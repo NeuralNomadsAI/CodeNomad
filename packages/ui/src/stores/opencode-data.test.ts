@@ -193,6 +193,40 @@ describe("OpenCode data projection", () => {
     }
   })
 
+  it("does not evict another message when compaction completion updates its running row", async () => {
+    const instanceId = "opencode-data-compaction-boundary"
+    const sessionId = "session"
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 200; index += 1) {
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `start-${index}`, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: `m${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `end-${index}`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: `m${index}`, finish: "stop" },
+        } as any)
+      }
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "compact", type: "session.compaction.started", created: 401,
+        data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "compact-end", type: "session.compaction.ended", created: 402,
+        data: { sessionID: sessionId, reason: "manual", text: "summary", recent: "" },
+      } as any)
+
+      assert.equal(data.session.message.list(sessionId).length, 200)
+      assert.ok(data.session.message.get(sessionId, "m1"))
+      assert.equal((data.session.message.get(sessionId, "compact") as any).status, "completed")
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
   it("bounds one transcript without disposing instance data or replaying boundary events", async () => {
     const instanceId = "opencode-data-isolated-bound"
     const primary = applyOpenCodeDataEvent(instanceId, "/work", {

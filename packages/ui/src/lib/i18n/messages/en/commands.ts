@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "Nothing to undo",
   "commands.undoLastMessage.failed.title": "Undo failed",
   "commands.undoLastMessage.failed.message": "Failed to revert message",
+  "commands.redoLastMessage.label": "Redo Last Message",
+  "commands.redoLastMessage.description": "Clear the staged undo",
+  "commands.redoLastMessage.keywords": "redo, restore, clear revert",
+  "commands.redoLastMessage.failed.title": "Redo failed",
+  "commands.redoLastMessage.failed.message": "Failed to clear the staged undo",
 
   "commands.openModelSelector.label": "Open Model Selector",
   "commands.openModelSelector.description": "Choose a different model",

@@ -258,7 +258,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     reply.code(404).send({ message: "UI bundle missing" })
   })
 
-  registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
@@ -273,7 +274,6 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  const worktreeDeletionFence = new WorktreeDeletionFence()
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
@@ -1214,7 +1214,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|background|fork)$/],
     ["POST", /^\/api\/session\/[^/]+\/inbox\/[^/]+\/(?:steer|queue)$/],
-    ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
+    ["POST", /^\/api\/session\/[^/]+\/revert\/(?:stage|clear)$/],
     ["PUT", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["DELETE", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],

@@ -219,7 +219,7 @@ function boundedTranscript(messages: SessionMessageInfo[], limit = MAX_TRANSCRIP
     .map((message) => JSON.parse(JSON.stringify(message)) as SessionMessageInfo)
 }
 
-function eventMayAppendMessage(event: OpenCodeEvent): boolean {
+function eventMayAppendMessage(event: OpenCodeEvent, runningCompactions = 0): boolean {
   switch (event.type) {
     case "session.agent.selected":
     case "session.model.selected":
@@ -228,9 +228,10 @@ function eventMayAppendMessage(event: OpenCodeEvent): boolean {
     case "session.shell.started":
     case "session.step.started":
     case "session.compaction.started":
+      return true
     case "session.compaction.ended":
     case "session.compaction.failed":
-      return true
+      return runningCompactions === 0
     case "session.instructions.updated":
       return event.data.text !== undefined
     case "session.inbox.enqueued":
@@ -443,7 +444,9 @@ function drainTranscriptQueue(
   while (transcript.queue.length > 0) {
     if (!isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) return false
     const queued = transcript.queue[0]
-    if (eventMayAppendMessage(queued.event)
+    const runningCompactions = entry.data.session.message.list(sessionId)
+      .filter((message) => message.type === "compaction" && message.status === "running").length
+    if (eventMayAppendMessage(queued.event, runningCompactions)
       && entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES) return true
     transcript.queue.shift()
     entry.emit(queued.event)
@@ -463,7 +466,16 @@ async function rotateTranscript(
 ): Promise<void> {
   try {
     while (isRotationCurrent(instanceId, sessionId, transcript, entry, generation)) {
-      const appendCount = transcript.queue.reduce((count, item) => count + Number(eventMayAppendMessage(item.event)), 0)
+      let runningCompactions = entry.data.session.message.list(sessionId)
+        .filter((message) => message.type === "compaction" && message.status === "running").length
+      const appendCount = transcript.queue.reduce((count, item) => {
+        const appends = eventMayAppendMessage(item.event, runningCompactions)
+        if (item.event.type === "session.compaction.started") runningCompactions += 1
+        if ((item.event.type === "session.compaction.ended" || item.event.type === "session.compaction.failed") && runningCompactions > 0) {
+          runningCompactions -= 1
+        }
+        return count + Number(appends)
+      }, 0)
       const reserve = Math.min(Math.max(appendCount, 1), MAX_ROTATION_RESERVE)
       const snapshot = boundedTranscript(
         entry.data.session.message.list(sessionId),
@@ -559,7 +571,8 @@ export function applyOpenCodeDataEvent(
       return transcript.entry.data
     }
     if (transcript.rotating
-      || (eventMayAppendMessage(event)
+      || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
+        .filter((message) => message.type === "compaction" && message.status === "running").length)
         && transcript.entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES)) {
       enqueueTranscriptEvent(instanceId, sessionId, transcript, { event, onApplied: onDeferred })
       startTranscriptRotation(instanceId, sessionId, transcript)

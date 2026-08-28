@@ -76,8 +76,8 @@ interface WorkspaceManagerOptions {
   setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
   clearTimeout?: (timer: ManagerTimeout) => void
   platform?: NodeJS.Platform
-  wslServiceDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
-  wslHostDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null
+  wslServiceDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null | Promise<string | null>
+  wslHostDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null | Promise<string | null>
   wslServiceLifecycleFactory?: (
     spec: Extract<ServiceLaunchSpec, { kind: "wsl" }>,
     timeoutMs: number,
@@ -218,7 +218,7 @@ export class WorkspaceManager {
     if (directory === record.path || directory === record.location?.directory) return true
     if (await this.ownsHostDirectory(record, directory)) return true
     if (!record.wslDistro) return false
-    const hostDirectory = this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    const hostDirectory = await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
   }
 
@@ -265,7 +265,7 @@ export class WorkspaceManager {
     const owned = await this.resolveOwnedWorktree(record, directory)
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
-    return this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
   }
 
   async getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined> {
@@ -280,7 +280,7 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published || !await this.ownsPath(id, candidate)) return undefined
     if (!record.wslDistro) return candidate
-    return this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    return await this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
@@ -297,7 +297,7 @@ export class WorkspaceManager {
     const hostDirectory = record.wslDistro
       ? isWindowsHostPath(directory)
         ? directory
-        : this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+        : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
     if (!hostDirectory) return null
     return resolveOwnedWorktreePath({
@@ -313,7 +313,7 @@ export class WorkspaceManager {
     if (!record?.[WORKSPACE_STATE].published) return false
     if (await this.ownsHostPath(record, candidate)) return true
     if (!record.wslDistro) return false
-    const hostPath = this.resolveWslHostDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    const hostPath = await this.resolveWslHostDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
     return Boolean(hostPath && await this.ownsHostPath(record, hostPath))
   }
 
@@ -526,7 +526,7 @@ export class WorkspaceManager {
       })
       const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
       const startupEnvironment = launch.kind === "wsl"
-        ? this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
+        ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
         : this.serviceStartupEnvironment()
       const serviceOptions: OpenCodeSharedServiceOptions = {
         kind: "lifecycle",
@@ -546,7 +546,7 @@ export class WorkspaceManager {
       this.throwIfCancelled(record)
       record.wslDistro = launch.kind === "wsl" ? launch.distro : undefined
       const serviceDirectory = launch.kind === "wsl"
-        ? this.requireWslServiceDirectory(workspacePath, launch.distro, launchDeadlineAt - this.now())
+        ? await this.requireWslServiceDirectory(workspacePath, launch.distro, launchDeadlineAt - this.now())
         : workspacePath
       record.location = { directory: serviceDirectory }
       return await this.withLocationCreation(async () => {
@@ -851,24 +851,24 @@ export class WorkspaceManager {
     return settled
   }
 
-  private requireWslServiceDirectory(directory: string, distro: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {
-    const translated = timeoutMs > 0 ? this.resolveWslServiceDirectory(directory, distro, timeoutMs) : null
+  private async requireWslServiceDirectory(directory: string, distro: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): Promise<string> {
+    const translated = timeoutMs > 0 ? await this.resolveWslServiceDirectory(directory, distro, timeoutMs) : null
     if (!translated) {
       throw new Error(`Unable to translate workspace location for WSL distro "${distro}": ${directory}`)
     }
     return translated
   }
 
-  private resolveWslServiceDirectory(directory: string, distro: string, timeoutMs: number): string | null {
+  private resolveWslServiceDirectory(directory: string, distro: string, timeoutMs: number): Promise<string | null> {
     if (this.options.wslServiceDirectoryResolver) {
-      return this.options.wslServiceDirectoryResolver(directory, distro, timeoutMs)
+      return Promise.resolve(this.options.wslServiceDirectoryResolver(directory, distro, timeoutMs))
     }
     return resolveWslServiceDirectory(directory, distro, undefined, timeoutMs)
   }
 
-  private resolveWslHostDirectory(directory: string, distro: string, timeoutMs: number): string | null {
+  private resolveWslHostDirectory(directory: string, distro: string, timeoutMs: number): Promise<string | null> {
     if (this.options.wslHostDirectoryResolver) {
-      return this.options.wslHostDirectoryResolver(directory, distro, timeoutMs)
+      return Promise.resolve(this.options.wslHostDirectoryResolver(directory, distro, timeoutMs))
     }
     return resolveWslHostDirectory(directory, distro, undefined, timeoutMs)
   }
@@ -934,7 +934,7 @@ export class WorkspaceManager {
     return environment
   }
 
-  private wslStartupEnvironment(environment: NodeJS.ProcessEnv, distro: string, deadlineAt: number): NodeJS.ProcessEnv {
+  private async wslStartupEnvironment(environment: NodeJS.ProcessEnv, distro: string, deadlineAt: number): Promise<NodeJS.ProcessEnv> {
     let caKey: string | undefined
     let caValue: string | undefined
     for (const [key, value] of Object.entries(environment)) {
@@ -948,7 +948,7 @@ export class WorkspaceManager {
     if (caKey === undefined) return environment
     if (caValue && !path.posix.isAbsolute(caValue) && path.win32.isAbsolute(caValue)) {
       const remaining = deadlineAt - this.now()
-      const translated = remaining > 0 ? this.resolveWslServiceDirectory(caValue, distro, remaining) : null
+      const translated = remaining > 0 ? await this.resolveWslServiceDirectory(caValue, distro, remaining) : null
       if (!translated) {
         throw new Error(`Unable to translate NODE_EXTRA_CA_CERTS for WSL distro "${distro}": ${caValue}`)
       }

@@ -1,4 +1,3 @@
-export const MESSAGE_HISTORY_TOP_THRESHOLD_PX = 320
 export const MESSAGE_HISTORY_ANCHOR_PAGE_LIMIT = 50
 export const MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT = 1000
 
@@ -27,15 +26,6 @@ export function createSearchLocatorAuthority() {
       current = null
     },
   }
-}
-
-export function isMessageHistoryRestoreCurrent<T>(
-  active: boolean,
-  capturedList: T,
-  currentList: T | null,
-  generationCurrent: boolean,
-): boolean {
-  return active && capturedList === currentList && generationCurrent
 }
 
 export async function loadPagesUntilAnchor(options: {
@@ -97,15 +87,6 @@ export async function loadCompleteMessageHistory<T>(options: {
   throw new Error("Message history traversal page limit reached")
 }
 
-export async function loadMessageHistoryPage(options: {
-  getCursor: () => string | undefined
-  loadMore: () => Promise<void>
-}): Promise<boolean> {
-  const cursor = options.getCursor()
-  await options.loadMore()
-  return options.getCursor() !== cursor
-}
-
 export function hasMessageSearchAuthority(query: string, searchedQuery: string): boolean {
   return query.trim().length > 0 && searchedQuery.trim() === query.trim()
 }
@@ -157,18 +138,4 @@ export function reconcileResidentSearchMatches<T extends { messageId: string }>(
     result.splice(insertion < 0 ? result.length : insertion, 0, ...matches)
   }
   return result
-}
-
-export function shouldLoadOlderMessages(options: {
-  active: boolean
-  failed: boolean
-  hasMore: boolean
-  loading: boolean
-  scrollTop: number
-}): boolean {
-  return options.active
-    && !options.failed
-    && options.hasMore
-    && !options.loading
-    && options.scrollTop <= MESSAGE_HISTORY_TOP_THRESHOLD_PX
 }

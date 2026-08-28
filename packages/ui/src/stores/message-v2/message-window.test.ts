@@ -1,28 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-  DEFAULT_SESSION_MEMORY_MESSAGE_LIMIT,
   emptyLatestWindow,
-  parseNewerCursors,
-  parseSessionMemoryMessageLimit,
   planNewerWindow,
   planOlderWindow,
-  serializeNewerCursors,
   type MessageWindowState,
   windowFromSnapshot,
   withOlderCursor,
 } from "./message-window.ts"
-
-test("invalid memory limits fall back to 200", () => {
-  assert.equal(parseSessionMemoryMessageLimit(undefined), DEFAULT_SESSION_MEMORY_MESSAGE_LIMIT)
-  assert.equal(parseSessionMemoryMessageLimit("nope"), DEFAULT_SESSION_MEMORY_MESSAGE_LIMIT)
-})
-
-test("memory limits stay positive integers", () => {
-  assert.equal(parseSessionMemoryMessageLimit(200.8), 200)
-  assert.equal(parseSessionMemoryMessageLimit(1), 1)
-  assert.equal(parseSessionMemoryMessageLimit(5000), 5000)
-})
 
 test("older pages push a latest sentinel then history cursors", () => {
   const first = planOlderWindow(withOlderCursor(emptyLatestWindow(), "c1"))
@@ -81,11 +66,4 @@ test("restore uses the saved page without inventing a newer stack", () => {
     resumeCursor: "c1",
     newerCursors: [null],
   })
-})
-
-test("newer cursors serialize the latest sentinel", () => {
-  assert.deepEqual(serializeNewerCursors([null, "c1"]), ["", "c1"])
-  assert.deepEqual(parseNewerCursors(["", "c1"]), [null, "c1"])
-  assert.equal(parseNewerCursors(["", ...Array.from({ length: 40 }, (_, index) => `c${index}`)])[0], "c8")
-  assert.deepEqual(parseNewerCursors(["", "", ...Array.from({ length: 30 }, (_, index) => `c${index}`)]).slice(0, 2), [null, null])
 })

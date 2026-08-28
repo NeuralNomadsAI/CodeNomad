@@ -486,6 +486,35 @@ export function useCommands(options: UseCommandsOptions) {
     })
 
     commandRegistry.register({
+      id: "redo",
+      label: () => tGlobal("commands.redoLastMessage.label"),
+      description: () => tGlobal("commands.redoLastMessage.description"),
+      category: "Session",
+      keywords: () => ["/redo", ...splitKeywords("commands.redoLastMessage.keywords")],
+      disabled: () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return true
+        const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
+        return !(messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session?.revert)
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance?.client || !sessionId || sessionId === "info") return
+        try {
+          await instance.client.session.revert.clear({ sessionID: sessionId })
+        } catch (error) {
+          log.error("Failed to clear session revert", error)
+          showAlertDialog(tGlobal("commands.redoLastMessage.failed.message"), {
+            title: tGlobal("commands.redoLastMessage.failed.title"),
+            variant: "error",
+          })
+        }
+      },
+    })
+
+    commandRegistry.register({
       id: "open-model-selector",
       label: () => tGlobal("commands.openModelSelector.label"),
       description: () => tGlobal("commands.openModelSelector.description"),

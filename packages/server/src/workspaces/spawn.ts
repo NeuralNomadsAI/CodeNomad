@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process"
+import { execFile, spawnSync } from "child_process"
 import { readFileSync, statSync } from "fs"
 import path from "path"
 
@@ -129,39 +129,38 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
 export function resolveWslServiceDirectory(
   folder: string,
   distro: string,
-  translateWindowsPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (windowsFolder, wslDistro, timeoutMs) => {
-    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-au", windowsFolder], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024,
-    })
-    return result.status === 0 ? result.stdout.trim() : undefined
-  },
+  translateWindowsPath: (folder: string, distro: string, timeoutMs: number) => string | undefined | Promise<string | undefined> =
+    (windowsFolder, wslDistro, timeoutMs) => translateWslPath(["-au", windowsFolder], wslDistro, timeoutMs),
   timeoutMs = 5_000,
-): string | null {
+): Promise<string | null> {
   const directory = resolveWslWorkingDirectory(folder, distro)
-  if (!directory) return null
-  if (directory.kind === "linux") return directory.path
-  return translateWindowsPath(directory.path, distro, Math.max(1, timeoutMs))?.trim() || null
+  if (!directory) return Promise.resolve(null)
+  if (directory.kind === "linux") return Promise.resolve(directory.path)
+  return Promise.resolve(translateWindowsPath(directory.path, distro, Math.max(1, timeoutMs)))
+    .then((translated) => translated?.trim() || null)
 }
 
 export function resolveWslHostDirectory(
   folder: string,
   distro: string,
-  translateLinuxPath: (folder: string, distro: string, timeoutMs: number) => string | undefined = (linuxFolder, wslDistro, timeoutMs) => {
-    const result = spawnSync("wsl.exe", ["--distribution", wslDistro, "--exec", "wslpath", "-aw", linuxFolder], {
+  translateLinuxPath: (folder: string, distro: string, timeoutMs: number) => string | undefined | Promise<string | undefined> =
+    (linuxFolder, wslDistro, timeoutMs) => translateWslPath(["-aw", linuxFolder], wslDistro, timeoutMs),
+  timeoutMs = 5_000,
+): Promise<string | null> {
+  if (!path.posix.isAbsolute(folder)) return Promise.resolve(null)
+  return Promise.resolve(translateLinuxPath(folder, distro, Math.max(1, timeoutMs)))
+    .then((translated) => translated?.trim() || null)
+}
+
+function translateWslPath(args: string[], distro: string, timeoutMs: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile("wsl.exe", ["--distribution", distro, "--exec", "wslpath", ...args], {
       encoding: "utf8",
       windowsHide: true,
       timeout: timeoutMs,
       maxBuffer: 64 * 1024,
-    })
-    return result.status === 0 ? result.stdout.trim() : undefined
-  },
-  timeoutMs = 5_000,
-): string | null {
-  if (!path.posix.isAbsolute(folder)) return null
-  return translateLinuxPath(folder, distro, Math.max(1, timeoutMs))?.trim() || null
+    }, (error, stdout) => resolve(error ? undefined : stdout.trim()))
+  })
 }
 
 export function buildServiceLaunchSpec(

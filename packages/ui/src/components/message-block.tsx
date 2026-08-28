@@ -270,6 +270,7 @@ interface MessageContentItemProps {
   pendingPrompt?: SessionInboxUser
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
@@ -375,6 +376,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         pendingPrompt={props.pendingPrompt}
         pendingPromptBusy={props.pendingPromptBusy}
         onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+        onPendingPromptEdit={props.onPendingPromptEdit}
         onPendingPromptRemove={props.onPendingPromptRemove}
         technicalCleanupParts={props.technicalCleanupParts}
         onTechnicalCleanupHoverChange={props.onTechnicalCleanupHoverChange}
@@ -577,6 +579,7 @@ interface MessageBlockProps {
   pendingPrompt?: SessionInboxUser
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   onContentRendered?: () => void
   searchQuery?: Accessor<string>
@@ -912,6 +915,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     pendingPrompt={props.pendingPrompt}
                     pendingPromptBusy={props.pendingPromptBusy}
                     onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+                    onPendingPromptEdit={props.onPendingPromptEdit}
                     onPendingPromptRemove={props.onPendingPromptRemove}
                     technicalCleanupParts={() => props.technicalCleanupParts?.(
                       (item() as ContentDisplayItem).messageId,

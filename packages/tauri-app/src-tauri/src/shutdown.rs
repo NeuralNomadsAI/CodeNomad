@@ -26,6 +26,12 @@ struct WindowsSessionEndPreparation {
     requests: Option<Vec<(String, u64)>>,
 }
 
+enum PendingShutdownTimeoutAction {
+    Cancel(Vec<(String, u64)>),
+    #[cfg(windows)]
+    Cleanup,
+}
+
 #[derive(Default)]
 struct ShutdownState {
     next_generation: u64,
@@ -87,6 +93,15 @@ impl ShutdownCoordinator {
             return None;
         }
         state.local_closes.remove(label)
+    }
+
+    fn cancel_local_close(&self, label: &str, generation: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.local_closes.get(label).map(|pending| pending.generation) != Some(generation) {
+            return false;
+        }
+        state.local_closes.remove(label);
+        true
     }
 
     fn begin_shutdown(
@@ -154,6 +169,20 @@ impl ShutdownCoordinator {
             state.windows_native_flush_complete = false;
         }
         cancellations
+    }
+
+    fn expire_pending_shutdown(&self) -> PendingShutdownTimeoutAction {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if !state.shutdown_started || state.cleanup_started {
+            return PendingShutdownTimeoutAction::Cancel(Vec::new());
+        }
+        #[cfg(windows)]
+        if state.windows_session_end_generation.is_some() {
+            return PendingShutdownTimeoutAction::Cleanup;
+        }
+        state.shutdown_started = false;
+        state.global_pending.clear();
+        PendingShutdownTimeoutAction::Cancel(state.global_requests.drain().collect())
     }
 
     fn commit_local_close(&self, label: String, pending: PendingClose) -> bool {
@@ -391,7 +420,12 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        finish_local_close(app, label, record.id, generation);
+        if app
+            .state::<ShutdownCoordinator>()
+            .cancel_local_close(&label, generation)
+        {
+            emit_flush_cancelled(&app, &label, generation);
+        }
     });
 }
 
@@ -464,7 +498,16 @@ pub(crate) fn request(app: AppHandle) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        start_cleanup(app, true);
+        match app
+            .state::<ShutdownCoordinator>()
+            .expire_pending_shutdown()
+        {
+            PendingShutdownTimeoutAction::Cancel(cancellations) => {
+                emit_flush_cancellations(&app, cancellations)
+            }
+            #[cfg(windows)]
+            PendingShutdownTimeoutAction::Cleanup => start_cleanup(app, true),
+        }
     });
 }
 

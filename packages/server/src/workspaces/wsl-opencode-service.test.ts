@@ -130,7 +130,7 @@ describe("WslOpenCodeService", () => {
 
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => Response.json({ healthy: false, pid: 12 }),
-    }).service.discover(), /not API-compatible/)
+    }).service.discover(), /invalid health response/)
   })
 
   it("requires the complete compatible health shape", async () => {
@@ -144,7 +144,7 @@ describe("WslOpenCodeService", () => {
     ]) {
       await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
         fetch: async () => Response.json(health),
-      }).service.discover(), /not API-compatible/)
+      }).service.discover(), /invalid health response/)
     }
   })
 

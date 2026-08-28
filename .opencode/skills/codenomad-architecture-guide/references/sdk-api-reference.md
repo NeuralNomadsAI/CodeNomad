@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently, and startup validates compatibility without an exact version gate. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
+CodeNomad server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently; startup validates its authenticated loopback endpoint and health response without an exact version gate, while contract parity is reviewed at upgrade and release time. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
 - Service authentication headers: `import { Service } from "@opencode-ai/client/service"`

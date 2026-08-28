@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "Нечего отменять",
   "commands.undoLastMessage.failed.title": "Не удалось отменить",
   "commands.undoLastMessage.failed.message": "Не удалось откатить сообщение",
+  "commands.redoLastMessage.label": "Повторить последнее сообщение",
+  "commands.redoLastMessage.description": "Отменить подготовленный откат",
+  "commands.redoLastMessage.keywords": "повторить, восстановить, отменить откат",
+  "commands.redoLastMessage.failed.title": "Не удалось повторить",
+  "commands.redoLastMessage.failed.message": "Не удалось отменить подготовленный откат",
 
   "commands.openModelSelector.label": "Открыть выбор модели",
   "commands.openModelSelector.description": "Выбрать другую модель",

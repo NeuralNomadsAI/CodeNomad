@@ -12,6 +12,8 @@ const GLOBAL_EVENT_TYPES = new Set([
   "catalog.updated",
   "command.updated",
   "config.updated",
+  "credential.switched",
+  "credential.updated",
   "integration.connection.updated",
   "integration.updated",
   "installation.update-available",

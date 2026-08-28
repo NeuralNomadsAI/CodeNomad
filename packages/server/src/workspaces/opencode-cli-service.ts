@@ -147,7 +147,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       || !Number.isSafeInteger(value.pid)
       || Number(value.pid) <= 0
     ) {
-      throw new Error(`${this.options.label} OpenCode service is not API-compatible at ${endpoint.url}`)
+      throw new Error(`${this.options.label} OpenCode service returned an invalid health response at ${endpoint.url}`)
     }
   }
 

@@ -93,7 +93,7 @@ async function inventorySessions(client: OpenCodeClient, project: string): Promi
   let cursor: string | undefined
 
   for (let pageCount = 0; pageCount < MAX_PAGES; pageCount += 1) {
-    const page = await client.session.list({ project, limit: PAGE_SIZE, order: "asc", cursor })
+    const page = await client.session.list(cursor ? { cursor } : { project, limit: PAGE_SIZE, order: "asc" })
     for (const session of page.data) {
       sessions.set(session.id, session)
       if (sessions.size > MAX_SESSIONS) throw new Error("Session inventory exceeded its safety limit")

@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "取り消すものがありません",
   "commands.undoLastMessage.failed.title": "取り消しに失敗",
   "commands.undoLastMessage.failed.message": "メッセージを戻せませんでした",
+  "commands.redoLastMessage.label": "最後のメッセージをやり直す",
+  "commands.redoLastMessage.description": "準備された取り消しを解除します",
+  "commands.redoLastMessage.keywords": "やり直す, 復元, 取り消し解除",
+  "commands.redoLastMessage.failed.title": "やり直しに失敗しました",
+  "commands.redoLastMessage.failed.message": "準備された取り消しを解除できませんでした",
 
   "commands.openModelSelector.label": "モデルセレクターを開く",
   "commands.openModelSelector.description": "別のモデルを選択",

@@ -1,13 +1,13 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
-import type { SessionInboxUser } from "@opencode-ai/client"
+import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode-ai/client"
 import type { Session } from "../../types/session"
-import type { Attachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
-import { getAttachments, removeAttachment } from "../../stores/attachments"
+import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
@@ -100,6 +100,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
+  let pendingQueuedPayload: SessionInboxUserPayload | undefined
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
   let pendingCommentText: string | null = null
   const [queueBusyId, setQueueBusyId] = createSignal<string>()
@@ -359,8 +360,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     props.registerSessionPromptApi?.(props.sessionId, api)
 
     if (pendingPromptText) {
-      api.setPromptText(pendingPromptText, { focus: true })
+      if (pendingQueuedPayload) api.restoreQueuedPrompt(pendingPromptText, pendingQueuedPayload)
+      else api.setPromptText(pendingPromptText, { focus: true })
       pendingPromptText = null
+      pendingQueuedPayload = undefined
     }
 
     if (pendingSelectionInsert) {
@@ -397,7 +400,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   }
 
-  async function handleSendMessage(prompt: string, attachments: Attachment[], delivery: PromptDelivery) {
+  async function handleSendMessage(
+    prompt: string,
+    attachments: Attachment[],
+    delivery: PromptDelivery,
+    restoredPayload?: SessionInboxUserPayload,
+  ) {
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
     }
@@ -405,7 +413,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery })
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
@@ -429,13 +437,35 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     })
   }
 
-  async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "remove") {
+  async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "edit" | "remove") {
+    if (queueBusyId()) return
     setQueueBusyId(item.id)
     try {
       const inbox = instances().get(props.instanceId)?.client?.session.inbox
       if (!inbox) throw new Error("Instance not ready")
-      if (action === "remove") {
+      if (action === "remove" || action === "edit") {
         await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+        if (action === "edit") {
+          const displayText = item.payload.metadata?.displayText
+          const text = typeof displayText === "string" && displayText ? displayText : item.payload.text
+          const restoredAttachments = [
+            ...(item.payload.files ?? []).map((file) => {
+              const uri = file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`
+              const name = file.name ?? file.mention?.text.replace(/^@/, "") ?? file.mime
+              const attachment = createFileAttachment(uri, name, file.mime)
+              if (file.mention?.text) attachment.display = file.mention.text
+              return attachment
+            }),
+            ...(item.payload.agents ?? []).map((agent) => createAgentAttachment(agent.name)),
+          ]
+          clearAttachments(props.instanceId, props.sessionId)
+          for (const attachment of restoredAttachments) addAttachment(props.instanceId, props.sessionId, attachment)
+          if (promptInputApi) promptInputApi.restoreQueuedPrompt(text, item.payload)
+          else {
+            pendingPromptText = text
+            pendingQueuedPayload = item.payload
+          }
+        }
       } else if (item.delivery === "queue") {
         await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
       } else {
@@ -515,6 +545,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           promptInputApi.setPromptText(restoredText, { focus: true })
         } else {
           pendingPromptText = restoredText
+          pendingQueuedPayload = undefined
         }
       }
     } catch (error) {
@@ -552,6 +583,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
            promptInputApi.setPromptText(restoredText, { focus: true })
          } else {
            pendingPromptText = restoredText
+           pendingQueuedPayload = undefined
          }
        }
     } catch (error) {
@@ -602,6 +634,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               pendingPrompts={pendingPromptById()}
               pendingPromptBusy={Boolean(queueBusyId())}
               onPendingPromptDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
+              onPendingPromptEdit={(item) => void manageQueuedPrompt(item, "edit")}
               onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
               onQuoteSelection={handleQuoteSelection}
             />

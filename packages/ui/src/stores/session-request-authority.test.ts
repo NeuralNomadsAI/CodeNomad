@@ -237,7 +237,7 @@ describe("session request authority", () => {
       if (input.cursor && pendingSecondPage) return pendingSecondPage.promise
       return input.cursor
         ? { data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} }
-        : { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { previous: "page-2" } }
+        : { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
@@ -287,7 +287,7 @@ describe("session request authority", () => {
         ? { data: history.slice(200, 250), cursor: {} }
         : failRefresh
           ? Promise.reject(new Error("replacement refresh failed"))
-        : { data: history.slice(0, 200), cursor: { previous: "older-page" } } }
+        : { data: history.slice(0, 200), cursor: { next: "older-page" } } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
 
     try {
@@ -346,7 +346,7 @@ describe("session request authority", () => {
     const oldPage = deferred<any>()
     ;(old.client as any).message = { list: (input: any) => input.cursor
       ? oldPage.promise
-      : Promise.resolve({ data: [apiMessage("old-new")], cursor: { previous: "old-page" } }) }
+      : Promise.resolve({ data: [apiMessage("old-new")], cursor: { next: "old-page" } }) }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     await loadMessages(instanceId, sessionId)
     const oldRequest = loadMoreMessages(instanceId, sessionId)
@@ -356,7 +356,7 @@ describe("session request authority", () => {
     const currentPage = deferred<any>()
     let currentPageCalls = 0
     ;(current.client as any).message = { list: (input: any) => {
-      if (!input.cursor) return Promise.resolve({ data: [apiMessage("current-new")], cursor: { previous: "current-page" } })
+      if (!input.cursor) return Promise.resolve({ data: [apiMessage("current-new")], cursor: { next: "current-page" } })
       currentPageCalls += 1
       return currentPage.promise
     } }
@@ -381,7 +381,7 @@ describe("session request authority", () => {
     const { client, cleanup } = setup(instanceId)
     let failOlder = false
     ;(client as any).message = { list: async (input: any) => {
-      if (!input.cursor) return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { previous: "page-2" } }
+      if (!input.cursor) return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
       if (failOlder) throw new Error("older failed")
       return { data: [apiMessage("old-2"), apiMessage("old-1")], cursor: {} }
     } }
@@ -410,7 +410,7 @@ describe("session request authority", () => {
     let calls = 0
     ;(client as any).message = { list: (input: any) => {
       calls += 1
-      if (calls === 1) return Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } })
+      if (calls === 1) return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
       if (input.cursor === "older") return Promise.resolve({ data: [apiMessage("old")], cursor: {} })
       if (calls === 3) return staleLatest.promise
       return Promise.resolve({ data: [apiMessage("fresh")], cursor: {} })
@@ -543,7 +543,7 @@ describe("session request authority", () => {
     const oldest = deferred<any>()
     ;(client as any).message = { list: (input: any) => input.order === "asc"
       ? oldest.promise
-      : Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } }) }
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
       await loadMessages(instanceId, sessionId)
@@ -566,7 +566,7 @@ describe("session request authority", () => {
     const oldest = deferred<any>()
     ;(client as any).message = { list: (input: any) => input.order === "asc"
       ? oldest.promise
-      : Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } }) }
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
       await loadMessages(instanceId, sessionId)
@@ -592,7 +592,7 @@ describe("session request authority", () => {
     const oldest = deferred<any>()
     ;(client as any).message = { list: (input: any) => input.order === "asc"
       ? oldest.promise
-      : Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } }) }
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
       await loadMessages(instanceId, sessionId)
@@ -618,7 +618,7 @@ describe("session request authority", () => {
     const oldest = deferred<any>()
     ;(client as any).message = { list: (input: any) => input.order === "asc"
       ? oldest.promise
-      : Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } }) }
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
       await loadMessages(instanceId, sessionId)
@@ -682,7 +682,7 @@ describe("session request authority", () => {
             ? stale.promise
             : Promise.resolve({ data: [apiMessage(`native-${mutation}`)], cursor: { next: "newer" } })
         }
-        return Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } })
+        return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
       } }
       setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
       try {
@@ -710,7 +710,7 @@ describe("session request authority", () => {
     const stale = deferred<any>()
     let oldestCalls = 0
     ;(client as any).message = { list: (input: any) => {
-      if (input.order !== "asc") return Promise.resolve({ data: [apiMessage("latest")], cursor: { previous: "older" } })
+      if (input.order !== "asc") return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
       oldestCalls += 1
       return oldestCalls === 1 ? stale.promise : Promise.resolve({ data: [apiMessage("authoritative")], cursor: {} })
     } }
@@ -749,7 +749,7 @@ describe("session request authority", () => {
           ? staleNewer.promise
           : Promise.resolve({ data: [apiMessage("survivor")], cursor: {} })
       }
-      return Promise.resolve({ data: [apiMessage("removed")], cursor: { previous: "older" } })
+      return Promise.resolve({ data: [apiMessage("removed")], cursor: { next: "older" } })
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
@@ -786,7 +786,7 @@ describe("session request authority", () => {
       }
       if (input.cursor === "newer-from-start") return { data: [apiMessage("middle-1"), apiMessage("middle-2")], cursor: { next: "newer-middle" } }
       if (input.cursor === "newer-middle") return { data: [apiMessage("recent")], cursor: {} }
-      return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { previous: "page-2" } }
+      return { data: [apiMessage("new-2"), apiMessage("new-1")], cursor: { next: "page-2" } }
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
@@ -817,9 +817,9 @@ describe("session request authority", () => {
     const { client, cleanup } = setup(instanceId)
     const latestPage = 40
     ;(client as any).message = { list: async (input: any) => {
-      if (!input.cursor) return { data: [apiMessage(`page-${latestPage}`)], cursor: { previous: `c${latestPage - 1}` } }
+      if (!input.cursor) return { data: [apiMessage(`page-${latestPage}`)], cursor: { next: `c${latestPage - 1}` } }
       const page = Number(input.cursor.slice(1))
-      return { data: [apiMessage(`page-${page}`)], cursor: page > 0 ? { previous: `c${page - 1}` } : {} }
+      return { data: [apiMessage(`page-${page}`)], cursor: page > 0 ? { next: `c${page - 1}` } : {} }
     } }
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {

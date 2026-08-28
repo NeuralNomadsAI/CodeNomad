@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "Nichts zum Rückgängigmachen",
   "commands.undoLastMessage.failed.title": "Rückgängigmachen fehlgeschlagen",
   "commands.undoLastMessage.failed.message": "Nachricht konnte nicht rückgängig gemacht werden",
+  "commands.redoLastMessage.label": "Letzte Nachricht wiederherstellen",
+  "commands.redoLastMessage.description": "Vorgemerkte Rücknahme aufheben",
+  "commands.redoLastMessage.keywords": "wiederholen, wiederherstellen, rücknahme aufheben",
+  "commands.redoLastMessage.failed.title": "Wiederherstellen fehlgeschlagen",
+  "commands.redoLastMessage.failed.message": "Vorgemerkte Rücknahme konnte nicht aufgehoben werden",
 
   "commands.openModelSelector.label": "Modellauswahl öffnen",
   "commands.openModelSelector.description": "Ein anderes Modell wählen",

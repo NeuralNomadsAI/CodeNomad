@@ -93,14 +93,6 @@ Service stop removal is intentional: CodeNomad does not own the shared daemon. U
 
 The CodeNomad metadata request and cache authority should be keyed by the active `SessionInfo.location`, and MCP toggles should use that same location. This needs a focused state change rather than a root fallback patch because switching tabs must not display or mutate another location's MCP state.
 
-### Undo without redo
-
-**Priority:** High. **Client upgrade required:** No.
-
-CodeNomad exposes native `session.revert.stage` for undo but does not expose `session.revert.clear` for redo. Official Desktop implements both in `packages/app/src/pages/session/use-session-commands.tsx`. An accidental undo can therefore only be reversed indirectly; submitting another prompt commits the staged boundary.
-
-Add a redo command that clears the staged revert and restores the prompt/viewport behavior. The proxy allowlist must admit only the matching native clear route.
-
 ### Queued prompt correction
 
 **Priority:** Medium. **Client upgrade required:** No.
@@ -119,7 +111,7 @@ This is distribution hardening rather than V2 API parity. Release jobs should fa
 
 ## Beta Channel Policy
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup accepts compatible services without an exact version gate.
+CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup validates its authenticated loopback health response without an exact version gate.
 
 Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 

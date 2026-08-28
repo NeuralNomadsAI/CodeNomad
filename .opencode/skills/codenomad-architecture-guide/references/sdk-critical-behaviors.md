@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Server and UI follow `@opencode-ai/client@beta`; refresh the client lock before API audits or release validation. Manage the runtime CLI independently and do not enforce an exact version string against compatible services. Review current documentation, installed declarations, and proxy/API parity whenever the client contract changes.
+- Server and UI follow `@opencode-ai/client@beta`; refresh the client lock before API audits or release validation. Manage the runtime CLI independently: startup checks the authenticated loopback endpoint and health shape without an exact version gate, while documentation, installed declarations, and proxy/API parity are reviewed whenever the client contract changes.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
@@ -19,6 +19,7 @@
 - There is one externally owned global service, one server client and one upstream event subscription. CodeNomad uses official host/WSL CLI status/start/password commands, owns no private service state or PID, and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding, executes lifecycle commands inside Linux, and never uses cross-namespace PID operations.
 - A workspace stop evicts its location; it does not stop a dedicated process or the global daemon.
+- The worktree deletion fence covers OpenCode proxy writes plus CodeNomad file and Git mutations for the same canonical worktree identity.
 - OpenCode owns standard state/database. Allowed configured environment variables apply only when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored.
 - The native event stream is volatile. Reconnect must reconcile authoritative state; use current `session.*`, `filesystem.changed`, and `config.updated` names rather than obsolete event aliases.
 

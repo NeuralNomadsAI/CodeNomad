@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent, handleSessionStatus } from "./session-events.ts"
-import { clearInstanceDeletedSessionAuthority, sessions, setActiveSession, setSessions } from "./session-state.ts"
+import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
@@ -122,6 +122,36 @@ describe("native session event reducer", () => {
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.runtimeStatusKnown, true)
     } finally {
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("invalidates a loaded inactive transcript after a native message event", () => {
+    const instanceId = "inactive-transcript"
+    const sessionId = "inactive"
+    const client = { session: { active: async () => ({}) } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "idle", retry: null,
+      idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+      projectID: "project", location: { directory: "/work" }, time: { created: 1, updated: 1 },
+    } as any]])))
+    setActiveSession(instanceId, "other")
+    setMessagesLoaded((previous) => new Map(previous).set(instanceId, new Set([sessionId])))
+
+    try {
+      handleInstanceInvalidation(instanceId, {
+        id: "step", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      assert.equal(Boolean(messagesLoaded().get(instanceId)?.has(sessionId)), false)
+    } finally {
+      setMessagesLoaded((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)

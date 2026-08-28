@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "Rien à annuler",
   "commands.undoLastMessage.failed.title": "Échec de l'annulation",
   "commands.undoLastMessage.failed.message": "Impossible de revenir au message",
+  "commands.redoLastMessage.label": "Rétablir le dernier message",
+  "commands.redoLastMessage.description": "Annuler le retour en arrière préparé",
+  "commands.redoLastMessage.keywords": "rétablir, restaurer, refaire",
+  "commands.redoLastMessage.failed.title": "Rétablissement impossible",
+  "commands.redoLastMessage.failed.message": "Impossible d'annuler le retour en arrière",
 
   "commands.openModelSelector.label": "Ouvrir le sélecteur de modèle",
   "commands.openModelSelector.description": "Choisir un autre modèle",

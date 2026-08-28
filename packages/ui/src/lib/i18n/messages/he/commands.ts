@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "אין מה לבטל",
   "commands.undoLastMessage.failed.title": "הביטול נכשל",
   "commands.undoLastMessage.failed.message": "ביטול ההודעה נכשל",
+  "commands.redoLastMessage.label": "ביצוע מחדש של ההודעה האחרונה",
+  "commands.redoLastMessage.description": "ניקוי הביטול המוכן",
+  "commands.redoLastMessage.keywords": "ביצוע מחדש, שחזור, ניקוי ביטול",
+  "commands.redoLastMessage.failed.title": "הביצוע מחדש נכשל",
+  "commands.redoLastMessage.failed.message": "ניקוי הביטול המוכן נכשל",
 
   "commands.openModelSelector.label": "פתח בורר מודלים",
   "commands.openModelSelector.description": "בחר מודל אחר",

@@ -186,18 +186,18 @@ describe("buildWindowsSpawnSpec", () => {
 })
 
 describe("resolveWslServiceDirectory", () => {
-  it("converts WSL UNC paths without invoking wslpath", () => {
+  it("converts WSL UNC paths without invoking wslpath", async () => {
     assert.equal(
-      resolveWslServiceDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu", () => {
+      await resolveWslServiceDirectory(String.raw`\\wsl.localhost\Ubuntu\home\dev\workspace`, "Ubuntu", () => {
         throw new Error("wslpath should not run")
       }),
       "/home/dev/workspace",
     )
   })
 
-  it("uses wslpath for Windows workspace paths", () => {
+  it("uses wslpath for Windows workspace paths", async () => {
     assert.equal(
-      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (folder, distro) => {
+      await resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (folder, distro) => {
         assert.equal(folder, String.raw`C:\Users\dev\workspace`)
         assert.equal(distro, "Ubuntu")
         return "/mnt/c/Users/dev/workspace"
@@ -206,11 +206,11 @@ describe("resolveWslServiceDirectory", () => {
     )
   })
 
-  it("bounds Windows path translation and returns null on timeout", () => {
+  it("bounds Windows path translation and returns null on timeout", async () => {
     let timeoutMs = 0
     const startedAt = Date.now()
     assert.equal(
-      resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (_folder, _distro, timeout) => {
+      await resolveWslServiceDirectory(String.raw`C:\Users\dev\workspace`, "Ubuntu", (_folder, _distro, timeout) => {
         timeoutMs = timeout
         const result = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout })
         assert.equal((result.error as NodeJS.ErrnoException | undefined)?.code, "ETIMEDOUT")
@@ -222,9 +222,9 @@ describe("resolveWslServiceDirectory", () => {
     assert.ok(Date.now() - startedAt < 1_000)
   })
 
-  it("maps service paths back to host paths with the same bound", () => {
+  it("maps service paths back to host paths with the same bound", async () => {
     assert.equal(
-      resolveWslHostDirectory("/mnt/c/Users/dev/workspace", "Ubuntu", (folder, distro, timeout) => {
+      await resolveWslHostDirectory("/mnt/c/Users/dev/workspace", "Ubuntu", (folder, distro, timeout) => {
         assert.deepEqual([folder, distro, timeout], ["/mnt/c/Users/dev/workspace", "Ubuntu", 23])
         return String.raw`C:\Users\dev\workspace`
       }, 23),

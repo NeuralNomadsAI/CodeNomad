@@ -25,6 +25,19 @@ fn close_generations_are_label_isolated_and_stale_ack_is_ignored() {
 }
 
 #[test]
+fn timed_out_local_close_reopens_close_authority() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "a".into(), true)
+        .unwrap();
+
+    assert!(coordinator.cancel_local_close("local-a", generation));
+    assert!(coordinator
+        .begin_local_close("local-a".into(), "a".into(), true)
+        .is_some());
+}
+
+#[test]
 fn final_shutdown_and_cleanup_start_once() {
     let coordinator = ShutdownCoordinator::default();
     let requests = coordinator
@@ -170,6 +183,38 @@ fn failed_global_shutdown_cancels_the_exact_renderer_generations() {
     requests.sort();
     cancellations.sort();
     assert_eq!(cancellations, requests);
+}
+
+#[test]
+fn timed_out_global_shutdown_reopens_navigation_authority() {
+    let coordinator = ShutdownCoordinator::default();
+    let mut requests = coordinator
+        .begin_shutdown(["local-a".to_string(), "local-b".to_string()])
+        .unwrap();
+
+    let PendingShutdownTimeoutAction::Cancel(mut cancellations) = coordinator.expire_pending_shutdown()
+    else {
+        panic!("ordinary shutdown timeout should cancel");
+    };
+    requests.sort();
+    cancellations.sort();
+    assert_eq!(cancellations, requests);
+    assert!(!coordinator.shutdown_started());
+    assert!(coordinator.with_navigation_authority(|| ()).is_some());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_session_end_promotes_an_ordinary_shutdown_timeout_to_cleanup() {
+    let coordinator = ShutdownCoordinator::default();
+    coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
+    coordinator.begin_windows_session_end(["local-a".to_string()]);
+
+    assert!(matches!(
+        coordinator.expire_pending_shutdown(),
+        PendingShutdownTimeoutAction::Cleanup
+    ));
+    assert!(coordinator.begin_cleanup(true));
 }
 
 #[cfg(windows)]

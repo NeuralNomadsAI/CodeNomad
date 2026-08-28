@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Eraser, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import { Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -29,6 +29,7 @@ interface MessageItemProps {
   pendingPrompt?: SessionInboxUser
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
@@ -435,14 +436,23 @@ export default function MessageItem(props: MessageItemProps) {
         {
           key: "pending-delivery",
           label: t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`),
+          disabled: props.pendingPromptBusy,
           icon: pending.delivery === "queue"
             ? <Play class="w-3.5 h-3.5" aria-hidden="true" />
             : <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
           onSelect: () => props.onPendingPromptDeliveryChange?.(pending),
         },
         {
+          key: "pending-edit",
+          label: t("promptQueue.actions.edit"),
+          disabled: props.pendingPromptBusy,
+          icon: <Pencil class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => props.onPendingPromptEdit?.(pending),
+        },
+        {
           key: "pending-remove",
           label: t("promptQueue.actions.remove"),
+          disabled: props.pendingPromptBusy,
           icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
           onSelect: () => props.onPendingPromptRemove?.(pending),
         },
@@ -598,6 +608,15 @@ export default function MessageItem(props: MessageItemProps) {
                         <Show when={pending.delivery === "queue"} fallback={<Undo class="w-3.5 h-3.5" aria-hidden="true" />}>
                           <Play class="w-3.5 h-3.5" aria-hidden="true" />
                         </Show>
+                      </button>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptEdit?.(pending)}
+                        title={t("promptQueue.actions.edit")}
+                        aria-label={t("promptQueue.actions.edit")}
+                      >
+                        <Pencil class="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
                       <button
                         class="message-action-button"

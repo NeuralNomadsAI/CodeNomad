@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "没有可撤销的内容",
   "commands.undoLastMessage.failed.title": "撤销失败",
   "commands.undoLastMessage.failed.message": "回退消息失败",
+  "commands.redoLastMessage.label": "重做上一条消息",
+  "commands.redoLastMessage.description": "清除已暂存的撤销",
+  "commands.redoLastMessage.keywords": "重做, 恢复, 清除撤销",
+  "commands.redoLastMessage.failed.title": "重做失败",
+  "commands.redoLastMessage.failed.message": "无法清除已暂存的撤销",
 
   "commands.openModelSelector.label": "打开模型选择器",
   "commands.openModelSelector.description": "选择其他模型",

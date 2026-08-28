@@ -20,7 +20,7 @@
 
 ## Prerequisites
 
-- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates service health and API behavior rather than an exact CLI version string.
+- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates its authenticated loopback health response rather than enforcing an exact CLI version string.
 - **OpenCode data**: The global daemon owns its platform-default storage, database, and service registration. Configured startup environment applies only when CodeNomad starts a missing daemon; an existing daemon is unchanged.
 - **Windows to WSL**: A configured WSL UNC binary uses Linux `service status`, `service start`, and `service get password`; Windows must have WSL localhost forwarding enabled to reach its loopback service.
 - Node.js 18+ and npm (for running or building from source).

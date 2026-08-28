@@ -94,7 +94,9 @@ describe("evacuateWorktreeSessions", () => {
     assert.deepEqual(moves.map(({ sessionID }) => sessionID), [root.id, child.id, grandchild.id])
     assert.equal(removed, true)
     assert.ok(listCall > 3)
-    assert.ok(lists.every((input: any) => input.project === "project" && input.directory === undefined))
+    assert.ok(lists.every((input: any) => input.cursor
+      ? Object.keys(input).length === 1
+      : input.project === "project" && input.directory === undefined))
   })
 
   it("evacuates sessions whose directory resolves to the target alias", async () => {

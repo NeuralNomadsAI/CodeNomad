@@ -52,7 +52,7 @@ import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showPromptDialog } from "../../stores/alerts"
 import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
 import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
-import { getAttachments, removeAttachment } from "../../stores/attachments"
+import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
 import {
@@ -132,6 +132,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   let lastAutoOpenedFormId: string | null = null
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
+  const pendingFirstPromptText = new Map<string, string>()
   const [draftAgent, setDraftAgent] = createSignal("")
   const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
   const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
@@ -412,6 +413,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       ...current,
       [sessionId]: api,
     }))
+    const text = api ? pendingFirstPromptText.get(sessionId) : undefined
+    if (api && text !== undefined) {
+      pendingFirstPromptText.delete(sessionId)
+      api.setPromptText(text, { focus: true })
+    }
   }
 
   async function handleOpenPreview() {
@@ -922,28 +928,50 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
   }
 
-  async function createAndActivateDraftSession() {
-    const agent = draftAgent()
-    const model = draftModel()
-    if (agent && model.providerId && model.modelId) {
-      await setAgentModelPreference(props.instance.id, agent, model)
-    }
-    const session = await createSession(props.instance.id, agent || undefined)
-    if (model.providerId && model.modelId) {
-      await updateSessionModel(props.instance.id, session.id, model)
-    }
-    if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
-      setFocusConversationSessionId(session.id)
-    }
-    setActiveParentSession(props.instance.id, session.id)
-    return session
+  let draftSessionCreation: ReturnType<typeof createSession> | undefined
+
+  function createAndActivateDraftSession() {
+    if (draftSessionCreation) return draftSessionCreation
+    const creation = (async () => {
+      const agent = draftAgent()
+      const model = draftModel()
+      if (agent && model.providerId && model.modelId) {
+        await setAgentModelPreference(props.instance.id, agent, model)
+      }
+      const session = await createSession(props.instance.id, agent || undefined)
+      if (model.providerId && model.modelId) {
+        await updateSessionModel(props.instance.id, session.id, model)
+      }
+      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
+        setFocusConversationSessionId(session.id)
+      }
+      setActiveParentSession(props.instance.id, session.id)
+      return session
+    })()
+    draftSessionCreation = creation
+    void creation.finally(() => {
+      if (draftSessionCreation === creation) draftSessionCreation = undefined
+    }).catch(() => undefined)
+    return creation
   }
 
-  async function runFirstPromptSubmission(submit: (sessionId: string) => Promise<void>) {
+  async function runFirstPromptSubmission(
+    submit: (sessionId: string) => Promise<void>,
+    draft?: { text: string; attachments: Attachment[] },
+  ) {
     const session = await createAndActivateDraftSession()
     try {
       await submit(session.id)
     } catch (error) {
+      if (draft) {
+        const api = sessionPromptApis()[session.id]
+        if ((!api || !api.getPromptText()) && getAttachments(props.instance.id, session.id).length === 0) {
+          clearAttachments(props.instance.id, session.id)
+          for (const attachment of draft.attachments) addAttachment(props.instance.id, session.id, attachment)
+          if (api) api.setPromptText(draft.text, { focus: true })
+          else pendingFirstPromptText.set(session.id, draft.text)
+        }
+      }
       focusCreatedSessionPrompt(session.id)
       throw error
     }
@@ -952,7 +980,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleFirstPromptSend(prompt: string, attachments: Attachment[]) {
     await runFirstPromptSubmission(async (sessionId) => {
       await sendMessage(props.instance.id, sessionId, prompt, attachments)
-    })
+    }, { text: prompt, attachments })
   }
 
   async function handleFirstPromptCommand(commandName: string, args: string) {

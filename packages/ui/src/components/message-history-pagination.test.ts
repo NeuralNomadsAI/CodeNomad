@@ -3,29 +3,9 @@ import fs from "node:fs"
 import { describe, it } from "node:test"
 import { batch, createRoot, createSignal } from "solid-js"
 
-import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadMessageHistoryPage, loadPagesUntilAnchor, MESSAGE_HISTORY_TOP_THRESHOLD_PX, reconcileResidentSearchMatches, shouldLoadOlderMessages } from "./message-history-pagination.ts"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadCompleteMessageHistory, loadPagesUntilAnchor, reconcileResidentSearchMatches } from "./message-history-pagination.ts"
 
 describe("message history pagination", () => {
-  const ready = {
-    active: true,
-    failed: false,
-    hasMore: true,
-    loading: false,
-    scrollTop: MESSAGE_HISTORY_TOP_THRESHOLD_PX,
-  }
-
-  it("loads at the top threshold", () => {
-    assert.equal(shouldLoadOlderMessages(ready), true)
-    assert.equal(shouldLoadOlderMessages({ ...ready, scrollTop: MESSAGE_HISTORY_TOP_THRESHOLD_PX + 1 }), false)
-  })
-
-  it("guards inactive, exhausted, concurrent, and failed loads", () => {
-    assert.equal(shouldLoadOlderMessages({ ...ready, active: false }), false)
-    assert.equal(shouldLoadOlderMessages({ ...ready, hasMore: false }), false)
-    assert.equal(shouldLoadOlderMessages({ ...ready, loading: true }), false)
-    assert.equal(shouldLoadOlderMessages({ ...ready, failed: true }), false)
-  })
-
   it("follows native page authority until the anchor appears", async () => {
     let pages = 0
     const result = await loadPagesUntilAnchor({
@@ -79,14 +59,6 @@ describe("message history pagination", () => {
 
     assert.equal(await result, "cancelled")
     assert.equal(pages, 1)
-  })
-
-  it("invalidates anchor restore when the view deactivates or replaces its list", () => {
-    const capturedList = {}
-    assert.equal(isMessageHistoryRestoreCurrent(true, capturedList, capturedList, true), true)
-    assert.equal(isMessageHistoryRestoreCurrent(false, capturedList, capturedList, true), false)
-    assert.equal(isMessageHistoryRestoreCurrent(true, capturedList, {}, true), false)
-    assert.equal(isMessageHistoryRestoreCurrent(true, capturedList, capturedList, false), false)
   })
 
   it("resets virtual measurements only when the resident page changes", () => {
@@ -261,20 +233,6 @@ describe("message history pagination", () => {
       isLatest: () => false,
       visit: () => ["unreachable"],
     }), /cursor did not advance/)
-  })
-
-  it("stops ordinary pagination on a repeated cursor and accepts opaque cursor progress", async () => {
-    let cursor: string | undefined = "older-page"
-    const load = (nextCursor: string | undefined) => loadMessageHistoryPage({
-      getCursor: () => cursor,
-      loadMore: async () => {
-        cursor = nextCursor
-      },
-    })
-
-    assert.equal(await load("older-page"), false)
-    assert.equal(await load("oldest-page"), true)
-    assert.equal(await load(undefined), true)
   })
 
   it("only grants search-result authority to the searched query", () => {

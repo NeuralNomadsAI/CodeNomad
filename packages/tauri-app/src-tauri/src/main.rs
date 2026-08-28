@@ -51,6 +51,7 @@ use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 const ZOOM_STEP: f64 = 0.1;
+const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
@@ -282,11 +283,18 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
 }
 
+fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
+    if let Ok(mut claims) = app.state::<AppState>().remote_proxy_cleanup_claims.lock() {
+        claims.remove(session_id);
+    }
+}
+
 async fn cleanup_remote_proxy_session_if_unowned(app: &AppHandle, session_id: &str) {
     if !claim_remote_proxy_session_cleanup(app, session_id) {
         return;
     }
     if let Err(err) = cleanup_remote_proxy_session(app, session_id).await {
+        release_remote_proxy_session_cleanup(app, session_id);
         eprintln!(
             "[tauri] failed to clean up remote proxy session {}: {}",
             session_id, err
@@ -333,7 +341,7 @@ fn schedule_remote_window_destroyed_cleanup(
 async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
     let status = app.state::<AppState>().manager.status();
     let Some(base_url) = status.url else {
-        return Ok(());
+        return Err("backend is unavailable".to_string());
     };
 
     let mut cleanup_url = Url::parse(&base_url).map_err(|err| err.to_string())?;
@@ -347,10 +355,14 @@ async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Resu
             .map_err(|err| err.to_string())?;
         reqwest::Client::builder()
             .add_root_certificate(ca_cert)
+            .timeout(REMOTE_PROXY_CLEANUP_TIMEOUT)
             .build()
             .map_err(|err| err.to_string())?
     } else {
-        reqwest::Client::new()
+        reqwest::Client::builder()
+            .timeout(REMOTE_PROXY_CLEANUP_TIMEOUT)
+            .build()
+            .map_err(|err| err.to_string())?
     };
 
     let response = client

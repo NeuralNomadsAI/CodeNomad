@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "Nada que deshacer",
   "commands.undoLastMessage.failed.title": "No se pudo deshacer",
   "commands.undoLastMessage.failed.message": "No se pudo revertir el mensaje",
+  "commands.redoLastMessage.label": "Rehacer último mensaje",
+  "commands.redoLastMessage.description": "Cancelar la reversión preparada",
+  "commands.redoLastMessage.keywords": "rehacer, restaurar, cancelar reversión",
+  "commands.redoLastMessage.failed.title": "No se pudo rehacer",
+  "commands.redoLastMessage.failed.message": "No se pudo cancelar la reversión preparada",
 
   "commands.openModelSelector.label": "Abrir selector de modelo",
   "commands.openModelSelector.description": "Elegir un modelo diferente",

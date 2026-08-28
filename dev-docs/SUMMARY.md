@@ -165,7 +165,7 @@ dev-docs/             Development documentation
 
 ## Current OpenCode Baseline
 
-- Experimental protocol client: server and UI follow `@opencode-ai/client@beta`; the runtime CLI is managed independently and startup uses compatibility-based service validation
+- Experimental protocol client: server and UI follow `@opencode-ai/client@beta`; the runtime CLI is managed independently and startup validates its authenticated loopback health endpoint without an exact version gate
 - Service: one externally owned global endpoint with a CodeNomad-pinned host or WSL identity
 - Workspaces: native locations/directories
 - Database: OpenCode's global default; configured startup environment applies only when CodeNomad starts a missing daemon

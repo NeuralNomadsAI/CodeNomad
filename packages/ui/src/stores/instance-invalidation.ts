@@ -11,6 +11,8 @@ export function getInstanceRefreshTargets(eventType: string): readonly InstanceR
       return ["agents", "providers", "commands"]
     case "integration.updated":
     case "integration.connection.updated":
+    case "credential.updated":
+    case "credential.switched":
       return ["providers", "metadata"]
     case "config.updated":
       return ["agents", "providers", "commands", "metadata"]

@@ -1,4 +1,3 @@
-export const DEFAULT_SESSION_MEMORY_MESSAGE_LIMIT = 200
 export const MESSAGE_WINDOW_PAGE_SIZE = 200
 export const MAX_NEWER_CURSORS = 32
 
@@ -16,16 +15,6 @@ export interface MessageWindowSnapshot {
   windowIsLatest?: boolean
   windowCursor?: string
   newerCursors?: NewerCursor[]
-}
-
-export function parseSessionMemoryMessageLimit(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value)
-  if (!Number.isFinite(parsed)) return DEFAULT_SESSION_MEMORY_MESSAGE_LIMIT
-  return Math.max(1, Math.floor(parsed))
-}
-
-export function messageWindowPageSize(limit: number): number {
-  return Math.min(MESSAGE_WINDOW_PAGE_SIZE, Math.max(1, limit))
 }
 
 export function emptyLatestWindow(): MessageWindowState {
@@ -95,18 +84,6 @@ export function toWindowSnapshot(window: MessageWindowState): MessageWindowSnaps
     windowCursor: window.resumeCursor,
     newerCursors: window.newerCursors,
   }
-}
-
-export function serializeNewerCursors(cursors: readonly NewerCursor[] | undefined): string[] {
-  return sanitizeNewerCursors(cursors).map((cursor) => cursor ?? "")
-}
-
-export function parseNewerCursors(value: unknown): NewerCursor[] {
-  if (!Array.isArray(value)) return []
-  return sanitizeNewerCursors(value.map((entry) => {
-    if (entry === null || entry === "") return null
-    return typeof entry === "string" ? entry : null
-  }))
 }
 
 function sanitizeNewerCursors(cursors: readonly NewerCursor[] | undefined): NewerCursor[] {

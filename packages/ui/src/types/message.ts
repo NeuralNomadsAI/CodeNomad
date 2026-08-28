@@ -1,5 +1,4 @@
 import type {
-  SessionMessageInfo,
   SessionStructuredError,
 } from "@opencode-ai/client"
 
@@ -30,8 +29,6 @@ export type NormalizedMessagePart =
   | CompactionMessagePart
   | StepStartMessagePart
   | StepFinishMessagePart
-
-export type NativeSessionMessageInfo = SessionMessageInfo
 
 export interface RenderCache {
   text: string

@@ -4,6 +4,7 @@ import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
@@ -31,7 +32,7 @@ describe("workspace routes", () => {
         calls.push(["cancel", requestId])
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const response = await app.inject({
       method: "POST",
@@ -93,7 +94,7 @@ describe("workspace routes", () => {
         return true
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const cancellation = app.inject({
       method: "POST",
@@ -140,7 +141,7 @@ describe("workspace routes", () => {
         }
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const owner = app.inject({
       method: "POST",

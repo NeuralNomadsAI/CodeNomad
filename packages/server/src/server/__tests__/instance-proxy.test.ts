@@ -696,6 +696,7 @@ describe("instance proxy location enforcement", () => {
       ["GET", "/workspaces/workspace/instance/api/session/owned/permission"],
       ["GET", "/workspaces/workspace/instance/api/session/owned/form"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/background"],
+      ["POST", "/workspaces/workspace/instance/api/session/owned/revert/clear"],
       ["GET", "/workspaces/workspace/instance/api/skill"],
       ["GET", "/workspaces/workspace/instance/api/reference"],
       ["GET", "/workspaces/workspace/instance/api/mcp/resource"],

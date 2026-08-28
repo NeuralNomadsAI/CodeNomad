@@ -91,6 +91,11 @@ export const commandMessages = {
   "commands.undoLastMessage.none.message": "फिर्ता लिनको लागि केहि छैन",
   "commands.undoLastMessage.failed.title": "फिर्ता लिन असफल",
   "commands.undoLastMessage.failed.message": "सन्देश उल्टाउन असफल भयो",
+  "commands.redoLastMessage.label": "अन्तिम सन्देश फेरि गर्नुहोस्",
+  "commands.redoLastMessage.description": "तयार गरिएको पूर्ववत् हटाउनुहोस्",
+  "commands.redoLastMessage.keywords": "फेरि, पुनर्स्थापना, पूर्ववत् हटाउनुहोस्",
+  "commands.redoLastMessage.failed.title": "फेरि गर्न असफल",
+  "commands.redoLastMessage.failed.message": "तयार गरिएको पूर्ववत् हटाउन असफल भयो",
 
   "commands.openModelSelector.label": "मोडेल चयनकर्ता खोल्नुहोस्",
   "commands.openModelSelector.description": "फरक मोडेल छनौट गर्नुहोस्",

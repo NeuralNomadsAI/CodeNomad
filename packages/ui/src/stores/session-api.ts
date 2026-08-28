@@ -93,7 +93,6 @@ const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
-const messageNextCursors = new Map<string, string>()
 const messagePageRequests = new Map<string, Promise<void>>()
 const messageHistoryAuthorities = new Map<string, object>()
 const MESSAGE_STREAM_SCOPE = "message-stream"
@@ -206,9 +205,6 @@ function clearSessionCatalogState(instanceId: string): void {
     if (!key.startsWith(prefix)) continue
     providerRefreshes.get(key)!.cancelled = true
     providerRefreshes.delete(key)
-  }
-  for (const key of messageNextCursors.keys()) {
-    if (key.startsWith(prefix)) messageNextCursors.delete(key)
   }
   for (const key of messagePageRequests.keys()) {
     if (key.startsWith(prefix)) messagePageRequests.delete(key)
@@ -1017,7 +1013,6 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
 
   // Drop normalized message state and caches for this session.
   const pageKey = messagePageKey(instanceId, sessionId)
-  messageNextCursors.delete(pageKey)
   messagePageRequests.delete(pageKey)
   messageHistoryAuthorities.delete(pageKey)
   messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
@@ -1237,9 +1232,6 @@ function commitMessageWindow(
     followModeType: existing?.followModeType,
     ...toWindowSnapshot(window),
   })
-  const key = messagePageKey(instanceId, sessionId)
-  if (window.olderCursor) messageNextCursors.set(key, window.olderCursor)
-  else messageNextCursors.delete(key)
 }
 
 function markSessionMessagesLoaded(instanceId: string, sessionId: string) {
@@ -1336,16 +1328,16 @@ async function loadMessages(
           ...(cursor ? { cursor } : { order: "desc" }),
         }, options?.signal ? { signal: options.signal } : undefined)
         if (!isCurrent()) return
-        if (response.cursor?.previous === planned.seekNewer) {
+        if (response.cursor?.next === planned.seekNewer) {
           resolvedNext = cursor
             ? { kind: "history", resumeCursor: cursor, newerCursors: [null, null] }
             : emptyLatestWindow()
           break
         }
-        const previous = response.cursor?.previous
-        if (!previous || seen.has(previous)) throw new Error(tGlobal("messageSection.loadError.detail"))
-        seen.add(previous)
-        cursor = previous
+        const next = response.cursor?.next
+        if (!next || seen.has(next)) throw new Error(tGlobal("messageSection.loadError.detail"))
+        seen.add(next)
+        cursor = next
       }
       responseAscending = false
     } else {
@@ -1355,8 +1347,8 @@ async function loadMessages(
         ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
       }, options?.signal ? { signal: options.signal } : undefined)
     }
-    const olderCursor = response.cursor?.previous ?? undefined
-    const newerCursor = response.cursor?.next ?? undefined
+    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
     if (planned.cursor && responseCursor === planned.cursor) {
       throw new Error("Repeated message cursor")

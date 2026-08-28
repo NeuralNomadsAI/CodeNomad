@@ -4,7 +4,7 @@ import { after, afterEach, before, describe, it } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
+import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
   deleteMessagePart,
@@ -234,6 +234,47 @@ describe("native message content mutation", () => {
     ])
   })
 
+  it("serializes concurrent deletions from the same assistant message", async () => {
+    const messageId = "assistant-concurrent"
+    let remote: any = {
+      id: messageId,
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 4 },
+      content: [
+        { type: "tool", id: "tool-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { type: "text", text: "done" },
+      ],
+    }
+    seed({ session: {
+      message: async () => structuredClone(remote),
+      messageUpdate: async (input: any) => {
+        remote = { ...remote, content: input.content }
+        return structuredClone(remote)
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-1`, type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await Promise.all([
+      deleteMessagePart(instanceId, sessionId, messageId, "tool-1"),
+      deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-1`),
+    ])
+
+    assert.deepEqual(remote.content, [{ type: "text", text: "done" }])
+  })
+
   it("removes a selected range without touching tools after the response", async () => {
     const messageId = "assistant-range"
     const content = [
@@ -432,6 +473,66 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("admits concurrent prompts in submission order", async () => {
+    const prompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        prompts.push(input.text)
+        if (input.text === "first") await firstPending
+        return { id: input.id }
+      },
+    } })
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(prompts, ["first"])
+    releaseFirst()
+    await Promise.all([first, second])
+    assert.deepEqual(prompts, ["first", "second"])
+  })
+
+  it("uses the current client when a queued prompt starts after reconnect", async () => {
+    const oldPrompts: string[] = []
+    const newPrompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const oldClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        oldPrompts.push(input.text)
+        await firstPending
+        return { id: input.id }
+      },
+    } }
+    seed(oldClient)
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const newClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { newPrompts.push(input.text); return { id: input.id } },
+    } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, newClient)
+    updateInstance(instanceId, { client: newClient as any })
+    releaseFirst()
+
+    await Promise.all([first, second])
+    assert.deepEqual(oldPrompts, ["first"])
+    assert.deepEqual(newPrompts, ["second"])
+  })
+
   it("sends agent attachments with mention offsets and the selected model variant", async () => {
     const calls: Array<{ type: string; input: any }> = []
     seed({ session: {
@@ -469,38 +570,53 @@ describe("native prompt serialization", () => {
     }])
   })
 
-  it("replaces a queued prompt only after admitting its edited replacement", async () => {
-    const calls: Array<{ type: string; input: any }> = []
+  it("preserves structured queued payload fields after composer editing", async () => {
+    let promptInput: any
     seed({ session: {
       instructions: { entry: { put: async () => {}, remove: async () => {} } },
-      switchAgent: async () => { calls.push({ type: "agent", input: undefined }) },
-      switchModel: async () => { calls.push({ type: "model", input: undefined }) },
-      prompt: async (input: any) => { calls.push({ type: "prompt", input }); return { id: input.id } },
-      inbox: { cancel: async (input: unknown) => { calls.push({ type: "cancel", input }) } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { promptInput = input; return { id: input.id } },
     } })
 
-    await sendMessage(instanceId, sessionId, "edited @reviewer", [], {
-      delivery: "queue",
-      replace: {
-        id: "queued-1",
-        sessionID: sessionId,
-        timeCreated: 1,
-        type: "user",
-        delivery: "queue",
-        payload: {
-          text: "original @reviewer\n\nhidden note",
-          metadata: { displayText: "original @reviewer" },
-          agents: [{ name: "reviewer", mention: { start: 9, end: 18, text: "@reviewer" } }],
-        },
+    await sendMessage(instanceId, sessionId, "edited @reviewer @skill", [{
+      id: "file",
+      type: "file",
+      display: "@notes.txt",
+      url: "data:text/plain;base64,bm90ZXM=",
+      filename: "notes.txt",
+      mediaType: "text/plain",
+      source: { type: "file", path: "notes.txt", mime: "text/plain" },
+    }, {
+      id: "agent",
+      type: "agent",
+      display: "@reviewer",
+      url: "",
+      filename: "reviewer",
+      mediaType: "text/plain",
+      source: { type: "agent", name: "reviewer" },
+    }], {
+      restoredPayload: {
+        text: "original @reviewer @skill\n\nhidden note",
+        metadata: { displayText: "original @reviewer @skill", source: "queued" },
+        files: [{
+          data: "bm90ZXM=",
+          mime: "text/plain",
+          source: { type: "inline" },
+          name: "notes.txt",
+          description: "Notes",
+          mention: { start: 0, end: 10, text: "@notes.txt" },
+        }],
+        agents: [{ name: "reviewer", mention: { start: 9, end: 18, text: "@reviewer" } }],
+        skills: [{ id: "skill", name: "Skill", mention: { start: 19, end: 25, text: "@skill" } }],
       },
     })
 
-    assert.equal(calls[0]?.type, "prompt")
-    assert.equal(calls[0]?.input.text, "edited @reviewer\n\nhidden note")
-    assert.equal(calls[0]?.input.delivery, "queue")
-    assert.equal(calls[0]?.input.resume, false)
-    assert.deepEqual(calls[0]?.input.agents, [{ name: "reviewer", mention: { start: 7, end: 16, text: "@reviewer" } }])
-    assert.deepEqual(calls[1], { type: "cancel", input: { sessionID: sessionId, inboxID: "queued-1" } })
-    assert.equal(calls.some((call) => call.type === "agent" || call.type === "model"), false)
+    assert.equal(promptInput.text, "edited @reviewer @skill\n\nhidden note")
+    assert.equal(promptInput.files[0].description, "Notes")
+    assert.deepEqual(promptInput.agents[0].mention, { start: 7, end: 16, text: "@reviewer" })
+    assert.deepEqual(promptInput.skills, [{ id: "skill", mention: { start: 17, end: 23, text: "@skill" } }])
+    assert.deepEqual(promptInput.metadata, { displayText: "edited @reviewer @skill", source: "queued" })
   })
+
 })

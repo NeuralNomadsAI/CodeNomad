@@ -21,7 +21,7 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, isMessageHistoryRestoreCurrent, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
 import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
@@ -66,6 +66,7 @@ export interface MessageSectionProps {
   pendingPrompts?: ReadonlyMap<string, SessionInboxUser>
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
 }
 
@@ -259,15 +260,6 @@ export default function MessageSection(props: MessageSectionProps) {
   const searchLocatorAuthority = createSearchLocatorAuthority()
   let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
-
-  const messageIndexById = createMemo(() => {
-    const ids = visibleMessageIds()
-    const map = new Map<string, number>()
-    for (let i = 0; i < ids.length; i++) {
-      map.set(ids[i], i)
-    }
-    return map
-  })
 
   const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
   const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
@@ -585,17 +577,14 @@ export default function MessageSection(props: MessageSectionProps) {
     restoredWithoutSnapshot = false
     const restoreSessionId = props.sessionId
     const restoreGeneration = ++scrollRestoreGeneration
-    const isCurrentRestore = () => isMessageHistoryRestoreCurrent(
-      isActive(),
-      api,
-      listApi(),
-      isScrollRestoreGenerationCurrent(
+    const isCurrentRestore = () => isActive()
+      && api === listApi()
+      && isScrollRestoreGenerationCurrent(
         restoreSessionId,
         restoreGeneration,
         props.sessionId,
         scrollRestoreGeneration,
-      ),
-    )
+      )
     restoringScrollSnapshot = true
     const restore = async () => {
       setOlderMessageLoadFailed(false)
@@ -822,12 +811,9 @@ export default function MessageSection(props: MessageSectionProps) {
     if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
     const sessionId = props.sessionId
     const generation = scrollRestoreGeneration
-    const isCurrent = () => isMessageHistoryRestoreCurrent(
-      isActive(),
-      api,
-      listApi(),
-      isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration),
-    )
+    const isCurrent = () => isActive()
+      && api === listApi()
+      && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
     pagingWindow = true
     try {
       if (!isCurrent()) return
@@ -1306,6 +1292,7 @@ export default function MessageSection(props: MessageSectionProps) {
               pendingPrompt={props.pendingPrompts?.get(messageId)}
               pendingPromptBusy={props.pendingPromptBusy}
               onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+              onPendingPromptEdit={props.onPendingPromptEdit}
               onPendingPromptRemove={props.onPendingPromptRemove}
               onContentRendered={handleContentRendered}
               searchQuery={authoritativeSearchQuery}

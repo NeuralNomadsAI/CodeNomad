@@ -11,6 +11,7 @@ describe("instance invalidation targets", () => {
 
   it("refreshes only state affected by metadata and filesystem events", () => {
     assert.deepEqual(getInstanceRefreshTargets("integration.updated"), ["providers", "metadata"])
+    assert.deepEqual(getInstanceRefreshTargets("credential.updated"), ["providers", "metadata"])
     assert.deepEqual(getInstanceRefreshTargets("filesystem.changed"), ["filesystem"])
     assert.deepEqual(getInstanceRefreshTargets("vcs.branch.updated"), ["filesystem", "metadata"])
     assert.deepEqual(getInstanceRefreshTargets("session.text.delta"), [])

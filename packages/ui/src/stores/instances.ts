@@ -1991,6 +1991,11 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     cancelCompactionProjection(instanceId, sessionId)
   }
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    if (sessionId && event.type.startsWith("session.")
+      && activeSessionId().get(instanceId) !== sessionId
+      && messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
     if (isCompactionDelta && !force) {
       if (sessionId) scheduleCompactionProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
       return
