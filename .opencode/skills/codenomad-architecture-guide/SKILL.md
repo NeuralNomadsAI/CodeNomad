@@ -15,7 +15,7 @@ description: |
 
 ## Native OpenCode V2 Baseline
 
-- The only OpenCode client dependency is the latest experimental `@opencode-ai/client@beta` protocol. Server and UI follow that channel together; the selected runtime CLI independently follows its latest beta without an exact version gate. The public `@opencode-ai/sdk` describes an alternative embedded host.
+- The only OpenCode client dependency is the experimental `@opencode-ai/client@beta` protocol. Server and UI follow that dependency together; refresh the client lock before API audits or release validation. The runtime CLI is managed independently and startup has no exact version gate. The public `@opencode-ai/sdk` describes an alternative embedded host.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
 - There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.

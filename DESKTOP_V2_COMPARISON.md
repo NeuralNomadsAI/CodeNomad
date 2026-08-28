@@ -6,7 +6,7 @@ This review compares:
 
 - CodeNomad `DEV-v2` through the fixes accompanying this document.
 - Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/beta` at `eb1ac54d73` (2026-08-25).
-- CodeNomad declares `@opencode-ai/client@beta`; the reviewed root lock resolves `0.0.0-beta-18219`. The managed CLI updater independently resolves and installs the latest CLI beta.
+- CodeNomad declares `@opencode-ai/client@beta`; the runtime CLI version is managed independently.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. Older `v2`, `opencode-2-0`, and intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -101,6 +101,14 @@ CodeNomad exposes native `session.revert.stage` for undo but does not expose `se
 
 Add a redo command that clears the staged revert and restores the prompt/viewport behavior. The proxy allowlist must admit only the matching native clear route.
 
+### Queued prompt correction
+
+**Priority:** Medium. **Client upgrade required:** No.
+
+The V2 TUI lets users correct a queued prompt by removing it from its local queue and restoring it to the composer. CodeNomad currently exposes native inbox cancellation but does not restore the cancelled prompt for editing.
+
+Match that baseline with a cancel-first workflow: restore the prompt only after cancellation succeeds, and leave resubmission to the user. Do not restore the removed automatic replacement or suffix-rewrite approaches; they could race with an inbox drain and duplicate or prematurely execute prompts.
+
 ### Signed desktop releases
 
 **Priority:** Medium. **Client upgrade required:** No.
@@ -111,7 +119,7 @@ This is distribution hardening rather than V2 API parity. Release jobs should fa
 
 ## Beta Channel Policy
 
-CodeNomad server and UI both follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving the current beta; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The managed updater independently follows the CLI beta channel and startup accepts another healthy CLI without an exact version gate.
+CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup accepts compatible services without an exact version gate.
 
 Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 

@@ -111,7 +111,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server and UI both follow the latest `@opencode-ai/client@beta` contract. The selected `opencode2` CLI follows its latest beta independently; startup must not reject it solely for a different version string. Review current OpenCode documentation, installed declarations, and proxy/API parity whenever the beta contract changes.
+- Server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently, and startup must not reject an otherwise compatible service solely for a different version string. Review current OpenCode documentation, installed declarations, and proxy/API parity whenever the client contract changes.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
 - `packages/server/src/workspaces/opencode-service.ts` uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. CodeNomad owns no private port, database, registration, or daemon PID and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding and runs the Linux CLI lifecycle inside the distribution; never inspect or signal Linux PIDs from Windows.
