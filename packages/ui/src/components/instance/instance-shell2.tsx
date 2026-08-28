@@ -49,8 +49,16 @@ import { Command as CommandIcon, Eye, Maximize2, MessageSquareText, Search, Shie
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
-import { showPromptDialog } from "../../stores/alerts"
-import { openSessionPreview, sessionPreviews, showSessionChat, showSessionPreview } from "../../stores/session-previews"
+import { showAlertDialog } from "../../stores/alerts"
+import {
+  DEFAULT_PREVIEW_URL,
+  getSessionPreview,
+  openSessionPreview,
+  restoreSessionPreview,
+  sessionPreviews,
+  showSessionChat,
+  showSessionPreview,
+} from "../../stores/session-previews"
 import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
@@ -405,7 +413,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? sessionPreviews().get(sessionId) ?? null : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
+  })
+
+  createEffect(() => {
+    const sessionId = activeSessionIdForInstance()
+    if (!sessionId || sessionId === "info" || sessionPreviews().has(props.instance.folder)) return
+    void restoreSessionPreview(sessionId, props.instance.folder).catch((error) => log.warn("Failed to restore web preview", { sessionId, error }))
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -423,17 +437,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
-
-    const url = await showPromptDialog(t("sessionPreview.open.prompt"), {
-      title: t("sessionPreview.open.title"),
-      inputLabel: t("sessionPreview.open.label"),
-      inputPlaceholder: t("sessionPreview.open.placeholder"),
-      confirmLabel: t("sessionPreview.open.confirm"),
-      cancelLabel: t("sessionPreview.open.cancel"),
-    })
-    const normalized = url?.trim()
-    if (!normalized) return
-    await openSessionPreview(sessionId, normalized)
+    try {
+      const restored = await restoreSessionPreview(sessionId, props.instance.folder)
+      if (restored) showSessionPreview(props.instance.folder)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
+    } catch (error) {
+      showAlertDialog(t("sessionPreview.open.title"), {
+        title: t("sessionPreview.open.title"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    }
   }
 
   function handlePreviewButtonClick() {
@@ -442,12 +456,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
     const preview = activeSessionPreview()
     if (preview?.mode === "preview") {
-      showSessionChat(sessionId)
+      showSessionChat(props.instance.folder)
       return
     }
 
     if (preview) {
-      showSessionPreview(sessionId)
+      showSessionPreview(props.instance.folder)
       return
     }
     void handleOpenPreview()
@@ -1193,7 +1207,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             showSidebarToggle={showEmbeddedSidebarToggle()}
                             onSidebarToggle={() => setLeftOpen(true)}
                             forceCompactStatusLayout={showEmbeddedSidebarToggle()}
-                            isActive
+                            isActive={isActive()}
                           />
                         </Show>
                       </div>

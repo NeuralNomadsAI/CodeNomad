@@ -34,7 +34,7 @@ Electron and Tauri run one native singleton process and one CodeNomad backend pe
 
 OpenCode sessions and messages remain shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership, and garbage collection runs after publication while retaining every partition referenced by any window.
 
-Native SideCar/browser previews use a sandbox without `allow-same-origin`, so they cannot inspect the embedded DOM. DOM comment inspection is available only in the web client.
+Previews use unguessable capabilities for HTTP and WebSocket traffic. Native previews route a token-scoped `.preview.localhost` origin to the pinned target; web clients use the equivalent path route. SideCar/browser frames remain opaque-origin sandboxes without `allow-same-origin`; preview element comments use a source-checked message bridge instead of parent DOM access.
 
 ## API Boundaries
 

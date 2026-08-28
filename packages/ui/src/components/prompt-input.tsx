@@ -25,6 +25,12 @@ import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import {
+  initializePromptInputHeight,
+  persistPromptInputHeight,
+  promptInputHeight,
+  setPromptInputHeight,
+} from "./prompt-input/height-state"
+import {
   canUseConversationMode,
   clearConversationPlaybackForInstance,
   isConversationModeEnabled,
@@ -80,9 +86,11 @@ function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachmen
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
+  initializePromptInputHeight()
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
-  const [inputHeight, setInputHeight] = createSignal<number | null>(null)
+  const inputHeight = promptInputHeight
+  const setInputHeight = setPromptInputHeight
   const [autoInputHeight, setAutoInputHeight] = createSignal<number | null>(null)
   const [isResizing, setIsResizing] = createSignal(false)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
@@ -152,7 +160,7 @@ export default function PromptInput(props: PromptInputProps) {
     const measuredHeight = measureCompactAutoHeight()
     if (inputHeight() !== null) {
       setAutoInputHeight(null)
-      if (measuredHeight !== null && inputHeight()! < measuredHeight) setInputHeight(measuredHeight)
+      if (measuredHeight !== null && inputHeight()! < measuredHeight) persistPromptInputHeight(measuredHeight)
       return
     }
     setAutoInputHeight(measuredHeight)
@@ -191,6 +199,11 @@ export default function PromptInput(props: PromptInputProps) {
     }
 
     syncWidthStep()
+    const restoredHeight = inputHeight()
+    if (restoredHeight !== null) {
+      const clampedHeight = Math.min(restoredHeight, computeMaxFieldHeight())
+      if (clampedHeight !== restoredHeight) persistPromptInputHeight(clampedHeight)
+    }
 
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(syncWidthStep)
@@ -330,7 +343,6 @@ export default function PromptInput(props: PromptInputProps) {
       draftLoadedNonce,
       () => {
         // Session switch resets (picker/counters/ignored positions) stay in the component.
-        setInputHeight(null)
         setIgnoredAtPositions(new Set<number>())
         setShowPicker(false)
         setPickerMode("mention")
@@ -422,7 +434,8 @@ export default function PromptInput(props: PromptInputProps) {
     if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
 
     const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
-    const availableHeight = sessionCenter?.getBoundingClientRect().height ?? window.innerHeight
+    const measuredHeight = sessionCenter?.getBoundingClientRect().height ?? 0
+    const availableHeight = measuredHeight > 0 ? measuredHeight : window.innerHeight
     const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
     return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
   }
@@ -466,6 +479,7 @@ export default function PromptInput(props: PromptInputProps) {
     event.preventDefault()
     resizeDragState = undefined
     setIsResizing(false)
+    persistPromptInputHeight()
     textareaRef?.focus()
   }
 
@@ -485,7 +499,7 @@ export default function PromptInput(props: PromptInputProps) {
             : null
     if (next === null) return
     event.preventDefault()
-    setInputHeight(next)
+    persistPromptInputHeight(next)
   }
 
   onCleanup(() => {
@@ -532,8 +546,9 @@ export default function PromptInput(props: PromptInputProps) {
     const historyEntry = submission.historyEntry
 
     const refreshHistory = () => recordHistoryEntry(historyEntry)
+    const previousInputHeight = inputHeight()
 
-    setInputHeight(null)
+    persistPromptInputHeight(null)
     clearPrompt()
     clearHistoryDraft()
     setMode("normal")
@@ -581,6 +596,7 @@ export default function PromptInput(props: PromptInputProps) {
       restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
+      if (inputHeight() === null) persistPromptInputHeight(previousInputHeight)
       if (!prompt()) {
         setPrompt(draftText)
         restoredQueuedPayload = restoredPayload
@@ -617,7 +633,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeMaximize(event: MouseEvent) {
     event.preventDefault()
-    setInputHeight(computeMaxFieldHeight())
+    persistPromptInputHeight(computeMaxFieldHeight())
     textareaRef?.focus()
   }
 

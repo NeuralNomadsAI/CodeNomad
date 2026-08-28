@@ -99,7 +99,7 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 - Translate host/WSL paths only after ownership validation.
 - Strip CodeNomad cookies, browser authorization, forwarding headers, and incoming `x-opencode-*` headers; inject shared-service authentication server-side.
 - Block upstream cookies and authentication challenges and avoid logging unredacted secret-bearing request bodies.
-- Sandbox native SideCar/browser previews without `allow-same-origin`; native hosts do not inspect embedded cross-origin DOM.
+- Treat each unguessable preview token as a route-scoped capability. Loopback HTTP native previews use `<token>.preview.localhost` so applications retain normal root paths; HTTPS, LAN, and web clients use the equivalent capability path. SideCar/browser previews remain opaque-origin sandboxes without `allow-same-origin`, and element comments cross a source-checked message bridge.
 
 ## Desktop and Restore Restructuring
 
@@ -116,6 +116,20 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 - Restore every persisted UUID window, exact active tab/session selection, drafts, attachments, expansion, scroll/follow state, idle markers, interrupted generations, bounds, and zoom.
 - Fence late workspace creation and cleanup so cancelled restore requests cannot leak or delete the wrong logical instance.
 - Build Electron and Tauri server resources reproducibly from the integrity-pinned root workspace lock for the requested OS/CPU target; no independent server lockfile or prebuild dependency repair remains.
+
+### Native Release Debug Launch
+
+For interactive validation of the native V2 application, launch the existing release binary from the `DEV-v2` worktree with an isolated WebView2 profile, CDP inspection, Rust backtraces, and Node source maps. Run this from PowerShell; do not substitute `tauri dev`, because that compiles and runs a different debug environment.
+
+```powershell
+$env:WEBVIEW2_USER_DATA_FOLDER="$env:TEMP\opencode\codenomad-v2-debug"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"
+$env:RUST_BACKTRACE="1"
+$env:NODE_OPTIONS="--enable-source-maps"
+& "D:\CodeNomad-worktrees\opencode-v2-foundation\packages\tauri-app\target\release\codenomad-tauri.exe"
+```
+
+The native WebView is then inspectable through CDP at `http://127.0.0.1:9223`. Stop the running instance before rebuilding this release path, then relaunch it from the independent OpenCode TUI.
 
 ## Removed Legacy Architecture
 

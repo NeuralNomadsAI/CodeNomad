@@ -94,7 +94,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId))
+  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -642,8 +642,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         >
           <SessionPreviewView
             preview={preview()!}
-            onBackToChat={() => showSessionChat(props.sessionId)}
-            onClose={() => void closeSessionPreview(props.sessionId)}
+            onBackToChat={() => showSessionChat(props.instanceFolder)}
+            onClose={() => void closeSessionPreview(props.instanceFolder)}
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>

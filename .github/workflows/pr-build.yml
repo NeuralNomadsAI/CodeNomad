@@ -111,6 +111,7 @@ jobs:
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
+          packages/ui/src/components/prompt-input/height-state.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
@@ -147,6 +148,7 @@ jobs:
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
+          packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
           packages/ui/src/types/session.test.ts
           packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts
