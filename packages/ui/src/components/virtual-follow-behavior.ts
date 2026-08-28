@@ -48,6 +48,10 @@ export function isScrollRestoreMeasurementReady(input: {
   return input.itemCount === 0 || (input.hasHandle && input.scrollSize > 0 && input.viewportSize > 0)
 }
 
+export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDelta: number): number {
+  return Math.max(0, offset + viewportHeightDelta)
+}
+
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])

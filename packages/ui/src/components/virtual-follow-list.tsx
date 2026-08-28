@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -138,6 +138,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingInitialScroll = true
   let pendingContentRenderedFrame: number | null = null
   let pendingExplicitBottomPinFrame: number | null = null
+  let pendingViewportResizeFrame: number | null = null
+  let pendingViewportHeightDelta = 0
   let explicitBottomPinToken: string | number | null = null
   let lastHandledExplicitBottomPinToken: string | number | null = null
   let userCancelledExplicitBottomPinToken: string | number | null = null
@@ -835,6 +837,41 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     if (autoScroll() && scrollToBottomOnActivate()) scrollToBottom(true)
   }))
+
+  createEffect(() => {
+    const element = scrollElement()
+    if (!element || typeof ResizeObserver === "undefined") return
+    let previousHeight = element.clientHeight
+    const observer = new ResizeObserver(() => {
+      const nextHeight = element.clientHeight
+      if (nextHeight === previousHeight) return
+      if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
+        previousHeight = nextHeight
+        return
+      }
+      pendingViewportHeightDelta += previousHeight - nextHeight
+      previousHeight = nextHeight
+      if (pendingViewportResizeFrame !== null) return
+      pendingViewportResizeFrame = requestAnimationFrame(() => {
+        pendingViewportResizeFrame = null
+        const heightDelta = pendingViewportHeightDelta
+        pendingViewportHeightDelta = 0
+        if (autoScroll() && !externalSuspendAutoPinToBottom()) {
+          pinDomBottomAfterLayout()
+        } else {
+          scrollToOffset(getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta), false)
+        }
+        updateScrollStateFromDom()
+      })
+    })
+    observer.observe(element)
+    onCleanup(() => {
+      observer.disconnect()
+      if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
+      pendingViewportResizeFrame = null
+      pendingViewportHeightDelta = 0
+    })
+  })
 
   onCleanup(() => {
     invalidateScrollRestore()

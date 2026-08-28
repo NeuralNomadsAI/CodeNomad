@@ -7,6 +7,7 @@ import {
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
   classifyVirtualItemKeyChange,
+  getBottomAnchoredViewportOffset,
   getKeyboardScrollIntent,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
@@ -198,14 +199,10 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
   })
 
-  it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {
-    const controller = new VirtualScrollController(false)
-    controller.recordProgrammaticOffset(2200, false)
-    controller.setUserIntent("down", 700)
-
-    const result = controller.observeViewport(metrics(2400), 100, true)
-
-    assert.deepEqual(result.state.mode, { type: "following" })
+  it("keeps the viewport bottom anchored when its height changes", () => {
+    assert.equal(getBottomAnchoredViewportOffset(2400, 200), 2600)
+    assert.equal(getBottomAnchoredViewportOffset(2600, -200), 2400)
+    assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
   })
 
   it("invalidates measurements and follows when a capped window slides", () => {
@@ -220,6 +217,16 @@ describe("virtual follow behavior", () => {
       resetMeasurements: false,
       endChanged: false,
     })
+  })
+
+  it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {
+    const controller = new VirtualScrollController(false)
+    controller.recordProgrammaticOffset(2200, false)
+    controller.setUserIntent("down", 700)
+
+    const result = controller.observeViewport(metrics(2400), 100, true)
+
+    assert.deepEqual(result.state.mode, { type: "following" })
   })
 
   it("repins after an unowned virtualizer measurement correction", () => {

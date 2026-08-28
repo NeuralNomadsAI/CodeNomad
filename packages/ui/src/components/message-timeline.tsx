@@ -11,6 +11,7 @@ import { getPartCharCount } from "../lib/token-utils"
 import { getToolIcon } from "./tool-call/utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
+import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -383,7 +384,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle | undefined>()
-  let scrollContainerRef: HTMLDivElement | undefined
 
   const handleScroll = () => {
     if (hoveredSegment()) clearHoverPreview()
@@ -414,6 +414,39 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const observer = new ResizeObserver(() => updateSize())
     observer.observe(element)
     onCleanup(() => observer.disconnect())
+  })
+
+  createEffect(() => {
+    const element = scrollElement()
+    if (!element || typeof ResizeObserver === "undefined") return
+    let previousHeight = element.clientHeight
+    let pendingHeightDelta = 0
+    let pendingFrame: number | null = null
+    const observer = new ResizeObserver(() => {
+      const nextHeight = element.clientHeight
+      if (nextHeight === previousHeight) return
+      if (previousHeight <= 0 || nextHeight <= 0) {
+        previousHeight = nextHeight
+        return
+      }
+      pendingHeightDelta += previousHeight - nextHeight
+      previousHeight = nextHeight
+      if (pendingFrame !== null) return
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = null
+        const handle = virtualizerHandle()
+        const offset = getBottomAnchoredViewportOffset(handle?.scrollOffset ?? element.scrollTop, pendingHeightDelta)
+        pendingHeightDelta = 0
+        const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+        if (handle) handle.scrollTo(Math.min(offset, maxOffset))
+        else element.scrollTop = Math.min(offset, maxOffset)
+      })
+    })
+    observer.observe(element)
+    onCleanup(() => {
+      observer.disconnect()
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
+    })
   })
 
   const previewData = createMemo(() => {
@@ -531,7 +564,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     <div class="message-timeline-container">
       <div
         ref={(element) => {
-          scrollContainerRef = element
           setScrollElement(element)
         }}
         class="message-timeline"
