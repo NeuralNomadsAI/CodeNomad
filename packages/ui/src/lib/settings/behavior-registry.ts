@@ -85,14 +85,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.keyboardShortcutHints",
       titleKey: "settings.behavior.keyboardHints.title",
       subtitleKey: "settings.behavior.keyboardHints.subtitle",
-      get: (p) => Boolean(p.showKeyboardShortcutHints ?? true),
+      get: (p) => Boolean(p.showKeyboardShortcutHints ?? false),
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ showKeyboardShortcutHints: next })
           return
         }
         setBooleanByToggle(
-          () => Boolean(prefs().showKeyboardShortcutHints ?? true),
+          () => Boolean(prefs().showKeyboardShortcutHints ?? false),
           actions.toggleKeyboardShortcutHints,
           next,
         )

@@ -183,10 +183,10 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
-  showKeyboardShortcutHints: true,
+  showKeyboardShortcutHints: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
-  showTimelineTools: true,
+  showTimelineTools: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   followUpBehavior: "steer",
@@ -200,7 +200,7 @@ const defaultUiSettings: UiSettings = {
   usageMetricsExpansion: "collapsed",
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
-  keepUnseenSubagentIdleStatus: false,
+  keepUnseenSubagentIdleStatus: true,
   modelVisibility: {},
 
   osNotificationsEnabled: false,

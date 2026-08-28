@@ -87,6 +87,7 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
     { label: "Window", submenu: [
       { label: "New Window", accelerator: NEW_WINDOW_ACCELERATOR, click: () => actions?.newWindow() },
       { label: "New Instance", accelerator: "CmdOrCtrl+N", click: sendCommand("new-instance") },
+      { label: "Command Palette", accelerator: "CmdOrCtrl+Shift+P", click: sendCommand("open-command-palette") },
       { type: "separator" },
       { label: "Minimize", accelerator: "CmdOrCtrl+M", click: withTarget((window) => window.minimize()) },
       ...(isMac ? [{ role: "front" as const }] : [{ label: "Close", accelerator: "CmdOrCtrl+W", click: withTarget((window) => window.close()) }]),

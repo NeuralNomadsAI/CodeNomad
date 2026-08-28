@@ -1378,6 +1378,7 @@ fn main() {
             match event.id().0.as_str() {
                 // File menu
                 action @ ("new-instance"
+                | "open-command-palette"
                 | "open-workspace-folder"
                 | "open-workspace-terminal"
                 | "open-workspace-editor-vscode"
@@ -1756,6 +1757,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let close_window_item =
         MenuItem::with_id(app, "close_window", "Close", true, Some("CmdOrCtrl+W"))?;
+    let command_palette_item = MenuItem::with_id(
+        app,
+        "open-command-palette",
+        "Command Palette",
+        true,
+        Some("CmdOrCtrl+Shift+P"),
+    )?;
 
     // Edit menu with predefined items for standard functionality
     let edit_menu = SubmenuBuilder::new(app, "Edit")
@@ -1789,6 +1797,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         SubmenuBuilder::new(app, "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
+            .item(&command_palette_item)
             .separator()
             .text("minimize", "Minimize")
             .text("zoom", "Zoom")
@@ -1799,6 +1808,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         SubmenuBuilder::new(app, "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
+            .item(&command_palette_item)
             .separator()
             .minimize()
             .maximize()
@@ -1807,6 +1817,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         SubmenuBuilder::new(app, "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
+            .item(&command_palette_item)
             .separator()
             .minimize()
             .maximize()

@@ -220,8 +220,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  width: 2.75rem;
-  min-height: 2.75rem;
+  width: 1.75rem;
+  min-height: 1.75rem;
 }
 
 .message-scroll-controls-expanded {
@@ -230,7 +230,7 @@
   bottom: 0;
   display: none;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.25rem;
   align-items: flex-end;
 }
 
@@ -246,8 +246,8 @@
 
 .message-scroll-button {
   @apply inline-flex items-center justify-center;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
   border-radius: 9999px;
   border: 1px solid var(--border-base);
   background-color: transparent;

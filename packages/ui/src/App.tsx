@@ -67,6 +67,7 @@ import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-s
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
+import { showCommandPalette } from "./stores/command-palette"
 import {
   closeSidecarTab,
   ensureSidecarsLoaded,
@@ -178,7 +179,7 @@ const App: Component = () => {
   createEffect(() => {
     if (typeof document === "undefined") return
     const shouldShow =
-      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? true)
+      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? false)
     document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
   })
 
@@ -635,6 +636,11 @@ const App: Component = () => {
   onMount(() => {
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (action === "open-command-palette") {
+        const instance = activeInstance()
+        if (instance) showCommandPalette(instance.id)
+        return
+      }
       const command = paletteCommands().find((candidate) => candidate.id === action)
       if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
     }

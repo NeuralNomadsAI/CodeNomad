@@ -1,7 +1,6 @@
 import type { Attachment } from "../../types/attachment"
 
 export type PromptMode = "normal" | "shell"
-export type ExpandState = "normal" | "expanded"
 export type PickerMode = "mention" | "command"
 export type PromptInsertMode = "quote" | "code"
 export type PromptDelivery = "steer" | "queue"
