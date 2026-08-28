@@ -20,6 +20,7 @@ export function useDrawerHostMeasure(): DrawerHostMeasure {
     const host = drawerHost()
     if (!host) return
     const rect = host.getBoundingClientRect()
+    if (rect.width <= 0) return
     setDrawerHostWidth(rect.width)
   }
 

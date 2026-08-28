@@ -751,17 +751,16 @@ export default function MessageBlock(props: MessageBlockProps) {
         flushContent()
         const partId = part.id ?? ""
         const key = `${current.id}:${partId || partIndex}:compaction`
-        const isAuto = Boolean((part as any)?.auto)
         items.push({
           type: "compaction",
           key,
           part,
           messageInfo: info,
-          accentColor: isAuto ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR,
+          accentColor: "var(--session-status-compacting-fg)",
           messageId: current.id,
           partId,
         })
-        lastAccentColor = isAuto ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR
+        lastAccentColor = "var(--session-status-compacting-fg)"
         return
       }
 
@@ -1150,7 +1149,7 @@ function CompactionCard(props: CompactionCardProps) {
       : isAuto()
         ? t("messageBlock.compaction.autoLabel")
         : t("messageBlock.compaction.manualLabel")
-  const borderColor = () => props.borderColor ?? (isAuto() ? "var(--session-status-compacting-fg)" : USER_BORDER_COLOR)
+  const borderColor = () => props.borderColor ?? "var(--session-status-compacting-fg)"
   const content = () => typeof (props.part as any)?.text === "string" ? (props.part as any).text.trim() : ""
   const markdownPart = createMemo<TextPart>(() => ({
     id: `${props.messageId}-compaction-summary`,

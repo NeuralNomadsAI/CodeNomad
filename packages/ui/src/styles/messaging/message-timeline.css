@@ -202,8 +202,8 @@
 }
 
 .message-timeline-compaction-manual {
-  border-color: var(--message-user-border);
-  background-color: var(--message-user-bg);
+  border-color: var(--session-status-compacting-fg);
+  background-color: var(--surface-secondary);
 }
 
 .message-timeline-segment-active {

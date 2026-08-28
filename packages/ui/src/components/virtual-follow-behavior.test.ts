@@ -6,6 +6,7 @@ import {
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  classifyVirtualItemKeyChange,
   getKeyboardScrollIntent,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
@@ -205,6 +206,20 @@ describe("virtual follow behavior", () => {
     const result = controller.observeViewport(metrics(2400), 100, true)
 
     assert.deepEqual(result.state.mode, { type: "following" })
+  })
+
+  it("invalidates measurements and follows when a capped window slides", () => {
+    const previous = Array.from({ length: 200 }, (_, index) => `m${index}`)
+    const next = [...previous.slice(1), "compaction"]
+
+    assert.deepEqual(classifyVirtualItemKeyChange(previous, next), {
+      resetMeasurements: true,
+      endChanged: true,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(next, next), {
+      resetMeasurements: false,
+      endChanged: false,
+    })
   })
 
   it("repins after an unowned virtualizer measurement correction", () => {

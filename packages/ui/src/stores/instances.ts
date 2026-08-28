@@ -134,6 +134,51 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
+const COMPACTION_PROJECTION_INTERVAL_MS = 250
+const pendingCompactionProjections = new Map<string, {
+  timeout: ReturnType<typeof setTimeout>
+  project: () => void
+}>()
+
+function compactionProjectionKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}\0${sessionId}`
+}
+
+function scheduleCompactionProjection(instanceId: string, sessionId: string, project: () => void): void {
+  const key = compactionProjectionKey(instanceId, sessionId)
+  const pending = pendingCompactionProjections.get(key)
+  if (pending) {
+    pending.project = project
+    return
+  }
+
+  const next = {
+    project,
+    timeout: setTimeout(() => {
+      pendingCompactionProjections.delete(key)
+      next.project()
+    }, COMPACTION_PROJECTION_INTERVAL_MS),
+  }
+  pendingCompactionProjections.set(key, next)
+}
+
+function cancelCompactionProjection(instanceId: string, sessionId: string): void {
+  const key = compactionProjectionKey(instanceId, sessionId)
+  const pending = pendingCompactionProjections.get(key)
+  if (!pending) return
+  clearTimeout(pending.timeout)
+  pendingCompactionProjections.delete(key)
+}
+
+function clearCompactionProjections(instanceId: string): void {
+  const prefix = `${instanceId}\0`
+  for (const [key, pending] of pendingCompactionProjections) {
+    if (!key.startsWith(prefix)) continue
+    clearTimeout(pending.timeout)
+    pendingCompactionProjections.delete(key)
+  }
+}
+
 // Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
@@ -1212,6 +1257,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearSessionCatalogState(id)
     clearCommands(id)
     clearInstanceMetadata(id)
+    clearCompactionProjections(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1275,6 +1321,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearSettledForms(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
+  clearCompactionProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -1938,7 +1985,16 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
+  const isCompactionDelta = event.type === "session.compaction.delta"
+  if (event.type === "server.connected") clearCompactionProjections(instanceId)
+  if (sessionId && (event.type === "session.compaction.ended" || event.type === "session.compaction.failed")) {
+    cancelCompactionProjection(instanceId, sessionId)
+  }
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    if (isCompactionDelta && !force) {
+      if (sessionId) scheduleCompactionProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
+      return
+    }
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))

@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -108,6 +108,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
+  const [itemKeyMeasurementEpoch, setItemKeyMeasurementEpoch] = createSignal(0)
 
   const isActive = () => props.isActive?.() ?? true
   const initialScrollToBottom = () => props.initialScrollToBottom?.() ?? true
@@ -118,7 +119,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
   const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
   const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
-  const measurementAuthority = createMemo(() => ({ key: props.measurementResetKey?.() ?? "default" }))
+  const measurementAuthority = createMemo(() => ({
+    key: `${props.measurementResetKey?.() ?? "default"}\0${itemKeyMeasurementEpoch()}`,
+  }))
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
   const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
@@ -142,6 +145,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let explicitBottomPinSettleFrames = 0
   let explicitBottomPinFramesRemaining = 0
   let programmaticScrollUntil = 0
+  let previousItemKeys = props.items().map((item, index) => props.getKey(item, index))
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -781,14 +785,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     startExplicitBottomPin(intent)
   }))
 
-  createEffect(on(() => props.items().length, (len, prevLen) => {
+  createEffect(on(() => props.items().length, (len) => {
     if (pendingInitialScroll && isActive() && len > 0) {
       pendingInitialScroll = false
       if (initialScrollToBottom()) scrollToBottom(true)
       return
     }
-    if (len > (prevLen ?? 0) && autoScroll()) api.notifyContentRendered()
   }, { defer: true }))
+
+  createEffect(on(
+    () => props.items().map((item, index) => props.getKey(item, index)),
+    (nextItemKeys) => {
+      const change = classifyVirtualItemKeyChange(previousItemKeys, nextItemKeys)
+      previousItemKeys = nextItemKeys
+      if (change.resetMeasurements) {
+        itemElements.clear()
+        setItemKeyMeasurementEpoch((epoch) => epoch + 1)
+      }
+      if (change.endChanged && autoScroll()) api.notifyContentRendered()
+    },
+    { defer: true },
+  ))
 
   createEffect(on(() => props.followToken?.(), () => {
     if (autoScroll()) api.notifyContentRendered()

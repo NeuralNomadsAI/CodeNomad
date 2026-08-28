@@ -302,8 +302,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => window.removeEventListener("resize", handleResize))
   })
 
-  onMount(() => {
-    if (typeof ResizeObserver === "undefined") return
+  createEffect(() => {
+    if (!props.isActiveInstance || mobileFullscreen() || typeof ResizeObserver === "undefined") return
     let frame = 0
     const measure = () => {
       cancelAnimationFrame(frame)
@@ -331,6 +331,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const observer = new ResizeObserver(measure)
     ;[sessionToolbarEl, headerLeftEl, headerRightEl, headerIndicatorsEl]
       .forEach((element) => element && observer.observe(element))
+    measureDrawerHost()
     measure()
     onCleanup(() => {
       cancelAnimationFrame(frame)
@@ -353,13 +354,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   createEffect(() => {
+    if (!props.isActiveInstance) return
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
 
     const updateWidthStep = (width: number) => {
+      if (width <= 0) return
       setSessionCenterWidthStep(getSessionCenterWidthStep(width))
     }
 
+    measureDrawerHost()
     updateWidthStep(element.getBoundingClientRect().width)
 
     const observer = new ResizeObserver((entries) => {

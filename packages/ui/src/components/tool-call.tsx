@@ -946,7 +946,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -1029,7 +1029,7 @@ export default function ToolCall(props: ToolCallProps) {
           items={actionMenuItems(true)}
           label={t("messageItem.actions.more")}
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
-          minItems={1}
+          minItems={2}
         />
         </div>
       </Show>

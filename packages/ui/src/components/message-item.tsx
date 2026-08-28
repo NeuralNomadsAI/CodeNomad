@@ -551,7 +551,7 @@ export default function MessageItem(props: MessageItemProps) {
 
           <div
             class="message-item-actions"
-            data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}
+            data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}
             ref={(el) => (actionsEl = el)}
           >
             <Show when={isUser()}>
@@ -617,7 +617,7 @@ export default function MessageItem(props: MessageItemProps) {
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
-                minItems={1}
+                minItems={2}
               />
             </Show>
             <Show when={!isUser()}>
@@ -652,7 +652,7 @@ export default function MessageItem(props: MessageItemProps) {
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
-                minItems={1}
+                minItems={2}
               />
             </Show>
           </div>
