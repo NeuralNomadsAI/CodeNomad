@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey } from "./message-part-grouping.ts"
+import { getTechnicalCleanupParts, groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
 import type { ClientPart } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
@@ -24,7 +24,7 @@ describe("message technical part grouping", () => {
       : [group.kind, group.parts.map((item) => item.id)]), [
       ["reasoning", ["r1", "r2"]],
       ["exploration", ["read", "grep"]],
-      ["part", "bash"],
+      ["shell", ["bash"]],
       ["exploration", ["glob"]],
       ["part", "text"],
       ["reasoning", ["r3"]],
@@ -81,6 +81,44 @@ describe("message technical part grouping", () => {
       ["exploration"],
     )
     assert.equal(groupTechnicalParts([read, glob], (value) => value.id).length, 2)
+  })
+
+  it("groups consecutive shell tools until another kind", () => {
+    const groups = groupTechnicalParts([
+      part("bash-1", "tool", "bash"),
+      part("shell-2", "tool", "shell"),
+      part("read", "tool", "read"),
+      part("bash-3", "tool", "bash"),
+    ])
+
+    assert.deepEqual(groups.map((group) => group.kind === "part"
+      ? [group.kind, group.part.id]
+      : [group.kind, group.parts.map((item) => item.id)]), [
+      ["shell", ["bash-1", "shell-2"]],
+      ["exploration", ["read"]],
+      ["shell", ["bash-3"]],
+    ])
+  })
+
+  it("selects only technical parts between the previous boundary and the targeted response", () => {
+    const items: TechnicalCleanupTranscriptItem[] = [
+      null,
+      { messageId: "assistant-1", partId: "reasoning-1", type: "reasoning" },
+      { messageId: "assistant-2", partId: "tool-1", type: "tool" },
+      { messageId: "assistant-2", partId: "response-1", type: "boundary" },
+      { messageId: "assistant-2", partId: "tool-after", type: "tool" },
+      { messageId: "assistant-3", partId: "reasoning-2", type: "reasoning" },
+      { messageId: "assistant-3", partId: "response-2", type: "boundary" },
+    ]
+
+    assert.deepEqual(getTechnicalCleanupParts(items, "assistant-2", "response-1"), [
+      { messageId: "assistant-1", partId: "reasoning-1", type: "reasoning" },
+      { messageId: "assistant-2", partId: "tool-1", type: "tool" },
+    ])
+    assert.deepEqual(getTechnicalCleanupParts(items, "assistant-3", "response-2"), [
+      { messageId: "assistant-2", partId: "tool-after", type: "tool" },
+      { messageId: "assistant-3", partId: "reasoning-2", type: "reasoning" },
+    ])
   })
 
   it("ignores invisible step lifecycle parts", () => {

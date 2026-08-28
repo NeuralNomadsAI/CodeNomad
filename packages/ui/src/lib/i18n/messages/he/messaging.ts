@@ -83,6 +83,8 @@ export const messagingMessages = {
   "messageBlock.exploration.read.other": "{count} קריאות",
   "messageBlock.exploration.search.one": "חיפוש אחד",
   "messageBlock.exploration.search.other": "{count} חיפושים",
+  "messageBlock.shell.completed": "מעטפת: {count}",
+  "messageBlock.shell.active": "מעטפת: {count}",
   "messageBlock.reasoning.expandAriaLabel": "פרוס חשיבה",
   "messageBlock.reasoning.collapseAriaLabel": "כווץ חשיבה",
   "messageBlock.reasoning.indicator.hide": "הסתר",

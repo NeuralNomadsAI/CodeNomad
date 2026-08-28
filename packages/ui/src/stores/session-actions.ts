@@ -1,4 +1,4 @@
-import type { ModelRef, SessionInboxDelivery, SessionInboxUser, SessionPromptInput } from "@opencode-ai/client"
+import type { ModelRef, SessionInboxDelivery, SessionInboxUser, SessionMessageInfo, SessionPromptInput } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
@@ -10,6 +10,7 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
 
@@ -518,12 +519,35 @@ async function compactSession(instanceId: string, sessionId: string): Promise<vo
   await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
 
-async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {
+  const { message, info } = normalizeSessionMessage(sessionId, source)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.upsertMessage({
+    id: message.id,
+    sessionId: message.sessionId,
+    role: message.type,
+    status: message.status,
+    createdAt: message.timestamp,
+    updatedAt: message.timestamp,
+    parts: message.parts,
+  })
+  store.setMessageInfo(info.id, info)
+}
+
+async function deleteSelectedMessageTechnicalParts(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  partIds: string[],
+): Promise<void> {
   const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
-  const partIndex = record?.partIds.indexOf(partId) ?? -1
-  const part = partIndex >= 0 ? record?.parts[partId]?.data : undefined
+  const targets = Array.from(new Set(partIds)).map((partId) => {
+    const index = record?.partIds.indexOf(partId) ?? -1
+    return { index, part: index >= 0 ? record?.parts[partId]?.data : undefined }
+  })
   if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
-    || (part?.type !== "tool" && part?.type !== "reasoning")) {
+    || targets.length === 0
+    || targets.some((target) => target.part?.type !== "tool" && target.part?.type !== "reasoning")) {
     throw new Error("Message part is not deletable")
   }
 
@@ -532,26 +556,55 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
   if (message.type !== "assistant" || !message.time.completed) {
     throw new Error("Message content changed before deletion")
   }
-  const target = message.content[partIndex]
-  if (target?.type !== part.type
-    || (target.type === "tool" && target.id !== partId)) {
+  if (targets.some(({ index, part }) => {
+    const target = message.content[index]
+    if (target?.type !== part!.type) return true
+    return target.type === "tool" && part!.type === "tool" && target.id !== part!.id
+  })) {
     throw new Error("Message content changed before deletion")
   }
 
-  await client.session.messageUpdate({
+  const indexes = new Set(targets.map((target) => target.index))
+  const updated = await client.session.messageUpdate({
     sessionID: sessionId,
     messageID: messageId,
-    content: message.content.filter((_, index) => index !== partIndex),
+    content: message.content.filter((_, index) => !indexes.has(index)),
   })
+  applyUpdatedMessage(instanceId, sessionId, updated)
 }
 
-async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+  await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, [partId])
+}
+
+async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string, partIds?: string[]): Promise<void> {
+  if (partIds) {
+    await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+    return
+  }
   const client = getRootClient(instanceId)
   const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
   if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
   const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
   if (content.length === message.content.length) return
-  await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
+  const updated = await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
+  applyUpdatedMessage(instanceId, sessionId, updated)
+}
+
+async function deleteTechnicalPartGroup(
+  instanceId: string,
+  sessionId: string,
+  parts: Array<{ messageId: string; partId: string }>,
+): Promise<void> {
+  const byMessage = new Map<string, string[]>()
+  for (const part of parts) {
+    const partIds = byMessage.get(part.messageId) ?? []
+    partIds.push(part.partId)
+    byMessage.set(part.messageId, partIds)
+  }
+  for (const [messageId, partIds] of byMessage) {
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+  }
 }
 
 export interface SessionTechnicalPartDeletionPlan {
@@ -604,12 +657,18 @@ async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDel
   return failed
 }
 
+async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {
+  await getRootClient(instanceId).session.background({ sessionID: sessionId })
+}
+
 export {
   abortSession,
+  backgroundSession,
   executeCustomCommand,
   compactSession,
   deleteMessagePart,
   deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
   executeSessionTechnicalPartDeletion,
   planSessionTechnicalPartDeletion,
   renameSession,

@@ -97,6 +97,7 @@ import {
 } from "./session-api"
 import {
   abortSession,
+  backgroundSession,
   executeCustomCommand,
   renameSession,
   runShellCommand,
@@ -131,6 +132,7 @@ sseManager.onWorktreeReady = handleWorktreeReady
 
 export {
   abortSession,
+  backgroundSession,
   activeParentSessionId,
   activeSessionId,
   agents,

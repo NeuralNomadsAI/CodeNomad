@@ -1207,6 +1207,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/session(?:\/active)?$/],
     ["POST", /^\/api\/session(?:\/import)?$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
+    ["PATCH", /^\/api\/session\/[^/]+\/message\/[^/]+$/],
     ["GET", /^\/api\/session\/[^/]+\/inbox$/],
     ["GET", /^\/api\/session\/[^/]+\/(?:permission|form)$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],

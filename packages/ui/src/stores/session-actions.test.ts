@@ -8,6 +8,8 @@ import { addInstance, removeInstance } from "./instances.ts"
 import {
   abortSession,
   deleteMessagePart,
+  deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
   executeCustomCommand,
   executeSessionTechnicalPartDeletion,
   planSessionTechnicalPartDeletion,
@@ -170,7 +172,7 @@ describe("session interruption", () => {
 })
 
 describe("native message content mutation", () => {
-  it("removes one terminal assistant part through messageUpdate without racing the server projection", async () => {
+  it("removes one terminal assistant part and projects the updated response", async () => {
     const messageId = "assistant-message"
     const content = [
       { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } },
@@ -193,7 +195,17 @@ describe("native message content mutation", () => {
         time: { created: 1, completed: 3 },
         content,
       }),
-      messageUpdate: async (input: any) => { updateInput = input },
+      messageUpdate: async (input: any) => {
+        updateInput = input
+        return {
+          id: messageId,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "provider", id: "old" },
+          time: { created: 1, completed: 3 },
+          content: input.content,
+        }
+      },
     } })
     const store = messageStoreBus.getOrCreate(instanceId)
     store.upsertMessage({
@@ -215,7 +227,89 @@ describe("native message content mutation", () => {
       messageID: messageId,
       content: [content[0], content[2]],
     })
-    assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+    assert.equal(store.getMessage(messageId)?.parts["tool-1"], undefined)
+    assert.deepEqual(store.getMessage(messageId)?.partIds, [
+      `${messageId}-reasoning-0`,
+      `${messageId}-text-1`,
+    ])
+  })
+
+  it("removes a selected range without touching tools after the response", async () => {
+    const messageId = "assistant-range"
+    const content = [
+      { type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
+      { type: "tool", id: "tool-before", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 2, completed: 3 } },
+      { type: "text", text: "response" },
+      { type: "tool", id: "tool-after", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 4, completed: 5 } },
+      { type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }),
+      messageUpdate: async (input: any) => {
+        updateInput = input
+        return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before" },
+        { id: "tool-before", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "response" },
+        { id: "tool-after", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after" },
+      ],
+    })
+
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, [`${messageId}-reasoning-0`, "tool-before"])
+
+    assert.deepEqual(updateInput.content, [content[2], content[3], content[4]])
+    assert.ok(messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts["tool-after"])
+  })
+
+  it("removes a technical group with one update per message", async () => {
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 2 }, content: [
+        { type: "tool", id: "shell-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "text", text: "first" },
+      ] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 3, completed: 4 }, content: [
+        { type: "tool", id: "shell-2", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 3, completed: 4 } },
+        { type: "text", text: "second" },
+      ] }],
+    ])
+    const updates: any[] = []
+    seed({ session: {
+      message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+      messageUpdate: async (input: any) => {
+        updates.push(input)
+        return { ...messages.get(input.messageID), content: input.content }
+      },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    for (const [messageId, message] of messages) {
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "assistant",
+        status: "complete",
+        parts: [{ id: message.content[0].id, type: "tool", tool: "bash" }, { id: `${messageId}-text-1`, type: "text", text: message.content[1].text }],
+      })
+    }
+
+    await deleteTechnicalPartGroup(instanceId, sessionId, [
+      { messageId: "assistant-1", partId: "shell-1" },
+      { messageId: "assistant-2", partId: "shell-2" },
+    ])
+
+    assert.deepEqual(updates.map((update) => [update.messageID, update.content]), [
+      ["assistant-1", [{ type: "text", text: "first" }]],
+      ["assistant-2", [{ type: "text", text: "second" }]],
+    ])
   })
 
   it("plans every completed response and re-reads it before session cleanup", async () => {
@@ -244,7 +338,10 @@ describe("native message content mutation", () => {
       } },
       session: {
         message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
-        messageUpdate: async (input: any) => { updates.push(input) },
+        messageUpdate: async (input: any) => {
+          updates.push(input)
+          return { ...messages.get(input.messageID), content: input.content }
+        },
       },
     })
 
@@ -264,6 +361,9 @@ describe("native message content mutation", () => {
       { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
       { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },
     ])
+    const store = messageStoreBus.getOrCreate(instanceId)
+    assert.deepEqual(store.getMessage("assistant-1")?.partIds, ["assistant-1-text-0"])
+    assert.deepEqual(store.getMessage("assistant-2")?.partIds, ["assistant-2-text-0"])
   })
 })
 

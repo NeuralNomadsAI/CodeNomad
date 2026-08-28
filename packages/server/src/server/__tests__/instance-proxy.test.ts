@@ -352,6 +352,20 @@ describe("instance proxy location enforcement", () => {
     assert.match(JSON.parse(response.body).url, /\/api\/location\?location%5Bdirectory%5D=%2Frepo/)
   })
 
+  it("allows updates to messages in owned sessions", async () => {
+    const { app, requestCount, sessionGets } = await harness()
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/workspaces/workspace/instance/api/session/session/message/message",
+      payload: { content: [{ type: "text", text: "kept" }] },
+    })
+
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(JSON.parse(response.body).body, { content: [{ type: "text", text: "kept" }] })
+    assert.deepEqual(sessionGets, ["session"])
+    assert.equal(requestCount(), 1)
+  })
+
   it("allows owned native VCS reads and rejects foreign locations", async () => {
     const { app, requestCount } = await harness()
     const owned = await app.inject({

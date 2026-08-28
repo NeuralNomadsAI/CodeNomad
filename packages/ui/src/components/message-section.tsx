@@ -15,7 +15,7 @@ import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
@@ -29,7 +29,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode-ai/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, technicalPartKey } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -115,6 +115,40 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
+  const technicalCleanupTranscript = createMemo<TechnicalCleanupTranscriptItem[]>(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    return messageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+        const partId = typeof part.id === "string" ? part.id : ""
+        if (!partId) return []
+        if (part.type === "tool" || part.type === "reasoning") {
+          return [{ messageId, partId, type: part.type }]
+        }
+        if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
+          return [{ messageId, partId, type: "boundary" as const }]
+        }
+        return []
+      })
+    })
+  })
+  const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
+    technicalCleanupTranscript(),
+    messageId,
+    partId,
+  )
+  const [technicalCleanupHoverTarget, setTechnicalCleanupHoverTarget] = createSignal<{ messageId: string; partId: string } | null>(null)
+  const technicalCleanupPartKeys = createMemo<ReadonlySet<string>>(() => {
+    const target = technicalCleanupHoverTarget()
+    if (!target) return new Set()
+    return new Set(technicalCleanupParts(target.messageId, target.partId).map((part) => technicalPartKey(part.messageId, part.partId)))
+  })
+  const handleTechnicalCleanupHoverChange = (messageId: string, partId: string, hovered: boolean) => {
+    setTechnicalCleanupHoverTarget(hovered ? { messageId, partId } : null)
+  }
   const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
     .filter((form) => form.sessionID === props.sessionId)
     .flatMap((form) => {
@@ -146,7 +180,7 @@ export default function MessageSection(props: MessageSectionProps) {
         )
         if (part.type === "tool" && resolveToolVisibility(preferences(), part.tool) === "hidden" && !pending) return []
         if (!kind || !partId) return [null]
-        if (kind === "exploration" && pending) return [null]
+        if ((kind === "exploration" || kind === "shell") && pending) return [null]
         return [{
           messageId,
           partId,
@@ -1280,6 +1314,9 @@ export default function MessageSection(props: MessageSectionProps) {
               pendingFormToolTargets={pendingFormToolTargets}
               technicalGroupForPart={technicalGroupForPart}
               technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
+              technicalCleanupParts={technicalCleanupParts}
+              technicalCleanupPartKeys={technicalCleanupPartKeys}
+              onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />

@@ -1,9 +1,12 @@
 import { isHiddenSyntheticTextPart, partHasRenderableText, type ClientPart, type MessageInfo } from "../types/message"
 
+export type TechnicalGroupKind = "reasoning" | "exploration" | "shell"
+
 export type TechnicalPartGroup =
   | { kind: "part"; part: ClientPart }
   | { kind: "reasoning"; parts: ClientPart[]; groupId?: string }
   | { kind: "exploration"; parts: ClientPart[]; groupId?: string }
+  | { kind: "shell"; parts: ClientPart[]; groupId?: string }
 
 export interface TranscriptTechnicalPart {
   messageId: string
@@ -15,11 +18,22 @@ export interface TranscriptTechnicalPart {
 
 export interface TranscriptTechnicalGroup {
   id: string
-  kind: "reasoning" | "exploration"
+  kind: TechnicalGroupKind
   parts: TranscriptTechnicalPart[]
   completed: boolean
   signature: string
 }
+
+export interface TechnicalCleanupPart {
+  messageId: string
+  partId: string
+  type: "tool" | "reasoning"
+}
+
+export type TechnicalCleanupTranscriptItem =
+  | TechnicalCleanupPart
+  | { messageId: string; partId: string; type: "boundary" }
+  | null
 
 export type ExplorationSegment<T> =
   | { kind: "group"; items: T[] }
@@ -27,7 +41,10 @@ export type ExplorationSegment<T> =
 
 export function getTechnicalGroupKind(part: ClientPart) {
   if (part.type === "reasoning") return "reasoning" as const
-  if (part.type === "tool" && ["read", "glob", "grep"].includes(part.tool.toLowerCase())) return "exploration" as const
+  if (part.type !== "tool") return
+  const tool = part.tool.toLowerCase()
+  if (["read", "glob", "grep"].includes(tool)) return "exploration" as const
+  if (tool === "bash" || tool === "shell") return "shell" as const
 }
 
 export function reasoningHasRenderableContent(part: ClientPart): boolean {
@@ -110,6 +127,25 @@ export function projectTranscriptTechnicalGroups(items: Array<TranscriptTechnica
   flush(false)
 
   return { groups, byPartKey }
+}
+
+export function getTechnicalCleanupParts(
+  items: TechnicalCleanupTranscriptItem[],
+  targetMessageId: string,
+  targetPartId: string,
+): TechnicalCleanupPart[] {
+  const targetIndex = items.findIndex((item) => item?.type === "boundary"
+    && item.messageId === targetMessageId
+    && item.partId === targetPartId)
+  if (targetIndex < 0) return []
+
+  const parts: TechnicalCleanupPart[] = []
+  for (let index = targetIndex - 1; index >= 0; index--) {
+    const item = items[index]
+    if (!item || item.type === "boundary") break
+    parts.unshift(item)
+  }
+  return parts
 }
 
 export function segmentExplorationItems<T>(items: T[], isPending: (item: T) => boolean): ExplorationSegment<T>[] {

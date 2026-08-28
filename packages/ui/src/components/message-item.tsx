@@ -16,6 +16,7 @@ import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 import { deleteMessageTechnicalParts } from "../stores/session-actions"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
+import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -32,6 +33,8 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   contentStartPartId?: string
   showTechnicalCleanup?: boolean
+  technicalCleanupParts: () => TechnicalCleanupPart[]
+  onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
 }
 
@@ -308,10 +311,9 @@ export default function MessageItem(props: MessageItemProps) {
   const technicalPartCounts = () => {
     let tools = 0
     let reasoning = 0
-    for (const partId of props.record.partIds) {
-      const type = props.record.parts[partId]?.data.type
-      if (type === "tool") tools += 1
-      if (type === "reasoning") reasoning += 1
+    for (const part of props.technicalCleanupParts()) {
+      if (part.type === "tool") tools += 1
+      if (part.type === "reasoning") reasoning += 1
     }
     return { tools, reasoning }
   }
@@ -331,7 +333,13 @@ export default function MessageItem(props: MessageItemProps) {
     if (!confirmed) return
     setDeletingTechnicalParts(true)
     try {
-      await deleteMessageTechnicalParts(props.instanceId, props.sessionId, props.record.id)
+      const byMessage = new Map<string, TechnicalCleanupPart[]>()
+      for (const part of props.technicalCleanupParts()) {
+        byMessage.set(part.messageId, [...(byMessage.get(part.messageId) ?? []), part])
+      }
+      for (const [messageId, parts] of byMessage) {
+        await deleteMessageTechnicalParts(props.instanceId, props.sessionId, messageId, parts.map((part) => part.partId))
+      }
     } catch (error) {
       showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
         title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
@@ -349,8 +357,8 @@ export default function MessageItem(props: MessageItemProps) {
 
   const containerClass = () =>
     isUser()
-      ? "message-item-base bg-[var(--message-user-bg)] border-l-4 border-[var(--message-user-border)]"
-      : "message-item-base assistant-message border-l-4 border-[var(--message-assistant-border)]"
+      ? "message-item-base bg-[var(--message-user-bg)] border-l border-[var(--message-user-border)]"
+      : "message-item-base assistant-message border-l border-[var(--message-assistant-border)]"
 
   const agentIdentifier = () => {
     if (isUser()) return ""
@@ -436,7 +444,6 @@ export default function MessageItem(props: MessageItemProps) {
           key: "pending-remove",
           label: t("promptQueue.actions.remove"),
           icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
-          destructive: true,
           onSelect: () => props.onPendingPromptRemove?.(pending),
         },
       )
@@ -485,8 +492,9 @@ export default function MessageItem(props: MessageItemProps) {
           ? t("messagePart.actions.deleting")
           : t("messageItem.actions.deleteTechnicalParts"),
         icon: <Eraser class="w-3.5 h-3.5" aria-hidden="true" />,
-        destructive: true,
         disabled: deletingTechnicalParts(),
+        onMouseEnter: () => props.onTechnicalCleanupHoverChange?.(true),
+        onMouseLeave: () => props.onTechnicalCleanupHoverChange?.(false),
         onSelect: handleDeleteTechnicalParts,
       })
     }
@@ -605,14 +613,7 @@ export default function MessageItem(props: MessageItemProps) {
                 </Show>
 
                 {renderSecondaryActions()}
-                {renderSecondaryActions()}
               </div>
-              <ActionOverflowMenu
-                items={actionMenuItems()}
-                label={t("messageItem.actions.more")}
-                triggerClass="message-action-button action-overflow-wide"
-                minItems={1}
-              />
               <ActionOverflowMenu
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}
@@ -641,13 +642,8 @@ export default function MessageItem(props: MessageItemProps) {
                   />
                 </Show>
 
+                {renderSecondaryActions()}
               </div>
-              <ActionOverflowMenu
-                items={actionMenuItems()}
-                label={t("messageItem.actions.more")}
-                triggerClass="message-action-button action-overflow-wide"
-                minItems={1}
-              />
               <ActionOverflowMenu
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}

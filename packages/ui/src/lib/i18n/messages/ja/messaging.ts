@@ -85,6 +85,8 @@ export const messagingMessages = {
   "messageBlock.exploration.read.other": "読み取り {count} 件",
   "messageBlock.exploration.search.one": "検索 {count} 件",
   "messageBlock.exploration.search.other": "検索 {count} 件",
+  "messageBlock.shell.completed": "シェル: {count}",
+  "messageBlock.shell.active": "シェル: {count}",
   "messageBlock.reasoning.expandAriaLabel": "思考を展開",
   "messageBlock.reasoning.collapseAriaLabel": "思考を折りたたむ",
   "messageBlock.reasoning.indicator.hide": "非表示",

@@ -83,6 +83,8 @@ export const messagingMessages = {
   "messageBlock.exploration.read.other": "{count} पढाइहरू",
   "messageBlock.exploration.search.one": "{count} खोज",
   "messageBlock.exploration.search.other": "{count} खोजहरू",
+  "messageBlock.shell.completed": "शेल: {count}",
+  "messageBlock.shell.active": "शेल: {count}",
   "messageBlock.reasoning.expandAriaLabel": "सोचाइ विस्तार गर्नुहोस्",
   "messageBlock.reasoning.collapseAriaLabel": "सोचाइ संकुचित गर्नुहोस्",
   "messageBlock.reasoning.indicator.hide": "लुकाउनुहोस्",

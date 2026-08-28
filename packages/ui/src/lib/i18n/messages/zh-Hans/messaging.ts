@@ -85,6 +85,8 @@ export const messagingMessages = {
   "messageBlock.exploration.read.other": "{count} 次读取",
   "messageBlock.exploration.search.one": "{count} 次搜索",
   "messageBlock.exploration.search.other": "{count} 次搜索",
+  "messageBlock.shell.completed": "终端: {count}",
+  "messageBlock.shell.active": "终端: {count}",
   "messageBlock.reasoning.expandAriaLabel": "展开思考",
   "messageBlock.reasoning.collapseAriaLabel": "折叠思考",
   "messageBlock.reasoning.indicator.hide": "隐藏",

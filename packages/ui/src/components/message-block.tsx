@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { Copy, ExternalLink, FoldVertical, Loader2, Trash2, Volume2, XCircle } from "lucide-solid"
+import { Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -16,23 +16,24 @@ import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { formatElapsedClock, inferReasoningDurationMs } from "../lib/message-timing"
 import type { SessionSearchMatch } from "../lib/session-search"
-import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
 import type { VisibilityPreference } from "../stores/preferences"
 import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } from "../types/tool-state"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
-import { deleteMessagePart } from "../stores/session-actions"
+import { backgroundSession, deleteMessagePart, deleteTechnicalPartGroup } from "../stores/session-actions"
 import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, segmentExplorationItems, technicalPartKey, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const NO_STEP_BORDER = "none"
+const BACKGROUNDABLE_TOOLS = new Set(["bash", "shell", "task", "subagent"])
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -53,6 +54,21 @@ function isToolStateCompleted(state: ToolState | undefined): state is ToolStateC
 
 function isToolStateError(state: ToolState | undefined): state is ToolStateError {
   return Boolean(state && state.status === "error")
+}
+
+function isBackgroundableTool(part: ToolCallPart | undefined) {
+  return Boolean(part && BACKGROUNDABLE_TOOLS.has(part.tool.toLowerCase()) && isToolStateRunning(part.state))
+}
+
+async function moveRunningWorkToBackground(instanceId: string, sessionId: string, t: I18nContextValue["t"]) {
+  try {
+    await backgroundSession(instanceId, sessionId)
+  } catch {
+    showAlertDialog(t("promptInput.background.error.message"), {
+      title: t("promptInput.background.error.title"),
+      variant: "error",
+    })
+  }
 }
 
 function extractTaskSessionId(state: ToolState | undefined): string {
@@ -255,6 +271,8 @@ interface MessageContentItemProps {
   pendingPromptBusy?: boolean
   onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
+  technicalCleanupParts: () => TechnicalCleanupPart[]
+  onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
 }
 
@@ -358,6 +376,8 @@ function MessageContentItem(props: MessageContentItemProps) {
         pendingPromptBusy={props.pendingPromptBusy}
         onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
         onPendingPromptRemove={props.onPendingPromptRemove}
+        technicalCleanupParts={props.technicalCleanupParts}
+        onTechnicalCleanupHoverChange={props.onTechnicalCleanupHoverChange}
         onContentRendered={props.onContentRendered}
       />
     </Show>
@@ -446,7 +466,6 @@ function ToolCallItem(props: ToolCallItemProps) {
       key: "delete-part",
       label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
       icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
-      destructive: true,
       disabled: deleting() || (record()?.status !== "complete" && record()?.status !== "error"),
       onMouseEnter: () => setDeleteHovered(true),
       onMouseLeave: () => setDeleteHovered(false),
@@ -469,6 +488,20 @@ function ToolCallItem(props: ToolCallItemProps) {
             instanceId={props.instanceId}
             sessionId={props.sessionId}
             onContentRendered={props.onContentRendered}
+            headerAction={isBackgroundableTool(toolPart()) ? (
+              <button
+                type="button"
+                class="tool-call-header-icon-button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
+                }}
+                aria-label={t("promptInput.background.title")}
+                title={t("promptInput.background.title")}
+              >
+                <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            ) : undefined}
             headerMenuItems={actionMenuItems}
           />
         </Suspense>
@@ -505,6 +538,7 @@ type ReasoningDisplayItem = {
 
 type ExplorationDisplayItem = {
   type: "exploration"
+  kind: "exploration" | "shell"
   key: string
   tools: ToolDisplayItem[]
   completed: boolean
@@ -551,6 +585,9 @@ interface MessageBlockProps {
   pendingFormToolTargets?: Accessor<ReadonlySet<string>>
   technicalGroupForPart?: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined
   technicalGroupingSignature?: Accessor<string>
+  technicalCleanupParts?: (messageId: string, partId: string) => TechnicalCleanupPart[]
+  technicalCleanupPartKeys?: Accessor<ReadonlySet<string>>
+  onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
   isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
 }
@@ -571,6 +608,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       return target ? [technicalPartKey(target.messageId, target.partId)] : []
     })))
   const pendingFormToolTargets = () => props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
+  const technicalCleanupPartKeys = () => props.technicalCleanupPartKeys?.() ?? new Set<string>()
   let lastInlineScrolledSearchMatchId: string | null = null
 
   createEffect(() => {
@@ -685,7 +723,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     })
 
     groupedParts.forEach((group, groupIndex) => {
-      if (group.kind === "exploration") {
+      if (group.kind === "exploration" || group.kind === "shell") {
         flushContent()
         const tools = group.parts.flatMap((part) => {
           const item = toolItem(part as ToolCallPart)
@@ -695,7 +733,8 @@ export default function MessageBlock(props: MessageBlockProps) {
           const technicalGroup = group.groupId ? props.technicalGroupForPart?.(current.id, tools[0].partId) : undefined
           items.push({
             type: "exploration",
-            key: `${tools[0].key}:exploration`,
+            kind: group.kind,
+            key: `${tools[0].key}:${group.kind}`,
             tools,
             completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
             technicalGroup,
@@ -874,6 +913,15 @@ export default function MessageBlock(props: MessageBlockProps) {
                     pendingPromptBusy={props.pendingPromptBusy}
                     onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
                     onPendingPromptRemove={props.onPendingPromptRemove}
+                    technicalCleanupParts={() => props.technicalCleanupParts?.(
+                      (item() as ContentDisplayItem).messageId,
+                      (item() as ContentDisplayItem).startPartId,
+                    ) ?? []}
+                    onTechnicalCleanupHoverChange={(hovered) => props.onTechnicalCleanupHoverChange?.(
+                      (item() as ContentDisplayItem).messageId,
+                      (item() as ContentDisplayItem).startPartId,
+                      hovered,
+                    )}
                     onContentRendered={props.onContentRendered}
                   />
                 </Match>
@@ -883,6 +931,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       class="tool-call-message"
                       data-key={(item() as ToolDisplayItem).key}
                       data-part-id={(item() as ToolDisplayItem).partId}
+                      data-delete-technical-selected={technicalCleanupPartKeys().has((item() as ToolDisplayItem).key) ? "true" : undefined}
                     >
                       <ToolCallItem
                         instanceId={props.instanceId}
@@ -898,6 +947,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 <Match when={item().type === "exploration"}>
                   <Show when={visibleItemKeys().has((item() as ExplorationDisplayItem).key)}>
                     <ExplorationGroup
+                      kind={(item() as ExplorationDisplayItem).kind}
                       tools={(item() as ExplorationDisplayItem).tools.filter(isToolDisplayItemVisible)}
                       summaryTools={(item() as ExplorationDisplayItem).technicalGroup
                         ? technicalGroupTools((item() as ExplorationDisplayItem).technicalGroup).filter(isToolDisplayItemVisible)
@@ -915,6 +965,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
                         : undefined}
+                      technicalCleanupPartKeys={technicalCleanupPartKeys}
                       onContentRendered={props.onContentRendered}
                     />
                   </Show>
@@ -979,6 +1030,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     onExpandedChange={(item() as ReasoningDisplayItem).technicalGroup
                       ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!.id, expanded)
                       : undefined}
+                    technicalCleanupPartKeys={technicalCleanupPartKeys}
                   />
                 </Match>
               </Switch>
@@ -990,6 +1042,7 @@ export default function MessageBlock(props: MessageBlockProps) {
 }
 
 interface ExplorationGroupProps {
+  kind: "exploration" | "shell"
   tools: ToolDisplayItem[]
   summaryTools?: ToolDisplayItem[]
   completed: boolean
@@ -1001,12 +1054,15 @@ interface ExplorationGroupProps {
   showHeader?: boolean
   expanded?: Accessor<boolean>
   onExpandedChange?: (expanded: boolean) => void
+  technicalCleanupPartKeys: Accessor<ReadonlySet<string>>
   onContentRendered?: () => void
 }
 
 function ExplorationGroup(props: ExplorationGroupProps) {
   const { t } = useI18n()
   const [localExpanded, setLocalExpanded] = createSignal(new Set<string>())
+  const [deletingGroup, setDeletingGroup] = createSignal(false)
+  const [deleteGroupHovered, setDeleteGroupHovered] = createSignal(false)
 
   const isPending = (item: ToolDisplayItem) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
@@ -1023,6 +1079,9 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     return status === "completed" || status === "error"
   })
   const label = (items: ToolDisplayItem[]) => {
+    if (props.kind === "shell") {
+      return t(completed(items) ? "messageBlock.shell.completed" : "messageBlock.shell.active", { count: String(items.length) })
+    }
     const counts = items.reduce((result, item) => {
       const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
       const name = part?.type === "tool" && part.tool.toLowerCase() === "read" ? "read" : "search"
@@ -1049,6 +1108,30 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     })
   }
   const toggle = (key: string) => setExpanded(key, !expanded(key))
+  const groupTools = () => props.summaryTools ?? props.tools
+  const canBackgroundGroup = () => props.kind === "shell" && groupTools().some((item) => {
+    const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
+    return part?.type === "tool" && isBackgroundableTool(part)
+  })
+  const canDeleteGroup = () => props.completed && groupTools().length > 1 && groupTools().every((item) => {
+    const status = props.store().getMessage(item.messageId)?.status
+    return status === "complete" || status === "error"
+  })
+  const handleDeleteGroup = async () => {
+    if (deletingGroup() || !canDeleteGroup()) return
+    setDeletingGroup(true)
+    try {
+      await deleteTechnicalPartGroup(props.instanceId, props.sessionId, groupTools())
+    } catch (error) {
+      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
+        title: t("messagePart.actions.deleteFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingGroup(false)
+    }
+  }
 
   createEffect(() => {
     const segment = segments().find((item) => item.kind === "group" && item.items.some((tool) => tool.partId === props.activePartId))
@@ -1057,7 +1140,12 @@ function ExplorationGroup(props: ExplorationGroupProps) {
   })
 
   const renderTool = (item: ToolDisplayItem) => (
-    <div class="tool-call-message" data-key={item.key} data-part-id={item.partId}>
+    <div
+      class="tool-call-message"
+      data-key={item.key}
+      data-part-id={item.partId}
+      data-delete-technical-selected={props.technicalCleanupPartKeys().has(item.key) ? "true" : undefined}
+    >
       <ToolCallItem
         instanceId={props.instanceId}
         sessionId={props.sessionId}
@@ -1068,20 +1156,55 @@ function ExplorationGroup(props: ExplorationGroupProps) {
       />
     </div>
   )
+  const singleton = () => (props.summaryTools ?? props.tools).length <= 1
 
   return (
-    <div class="message-technical-group message-exploration-group">
+    <Show when={!singleton()} fallback={<For each={props.tools}>{renderTool}</For>}>
+    <div
+      class="message-technical-group message-exploration-group"
+      data-delete-technical-selected={deleteGroupHovered() || groupTools().some((item) => props.technicalCleanupPartKeys().has(item.key)) ? "true" : undefined}
+    >
       <Show when={props.showHeader !== false && props.summaryTools?.length}>
-        <button
-          type="button"
-          class="message-technical-group-toggle"
-          aria-expanded={expanded(props.summaryTools![0].key)}
-          onClick={() => toggle(props.summaryTools![0].key)}
-        >
-          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(props.summaryTools![0].key) ? "▼" : "▶"}</span>
-          <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
-          <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
-        </button>
+        <div class="message-technical-group-header tool-call-header">
+          <button
+            type="button"
+            class="message-technical-group-toggle tool-call-header-toggle"
+            aria-expanded={expanded(props.summaryTools![0].key)}
+            onClick={() => toggle(props.summaryTools![0].key)}
+          >
+            <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(props.summaryTools![0].key) ? "▼" : "▶"}</span>
+            <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+            <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
+          </button>
+          <Show when={canBackgroundGroup()}>
+            <button
+              type="button"
+              class="tool-call-header-icon-button"
+              onClick={(event) => {
+                event.stopPropagation()
+                void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
+              }}
+              aria-label={t("promptInput.background.title")}
+              title={t("promptInput.background.title")}
+            >
+              <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </Show>
+          <Show when={!expanded(props.summaryTools![0].key) && canDeleteGroup()}>
+            <button
+              type="button"
+              class="tool-call-header-icon-button"
+              disabled={deletingGroup()}
+              onMouseEnter={() => setDeleteGroupHovered(true)}
+              onMouseLeave={() => setDeleteGroupHovered(false)}
+              onClick={(event) => { event.stopPropagation(); void handleDeleteGroup() }}
+              aria-label={deletingGroup() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+              title={deletingGroup() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+            >
+              <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </Show>
+        </div>
       </Show>
       <For each={segments()}>{(segment) => segment.kind === "pending"
         ? renderTool(segment.item)
@@ -1109,6 +1232,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
         })()
       }</For>
     </div>
+    </Show>
   )
 }
 
@@ -1163,7 +1287,7 @@ function CompactionCard(props: CompactionCardProps) {
   return (
     <div
       class={`delete-hover-scope ${containerClass()} relative`}
-      style={{ "border-left": `4px solid ${borderColor()}` }}
+      style={{ "border-left": `1px solid ${borderColor()}` }}
       role={isFailed() ? "alert" : "status"}
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
@@ -1392,9 +1516,12 @@ function ReasoningGroupCard(props: {
   showHeader?: boolean
   expanded?: Accessor<boolean>
   onExpandedChange?: (expanded: boolean) => void
+  technicalCleanupPartKeys: Accessor<ReadonlySet<string>>
 }) {
   const { t, locale } = useI18n()
   const [localExpanded, setLocalExpanded] = createSignal(Boolean(props.defaultExpanded))
+  const [deletingGroup, setDeletingGroup] = createSignal(false)
+  const [deleteGroupHovered, setDeleteGroupHovered] = createSignal(false)
   const expanded = () => props.expanded?.() ?? localExpanded()
   const setExpanded = (value: boolean) => props.onExpandedChange ? props.onExpandedChange(value) : setLocalExpanded(value)
   const summaryParts = () => props.summaryParts ?? props.parts
@@ -1403,6 +1530,25 @@ function ReasoningGroupCard(props: {
     const latest = summaryParts().at(-1)
     return latest ? parseReasoningSummary(getReasoningText(latest.part)).title ?? "" : ""
   })
+  const canDeleteGroup = () => props.completed && summaryParts().length > 1 && summaryParts().every((item) => {
+    const status = messageStoreBus.getOrCreate(props.instanceId).getMessage(item.messageId)?.status
+    return status === "complete" || status === "error"
+  })
+  const handleDeleteGroup = async () => {
+    if (deletingGroup() || !canDeleteGroup()) return
+    setDeletingGroup(true)
+    try {
+      await deleteTechnicalPartGroup(props.instanceId, props.sessionId, summaryParts())
+    } catch (error) {
+      showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
+        title: t("messagePart.actions.deleteFailedTitle"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    } finally {
+      setDeletingGroup(false)
+    }
+  }
 
   createEffect(() => {
     if (!props.expanded) setExpanded(Boolean(props.defaultExpanded))
@@ -1411,54 +1557,74 @@ function ReasoningGroupCard(props: {
     if (props.activePartId && props.parts.some((item) => item.partId === props.activePartId)) setExpanded(true)
   })
 
+  const renderCard = (item: ReasoningDisplayPart) => (
+    <ReasoningCard
+      part={item.part}
+      messageInfo={item.messageInfo}
+      durationMs={item.durationMs}
+      instanceId={props.instanceId}
+      sessionId={props.sessionId}
+      messageId={item.messageId}
+      status={props.status}
+      showAgentMeta={props.showAgentMeta}
+      defaultExpanded
+      onContentRendered={props.onContentRendered}
+      forceExpanded={props.activePartId === item.partId}
+      technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))}
+    />
+  )
+
   return (
-    <div class="message-technical-group message-reasoning-group">
+    <Show when={summaryParts().length > 1} fallback={<For each={props.parts}>{renderCard}</For>}>
+    <div
+      class="message-technical-group message-reasoning-group"
+      data-delete-technical-selected={deleteGroupHovered() || summaryParts().some((item) => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))) ? "true" : undefined}
+    >
       <Show when={props.showHeader !== false}>
-        <button
-          type="button"
-          class="message-technical-group-toggle"
-          aria-expanded={expanded()}
-          aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
-          onClick={() => setExpanded(!expanded())}
-        >
-          <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
-          <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
-          <span class="message-reasoning-type">
-            {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
-          </span>
-          <span class="message-technical-group-title">{latestTitle() || t("messageBlock.reasoning.thoughtsFallback")}</span>
-          <Show when={summaryParts().length > 1}>
+        <div class="message-technical-group-header tool-call-header">
+          <button
+            type="button"
+            class="message-technical-group-toggle tool-call-header-toggle"
+            aria-expanded={expanded()}
+            aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
+            onClick={() => setExpanded(!expanded())}
+          >
+            <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+            <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+            <span class="message-reasoning-type">
+              {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
+            </span>
+            <span class="message-technical-group-title">{latestTitle() || t("messageBlock.reasoning.thoughtsFallback")}</span>
             <span class="message-technical-group-meta">
               · {t(`messageBlock.reasoning.steps.${summaryParts().length === 1 ? "one" : "other"}`, { count: String(summaryParts().length) })}
             </span>
+            <Show when={totalDuration() > 0}>
+              <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
+            </Show>
+          </button>
+          <Show when={!expanded() && canDeleteGroup()}>
+            <button
+              type="button"
+              class="tool-call-header-icon-button"
+              disabled={deletingGroup()}
+              onMouseEnter={() => setDeleteGroupHovered(true)}
+              onMouseLeave={() => setDeleteGroupHovered(false)}
+              onClick={(event) => { event.stopPropagation(); void handleDeleteGroup() }}
+              aria-label={deletingGroup() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+              title={deletingGroup() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+            >
+              <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
           </Show>
-          <Show when={totalDuration() > 0}>
-            <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
-          </Show>
-        </button>
+        </div>
       </Show>
       <Show when={expanded()}>
         <div class="message-technical-group-parts message-reasoning-group-parts">
-          <For each={props.parts}>
-            {(item) => (
-              <ReasoningCard
-                part={item.part}
-                messageInfo={item.messageInfo}
-                durationMs={item.durationMs}
-                instanceId={props.instanceId}
-                sessionId={props.sessionId}
-                messageId={item.messageId}
-                status={props.status}
-                showAgentMeta={props.showAgentMeta}
-                defaultExpanded
-                onContentRendered={props.onContentRendered}
-                forceExpanded={props.activePartId === item.partId}
-              />
-            )}
-          </For>
+          <For each={props.parts}>{renderCard}</For>
         </div>
       </Show>
     </div>
+    </Show>
   )
 }
 
@@ -1474,6 +1640,7 @@ interface ReasoningCardProps {
   defaultExpanded?: boolean
   onContentRendered?: () => void
   forceExpanded?: boolean
+  technicalCleanupSelected: Accessor<boolean>
 }
 
 function ReasoningStreamOutput(props: {
@@ -1627,45 +1794,11 @@ function ReasoningCard(props: ReasoningCardProps) {
     }
   }
 
-  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
-    const items: ActionOverflowMenuItem[] = []
-
-    if (includePrimaryActions) {
-      items.push({
-        key: "copy",
-        label: t("messageBlock.reasoning.copyTitle"),
-        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
-        onSelect: handleCopyReasoning,
-      })
-
-      if (canSpeakReasoning()) {
-        items.push({
-          key: "speak",
-          label: speech.buttonTitle(),
-          icon: <Volume2 class="w-3.5 h-3.5" aria-hidden="true" />,
-          onSelect: () => void speech.toggle(),
-        })
-      }
-    }
-
-    items.push({
-      key: "delete-part",
-      label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
-      icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
-      destructive: true,
-      disabled: deleting() || (props.status !== "complete" && props.status !== "error"),
-      onMouseEnter: () => setDeleteHovered(true),
-      onMouseLeave: () => setDeleteHovered(false),
-      onSelect: handleDelete,
-    })
-
-    return items
-  }
-
   return (
     <div
       class="delete-hover-scope message-reasoning-card"
       data-part-id={typeof (props.part as any)?.id === "string" ? (props.part as any).id : undefined}
+      data-delete-technical-selected={props.technicalCleanupSelected() ? "true" : undefined}
       data-delete-part-hover={deleteHovered() ? "true" : undefined}
     >
       <div class="message-reasoning-header">
@@ -1688,7 +1821,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           </span>
         </button>
 
-        <div class="message-reasoning-actions" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+        <div class="message-reasoning-actions">
           <button
             type="button"
             class="message-action-button"
@@ -1717,18 +1850,22 @@ function ReasoningCard(props: ReasoningCardProps) {
             />
           </Show>
 
-          <ActionOverflowMenu
-            items={actionMenuItems()}
-            label={t("messageItem.actions.more")}
-            triggerClass="message-action-button action-overflow-wide"
-            minItems={1}
-          />
-          <ActionOverflowMenu
-            items={actionMenuItems(true)}
-            label={t("messageItem.actions.more")}
-            triggerClass="message-action-button action-overflow-narrow"
-            minItems={1}
-          />
+          <button
+            type="button"
+            class="message-action-button"
+            disabled={deleting() || (props.status !== "complete" && props.status !== "error")}
+            onMouseEnter={() => setDeleteHovered(true)}
+            onMouseLeave={() => setDeleteHovered(false)}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              void handleDelete()
+            }}
+            aria-label={deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+            title={deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
+          >
+            <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
         </div>
       </div>
 

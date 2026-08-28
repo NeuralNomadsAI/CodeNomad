@@ -83,6 +83,8 @@ export const messagingMessages = {
   "messageBlock.exploration.read.other": "{count} reads",
   "messageBlock.exploration.search.one": "{count} search",
   "messageBlock.exploration.search.other": "{count} searches",
+  "messageBlock.shell.completed": "Shell: {count}",
+  "messageBlock.shell.active": "Shell: {count}",
   "messageBlock.reasoning.expandAriaLabel": "Expand thinking",
   "messageBlock.reasoning.collapseAriaLabel": "Collapse thinking",
   "messageBlock.reasoning.indicator.hide": "Hide",
