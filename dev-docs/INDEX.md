@@ -20,6 +20,10 @@ Executive summary of the entire project - **start here!**
 
 Incremental comparison with official OpenCode Desktop V2, including parity, closed defects, remaining correctness work, runtime upgrade scope, and optional feature gaps.
 
+### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
+
+Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.
+
 ---
 
 ## Specification Documents
