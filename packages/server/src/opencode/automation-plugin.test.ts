@@ -15,40 +15,20 @@ test("validates developer automation actions", () => {
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
 })
 
-test("registers developer tools only for CodeNomad-owned locations", async () => {
+test("registers developer tools while execution remains session-gated", async () => {
   let skill: Record<string, unknown> | undefined
   const tools: string[] = []
   await setupAutomationPlugin({
     location: { directory: "D:\\project" },
     skill: { transform: async (callback) => callback({ add: (value) => { skill = value } }) },
     tool: { transform: async (callback) => callback({ add: (value) => tools.push(value.name) }) },
-  }, async () => true)
+  })
 
   assert.equal(skill?.id, "codenomad-automation")
   assert.equal(skill?.autoinvoke, true)
   assert.match(String(skill?.content), /codenomad\.inspect/)
   assert.deepEqual(tools, ["inspect", "act", "screenshot"])
 
-  let transformed = false
-  await setupAutomationPlugin({
-    location: { directory: "D:\\other" },
-    skill: { transform: async () => { transformed = true } },
-    tool: { transform: async () => { transformed = true } },
-  }, async () => false)
-  assert.equal(transformed, false)
-})
-
-test("includes the OpenCode workspace identity in location discovery", async () => {
-  let location: [string, string | undefined] | undefined
-  await setupAutomationPlugin({
-    location: { directory: "D:\\project", workspaceID: "workspace-1" },
-    skill: { transform: async () => undefined },
-    tool: { transform: async () => undefined },
-  }, async (directory, workspaceID) => {
-    location = [directory, workspaceID]
-    return false
-  })
-  assert.deepEqual(location, ["D:\\project", "workspace-1"])
 })
 
 test("installs the automation plugin and removes obsolete browser wrappers", async () => {

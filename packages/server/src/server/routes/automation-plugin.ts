@@ -41,22 +41,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
   let developerOwner: { runId: string; sessionID: string } | undefined
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; directory?: unknown; workspaceID?: unknown; sessionID?: unknown; command?: unknown } | undefined
-    if (body?.mode === "location") {
-      if (typeof body.directory !== "string" || body.directory.length === 0 || body.directory.length > 32_768) {
-        return reply.code(400).send({ error: "Invalid automation bridge location" })
-      }
-      if (body.workspaceID !== undefined && (typeof body.workspaceID !== "string" || body.workspaceID.length === 0 || body.workspaceID.length > 256)) {
-        return reply.code(400).send({ error: "Invalid automation bridge workspace" })
-      }
-      const directory = body.directory
-      const workspaceID = body.workspaceID as string | undefined
-      const owned = await Promise.all(deps.workspaceManager.list().map((workspace) =>
-        deps.workspaceManager.ownsLocation(workspace.id, { directory, workspaceID }),
-      ))
-      if (owned.some(Boolean)) return reply.send({ result: { available: true } })
-      return reply.code(404).send({ error: "Location is not owned by this CodeNomad instance" })
-    }
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
     if (!body || !["developer-probe", "developer-execute"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })

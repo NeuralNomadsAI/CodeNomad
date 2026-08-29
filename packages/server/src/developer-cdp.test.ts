@@ -13,7 +13,7 @@ const page = (id: string) => ({
   title: `Page ${id}`,
   type: "page",
   url: `http://app.test/${id}`,
-  webSocketDebuggerUrl: `ws://chrome.test/${id}`,
+  webSocketDebuggerUrl: `ws://127.0.0.1:9222/${id}`,
 })
 
 class FakeSocket {
@@ -212,6 +212,25 @@ describe("DeveloperCdp", () => {
       /stale accessibility ref/,
     )
     assert.equal(chrome.sockets.length, 2)
+  })
+
+  it("invalidates refs and pending commands when an open socket errors", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+    const oldRef = inspection.nodes[0].ref!
+    const socket = chrome.sockets[0]
+    socket.onerror?.({})
+
+    await assert.rejects(client.act({ runId: identity.runId, kind: "click", ref: oldRef }), /stale accessibility ref/)
+    assert.equal(socket.closed, true)
+  })
+
+  it("rejects non-loopback WebSocket targets", async () => {
+    const chrome = new FakeChrome()
+    chrome.target = { ...chrome.target, webSocketDebuggerUrl: "ws://example.com/page" }
+    await assert.rejects(chrome.client().inspect(identity), /target one is unavailable/)
+    assert.equal(chrome.sockets.length, 0)
   })
 
   it("aborts actions when navigation occurs between CDP commands", async () => {

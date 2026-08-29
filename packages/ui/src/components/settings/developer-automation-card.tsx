@@ -26,6 +26,8 @@ export const DeveloperAutomationCard: Component = () => {
   let disposed = false
   let statusRevision = 0
   let logRevision = 0
+  let operationRevision = 0
+  let refreshing = false
   let stopRequested = false
   let refreshTimer: number | undefined
   const cleanups: Array<() => void> = []
@@ -56,6 +58,8 @@ export const DeveloperAutomationCard: Component = () => {
   }
 
   async function refresh() {
+    if (refreshing) return
+    refreshing = true
     const currentStatusRevision = statusRevision
     const currentLogRevision = logRevision
     try {
@@ -65,6 +69,8 @@ export const DeveloperAutomationCard: Component = () => {
       if (currentLogRevision === logRevision) setLogs(snapshot.logs.slice(-MAX_LOG_ENTRIES))
     } catch (cause) {
       if (!disposed) reportError(cause, "settings.developerAutomation.errors.load")
+    } finally {
+      refreshing = false
     }
   }
 
@@ -104,12 +110,14 @@ export const DeveloperAutomationCard: Component = () => {
     const path = executable().trim()
     if (!path || starting() || stopping() || active()) return
     stopRequested = false
+    const currentOperationRevision = ++operationRevision
     setStarting(true)
     setError(null)
     logRevision += 1
     setLogs([])
     try {
-      applyStatus(await startDeveloperRun({ target: target(), executable: path }))
+      const next = await startDeveloperRun({ target: target(), executable: path })
+      if (currentOperationRevision === operationRevision && !stopRequested) applyStatus(next)
     } catch (cause) {
       if (!stopRequested) reportError(cause, "settings.developerAutomation.errors.start")
     } finally {
@@ -120,14 +128,17 @@ export const DeveloperAutomationCard: Component = () => {
   async function stop() {
     if (stopping() || (!active() && !starting())) return
     stopRequested = true
+    const currentOperationRevision = ++operationRevision
     setStopping(true)
     setError(null)
     try {
       await stopDeveloperRun()
       const currentLogRevision = logRevision
       const snapshot = await getDeveloperRun()
-      applyStatus(snapshot.status)
-      if (currentLogRevision === logRevision) setLogs(snapshot.logs.slice(-MAX_LOG_ENTRIES))
+      if (currentOperationRevision === operationRevision) {
+        applyStatus(snapshot.status)
+        if (currentLogRevision === logRevision) setLogs(snapshot.logs.slice(-MAX_LOG_ENTRIES))
+      }
     } catch (cause) {
       reportError(cause, "settings.developerAutomation.errors.stop")
     } finally {

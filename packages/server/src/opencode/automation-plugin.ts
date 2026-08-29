@@ -168,18 +168,6 @@ async function callBridge(
   return { status: response.status, body: await response.json() as BridgeResponse }
 }
 
-async function ownsLocation(directory: string, workspaceID?: string): Promise<boolean> {
-  const active = await registrations()
-  const claims = await Promise.all(active.map(async (registration) => {
-    try {
-      return (await callBridge(registration, { mode: "location", directory, workspaceID })).status === 200
-    } catch {
-      return false
-    }
-  }))
-  return claims.some(Boolean)
-}
-
 function formatBridgeResult(resultValue: unknown) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (result?.image) {
@@ -211,11 +199,7 @@ async function executeDeveloperTool(sessionID: string, command: DeveloperAction)
   return formatBridgeResult(response.body.result)
 }
 
-export async function setupAutomationPlugin(
-  context: AutomationPluginContext,
-  locationOwned: (directory: string, workspaceID?: string) => Promise<boolean> = ownsLocation,
-): Promise<void> {
-  if (!await locationOwned(context.location.directory, context.location.workspaceID)) return
+export async function setupAutomationPlugin(context: AutomationPluginContext): Promise<void> {
   await context.skill.transform((draft) => {
     draft.add({
       id: SKILL_ID,

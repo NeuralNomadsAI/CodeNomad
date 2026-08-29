@@ -29,12 +29,12 @@ The adapter is intentionally narrower than the removed V1 plugin runtime. It doe
 
 ## Trust Boundaries
 
-- Discovery registrations contain random tokens and accept loopback requests only.
+- Discovery registrations contain random tokens and target an internal loopback HTTP listener, independent of the user-facing HTTPS certificate.
 - The bridge verifies the OpenCode session and its location against the current CodeNomad workspace manager.
 - One OpenCode session owns a developer run until that run stops or is replaced.
 - CDP uses the exact target ID reported by the native host.
 - Accessibility refs are invalidated by navigation.
-- Diagnostics, accessibility snapshots, screenshots, lines, and log histories are bounded.
+- Diagnostics, accessibility snapshots, screenshots, and log histories are bounded.
 
 ## Main Paths
 

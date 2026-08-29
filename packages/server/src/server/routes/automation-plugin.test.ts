@@ -47,7 +47,6 @@ test("fences developer automation by owned session and forwards CDP actions", as
     payload: body,
   })
 
-  assert.equal((await request({ mode: "location", directory: "D:\\project", workspaceID: "workspace-1" })).statusCode, 200)
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-1" })).statusCode, 200)
   const inspect = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(inspect.statusCode, 200)

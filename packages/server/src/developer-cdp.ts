@@ -268,10 +268,8 @@ export class DeveloperCdp {
       const fail = (error: Error) => {
         clearTimeout(timer)
         if (state.socket === socket) {
-          state.socket = undefined
-          state.open = undefined
-        }
-        socket.close()
+          this.disconnect(state, error)
+        } else socket.close()
         reject(error)
       }
       const timer = setTimeout(() => fail(new Error("CDP WebSocket connection timed out")), this.dependencies.timeoutMs)
@@ -417,6 +415,19 @@ function isTarget(value: unknown): value is CdpTarget {
     && typeof target.type === "string"
     && typeof target.url === "string"
     && typeof target.webSocketDebuggerUrl === "string"
+    && isLoopbackWebSocketUrl(target.webSocketDebuggerUrl)
+}
+
+function isLoopbackWebSocketUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (url.protocol === "ws:" || url.protocol === "wss:")
+      && url.hostname === "127.0.0.1"
+      && !url.username
+      && !url.password
+  } catch {
+    return false
+  }
 }
 
 function valueOf(value: AxValue | undefined): string {

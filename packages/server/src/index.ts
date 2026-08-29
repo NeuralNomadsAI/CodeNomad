@@ -23,7 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
-import { resolvePluginBaseUrl } from "./server/listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -470,11 +470,11 @@ async function main() {
   // - Remote access disabled: both listen on loopback.
   // - HTTP-only mode: respect --host (used for dev/testing).
   const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
-  const httpBindHost = options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
+  const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
 
-  const httpServer = options.http
+  const httpServer = options.http || nativeParent.available
     ? createHttpServer({
         bindHost: httpBindHost,
         bindPort: httpBindPort,
@@ -537,7 +537,8 @@ async function main() {
     httpsServer ? httpsServer.start() : Promise.resolve(null),
   ])
 
-  const localStart = httpStart ?? httpsStart
+  const visibleHttpStart = options.http ? httpStart : null
+  const localStart = visibleHttpStart ?? httpsStart
   if (!localStart) {
     throw new Error("No listeners started")
   }
@@ -568,7 +569,7 @@ async function main() {
   // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
   // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
-    httpStart: httpStart ? { protocol: "http", bindHost: httpBindHost, port: httpStart.port } : null,
+    httpStart: visibleHttpStart ? { protocol: "http", bindHost: httpBindHost, port: visibleHttpStart.port } : null,
     httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
     remoteUrl,
   })
@@ -584,9 +585,11 @@ async function main() {
   if (nativeParent.available) {
     try {
       await installAutomationPlugin()
+      if (!httpStart) throw new Error("Developer Automation HTTP listener did not start")
+      const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
       removeAutomationBridge = await publishAutomationBridge({
         ...automationBridge,
-        url: new URL(AUTOMATION_BRIDGE_PATH, localUrl).href,
+        url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
       })
     } catch (error) {
       logger.warn({ err: error }, "Failed to install the OpenCode automation plugin")
