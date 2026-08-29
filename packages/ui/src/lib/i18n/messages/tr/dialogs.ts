@@ -1,0 +1,15 @@
+export const dialogMessages = {
+  "alertDialog.fallbackTitle.info": "Dikkat",
+  "alertDialog.fallbackTitle.warning": "Gözden geçirin",
+  "alertDialog.fallbackTitle.error": "Bir şeyler ters gitti",
+  "alertDialog.actions.confirm": "Onayla",
+  "alertDialog.actions.run": "Çalıştır",
+  "alertDialog.actions.ok": "Tamam",
+  "alertDialog.actions.cancel": "İptal",
+  "alertDialog.prompt.inputLabel": "Girdi",
+  "backgroundProcessOutputDialog.title": "Arka Plan Çıktısı",
+  "backgroundProcessOutputDialog.actions.close": "Kapat",
+  "backgroundProcessOutputDialog.loading": "Çıktı yükleniyor...",
+  "backgroundProcessOutputDialog.truncatedNotice": "Çıktı görüntüleme için kısaltıldı.",
+  "backgroundProcessOutputDialog.loadErrorFallback": "Çıktı yüklenemedi.",
+} as const

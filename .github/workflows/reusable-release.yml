@@ -13,6 +13,11 @@ on:
         required: false
         default: ""
         type: string
+      base_version:
+        description: "Base version override (defaults to package.json version)"
+        required: false
+        default: ""
+        type: string
       dist_tag:
         description: "npm dist-tag to publish under"
         required: false
@@ -62,9 +67,10 @@ jobs:
       - name: Compute release versions
         id: versions
         env:
+          BASE_VERSION_INPUT: ${{ inputs.base_version }}
           VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
+          BASE_VERSION=${BASE_VERSION_INPUT:-$(node -p "require('./package.json').version")}
           VERSION="${BASE_VERSION}${VERSION_SUFFIX}"
           TAG="v${VERSION}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

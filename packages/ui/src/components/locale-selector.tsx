@@ -16,6 +16,7 @@ const languageOptions: LanguageOption[] = [
   { value: "he", label: "עברית" },
   { value: "de", label: "Deutsch" },
   { value: "ne", label: "नेपाली" },
+  { value: "tr", label: "Türkçe" },
 ]
 
 export const LocaleSelector: Component = () => {
