@@ -106,6 +106,14 @@ const openRouter: UsageProvider = {
   },
 }
 
+const CREDIT_LIMIT_TYPE = "CREDIT_LIMIT"
+const UNIT_SECONDS: Record<number, number> = { 3: 3_600, 6: 604_800 }
+
+function unitWindowSeconds(unit: unknown, count: number | null): number | null {
+  const unitSeconds = typeof unit === "number" ? UNIT_SECONDS[unit] : undefined
+  return unitSeconds !== undefined && count !== null ? unitSeconds * count : null
+}
+
 function createTokenLimitProvider(input: { id: string; name: string; aliases: readonly string[]; url: string }): UsageProvider {
   return {
     id: input.id,
@@ -120,20 +128,19 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
         for (const limit of Array.isArray(payload?.data?.limits) ? payload.data.limits : []) {
           const number = toNumber(limit?.number)
           if (limit && (limit.type === "TOKENS_LIMIT" || limit.type === "TIME_LIMIT")) {
-            const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : limit.unit === 3 && number ? number * 3600 : null
+            const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : unitWindowSeconds(limit.unit, number)
             const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
             windows[label] = toUsageWindow({
               usedPercent: toNumber(limit.percentage),
               windowSeconds: seconds,
               resetAt: toTimestamp(limit.nextResetTime),
             })
-          } else if (limit && limit.type === "CREDIT_LIMIT") {
+          } else if (limit && limit.type === CREDIT_LIMIT_TYPE) {
             const usedPercent = toNumber(limit.percentage)
             const remaining = toNumber(limit.remaining)
             const allowance = toNumber(limit.usage)
             if (usedPercent === null && (remaining === null || allowance === null)) continue
-            const unitSeconds = limit.unit === 3 ? 3_600 : limit.unit === 6 ? 604_800 : null
-            const seconds = unitSeconds !== null && number ? unitSeconds * number : null
+            const seconds = unitWindowSeconds(limit.unit, number)
             windows[resolveWindowLabel(seconds)] = toUsageWindow({
               usedPercent: usedPercent ?? (allowance !== null && allowance > 0 && remaining !== null ? ((allowance - remaining) / allowance) * 100 : null),
               windowSeconds: seconds,
