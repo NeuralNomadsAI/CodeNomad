@@ -7,6 +7,8 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode, readDeveloperModeEnabled } from "./developer-mode"
+import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
+import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -16,7 +18,7 @@ import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnable
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
-import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
+import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager } from "./process-manager"
@@ -110,10 +112,18 @@ function runPrimary(firstIntent: LaunchIntent) {
     },
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
-  const cli = new CliProcessManager((method) => developerMode.handleNativeRequest(method))
+  const browserController = new BrowserController((sessionID, url, requestID) => {
+    for (const record of registry.all()) {
+      if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
+    }
+  })
+  const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
+    ? handleNativeBrowserRequest(browserController, method, params, deadline)
+    : developerMode.handleNativeRequest(method))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
+  const securedBrowserSessions = new WeakSet<Electron.Session>()
   let backendUrl: string | null = null
   let backendTargetUrl: string | null = null
   const remoteWindows = new RemoteWindowRegistry((sessionId) => {
@@ -219,7 +229,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: 800, minHeight: 600,
       frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
-        preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
+        preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
         additionalArguments: ["--codenomad-window-context=local", `--codenomad-window-id=${windowId}`],
       },
@@ -241,6 +251,34 @@ function runPrimary(firstIntent: LaunchIntent) {
     lifecycle.attach(record)
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : window.webContents.setZoomLevel(level))
     setupNavigationGuards(window, navigation, getAllowedOrigins, getLoadingUrl)
+    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (!secureBrowserWebview(webPreferences, params)) {
+        event.preventDefault()
+        return
+      }
+      const browserSession = session.fromPartition(params.partition)
+      if (!securedBrowserSessions.has(browserSession)) {
+        securedBrowserSessions.add(browserSession)
+        configureBrowserPermissionHandlers(browserSession)
+        browserSession.on("will-download", (downloadEvent) => downloadEvent.preventDefault())
+      }
+    })
+    window.webContents.on("did-attach-webview", (_event, guest) => {
+      browserController.observeGuest(window.webContents, guest)
+      const guardNavigation = (event: Electron.Event, url: string) => {
+        if (!isBrowserUrlAllowed(url)) event.preventDefault()
+      }
+      guest.on("will-navigate", guardNavigation)
+      guest.on("will-redirect", guardNavigation)
+      guest.setWindowOpenHandler(({ url }) => {
+        if (isBrowserUrlAllowed(url)) queueMicrotask(() => {
+          try {
+            if (!guest.isDestroyed()) void guest.loadURL(url).catch(() => undefined)
+          } catch {}
+        })
+        return { action: "deny" }
+      })
+    })
     window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) setWorkspaceMenuEnabled(window, false)
     })
@@ -250,6 +288,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       clearWorkspaceMenuWindow(webContentsId)
       remoteOrigins.delete(nativeWindowId)
       insecureOrigins.delete(webContentsId)
+      browserController.removeOwner(window.webContents)
     })
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     if (process.env.NODE_ENV === "development") window.webContents.openDevTools({ mode: "detach" })
@@ -286,6 +325,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     developerMode,
+    browserController,
   })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),

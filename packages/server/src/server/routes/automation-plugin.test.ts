@@ -94,3 +94,44 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
   assert.equal(unauthorized.statusCode, 401)
   await app.close()
 })
+
+test("claims owned sessions and forwards browser commands through the automation bridge", async () => {
+  const app = Fastify({ logger: false })
+  const nativeCalls: Array<{ method: string; params: unknown }> = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true },
+    bridgeToken: "secret",
+    nativeParent: {
+      request: async (method: string, params: unknown) => {
+        nativeCalls.push({ method, params })
+        return method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
+      },
+    },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
+      list: () => [{ id: "workspace-1" }],
+      ownsLocation: async () => true,
+    },
+  } as never)
+
+  const request = async (body: Record<string, unknown>) => app.inject({
+    method: "POST",
+    url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" },
+    payload: body,
+  })
+
+  assert.equal((await request({ mode: "browser-claim", sessionID: "session-1" })).statusCode, 200)
+  assert.equal(nativeCalls.length, 0)
+  assert.equal((await request({ mode: "browser-probe", sessionID: "session-1" })).statusCode, 200)
+  const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
+  assert.equal(open.statusCode, 200)
+  assert.deepEqual(nativeCalls, [
+    { method: "browser.probe", params: { sessionID: "session-1" } },
+    {
+      method: "browser.execute",
+      params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
+    },
+  ])
+  await app.close()
+})

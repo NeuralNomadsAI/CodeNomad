@@ -8,6 +8,7 @@ import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectories,
   createAutomationBridgeRegistration,
+  parseBrowserAction,
   parseDeveloperAction,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
@@ -60,13 +61,27 @@ test("validates Developer Mode actions", () => {
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
 })
 
+test("validates browser actions", () => {
+  assert.deepEqual(parseBrowserAction({ action: "open", url: "https://example.com" }), {
+    action: "open",
+    url: "https://example.com",
+  })
+  assert.deepEqual(parseBrowserAction({ action: "type", ref: "e2", text: "hello", clear: false }), {
+    action: "type",
+    ref: "e2",
+    text: "hello",
+    clear: false,
+  })
+  assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
+})
+
 test("registers developer tools while execution remains session-gated", async () => {
   const tools: string[] = []
   await setupAutomationPlugin({
     tool: { transform: async (callback) => callback({ add: (value) => tools.push(value.name) }) },
   })
 
-  assert.deepEqual(tools, ["inspect", "act", "screenshot"])
+  assert.deepEqual(tools, ["inspect", "act", "screenshot", "browser"])
 })
 
 test("discovers the Windows bridge registry from a WSL plugin", () => {

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
@@ -62,6 +63,7 @@ const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
 pub struct AppState {
     pub manager: CliProcessManager,
     pub(crate) developer_mode: developer_mode::DeveloperMode,
+    pub(crate) browser_controller: browser_controller::BrowserController,
     pub wake_lock: Mutex<WakeLockState>,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
     remote_navigation_generation: AtomicU64,
@@ -224,17 +226,31 @@ pub(crate) fn require_preferences_or_local_app_window(
     }
 }
 
+fn require_local_app_webview(webview: &tauri::Webview, state: &AppState) -> Result<Url, String> {
+    identity::local_window_id(webview.label())?;
+    let current = webview.url().map_err(|error| error.to_string())?;
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref()) {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted local renderer origin".into())
+    }
+}
+
 pub(crate) fn handle_native_request(
     app: &AppHandle,
     method: &str,
-    _params: Option<serde_json::Value>,
-    _deadline: u64,
+    params: Option<serde_json::Value>,
+    deadline: u64,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
+        "browser.probe" | "browser.execute" => state
+            .browser_controller
+            .handle_native(app, method, params, deadline),
         "developer.status" => Ok(state.developer_mode.native_snapshot(app)),
         "developer.restart" => state.developer_mode.request_restart(app),
-        _ => Err(format!("Unsupported native developer request: {method}")),
+        _ => Err(format!("Unsupported native request: {method}")),
     }
 }
 
@@ -408,6 +424,68 @@ async fn popup_titlebar_menu(
     window
         .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn browser_target_register(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: browser_controller::BrowserTargetRegistration,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    let window = app
+        .get_webview_window(webview.label())
+        .ok_or_else(|| "Browser target requires a local application window".to_string())?;
+    state.browser_controller.register(&window, payload)
+}
+
+#[tauri::command]
+fn browser_target_update(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: browser_controller::BrowserTargetUpdate,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    state.browser_controller.update(&app, webview.label(), payload)
+}
+
+#[tauri::command]
+fn browser_target_action(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: browser_controller::BrowserTargetAction,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    state.browser_controller.action(&app, webview.label(), payload)
+}
+
+#[tauri::command]
+fn browser_target_unregister(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    registration_id: String,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    state.browser_controller.unregister(&app, webview.label(), &registration_id)
+}
+
+#[tauri::command]
+fn browser_target_claim_open(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    request_id: String,
+) -> Result<bool, String> {
+    require_local_app_webview(&webview, &state)?;
+    let claimed = state.browser_controller.claim_open(webview.label(), &request_id);
+    if claimed {
+        crate::local_windows::focus(&app, webview.label());
+    }
+    Ok(claimed)
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
@@ -633,6 +711,10 @@ fn should_open_external_url(url: &Url) -> bool {
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
+    let state = webview.app_handle().state::<AppState>();
+    if let Some(allowed) = state.browser_controller.navigation_allowed(&window_label, url) {
+        return allowed;
+    }
     if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
         return true;
     }
@@ -1506,6 +1588,9 @@ fn main() {
         .manage(AppState {
             manager: CliProcessManager::new(),
             developer_mode,
+            browser_controller: browser_controller::BrowserController::new(
+                setup_scope.webview_data_directory.join("browser"),
+            ),
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
@@ -1613,7 +1698,12 @@ fn main() {
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
             developer_mode_get,
-            developer_mode_set
+            developer_mode_set,
+            browser_target_register,
+            browser_target_update,
+            browser_target_action,
+            browser_target_unregister,
+            browser_target_claim_open
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
@@ -1825,6 +1915,10 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app_handle
+                    .state::<AppState>()
+                    .browser_controller
+                    .remove_window(&app_handle, &label);
                 if let Ok(window_id) = identity::local_window_id(&label) {
                     app_handle
                         .state::<local_windows::LocalWindows>()

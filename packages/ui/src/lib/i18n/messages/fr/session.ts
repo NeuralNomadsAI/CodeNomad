@@ -96,6 +96,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "Ouvrir l'aperçu web",
   "sessionPreview.open.prompt": "Saisissez une URL locale ou de staging de confiance à prévisualiser dans cette session.",
   "sessionPreview.open.label": "URL de l'aperçu",
+  "sessionPreview.open.invalidUrl": "Saisissez une URL HTTP ou HTTPS valide.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Ouvrir l'aperçu",
   "sessionPreview.open.cancel": "Annuler",
