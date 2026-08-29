@@ -117,7 +117,7 @@ jobs:
           echo "Resolved version: ${{ steps.release_asset.outputs.version }}"
           echo "Resolved SHA-256: ${{ steps.release_asset.outputs.asset_sha256 }}"
 
-      - name: Validate fork configuration
+      - name: Validate fork write access
         env:
           GH_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
           EXPECTED_OWNER: ${{ env.WINGET_FORK_OWNER }}
@@ -137,6 +137,14 @@ jobs:
             echo "Configured fork must be $EXPECTED_OWNER/winget-pkgs forked from microsoft/winget-pkgs" >&2
             exit 1
           fi
+
+          default_branch="$(gh api "repos/$fork_name" --jq '.default_branch')"
+          default_sha="$(gh api "repos/$fork_name/git/ref/heads/$default_branch" --jq '.object.sha')"
+          test_branch="codenomad-winget-token-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh api --method POST "repos/$fork_name/git/refs" \
+            -f ref="refs/heads/$test_branch" \
+            -f sha="$default_sha" >/dev/null
+          gh api --method DELETE "repos/$fork_name/git/refs/heads/$test_branch" >/dev/null
 
           echo "Validated fork: $fork_name"
 

@@ -86,11 +86,19 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
+            args=(--title "$TAG" --generate-notes)
+
             if [ "${IS_PRERELEASE}" = "true" ]; then
-              gh release create "$TAG" --title "$TAG" --generate-notes --prerelease
+              args+=(--prerelease)
             else
-              gh release create "$TAG" --title "$TAG" --generate-notes
+              pr_body="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+                --jq 'map(select(.merged_at != null and .base.ref == "main")) | sort_by(.merged_at) | last | .body // ""')"
+              if [ -n "$pr_body" ]; then
+                args+=(--notes "$pr_body")
+              fi
             fi
+
+            gh release create "$TAG" "${args[@]}"
           fi
 
   build-and-upload:
