@@ -19,11 +19,13 @@ The host waits for the exact CDP page target, keeps bounded stdout/stderr logs, 
 
 ## Agent Feedback
 
-For CodeNomad-owned OpenCode locations, a small automation adapter exposes:
+The small automation adapter registers these definitions with OpenCode:
 
 - `codenomad.inspect`: accessibility tree, runtime diagnostics, target metadata, and recent launch logs.
 - `codenomad.act`: click, type, or restart using refs from the latest inspection.
 - `codenomad.screenshot`: PNG capture of the connected build.
+
+OpenCode plugin setup is currently one-shot, so definitions are visible in unrelated locations. Calls remain inert unless the bridge verifies that the current session location is owned by the active CodeNomad instance.
 
 The adapter is intentionally narrower than the removed V1 plugin runtime. It does not own OpenCode lifecycle or state, spawn one daemon per workspace, or expose autonomous browser previews.
 

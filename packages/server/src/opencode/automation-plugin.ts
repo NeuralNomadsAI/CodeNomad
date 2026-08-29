@@ -200,6 +200,7 @@ async function executeDeveloperTool(sessionID: string, command: DeveloperAction)
 }
 
 export async function setupAutomationPlugin(context: AutomationPluginContext): Promise<void> {
+  // ponytail: OpenCode plugin setup is one-shot; keep definitions global until it supports dynamic location-scoped registration. Every call is still ownership-gated.
   await context.skill.transform((draft) => {
     draft.add({
       id: SKILL_ID,
