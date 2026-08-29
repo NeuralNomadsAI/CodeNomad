@@ -71,6 +71,7 @@ fn main() {
             "browser_target_action",
             "browser_target_unregister",
             "browser_target_claim_open",
+            "browser_target_release_open",
         ]),
     ))
     .expect("build Tauri application and command ACL")

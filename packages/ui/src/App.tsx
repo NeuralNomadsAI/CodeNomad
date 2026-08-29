@@ -30,7 +30,7 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
-import { claimNativeBrowserOpen, onNativeBrowserOpen } from "./lib/native/browser"
+import { claimNativeBrowserOpen, onNativeBrowserOpen, releaseNativeBrowserOpen } from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
 import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
@@ -290,11 +290,22 @@ const App: Component = () => {
         return
       }
       if (!await claimNativeBrowserOpen(requestID)) return
-      const instance = owners[0]
-      setShowFolderSelection(false)
-      selectInstanceTab(instance.id)
-      setActiveSessionFromList(instance.id, sessionID)
-      await openSessionPreview(sessionID, url, instance.folder)
+      try {
+        const instance = owners[0]
+        await openSessionPreview(sessionID, url, instance.folder)
+        if (disposed) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
+        setShowFolderSelection(false)
+        selectInstanceTab(instance.id)
+        setActiveSessionFromList(instance.id, sessionID)
+      } catch (error) {
+        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
+        })
+        throw error
+      }
     }
     void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
       void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))

@@ -131,6 +131,28 @@ describe("BrowserController", () => {
     assert.equal(harness.controller.claimOpen(harness.owner, requestID), false)
   })
 
+  it("redistributes a missing-target open after the owner releases it", async () => {
+    const requests: string[] = []
+    let requestID = ""
+    const harness = createHarness((_sessionID, _url, id) => {
+      requestID = id
+      requests.push(id)
+    })
+    const pending = harness.controller.execute("session", { action: "open", url: "https://example.com/next" })
+    assert.equal(harness.controller.claimOpen(harness.owner, requestID), true)
+    assert.equal(harness.controller.releaseOpen(harness.owner, requestID), true)
+    assert.deepEqual(requests, [requestID, requestID])
+    assert.equal(harness.controller.claimOpen(harness.owner, requestID), false)
+    const replacementOwner = { id: 2, isDestroyed: () => false } as WebContents
+    assert.equal(harness.controller.claimOpen(replacementOwner, requestID), true)
+
+    const { guest, events } = createGuest({ id: 15, owner: harness.owner, loading: true })
+    harness.add(guest, "one")
+    events.emit("did-start-navigation", {}, "https://example.com/next", false, true)
+    events.emit("did-finish-load")
+    await pending
+  })
+
   it("does not publish snapshot refs when a frame navigates during capture", async () => {
     const harness = createHarness()
     let releaseTree!: () => void
@@ -155,6 +177,33 @@ describe("BrowserController", () => {
     await snapshot
 
     await assert.rejects(harness.controller.execute("session", { action: "click", ref: "e1" }), /take a new snapshot/)
+  })
+
+  it("does not dispatch a click after navigation invalidates its ref", async () => {
+    const harness = createHarness()
+    let inputEvents = 0
+    let guestEvents!: EventEmitter
+    const { guest, events } = createGuest({
+      id: 16,
+      owner: harness.owner,
+      sendCommand: async (method) => {
+        if (method === "Accessibility.getFullAXTree") {
+          return { nodes: [{ backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }] }
+        }
+        if (method === "DOM.getBoxModel") {
+          guestEvents.emit("did-frame-navigate")
+          return { model: { content: [0, 0, 10, 0, 10, 10, 0, 10] } }
+        }
+        if (method === "Input.dispatchMouseEvent") inputEvents += 1
+        return {}
+      },
+    })
+    guestEvents = events
+    harness.add(guest, "one")
+    await harness.controller.execute("session", { action: "snapshot" })
+
+    await assert.rejects(harness.controller.execute("session", { action: "click", ref: "e1" }), /take a new snapshot/)
+    assert.equal(inputEvents, 0)
   })
 
   it("reports ambiguity while waiting for a renderer target", async () => {

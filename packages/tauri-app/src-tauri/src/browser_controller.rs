@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -59,6 +59,14 @@ struct PageLoadExpectation {
     result: Option<Result<(), String>>,
 }
 
+#[derive(Clone)]
+struct OpenClaim {
+    session_id: String,
+    url: String,
+    owner: Option<String>,
+    failed_owners: HashSet<String>,
+}
+
 #[derive(Default)]
 struct Inner {
     registrations: HashMap<String, Registration>,
@@ -66,7 +74,7 @@ struct Inner {
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
-    open_claims: HashMap<String, Option<String>>,
+    open_claims: HashMap<String, OpenClaim>,
 }
 
 #[derive(Clone)]
@@ -312,22 +320,52 @@ impl BrowserController {
         let Some(claim) = inner.open_claims.get_mut(request_id) else {
             return false;
         };
-        if claim.as_deref().is_some_and(|owner| owner != window_label) {
+        if claim
+            .owner
+            .as_deref()
+            .is_some_and(|owner| owner != window_label)
+            || claim.failed_owners.contains(window_label)
+        {
             return false;
         }
-        *claim = Some(window_label.to_string());
+        claim.owner = Some(window_label.to_string());
         true
     }
 
+    pub(crate) fn release_open(
+        &self,
+        app: &AppHandle,
+        window_label: &str,
+        request_id: &str,
+    ) -> bool {
+        let Some(claim) = self.release_claim(window_label, request_id) else {
+            return false;
+        };
+        Self::emit_open_request(app, request_id, &claim);
+        true
+    }
+
+    fn release_claim(&self, window_label: &str, request_id: &str) -> Option<OpenClaim> {
+        let mut inner = self.inner.0.lock().ok()?;
+        let claim = inner.open_claims.get_mut(request_id)?;
+        if claim.owner.as_deref() != Some(window_label) {
+            return None;
+        }
+        claim.owner = None;
+        claim.failed_owners.insert(window_label.to_string());
+        Some(claim.clone())
+    }
+
     pub(crate) fn remove_window(&self, app: &AppHandle, window_label: &str) {
-        let labels = if let Ok(mut inner) = self.inner.0.lock() {
+        let (labels, retries) = if let Ok(mut inner) = self.inner.0.lock() {
             let ids = inner
                 .registrations
                 .values()
                 .filter(|registration| registration.window_label == window_label)
                 .map(|registration| registration.registration_id.clone())
                 .collect::<Vec<_>>();
-            ids.into_iter()
+            let labels = ids
+                .into_iter()
                 .filter_map(|id| {
                     inner.refs.remove(&id);
                     inner.navigation_versions.remove(&id);
@@ -337,14 +375,30 @@ impl BrowserController {
                         .remove(&id)
                         .map(|item| item.webview_label)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let retries = inner
+                .open_claims
+                .iter_mut()
+                .filter_map(|(request_id, claim)| {
+                    if claim.owner.as_deref() != Some(window_label) {
+                        return None;
+                    }
+                    claim.owner = None;
+                    claim.failed_owners.insert(window_label.to_string());
+                    Some((request_id.clone(), claim.clone()))
+                })
+                .collect::<Vec<_>>();
+            (labels, retries)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         for label in labels {
             if let Some(webview) = app.get_webview(&label) {
                 let _ = webview.close();
             }
+        }
+        for (request_id, claim) in retries {
+            Self::emit_open_request(app, &request_id, &claim);
         }
         self.inner.1.notify_all();
     }
@@ -486,16 +540,23 @@ impl BrowserController {
         let request_id = uuid::Uuid::new_v4().to_string();
         {
             let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-            inner.open_claims.insert(request_id.clone(), None);
+            inner.open_claims.insert(
+                request_id.clone(),
+                OpenClaim {
+                    session_id: session_id.to_string(),
+                    url: raw_url.to_string(),
+                    owner: None,
+                    failed_owners: HashSet::new(),
+                },
+            );
         }
-        for record in app.state::<crate::local_windows::LocalWindows>().records() {
-            if let Some(window) = app.get_webview_window(&record.label) {
-                let _ = window.emit(
-                    "browser-target:open",
-                    json!({ "sessionID": session_id, "url": raw_url, "requestID": request_id }),
-                );
-            }
-        }
+        let claim = OpenClaim {
+            session_id: session_id.to_string(),
+            url: raw_url.to_string(),
+            owner: None,
+            failed_owners: HashSet::new(),
+        };
+        Self::emit_open_request(app, &request_id, &claim);
         let result = (|| -> Result<Value, String> {
             let registration_deadline = deadline.min(Instant::now() + Duration::from_secs(10));
             let (inner, ready) = &*self.inner;
@@ -507,12 +568,18 @@ impl BrowserController {
                         let webview = app
                             .get_webview(&registration.webview_label)
                             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
-                        let sequence = self
-                            .page_load_expectation(&registration.registration_id, url.as_str())?;
-                        self.wait_for_page_load(&registration.registration_id, sequence, deadline)?;
-                        return Ok(
-                            json!({ "url": webview.url().map_err(|error| error.to_string())? }),
-                        );
+                        if let Some(sequence) =
+                            self.page_load_expectation(&registration.registration_id, url.as_str())?
+                        {
+                            self.wait_for_page_load(
+                                &registration.registration_id,
+                                sequence,
+                                deadline,
+                            )?;
+                            return Ok(
+                                json!({ "url": webview.url().map_err(|error| error.to_string())? }),
+                            );
+                        }
                     }
                     Err(error) if error == no_browser_target_error() => {}
                     Err(error) => return Err(error),
@@ -536,6 +603,17 @@ impl BrowserController {
             inner.open_claims.remove(&request_id);
         }
         result
+    }
+
+    fn emit_open_request(app: &AppHandle, request_id: &str, claim: &OpenClaim) {
+        for record in app.state::<crate::local_windows::LocalWindows>().records() {
+            if let Some(window) = app.get_webview_window(&record.label) {
+                let _ = window.emit(
+                    "browser-target:open",
+                    json!({ "sessionID": claim.session_id, "url": claim.url, "requestID": request_id }),
+                );
+            }
+        }
     }
 
     #[cfg(windows)]
@@ -840,14 +918,17 @@ impl BrowserController {
         Ok(sequence)
     }
 
-    fn page_load_expectation(&self, registration_id: &str, url: &str) -> Result<u64, String> {
+    fn page_load_expectation(
+        &self,
+        registration_id: &str,
+        url: &str,
+    ) -> Result<Option<u64>, String> {
         let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-        inner
+        Ok(inner
             .page_load_expectations
             .get(registration_id)
             .filter(|expectation| expectation.url == url)
-            .map(|expectation| expectation.sequence)
-            .ok_or_else(|| "Browser preview navigation is no longer current".to_string())
+            .map(|expectation| expectation.sequence))
     }
 
     fn mark_page_started(
@@ -1224,18 +1305,49 @@ mod tests {
     #[test]
     fn browser_open_claims_have_one_window_owner() {
         let controller = BrowserController::new(std::path::PathBuf::new());
+        controller.inner.0.lock().unwrap().open_claims.insert(
+            "request".to_string(),
+            OpenClaim {
+                session_id: "session".to_string(),
+                url: "https://example.com/".to_string(),
+                owner: None,
+                failed_owners: HashSet::new(),
+            },
+        );
+
+        assert!(controller.claim_open("window-1", "request"));
+        assert!(controller.claim_open("window-1", "request"));
+        assert!(!controller.claim_open("window-2", "request"));
+        assert!(controller.release_claim("window-1", "request").is_some());
+        assert!(!controller.claim_open("window-1", "request"));
+        assert!(controller.claim_open("window-2", "request"));
+        assert!(!controller.claim_open("window-1", "missing"));
+    }
+
+    #[test]
+    fn ignores_a_registration_loading_an_old_open_url() {
+        let controller = BrowserController::new(std::path::PathBuf::new());
         controller
             .inner
             .0
             .lock()
             .unwrap()
-            .open_claims
-            .insert("request".to_string(), None);
-
-        assert!(controller.claim_open("window-1", "request"));
-        assert!(controller.claim_open("window-1", "request"));
-        assert!(!controller.claim_open("window-2", "request"));
-        assert!(!controller.claim_open("window-1", "missing"));
+            .page_load_expectations
+            .insert(
+                "registration".to_string(),
+                PageLoadExpectation {
+                    sequence: 1,
+                    url: "https://old.example.com/".to_string(),
+                    navigation_id: None,
+                    result: None,
+                },
+            );
+        assert_eq!(
+            controller
+                .page_load_expectation("registration", "https://new.example.com/")
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
