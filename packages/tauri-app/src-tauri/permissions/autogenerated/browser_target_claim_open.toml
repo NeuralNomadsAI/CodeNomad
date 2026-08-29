@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-target-claim-open"
+description = "Enables the browser_target_claim_open command without any pre-configured scope."
+commands.allow = ["browser_target_claim_open"]
+
+[[permission]]
+identifier = "deny-browser-target-claim-open"
+description = "Denies the browser_target_claim_open command without any pre-configured scope."
+commands.deny = ["browser_target_claim_open"]

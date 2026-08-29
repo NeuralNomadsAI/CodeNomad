@@ -96,6 +96,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "打开网页预览",
   "sessionPreview.open.prompt": "输入可信的本地或预发布 URL，以便在此会话中预览。",
   "sessionPreview.open.label": "预览 URL",
+  "sessionPreview.open.invalidUrl": "请输入有效的 HTTP 或 HTTPS URL。",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "打开预览",
   "sessionPreview.open.cancel": "取消",

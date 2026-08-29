@@ -7,6 +7,7 @@ import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } f
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
+import type { BrowserController } from "./browser-controller"
 
 interface LocalSender {
   id: string
@@ -22,6 +23,7 @@ interface CliIPCDependencies {
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
   developerMode: DeveloperMode
+  browserController: BrowserController
 }
 
 interface DialogOpenRequest {
@@ -113,6 +115,30 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     local(event)
     if (typeof enabled !== "boolean") throw new Error("Developer Mode requires a boolean value")
     return dependencies.developerMode.setEnabled(enabled)
+  })
+  ipcMain.handle("browser-target:register", async (event, payload: { sessionId?: unknown; registrationId?: unknown; guestWebContentsId?: unknown }) => {
+    const { window } = local(event)
+    dependencies.browserController.register(window.webContents, payload as {
+      sessionId: string
+      registrationId: string
+      guestWebContentsId: number
+    })
+    return { ok: true }
+  })
+  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown) => {
+    const window = local(event).window
+    const claimed = dependencies.browserController.claimOpen(window.webContents, requestID)
+    if (claimed) {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }
+    return claimed
+  })
+  ipcMain.handle("browser-target:unregister", async (event, registrationId: unknown) => {
+    const { window } = local(event)
+    dependencies.browserController.unregister(window.webContents, registrationId)
+    return { ok: true }
   })
 
   ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {

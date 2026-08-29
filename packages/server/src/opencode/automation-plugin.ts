@@ -25,6 +25,14 @@ export type DeveloperAction =
   | { action: "restart" }
   | { action: "screenshot" }
 
+export type BrowserAction =
+  | { action: "open"; url: string }
+  | { action: "navigate"; url: string }
+  | { action: "snapshot" }
+  | { action: "click"; ref: string }
+  | { action: "type"; ref: string; text: string; clear?: boolean }
+  | { action: "screenshot" }
+
 export interface AutomationBridgeRegistration {
   version: 1
   url: string
@@ -239,6 +247,28 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   }
 }
 
+export function parseBrowserAction(input: unknown): BrowserAction {
+  if (!input || typeof input !== "object") throw new Error("Browser input must be an object")
+  const value = input as Record<string, unknown>
+  switch (value.action) {
+    case "open":
+    case "navigate":
+      if (typeof value.url !== "string") throw new Error(`${value.action} requires url`)
+      return { action: value.action, url: value.url }
+    case "snapshot":
+    case "screenshot":
+      return { action: value.action }
+    case "click":
+      if (typeof value.ref !== "string") throw new Error("click requires ref from the latest snapshot")
+      return { action: "click", ref: value.ref }
+    case "type":
+      if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
+      return { action: "type", ref: value.ref, text: value.text, clear: value.clear !== false }
+    default:
+      throw new Error("Unsupported browser action")
+  }
+}
+
 async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories()
@@ -377,12 +407,12 @@ function callWindowsBridge(
   })
 }
 
-function formatBridgeResult(resultValue: unknown) {
+function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (result?.image) {
     const content: Array<Record<string, string>> = [
-      { type: "text", text: "Captured the connected CodeNomad build." },
-      { type: "file", uri: `data:${result.image.mime};base64,${result.image.data}`, mime: result.image.mime, name: "codenomad.png" },
+      { type: "text", text: screenshot.text },
+      { type: "file", uri: `data:${result.image.mime};base64,${result.image.data}`, mime: result.image.mime, name: screenshot.name },
     ]
     return {
       content,
@@ -418,6 +448,46 @@ async function probeBridges(
     }
   }
   return found.slice(0, limit)
+}
+
+async function probeBrowserBridges(
+  active: DiscoveredBridgeRegistration[],
+  sessionID: string,
+  mode: "browser-claim" | "browser-probe",
+): Promise<DiscoveredBridgeRegistration[]> {
+  const found: DiscoveredBridgeRegistration[] = []
+  for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
+    const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
+      try {
+        return (await callBridge(registration, { mode, sessionID })).status === 200 ? registration : undefined
+      } catch {
+        return undefined
+      }
+    }))
+    for (const registration of batch) {
+      if (registration) found.push(registration)
+    }
+  }
+  return found.slice(0, 2)
+}
+
+async function executeBrowserTool(sessionID: string, input: unknown) {
+  const command = parseBrowserAction(input)
+  const mode = command.action === "open" ? "browser-claim" : "browser-probe"
+  const targets = await probeBrowserBridges(await registrations(), sessionID, mode)
+  if (targets.length === 0) {
+    throw new Error(command.action === "open"
+      ? "No local CodeNomad window owns this session"
+      : "No visible local CodeNomad browser is attached to this session")
+  }
+  if (targets.length > 1) {
+    throw new Error(command.action === "open"
+      ? "Multiple CodeNomad instances own this session"
+      : "Multiple CodeNomad windows expose a browser for this session")
+  }
+  const response = await callBridge(targets[0], { mode: "browser-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
+  if (response.status !== 200) throw new Error(response.body.error || `Browser command failed (${response.status})`)
+  return formatBridgeResult(response.body.result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
 }
 
 async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>, sessionID: string, command: DeveloperAction) {
@@ -512,6 +582,24 @@ export async function setupAutomationPlugin(context: AutomationPluginContext): P
       input: { type: "object", properties: {}, additionalProperties: false },
       options: { namespace: "codenomad", codemode: false },
       execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "screenshot" }),
+    })
+    draft.add({
+      name: "browser",
+      description: "Open and control the browser attached to the current CodeNomad session. Use open when the preview is closed, then snapshot before click or type.",
+      input: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["open", "navigate", "snapshot", "click", "type", "screenshot"] },
+          url: { type: "string", description: "HTTP(S) URL for open or navigate" },
+          ref: { type: "string", description: "Element ref from the latest snapshot" },
+          text: { type: "string", description: "Text for type" },
+          clear: { type: "boolean", description: "Clear the field before typing (default true)" },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+      options: { namespace: "codenomad", codemode: false },
+      execute: (input, tool) => executeBrowserTool(tool.sessionID, input),
     })
   })
 }

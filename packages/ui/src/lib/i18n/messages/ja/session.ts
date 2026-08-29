@@ -96,6 +96,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "Web プレビューを開く",
   "sessionPreview.open.prompt": "このセッションでプレビューする信頼済みのローカルまたはステージング URL を入力してください。",
   "sessionPreview.open.label": "プレビュー URL",
+  "sessionPreview.open.invalidUrl": "有効な HTTP または HTTPS URL を入力してください。",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "プレビューを開く",
   "sessionPreview.open.cancel": "キャンセル",

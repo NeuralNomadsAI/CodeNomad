@@ -75,6 +75,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         </div>
       </div>
       <BrowserFrame
+        sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
         initialAddress={props.preview.targetUrl}
@@ -92,6 +93,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
           back: t("sidecars.back"),
           refresh: t("sidecars.refresh"),
           path: t("sessionPreview.open.label"),
+          invalidUrl: t("sessionPreview.open.invalidUrl"),
           go: t("sidecars.go"),
           viewport: t("browserFrame.viewport"),
           viewportResponsive: t("browserFrame.viewport.responsive"),

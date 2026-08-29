@@ -1,7 +1,16 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Expand, MessageSquarePlus, Monitor, RefreshCw, RotateCw, Smartphone, Tablet } from "lucide-solid"
 import { Show, createEffect, createMemo, createSignal, onCleanup, untrack, type Component } from "solid-js"
 import { runtimeEnv } from "../lib/runtime-env"
-import { getBrowserFramePolicy } from "./browser-frame-security"
+import {
+  controlTauriBrowserTarget,
+  nativeBrowserHost,
+  onTauriBrowserNavigation,
+  physicalBrowserBounds,
+  registerTauriBrowserTarget,
+  unregisterTauriBrowserTarget,
+  updateTauriBrowserTarget,
+} from "../lib/native/browser"
+import { getBrowserFramePolicy, normalizeBrowserPreviewUrl } from "./browser-frame-security"
 
 export interface BrowserFrameElementTarget {
   pagePath: string
@@ -17,6 +26,7 @@ interface BrowserFrameLabels {
   back: string
   refresh: string
   path: string
+  invalidUrl?: string
   go: string
   commentMode?: string
   viewport?: string
@@ -49,6 +59,7 @@ const VIEWPORT_OPTIONS = [
 ]
 
 interface BrowserFrameProps {
+  sessionId?: string
   title: string
   initialUrl: string
   initialAddress?: string
@@ -103,12 +114,21 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [viewportMenuOpen, setViewportMenuOpen] = createSignal(false)
   const [navigating, setNavigating] = createSignal(false)
   const [highlight, setHighlight] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null)
+  const browserHost = nativeBrowserHost(runtimeEnv)
+  const nativeBrowserAvailable = Boolean(browserHost) && props.addressMode === "url"
+  const [nativeMode, setNativeMode] = createSignal(nativeBrowserAvailable)
+  const [nativeTarget, setNativeTarget] = createSignal(props.initialAddress ?? "")
   let iframeRef: HTMLIFrameElement | undefined
+  let webviewRef: ElectronBrowserWebviewElement | undefined
   let frameWrapRef: HTMLDivElement | undefined
   let cleanupFrameListeners: (() => void) | null = null
+  let cleanupWebviewListeners: (() => void) | null = null
+  let cleanupTauriTarget: (() => void) | null = null
+  let tauriRegistered = false
+  let browserRegistrationId = crypto.randomUUID()
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv)
-  const canComment = createMemo(() => (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
+  const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
@@ -267,12 +287,266 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     attachCommentListeners()
   }
 
+  const reportNativeError = (error: unknown) => props.onNavigationError?.(error)
+
+  const bindWebview = (webview: ElectronBrowserWebviewElement) => {
+    cleanupWebviewListeners?.()
+    webviewRef = webview
+    let active = true
+    let registered = false
+    let registeredSessionId = ""
+    let registering = false
+    let registrationFailures = 0
+    let registrationErrorReported = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const syncLocation = (event: Event) => {
+      const url = (event as Event & { url?: string }).url ?? webview.getURL()
+      if (!url) return
+      setPathInput(url)
+      props.onFrameLocation?.(url)
+    }
+    const reportLoadError = (event: Event) => {
+      const failure = event as Event & { errorCode?: number; errorDescription?: string }
+      if (failure.errorCode === -3) return
+      reportNativeError(new Error(failure.errorDescription || `Browser failed to load (${failure.errorCode ?? "unknown"})`))
+    }
+    const retryRegistration = (error: unknown) => {
+      registering = false
+      registrationFailures += 1
+      if (registrationFailures >= 5 && !registrationErrorReported) {
+        registrationErrorReported = true
+        reportNativeError(error)
+      }
+      if (active) retryTimer = setTimeout(syncRegistration, 100)
+    }
+    const syncRegistration = () => {
+      const rect = webview.getBoundingClientRect()
+      const visible = active && rect.width > 0 && rect.height > 0
+      const sessionId = props.sessionId
+      if (!sessionId || registering) return
+      if (registered && registeredSessionId !== sessionId) {
+        const previousId = browserRegistrationId
+        browserRegistrationId = crypto.randomUUID()
+        registering = true
+        registered = false
+        registeredSessionId = ""
+        void window.electronAPI?.unregisterBrowserTarget?.(previousId).catch(reportNativeError).finally(() => {
+          registering = false
+          if (active) syncRegistration()
+        })
+        return
+      }
+      if (visible === registered) return
+      if (!visible) {
+        if (retryTimer) clearTimeout(retryTimer)
+        retryTimer = undefined
+        if (registered) {
+          registering = true
+          void window.electronAPI?.unregisterBrowserTarget?.(browserRegistrationId).catch(reportNativeError).finally(() => {
+            registering = false
+            if (active) syncRegistration()
+          })
+        }
+        registered = false
+        registeredSessionId = ""
+        return
+      }
+      const register = window.electronAPI?.registerBrowserTarget
+      if (!register) return
+      registering = true
+      try {
+        void register({
+          sessionId,
+          registrationId: browserRegistrationId,
+          guestWebContentsId: webview.getWebContentsId(),
+        }).then(() => {
+          registering = false
+          registered = true
+          registeredSessionId = sessionId
+          registrationFailures = 0
+          registrationErrorReported = false
+          syncRegistration()
+        }).catch(retryRegistration)
+      } catch (error) {
+        retryRegistration(error)
+      }
+    }
+    const resizeObserver = new ResizeObserver(syncRegistration)
+    resizeObserver.observe(webview)
+    createEffect(syncRegistration)
+    webview.addEventListener("did-navigate", syncLocation)
+    webview.addEventListener("did-navigate-in-page", syncLocation)
+    webview.addEventListener("did-fail-load", reportLoadError)
+    webview.addEventListener("dom-ready", syncRegistration)
+    syncRegistration()
+    cleanupWebviewListeners = () => {
+      active = false
+      if (retryTimer) clearTimeout(retryTimer)
+      webview.removeEventListener("did-navigate", syncLocation)
+      webview.removeEventListener("did-navigate-in-page", syncLocation)
+      webview.removeEventListener("did-fail-load", reportLoadError)
+      webview.removeEventListener("dom-ready", syncRegistration)
+      resizeObserver.disconnect()
+      if (registered) void window.electronAPI?.unregisterBrowserTarget?.(browserRegistrationId).catch(reportNativeError)
+      if (webviewRef === webview) webviewRef = undefined
+    }
+  }
+
+  const bindTauriPlaceholder = (element: HTMLDivElement) => {
+    cleanupTauriTarget?.()
+    let active = true
+    let registering = false
+    let registered = false
+    let nativeVisible = false
+    let registeredSessionId = ""
+    let lastBounds = ""
+    let unlistenNavigation = () => {}
+    const bounds = () => {
+      if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
+      const rect = element.getBoundingClientRect()
+      const clip = frameWrapRef?.getBoundingClientRect() ?? rect
+      const left = Math.max(rect.left, clip.left, 0)
+      const top = Math.max(rect.top, clip.top, 0)
+      const right = Math.min(rect.right, clip.right, window.innerWidth)
+      const bottom = Math.min(rect.bottom, clip.bottom, window.innerHeight)
+      if (right <= left || bottom <= top) return null
+      return physicalBrowserBounds({ x: left, y: top, width: right - left, height: bottom - top }, window.devicePixelRatio)
+    }
+    const syncBounds = () => {
+      const sessionId = props.sessionId
+      if (!active || registering || !sessionId) return
+      const next = bounds()
+      if (!next) {
+        lastBounds = ""
+        if (registered && nativeVisible) {
+          registering = true
+          void updateTauriBrowserTarget(browserRegistrationId, undefined, false).then(() => {
+            nativeVisible = false
+          }).catch(reportNativeError).finally(() => {
+            registering = false
+            if (active) syncBounds()
+          })
+        }
+        return
+      }
+      if (registered && registeredSessionId !== sessionId) {
+        const previousId = browserRegistrationId
+        browserRegistrationId = crypto.randomUUID()
+        registering = true
+        unlistenNavigation()
+        unlistenNavigation = () => {}
+        registered = false
+        nativeVisible = false
+        registeredSessionId = ""
+        tauriRegistered = false
+        void unregisterTauriBrowserTarget(previousId).catch(reportNativeError).finally(() => {
+          registering = false
+          if (active) syncBounds()
+        })
+        return
+      }
+      const serialized = JSON.stringify(next)
+      if (registered && nativeVisible && serialized === lastBounds) return
+      if (registered) {
+        registering = true
+        void updateTauriBrowserTarget(browserRegistrationId, next, true).then(() => {
+          lastBounds = serialized
+          nativeVisible = true
+        }).catch((error) => {
+          lastBounds = ""
+          reportNativeError(error)
+        }).finally(() => {
+          registering = false
+          if (active) syncBounds()
+        })
+        return
+      }
+      registering = true
+      const target = nativeTarget()
+      const registrationId = browserRegistrationId
+      void onTauriBrowserNavigation(registrationId, (url) => {
+        setNativeTarget(url)
+        setPathInput(url)
+        props.onFrameLocation?.(url)
+      }).then(async (unlisten) => {
+        if (!active) {
+          unlisten()
+          return
+        }
+        unlistenNavigation()
+        unlistenNavigation = unlisten
+        await registerTauriBrowserTarget({
+          sessionId,
+          registrationId,
+          url: target,
+          bounds: next,
+        })
+        registeredSessionId = sessionId
+        lastBounds = serialized
+        registering = false
+        if (!active) {
+          await unregisterTauriBrowserTarget(registrationId)
+          return
+        }
+        registered = true
+        nativeVisible = true
+        tauriRegistered = true
+        if (nativeTarget() !== target) {
+          await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
+        }
+        syncBounds()
+      }).catch((error) => {
+        registering = false
+        lastBounds = ""
+        reportNativeError(error)
+      })
+    }
+    const resizeObserver = new ResizeObserver(syncBounds)
+    const overlayObserver = new MutationObserver(syncBounds)
+    resizeObserver.observe(element)
+    overlayObserver.observe(document.body, { attributes: true, childList: true, subtree: true })
+    createEffect(syncBounds)
+    window.addEventListener("resize", syncBounds)
+    window.addEventListener("scroll", syncBounds, true)
+    queueMicrotask(syncBounds)
+    cleanupTauriTarget = () => {
+      active = false
+      resizeObserver.disconnect()
+      overlayObserver.disconnect()
+      window.removeEventListener("resize", syncBounds)
+      window.removeEventListener("scroll", syncBounds, true)
+      unlistenNavigation()
+      if (registered) void unregisterTauriBrowserTarget(browserRegistrationId).catch(reportNativeError)
+      registered = false
+      nativeVisible = false
+      tauriRegistered = false
+    }
+  }
+
   createEffect(() => {
     const initialUrl = props.initialUrl
+    const initialAddress = props.initialAddress
     untrack(() => {
       setFrameSrc(initialUrl)
-      setPathInput(props.initialAddress ?? getEditablePathFromUrl(initialUrl))
+      const address = initialAddress ?? getEditablePathFromUrl(initialUrl)
+      setPathInput(address)
+      if (nativeMode() && webviewRef?.getURL() === address) return
+      const previousTarget = nativeTarget()
+      setNativeTarget(address)
+      const nextNativeMode = nativeBrowserAvailable
+      if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== address) {
+        void controlTauriBrowserTarget(browserRegistrationId, "navigate", address).catch(reportNativeError)
+      }
+      setNativeMode(nextNativeMode)
     })
+  })
+
+  createEffect(() => {
+    if (nativeMode()) return
+    cleanupWebviewListeners?.()
+    cleanupWebviewListeners = null
+    cleanupTauriTarget?.()
+    cleanupTauriTarget = null
   })
 
   createEffect(() => {
@@ -280,11 +554,20 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     attachCommentListeners()
   })
 
-  onCleanup(() => cleanupFrameListeners?.())
+  onCleanup(() => {
+    cleanupFrameListeners?.()
+    cleanupWebviewListeners?.()
+    cleanupTauriTarget?.()
+  })
 
   const handleBack = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
+    if (nativeMode()) {
+      if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError)
+      else if (webviewRef?.canGoBack()) webviewRef.goBack()
+      return
+    }
     try {
       iframeRef?.contentWindow?.history.go(-1)
     } catch {
@@ -293,6 +576,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const handleRefresh = () => {
+    if (nativeMode()) {
+      if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError)
+      else webviewRef?.reload()
+      return
+    }
     try {
       iframeRef?.contentWindow?.location.reload()
       return
@@ -307,10 +595,31 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     event?.preventDefault()
     if (props.addressMode === "url" && props.onNavigate) {
       if (navigating()) return
+      if (nativeBrowserAvailable) {
+        try {
+          const target = normalizeBrowserPreviewUrl(pathInput())
+          setPathInput(target)
+          setNativeTarget(target)
+          if (nativeMode() && browserHost === "tauri") {
+            void controlTauriBrowserTarget(browserRegistrationId, "navigate", target).catch(reportNativeError)
+          } else if (nativeMode() && webviewRef) void webviewRef.loadURL(target).catch(reportNativeError)
+          else {
+            setNativeTarget(target)
+            setNativeMode(true)
+          }
+          props.onFrameLocation?.(target)
+        } catch {
+          reportNativeError(new Error(props.labels.invalidUrl ?? props.labels.path))
+        }
+        return
+      }
+      const restoreNative = nativeMode()
+      setNativeMode(false)
       setNavigating(true)
       try {
         setFrameSrc(await props.onNavigate(pathInput()))
       } catch (error) {
+        setNativeMode(restoreNative)
         props.onNavigationError?.(error)
       } finally {
         setNavigating(false)
@@ -419,20 +728,49 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             ? "absolute inset-0 overflow-hidden bg-surface"
             : "absolute inset-0 overflow-auto bg-surface-secondary p-4"}
         >
-          <iframe
-            ref={iframeRef}
-            src={frameSrc()}
-            title={props.title}
-            class={isResponsiveViewport() ? "block border-0 bg-surface" : "block border-0 bg-surface shadow-xl"}
-            style={{
-              width: viewport().width ? `${viewport().width}px` : "100%",
-              height: viewport().height ? `${viewport().height}px` : "100%",
-              margin: viewport().width ? "0 auto" : "0",
-            }}
-            referrerPolicy="same-origin"
-            sandbox={framePolicy.sandbox}
-            onLoad={syncPathInputFromFrame}
-          />
+          <Show when={!nativeMode()}>
+            <iframe
+              ref={iframeRef}
+              src={frameSrc()}
+              title={props.title}
+              class={isResponsiveViewport() ? "block border-0 bg-surface" : "block border-0 bg-surface shadow-xl"}
+              style={{
+                width: viewport().width ? `${viewport().width}px` : "100%",
+                height: viewport().height ? `${viewport().height}px` : "100%",
+                margin: viewport().width ? "0 auto" : "0",
+              }}
+              referrerPolicy="same-origin"
+              sandbox={framePolicy.sandbox}
+              onLoad={syncPathInputFromFrame}
+            />
+          </Show>
+          <Show when={nativeMode() && browserHost === "electron"}>
+            {/* Electron's shadow iframe needs its :host display:flex to fill the webview height. */}
+            <webview
+              ref={bindWebview}
+              src={nativeTarget()}
+              partition={`persist:codenomad-browser-${props.sessionId}`}
+              allowpopups
+              class={isResponsiveViewport() ? "border-0 bg-surface" : "border-0 bg-surface shadow-xl"}
+              style={{
+                width: viewport().width ? `${viewport().width}px` : "100%",
+                height: viewport().height ? `${viewport().height}px` : "100%",
+                margin: viewport().width ? "0 auto" : "0",
+              }}
+            />
+          </Show>
+          <Show when={nativeMode() && browserHost === "tauri"}>
+            <div
+              ref={bindTauriPlaceholder}
+              title={props.title}
+              class={isResponsiveViewport() ? "bg-surface" : "bg-surface shadow-xl"}
+              style={{
+                width: viewport().width ? `${viewport().width}px` : "100%",
+                height: viewport().height ? `${viewport().height}px` : "100%",
+                margin: viewport().width ? "0 auto" : "0",
+              }}
+            />
+          </Show>
         </div>
         <Show when={props.commentMode && highlight()}>
           {(rect) => (

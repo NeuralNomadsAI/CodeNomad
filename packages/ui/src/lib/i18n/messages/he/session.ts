@@ -96,6 +96,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "פתח תצוגה מקדימה של אתר",
   "sessionPreview.open.prompt": "הזן כתובת URL מקומית או סביבת staging שאתה נותן בה אמון לתצוגה מקדימה בסשן הזה.",
   "sessionPreview.open.label": "כתובת URL לתצוגה מקדימה",
+  "sessionPreview.open.invalidUrl": "הזן כתובת URL תקינה מסוג HTTP או HTTPS.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "פתח תצוגה מקדימה",
   "sessionPreview.open.cancel": "ביטול",
