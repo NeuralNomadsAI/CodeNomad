@@ -127,12 +127,13 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
               windowSeconds: seconds,
               resetAt: toTimestamp(limit.nextResetTime),
             })
-          } else if (limit) {
+          } else if (limit && limit.type === "CREDIT_LIMIT") {
             const usedPercent = toNumber(limit.percentage)
             const remaining = toNumber(limit.remaining)
             const allowance = toNumber(limit.usage)
             if (usedPercent === null && (remaining === null || allowance === null)) continue
-            const seconds = limit.unit === 3 && number ? number * 3600 : null
+            const unitSeconds = limit.unit === 3 ? 3_600 : limit.unit === 6 ? 604_800 : null
+            const seconds = unitSeconds !== null && number ? unitSeconds * number : null
             windows[resolveWindowLabel(seconds)] = toUsageWindow({
               usedPercent: usedPercent ?? (allowance !== null && allowance > 0 && remaining !== null ? ((allowance - remaining) / allowance) * 100 : null),
               windowSeconds: seconds,

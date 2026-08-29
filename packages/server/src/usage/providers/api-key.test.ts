@@ -77,8 +77,9 @@ test("parses credit-based limits into usage windows", async () => {
   assert.equal(windows["5h"]?.usedPercent, 7)
   assert.equal(windows["5h"]?.windowSeconds, 18_000)
   assert.equal(windows["5h"]?.resetAt, CREDIT_RESET_AT)
-  assert.equal(windows["usage"]?.usedPercent, 1)
-  assert.equal("valueLabel" in (windows["usage"] ?? {}), false)
+  assert.equal(windows["weekly"]?.usedPercent, 1)
+  assert.equal(windows["weekly"]?.windowSeconds, 604_800)
+  assert.equal("valueLabel" in (windows["weekly"] ?? {}), false)
 })
 
 test("derives usedPercent when the credit payload omits percentage", async () => {
@@ -89,18 +90,20 @@ test("derives usedPercent when the credit payload omits percentage", async () =>
     () => zai.fetchQuota(),
   )
 
-  const window = result.usage!.windows["usage"]
+  const window = result.usage!.windows["weekly"]
   // (2000 - 1842) / 2000
   assert.ok(Math.abs((window?.usedPercent ?? 0) - 7.9) < 0.001)
+  assert.equal(window?.windowSeconds, 604_800)
 })
 
-test("coerces string quota fields and skips unusable entries without throwing", async () => {
+test("coerces string quota fields and skips unusable or unknown entries without throwing", async () => {
   const { result } = await withFetchStub(
     {
       data: {
         limits: [
           null,
           { type: "UNKNOWN_LIMIT" },
+          { type: "PROMO_LIMIT", percentage: 55, remaining: 10, usage: 20 },
           { type: "CREDIT_LIMIT", unit: 6, number: 1, usage: "10000", remaining: "9800", percentage: "2", nextResetTime: TOKENS_RESET_AT },
         ],
       },
@@ -111,7 +114,7 @@ test("coerces string quota fields and skips unusable entries without throwing", 
   assert.equal(result.ok, true)
   const windows = result.usage!.windows
   assert.equal(Object.keys(windows).length, 1)
-  assert.equal(windows["usage"]?.usedPercent, 2)
+  assert.equal(windows["weekly"]?.usedPercent, 2)
 })
 
 test("keeps legacy token and time windows intact for the bigmodel endpoint", async () => {
