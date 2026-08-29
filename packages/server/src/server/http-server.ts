@@ -45,6 +45,9 @@ import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaS
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
+import type { NativeParent } from "../native-parent"
+import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
+import { DeveloperCdp } from "../developer-cdp"
 
 interface HttpServerDeps {
   bindHost: string
@@ -69,6 +72,8 @@ interface HttpServerDeps {
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
+  nativeParent: NativeParent
+  automationBridgeToken: string
 }
 
 interface HttpServerStartResult {
@@ -240,7 +245,11 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete || isPreviewCapability) {
+    const isAutomationBridge = isAutomationPluginRequest(request, {
+      authManager: deps.authManager,
+      bridgeToken: deps.automationBridgeToken,
+    })
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete || isPreviewCapability || isAutomationBridge) {
       done()
       return
     }
@@ -310,6 +319,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
+  const developerCdp = new DeveloperCdp()
+  registerAutomationPluginRoute(app, {
+    authManager: deps.authManager,
+    bridgeToken: deps.automationBridgeToken,
+    nativeParent: deps.nativeParent,
+    developerCdp,
+    workspaceManager: deps.workspaceManager,
+  })
+  app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app)
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })

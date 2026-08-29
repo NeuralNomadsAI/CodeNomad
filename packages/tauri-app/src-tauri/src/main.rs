@@ -4,12 +4,14 @@
 mod cert_manager;
 mod cli_manager;
 mod client_state;
+mod developer_run;
 mod identity;
 mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod local_windows;
 mod managed_node;
+mod native_request;
 mod shutdown;
 mod windows_update;
 mod workspace_open;
@@ -58,6 +60,7 @@ const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
 
 pub struct AppState {
     pub manager: CliProcessManager,
+    pub(crate) developer_run_manager: developer_run::DeveloperRunManager,
     pub wake_lock: Mutex<WakeLockState>,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
     remote_navigation_generation: AtomicU64,
@@ -201,6 +204,44 @@ pub(crate) fn require_local_app_window(
     }
 }
 
+fn developer_run_status(status: &developer_run::DeveloperRunStatus) -> serde_json::Value {
+    json!({
+        "state": status.state,
+        "runId": status.run_id,
+        "target": status.target,
+        "executable": status.executable_path,
+        "profilePath": status.profile_path,
+        "pid": status.pid,
+        "cdpUrl": status.port.map(|port| format!("http://127.0.0.1:{port}")),
+        "targetUrl": status.page_url,
+        "targetId": status.target_id,
+        "targetTitle": status.target_title,
+        "error": status.error,
+    })
+}
+
+fn developer_run_snapshot(manager: &developer_run::DeveloperRunManager) -> serde_json::Value {
+    json!({ "status": developer_run_status(&manager.status()), "logs": manager.logs() })
+}
+
+pub(crate) fn handle_native_request(
+    app: &AppHandle,
+    method: &str,
+    _params: Option<serde_json::Value>,
+    _deadline: u64,
+) -> Result<serde_json::Value, String> {
+    let state = app.state::<AppState>();
+    match method {
+        "developer.status" => Ok(developer_run_snapshot(&state.developer_run_manager)),
+        "developer.restart" => state
+            .developer_run_manager
+            .restart()
+            .map(|status| developer_run_status(&status))
+            .map_err(|error| error.to_string()),
+        _ => Err(format!("Unsupported native developer request: {method}")),
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn profile_identifier(identity: &str) -> [u8; 16] {
     let digest = Sha256::digest(identity.as_bytes());
@@ -281,6 +322,54 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
         return false;
     };
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeveloperRunStartInput {
+    target: developer_run::DeveloperRunTarget,
+    executable: String,
+}
+
+#[tauri::command]
+fn developer_run_get(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    require_local_app_window(&window, &state)?;
+    Ok(developer_run_snapshot(&state.developer_run_manager))
+}
+
+#[tauri::command]
+async fn developer_run_start(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    input: DeveloperRunStartInput,
+) -> Result<serde_json::Value, String> {
+    require_local_app_window(&window, &state)?;
+    if input.executable.len() > 32_768 {
+        return Err("Developer executable path is too long".into());
+    }
+    let manager = state.developer_run_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.start(input.target, input.executable))
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|status| developer_run_status(&status))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn developer_run_stop(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
+    let manager = state.developer_run_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.stop())
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
@@ -1292,6 +1381,7 @@ fn main() {
         .manage(local_windows::LocalWindows::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
+            developer_run_manager: developer_run::DeveloperRunManager::new(),
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
@@ -1384,7 +1474,10 @@ fn main() {
             local_windows::desktop_launch_acknowledge_folder,
             windows_update::install_stable_update,
             workspace_open::open_workspace_target,
-            set_workspace_menu_enabled
+            set_workspace_menu_enabled,
+            developer_run_get,
+            developer_run_start,
+            developer_run_stop
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {

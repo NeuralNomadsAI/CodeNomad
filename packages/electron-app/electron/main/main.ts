@@ -1,9 +1,11 @@
+import "./process-output"
 import { app, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import { DeveloperRunManager, handleNativeDeveloperRunRequest } from "./developer-run-manager"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -62,8 +64,9 @@ function runPrimary(firstIntent: LaunchIntent) {
   const clientState = new ClientStateManager(app.getPath("userData"), undefined, storageScope.clientStateElectionDirectory
     ? { crossHostElectionDirectory: storageScope.clientStateElectionDirectory }
     : undefined)
-  const cli = new CliProcessManager()
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
+  const developerRunManager = new DeveloperRunManager()
+  const cli = new CliProcessManager((method) => handleNativeDeveloperRunRequest(developerRunManager, method))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
@@ -88,6 +91,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
+    stopDeveloperRun: () => developerRunManager.stop(),
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -219,6 +223,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveLocal: (sender) => registry.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
+    developerRunManager,
   })
   lifecycle.registerAppEvents()
   app.on("second-instance", (_event, argv, workingDirectory) => {
@@ -252,6 +257,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     }
   })
   cli.on("error", (error) => registry.fanout("cli:error", { message: error.message }))
+  developerRunManager.on("status", (status) => registry.fanout("developer-run:status", status))
+  developerRunManager.on("log", (entry) => registry.fanout("developer-run:log", entry))
 
   app.whenReady().then(async () => {
     try { app.setAppUserModelId("ai.neuralnomads.codenomad.client") } catch {}

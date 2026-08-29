@@ -20,6 +20,7 @@ import {
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
+import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -148,6 +149,10 @@ export class CliProcessManager extends EventEmitter {
   private shutdownStatus: "complete" | "incomplete" | null = null
   private lifecycle = new SerializedLifecycle()
 
+  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number) => Promise<unknown>) {
+    super()
+  }
+
   start(options: StartOptions): Promise<CliStatus> {
     return this.lifecycle.enqueue(() => this.startNow(options))
   }
@@ -204,6 +209,7 @@ export class CliProcessManager extends EventEmitter {
 
     const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
     env.ELECTRON_RUN_AS_NODE = "1"
+    env.CODENOMAD_NATIVE_PARENT = "1"
 
     const spawnDetails = supportsUserShell()
       ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
@@ -228,15 +234,18 @@ export class CliProcessManager extends EventEmitter {
 
     const stdout = child.stdout as NodeJS.ReadableStream | undefined
     const stderr = child.stderr as NodeJS.ReadableStream | undefined
+    child.stdin?.on("error", (error) => {
+      if (!isClosedPipeError(error)) console.warn("[cli] stdin error", error)
+    })
 
     stdout?.on("data", (data: Buffer) => {
       if (this.child !== child) return
-      this.handleStream(data.toString(), "stdout")
+      this.handleStream(data.toString(), "stdout", child)
     })
 
     stderr?.on("data", (data: Buffer) => {
       if (this.child !== child) return
-      this.handleStream(data.toString(), "stderr")
+      this.handleStream(data.toString(), "stderr", child)
     })
 
     child.on("error", (error) => {
@@ -414,17 +423,17 @@ export class CliProcessManager extends EventEmitter {
     this.emit("error", new Error("CLI did not start in time"))
   }
 
-  private handleStream(chunk: string, stream: "stdout" | "stderr") {
+  private handleStream(chunk: string, stream: "stdout" | "stderr", child: ChildProcess) {
     if (stream === "stdout") {
       this.stdoutBuffer += chunk
-      this.processBuffer("stdout")
+      this.processBuffer("stdout", child)
     } else {
       this.stderrBuffer += chunk
-      this.processBuffer("stderr")
+      this.processBuffer("stderr", child)
     }
   }
 
-  private processBuffer(stream: "stdout" | "stderr") {
+  private processBuffer(stream: "stdout" | "stderr", child: ChildProcess) {
     const buffer = stream === "stdout" ? this.stdoutBuffer : this.stderrBuffer
     const lines = buffer.split("\n")
     const trailing = lines.pop() ?? ""
@@ -438,6 +447,19 @@ export class CliProcessManager extends EventEmitter {
     for (const line of lines) {
       const trimmed = line.trim()
       if (!trimmed) continue
+
+      if (stream === "stdout" && trimmed.startsWith("CODENOMAD_NATIVE_REQUEST:")) {
+        const request = parseNativeRequest(trimmed)
+        if (request) {
+          void dispatchNativeRequest(
+            child,
+            request,
+            this.nativeRequestHandler ?? (async (method) => { throw new Error(`Unsupported native method: ${method}`) }),
+            () => this.child === child && !this.requestedStop,
+          )
+        }
+        continue
+      }
 
       if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
         if (this.shutdownStatus === "incomplete") continue

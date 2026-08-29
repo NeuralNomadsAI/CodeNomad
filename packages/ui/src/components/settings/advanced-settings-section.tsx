@@ -4,6 +4,8 @@ import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
 import { useConfig } from "../../stores/preferences"
 import EnvironmentVariablesEditor from "../environment-variables-editor"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
+import { DeveloperAutomationCard } from "./developer-automation-card"
+import { supportsNativeDialogsInCurrentWindow } from "../../lib/native/native-functions"
 
 export const AdvancedSettingsSection: Component = () => {
   const { t } = useI18n()
@@ -19,6 +21,8 @@ export const AdvancedSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack">
+      {supportsNativeDialogsInCurrentWindow() && <DeveloperAutomationCard />}
+
       <div class="settings-card">
         <div class="settings-card-header">
           <div>

@@ -11,7 +11,7 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` package.
+There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow CodeNomad-owned Developer Automation adapter is documented in [DEVELOPER_AUTOMATION.md](DEVELOPER_AUTOMATION.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
 
 ## Shared Service And Locations
 
@@ -44,6 +44,7 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/workspaces/:id/worktrees/:slug/git-status|git-diff|git-stage|git-unstage|git-commit`
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
+- `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Upstream additions require an explicit proxy review and are not available automatically.
 
@@ -70,8 +71,9 @@ Current native events include session lifecycle/output events (`session.created`
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
+| Developer Automation launch and CDP feedback | CodeNomad desktop hosts and authenticated automation adapter |
 
-Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; Developer Automation is the only reviewed adapter exception.
 
 ## Persistence
 
@@ -86,6 +88,7 @@ CodeNomad configuration resolves through `packages/server/src/config/location.ts
 - `packages/server/src/workspaces/instance-events.ts`
 - `packages/server/src/workspaces/git-mutations.ts`
 - `packages/server/src/permissions/auto-accept-manager.ts`
+- `packages/server/src/opencode/automation-plugin.ts`
 - `packages/ui/src/lib/sdk-manager.ts`
 - `packages/ui/src/lib/api-client.ts`
 - `packages/ui/src/stores/session-api.ts`

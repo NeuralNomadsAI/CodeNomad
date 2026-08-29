@@ -97,7 +97,12 @@ impl ShutdownCoordinator {
 
     fn cancel_local_close(&self, label: &str, generation: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.local_closes.get(label).map(|pending| pending.generation) != Some(generation) {
+        if state
+            .local_closes
+            .get(label)
+            .map(|pending| pending.generation)
+            != Some(generation)
+        {
             return false;
         }
         state.local_closes.remove(label);
@@ -498,10 +503,7 @@ pub(crate) fn request(app: AppHandle) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        match app
-            .state::<ShutdownCoordinator>()
-            .expire_pending_shutdown()
-        {
+        match app.state::<ShutdownCoordinator>().expire_pending_shutdown() {
             PendingShutdownTimeoutAction::Cancel(cancellations) => {
                 emit_flush_cancellations(&app, cancellations)
             }
@@ -533,7 +535,16 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         client_state::capture_and_flush_all_windows(&app);
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                state.manager.stop().map_err(|error| error.to_string())
+                state
+                    .developer_run_manager
+                    .stop()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|_| {
+                retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                    state.manager.stop().map_err(|error| error.to_string())
+                })
             })
         } else {
             Ok(())
@@ -703,12 +714,19 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
             cleanup_app
                 .try_state::<AppState>()
                 .map(|state| {
-                    retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                        state
-                            .manager
-                            .stop_until(session_deadline)
-                            .map_err(|error| error.to_string())
-                    })
+                    state
+                        .developer_run_manager
+                        .stop()
+                        .map(|_| ())
+                        .map_err(|error| error.to_string())
+                        .and_then(|_| {
+                            retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                                state
+                                    .manager
+                                    .stop_until(session_deadline)
+                                    .map_err(|error| error.to_string())
+                            })
+                        })
                 })
                 .unwrap_or(Ok(()))
         };

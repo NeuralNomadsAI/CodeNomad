@@ -12,12 +12,13 @@ description: |
 - Server: read `references/server-conventions.md` and `references/feature-traces.md`.
 - OpenCode: read the three `sdk-*.md` references before changing client calls or service lifecycle.
 - Desktop: read `references/desktop-conventions.md`.
+- Developer Automation: read `../../../dev-docs/DEVELOPER_AUTOMATION.md`.
 
 ## Native OpenCode V2 Baseline
 
 - The only OpenCode client dependency is the experimental `@opencode-ai/client@beta` protocol. Server and UI follow that dependency together; refresh the client lock before API audits or release validation. The runtime CLI is managed independently and startup has no exact version gate. The public `@opencode-ai/sdk` describes an alternative embedded host.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
-- There is no `packages/opencode-plugin/`. Do not restore plugin tools, plugin routes, or plugin packaging.
+- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The reviewed Developer Automation adapter is the sole narrow exception; see `dev-docs/DEVELOPER_AUTOMATION.md`.
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
 - OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. Question request/reply/reject routes are compatibility-only; new interruption flows use `client.form.*`. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
@@ -46,6 +47,7 @@ description: |
 - Git mutations: `packages/server/src/workspaces/git-mutations.ts`
 - Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
 - Desktop hosts: `packages/electron-app/electron/main/`, `packages/electron-app/electron/preload/index.cjs`, `packages/tauri-app/src-tauri/src/`
+- Developer Automation: `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/developer-cdp.ts`
 
 ## Rules
 
@@ -65,7 +67,7 @@ description: |
 | Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
 | One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
-| Reintroducing `packages/opencode-plugin` or server plugin/background-process paths | Native session Shell/instructions, background `shell.*`, and separate interactive `pty.*` management |
+| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; the reviewed Developer Automation adapter only for desktop feedback |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 

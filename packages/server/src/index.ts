@@ -34,6 +34,8 @@ import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShut
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { NativeParent } from "./native-parent"
+import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, installAutomationPlugin, publishAutomationBridge } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
 
@@ -98,6 +100,7 @@ interface ShutdownStdinSource {
 export function installShutdownStdinHandler(
   source: ShutdownStdinSource,
   shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+  handleLine?: (line: string) => boolean,
 ): void {
   let buffer = ""
   let requested = false
@@ -106,7 +109,12 @@ export function installShutdownStdinHandler(
     buffer += chunk.toString()
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ""
-    if (!lines.some((line) => line.trim() === STDIN_SHUTDOWN_COMMAND)) return
+    let shutdownRequested = false
+    for (const line of lines) {
+      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+      else handleLine?.(line)
+    }
+    if (!shutdownRequested) return
 
     requested = true
     source.off?.("data", onData)
@@ -369,6 +377,8 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
   })
+  const nativeParent = new NativeParent()
+  const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
     unrestricted: options.unrestrictedRoot,
@@ -486,6 +496,8 @@ async function main() {
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -512,6 +524,8 @@ async function main() {
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -566,6 +580,19 @@ async function main() {
   serverMeta.host = options.host
   serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
 
+  let removeAutomationBridge: (() => Promise<void>) | undefined
+  if (nativeParent.available) {
+    try {
+      await installAutomationPlugin()
+      removeAutomationBridge = await publishAutomationBridge({
+        ...automationBridge,
+        url: new URL(AUTOMATION_BRIDGE_PATH, localUrl).href,
+      })
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to install the OpenCode automation plugin")
+    }
+  }
+
   if (serverMeta.remotePort && remoteUrl) {
     serverMeta.addresses = remoteAddresses.length
       ? remoteAddresses
@@ -609,6 +636,8 @@ async function main() {
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
+            nativeParent.close()
+            await removeAutomationBridge?.()
             yoloManager.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
@@ -626,7 +655,7 @@ async function main() {
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown)
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {

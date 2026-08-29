@@ -429,6 +429,24 @@
           "markdownDescription": "Enables the desktop_launch_ready command without any pre-configured scope."
         },
         {
+          "description": "Enables the developer_run_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-developer-run-get",
+          "markdownDescription": "Enables the developer_run_get command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the developer_run_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-developer-run-start",
+          "markdownDescription": "Enables the developer_run_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the developer_run_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-developer-run-stop",
+          "markdownDescription": "Enables the developer_run_stop command without any pre-configured scope."
+        },
+        {
           "description": "Enables the install_stable_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-install-stable-update",
@@ -553,6 +571,24 @@
           "type": "string",
           "const": "deny-desktop-launch-ready",
           "markdownDescription": "Denies the desktop_launch_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the developer_run_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-developer-run-get",
+          "markdownDescription": "Denies the developer_run_get command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the developer_run_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-developer-run-start",
+          "markdownDescription": "Denies the developer_run_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the developer_run_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-developer-run-stop",
+          "markdownDescription": "Denies the developer_run_stop command without any pre-configured scope."
         },
         {
           "description": "Denies the install_stable_update command without any pre-configured scope.",

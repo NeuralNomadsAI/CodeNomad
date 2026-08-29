@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-developer-run-stop"
+description = "Enables the developer_run_stop command without any pre-configured scope."
+commands.allow = ["developer_run_stop"]
+
+[[permission]]
+identifier = "deny-developer-run-stop"
+description = "Denies the developer_run_stop command without any pre-configured scope."
+commands.deny = ["developer_run_stop"]

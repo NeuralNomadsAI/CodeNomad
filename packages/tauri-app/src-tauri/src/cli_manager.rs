@@ -799,6 +799,7 @@ fn cli_exit_error(status: &CliStatus, exit: &std::process::ExitStatus) -> String
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    stdin: Arc<Mutex<Option<std::process::ChildStdin>>>,
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
@@ -814,6 +815,7 @@ impl CliProcessManager {
         Self {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            stdin: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
             bootstrap_token: Arc::new(Mutex::new(None)),
@@ -945,6 +947,7 @@ impl CliProcessManager {
 
     fn stop_tracked_child(&self, deadline: Option<Instant>) -> anyhow::Result<()> {
         let Some(mut child) = self.child.lock().take() else {
+            self.stdin.lock().take();
             #[cfg(windows)]
             if let Some(job) = self.job.lock().take() {
                 let result = job.terminate().and_then(|()| {
@@ -964,6 +967,9 @@ impl CliProcessManager {
             }
             return Ok(());
         };
+        if let Some(mut stdin) = self.stdin.try_lock() {
+            child.stdin = stdin.take();
+        }
         #[cfg(windows)]
         let job = self.job.lock().take();
         log_line(&format!("stopping CLI pid={}", child.id()));
@@ -1006,9 +1012,11 @@ impl CliProcessManager {
         let pid = child.id();
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
+        let stdin = child.stdin.take();
         debug_assert!(self.child.lock().is_none());
         self.status.lock().pid = Some(pid);
         *self.child.lock() = Some(child);
+        *self.stdin.lock() = stdin;
         #[cfg(windows)]
         {
             *self.job.lock() = Some(job);
@@ -1024,6 +1032,7 @@ impl CliProcessManager {
         status.url = None;
         status.error = None;
         *self.local_access.lock() = None;
+        self.stdin.lock().take();
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
@@ -1037,6 +1046,25 @@ impl CliProcessManager {
             crate::local_windows::emit_all(app, "cli:error", json!({"message": message}));
             crate::local_windows::emit_all(app, "cli:status", snapshot);
         });
+    }
+
+    fn write_native_response(&self, generation: u64, response: &str) {
+        if !self.is_current_generation(generation) {
+            return;
+        }
+        let mut stdin = self.stdin.lock();
+        if !self.is_current_generation(generation) {
+            return;
+        }
+        let Some(stdin) = stdin.as_mut() else {
+            return;
+        };
+        if let Err(error) = stdin
+            .write_all(response.as_bytes())
+            .and_then(|()| stdin.flush())
+        {
+            log_line(&format!("failed to answer native CLI request: {error}"));
+        }
     }
 
     pub fn status(&self) -> CliStatus {
@@ -1113,6 +1141,8 @@ impl CliProcessManager {
                     .env_remove("NPM_CONFIG_PREFIX")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                #[cfg(windows)]
+                c.env("CODENOMAD_NATIVE_PARENT", "1");
                 configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
@@ -1142,6 +1172,8 @@ impl CliProcessManager {
                 c.env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                #[cfg(windows)]
+                c.env("CODENOMAD_NATIVE_PARENT", "1");
                 configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
@@ -1364,15 +1396,43 @@ impl CliProcessManager {
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
-            buffer.clear();
-            match reader.read_line(&mut buffer) {
+            match Self::read_bounded_line(&mut reader, &mut buffer) {
                 Ok(0) => break,
+                Ok(size) if size > crate::native_request::MAX_LINE_BYTES => {
+                    log_line(&format!("[cli][{stream}] discarded oversized output line"));
+                    continue;
+                }
                 Ok(_) => {
                     if !manager.is_current_generation(generation) {
                         break;
                     }
                     let line = buffer.trim_end();
                     if !line.is_empty() {
+                        if stream == "stdout"
+                            && line.starts_with(crate::native_request::REQUEST_PREFIX)
+                        {
+                            if let Some(request) = crate::native_request::parse(line) {
+                                let now = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .map(|duration| duration.as_millis() as u64)
+                                    .unwrap_or(u64::MAX);
+                                let result = if now >= request.deadline {
+                                    Err("Native request expired before execution".to_string())
+                                } else {
+                                    crate::handle_native_request(
+                                        app,
+                                        &request.method,
+                                        request.params,
+                                        request.deadline,
+                                    )
+                                };
+                                manager.write_native_response(
+                                    generation,
+                                    &crate::native_request::response(&request.id, result),
+                                );
+                            }
+                            continue;
+                        }
                         if line.starts_with(token_prefix) {
                             let token = line.trim_start_matches(token_prefix).trim();
                             if !token.is_empty() {
@@ -1423,6 +1483,46 @@ impl CliProcessManager {
                     }
                 }
                 Err(_) => break,
+            }
+        }
+    }
+
+    fn read_bounded_line<R: BufRead>(
+        reader: &mut R,
+        buffer: &mut String,
+    ) -> std::io::Result<usize> {
+        buffer.clear();
+        let mut total = 0usize;
+        let mut oversized = false;
+        let mut bytes = Vec::new();
+        loop {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                return Ok(total);
+            }
+            let length = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|index| index + 1)
+                .unwrap_or(available.len());
+            let ended = available.get(length - 1) == Some(&b'\n');
+            total = total.saturating_add(length);
+            if !oversized && bytes.len() + length <= crate::native_request::MAX_LINE_BYTES {
+                bytes.extend_from_slice(&available[..length]);
+            } else {
+                oversized = true;
+                bytes.clear();
+            }
+            reader.consume(length);
+            if ended {
+                if !oversized {
+                    *buffer = String::from_utf8_lossy(&bytes).into_owned();
+                }
+                return Ok(if oversized {
+                    crate::native_request::MAX_LINE_BYTES + 1
+                } else {
+                    total
+                });
             }
         }
     }
@@ -1860,6 +1960,38 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn bounded_line_reader_discards_oversized_lines_without_losing_the_next_line() {
+        let mut input = vec![b'x'; crate::native_request::MAX_LINE_BYTES + 5];
+        input.extend_from_slice(b"\nnext\n");
+        let mut reader = std::io::Cursor::new(input);
+        let mut line = String::new();
+
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            crate::native_request::MAX_LINE_BYTES + 1
+        );
+        assert!(line.is_empty());
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            5
+        );
+        assert_eq!(line, "next\n");
+    }
+
+    #[test]
+    fn bounded_line_reader_preserves_utf8_split_across_buffers() {
+        let input = std::io::Cursor::new("éclair\n".as_bytes());
+        let mut reader = std::io::BufReader::with_capacity(1, input);
+        let mut line = String::new();
+
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            8
+        );
+        assert_eq!(line, "éclair\n");
+    }
 
     #[test]
     fn prod_entry_candidates_prefer_exe_relative_before_workspace_fallback() {

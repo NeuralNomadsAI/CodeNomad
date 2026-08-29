@@ -5,6 +5,8 @@ import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { setWorkspaceMenuEnabled } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
+import type { DeveloperRunManager, DeveloperRunTarget } from "./developer-run-manager"
+import path from "node:path"
 
 interface LocalSender {
   id: string
@@ -18,6 +20,7 @@ interface CliIPCDependencies {
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
+  developerRunManager: DeveloperRunManager
 }
 
 interface DialogOpenRequest {
@@ -98,6 +101,24 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     if (typeof folder !== "string" || typeof opened !== "boolean") throw new Error("Invalid folder acknowledgement")
     dependencies.acknowledgeFolder(id, folder, opened)
     return { ok: true }
+  })
+  ipcMain.handle("developer-run:get", async (event) => {
+    local(event)
+    return { status: dependencies.developerRunManager.status(), logs: dependencies.developerRunManager.logs() }
+  })
+  ipcMain.handle("developer-run:start", async (event, payload: { target?: unknown; executable?: unknown }) => {
+    local(event)
+    const target = payload?.target
+    const executable = payload?.executable
+    if ((target !== "electron" && target !== "tauri") || typeof executable !== "string" || executable.length > 32_768
+      || !path.isAbsolute(executable) || !fs.statSync(executable, { throwIfNoEntry: false })?.isFile()) {
+      throw new Error("Developer Automation requires a valid Electron or Tauri executable")
+    }
+    return dependencies.developerRunManager.start({ target: target as DeveloperRunTarget, executable })
+  })
+  ipcMain.handle("developer-run:stop", async (event) => {
+    local(event)
+    await dependencies.developerRunManager.stop()
   })
 
   ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {

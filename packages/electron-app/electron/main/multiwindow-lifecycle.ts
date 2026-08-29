@@ -25,6 +25,7 @@ interface Dependencies {
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
   navigationLifecycle?: SerializedLifecycle
+  stopDeveloperRun?(): Promise<void>
 }
 
 export class MultiwindowLifecycle {
@@ -103,6 +104,7 @@ export class MultiwindowLifecycle {
     const cleanup = async () => {
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
+      await this.dependencies.stopDeveloperRun?.()
       await this.dependencies.cliManager.shutdown()
       try {
         await this.releasePrimary()
