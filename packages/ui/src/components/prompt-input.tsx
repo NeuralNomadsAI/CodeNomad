@@ -934,7 +934,7 @@ export default function PromptInput(props: PromptInputProps) {
         data-compact-auto={compactLayoutEnabled() ? "true" : undefined}
         style={
           isDragging()
-            ? "border-color: var(--accent-primary); background-color: rgba(0, 102, 255, 0.05);"
+            ? "border-color: var(--accent-primary); background-color: color-mix(in srgb, var(--accent-primary) 5%, transparent);"
             : ""
         }
         onDragOver={handleDragOver}

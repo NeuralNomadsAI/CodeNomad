@@ -11,6 +11,10 @@ import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import {
+  normalizeColorScheme,
+  type NormalizedColorScheme,
+} from "../lib/theme-scheme"
+import {
   normalizeModelVisibilityPreference,
   normalizeModelVisibilityPreferences,
   type ModelVisibilityPreference,
@@ -137,6 +141,8 @@ export type ThemePreference = "light" | "dark" | "system"
 
 interface UiConfigBucket {
   theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
   settings?: Partial<UiSettings>
 }
 
@@ -561,6 +567,15 @@ const [isLoaded, setIsLoaded] = createSignal(false)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
+const colorSchemePreference = createMemo(() => normalizeColorScheme(uiConfigBucket().colorScheme, themePreference()))
+const customColorSchemePreference = createMemo(() => {
+  const bucket = uiConfigBucket()
+  const custom = bucket.customColorScheme ?? (colorSchemePreference().id === "custom" ? bucket.colorScheme : undefined)
+  const value = typeof custom === "object" && custom !== null && !Array.isArray(custom)
+    ? { ...(custom as Record<string, unknown>), id: "custom" }
+    : { id: "custom" }
+  return normalizeColorScheme(value)
+})
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
 const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
 
@@ -689,8 +704,25 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
 }
 
 function setThemePreference(preference: ThemePreference): void {
-  if (themePreference() === preference) return
-  void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
+  void setColorSchemePreference(normalizeColorScheme(preference === "dark" ? "classic" : preference))
+}
+
+let colorSchemeWriteQueue = Promise.resolve()
+
+function setColorSchemePreference(preference: NormalizedColorScheme): Promise<void> {
+  const normalized = normalizeColorScheme(preference)
+  const legacyTheme: ThemePreference = normalized.appearance === "system" ? "system" : normalized.appearance
+  const patch = {
+    theme: legacyTheme,
+    colorScheme: normalized,
+    ...(normalized.id === "custom" ? { customColorScheme: normalized } : {}),
+  }
+  const write = colorSchemeWriteQueue.then(() => patchConfigOwner("ui", patch))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined).catch((error) => {
+    log.error("Failed to set color scheme", error)
+    throw error
+  })
 }
 
  async function setListeningMode(mode: ListeningMode): Promise<void> {
@@ -1007,6 +1039,9 @@ interface ConfigContextValue {
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
+  colorSchemePreference: typeof colorSchemePreference
+  customColorSchemePreference: typeof customColorSchemePreference
+  setColorSchemePreference: typeof setColorSchemePreference
 
   // server-owned stable config
   serverSettings: typeof serverSettings
@@ -1071,6 +1106,9 @@ const configContextValue: ConfigContextValue = {
   providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  customColorSchemePreference,
+  setColorSchemePreference,
   serverSettings,
   setListeningMode,
   updateEnvironmentVariables,
@@ -1163,6 +1201,9 @@ export {
   opencodeBinaries,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  customColorSchemePreference,
+  setColorSchemePreference,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,

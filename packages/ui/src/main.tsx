@@ -7,6 +7,7 @@ import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
 import { initializeClientState } from "./stores/client-state"
+import { applyColorScheme, normalizeColorScheme } from "./lib/theme-scheme"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -27,25 +28,21 @@ async function bootstrap() {
   await initializeClientState()
 
   if (typeof document !== "undefined") {
-    // renderer/index.html currently seeds a dark theme to avoid a white flash.
-    // Reset to CSS defaults immediately so the first render matches system
-    // (and then refine once persisted config loads).
-    document.documentElement.removeAttribute("data-theme")
-
     try {
       const uiConfig = await storage.loadConfigOwner("ui")
       const theme = (uiConfig as any)?.theme
+      const colorScheme = (uiConfig as any)?.colorScheme
       const locale = typeof (uiConfig as any)?.settings?.locale === "string" ? (uiConfig as any).settings.locale : undefined
 
-      if (theme === "light" || theme === "dark") {
-        document.documentElement.setAttribute("data-theme", theme)
-      } else {
-        document.documentElement.removeAttribute("data-theme")
-      }
+      applyColorScheme(normalizeColorScheme(colorScheme, theme), {
+        systemDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
+      })
 
       await preloadLocaleMessages(locale)
     } catch {
-      // If config fails to load, fall back to CSS defaults.
+      applyColorScheme(normalizeColorScheme("system"), {
+        systemDark: window.matchMedia("(prefers-color-scheme: dark)").matches,
+      })
       await preloadLocaleMessages()
     }
   }
