@@ -69,6 +69,11 @@ export async function claimNativeBrowserOpen(requestID: string): Promise<boolean
   return invoke<boolean>("browser_target_claim_open", { requestId: requestID })
 }
 
+export async function releaseNativeBrowserOpen(requestID: string): Promise<boolean> {
+  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID)
+  return invoke<boolean>("browser_target_release_open", { requestId: requestID })
+}
+
 export function onTauriBrowserNavigation(
   registrationId: string,
   callback: (url: string) => void,

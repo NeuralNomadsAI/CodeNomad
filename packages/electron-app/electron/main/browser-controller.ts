@@ -21,6 +21,13 @@ interface Registration extends RegistrationInput {
   guest: WebContents
 }
 
+interface OpenClaim {
+  sessionID: string
+  url: string
+  owner?: WebContents
+  failedOwners: Set<WebContents>
+}
+
 type BrowserCommand =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
@@ -45,7 +52,7 @@ export class BrowserController {
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly loadResults = new WeakMap<WebContents, { at: number; url: string; startedUrl: string; error?: Error }>()
-  private readonly openClaims = new Map<string, WebContents | undefined>()
+  private readonly openClaims = new Map<string, OpenClaim>()
 
   constructor(
     private readonly requestOpen: (sessionID: string, url: string, requestID: string) => void,
@@ -106,16 +113,32 @@ export class BrowserController {
   }
 
   claimOpen(owner: WebContents, requestID: unknown): boolean {
-    if (typeof requestID !== "string" || !this.openClaims.has(requestID) || owner.isDestroyed()) return false
-    const claimed = this.openClaims.get(requestID)
-    if (claimed && claimed !== owner) return false
-    this.openClaims.set(requestID, owner)
+    if (typeof requestID !== "string" || owner.isDestroyed()) return false
+    const claim = this.openClaims.get(requestID)
+    if (!claim || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
+    claim.owner = owner
+    return true
+  }
+
+  releaseOpen(owner: WebContents, requestID: unknown): boolean {
+    if (typeof requestID !== "string") return false
+    const claim = this.openClaims.get(requestID)
+    if (!claim || claim.owner !== owner) return false
+    claim.owner = undefined
+    claim.failedOwners.add(owner)
+    this.requestOpen(claim.sessionID, claim.url, requestID)
     return true
   }
 
   removeOwner(owner: WebContents): void {
     for (const [id, registration] of this.registrations) {
       if (registration.owner === owner) this.registrations.delete(id)
+    }
+    for (const [requestID, claim] of this.openClaims) {
+      if (claim.owner !== owner) continue
+      claim.owner = undefined
+      claim.failedOwners.add(owner)
+      this.requestOpen(claim.sessionID, claim.url, requestID)
     }
   }
 
@@ -180,7 +203,7 @@ export class BrowserController {
     }
 
     const requestID = randomUUID()
-    this.openClaims.set(requestID, undefined)
+    this.openClaims.set(requestID, { sessionID, url, failedOwners: new Set() })
     return new Promise<{ url: string }>((resolve, reject) => {
       const requestedAt = Date.now()
       const timeout = setTimeout(() => {
@@ -258,15 +281,25 @@ export class BrowserController {
   private async click(guest: WebContents, ref: string, deadline: number): Promise<void> {
     const backendNodeId = this.refs.get(guest.id)?.get(ref)
     if (!backendNodeId) throw new Error(`Unknown browser ref ${ref}; take a new snapshot`)
+    const navigationVersion = this.navigationVersions.get(guest)
+    const assertCurrentRef = () => {
+      if (this.navigationVersions.get(guest) !== navigationVersion || this.refs.get(guest.id)?.get(ref) !== backendNodeId) {
+        throw new Error(`Unknown browser ref ${ref}; take a new snapshot`)
+      }
+    }
     await withDebugger(guest, deadline, async (debuggerSession) => {
       await debuggerSession.sendCommand("DOM.scrollIntoViewIfNeeded", { backendNodeId })
+      assertCurrentRef()
       const result = await debuggerSession.sendCommand("DOM.getBoxModel", { backendNodeId }) as { model?: { content?: number[] } }
+      assertCurrentRef()
       const box = result.model?.content
       if (!box || box.length !== 8) throw new Error(`Browser ref ${ref} is not visible`)
       const x = (box[0] + box[2] + box[4] + box[6]) / 4
       const y = (box[1] + box[3] + box[5] + box[7]) / 4
       await debuggerSession.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
+      assertCurrentRef()
       await debuggerSession.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 })
+      assertCurrentRef()
       await debuggerSession.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 })
     })
   }

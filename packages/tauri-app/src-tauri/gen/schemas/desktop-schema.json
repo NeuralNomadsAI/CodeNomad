@@ -363,6 +363,12 @@
           "markdownDescription": "Enables the browser_target_register command without any pre-configured scope."
         },
         {
+          "description": "Enables the browser_target_release_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-release-open",
+          "markdownDescription": "Enables the browser_target_release_open command without any pre-configured scope."
+        },
+        {
           "description": "Enables the browser_target_unregister command without any pre-configured scope.",
           "type": "string",
           "const": "allow-browser-target-unregister",
@@ -571,6 +577,12 @@
           "type": "string",
           "const": "deny-browser-target-register",
           "markdownDescription": "Denies the browser_target_register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_release_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-release-open",
+          "markdownDescription": "Denies the browser_target_release_open command without any pre-configured scope."
         },
         {
           "description": "Denies the browser_target_unregister command without any pre-configured scope.",
