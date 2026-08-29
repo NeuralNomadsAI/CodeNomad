@@ -448,7 +448,9 @@ fn browser_target_update(
     payload: browser_controller::BrowserTargetUpdate,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state.browser_controller.update(&app, webview.label(), payload)
+    state
+        .browser_controller
+        .update(&app, webview.label(), payload)
 }
 
 #[tauri::command]
@@ -459,7 +461,9 @@ fn browser_target_action(
     payload: browser_controller::BrowserTargetAction,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state.browser_controller.action(&app, webview.label(), payload)
+    state
+        .browser_controller
+        .action(&app, webview.label(), payload)
 }
 
 #[tauri::command]
@@ -470,7 +474,9 @@ fn browser_target_unregister(
     registration_id: String,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state.browser_controller.unregister(&app, webview.label(), &registration_id)
+    state
+        .browser_controller
+        .unregister(&app, webview.label(), &registration_id)
 }
 
 #[tauri::command]
@@ -481,7 +487,9 @@ fn browser_target_claim_open(
     request_id: String,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    let claimed = state.browser_controller.claim_open(webview.label(), &request_id);
+    let claimed = state
+        .browser_controller
+        .claim_open(webview.label(), &request_id);
     if claimed {
         crate::local_windows::focus(&app, webview.label());
     }
@@ -712,7 +720,10 @@ fn should_open_external_url(url: &Url) -> bool {
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
     let state = webview.app_handle().state::<AppState>();
-    if let Some(allowed) = state.browser_controller.navigation_allowed(&window_label, url) {
+    if let Some(allowed) = state
+        .browser_controller
+        .navigation_allowed(&window_label, url)
+    {
         return allowed;
     }
     if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
