@@ -4,7 +4,15 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 
 #[tauri::command]
-pub async fn install_stable_update() -> Result<(), String> {
+pub async fn install_stable_update(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<(), String> {
+    crate::require_local_app_window(&window, &state)?;
+    install_stable_update_impl().await
+}
+
+pub(crate) async fn install_stable_update_impl() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
         let mut command = Command::new("winget");
         command.args([

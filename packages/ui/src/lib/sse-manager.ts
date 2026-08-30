@@ -10,7 +10,7 @@ import type {
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatus2,
+  SessionStatusUpdated,
   TuiToastShow,
   V2Event,
 } from "@opencode-ai/client"
@@ -61,7 +61,7 @@ type SSEEvent =
   | SessionRevertStaged
   | SessionRevertCleared
   | SessionRevertCommitted
-  | SessionStatus2
+  | SessionStatusUpdated
   | PermissionAsked
   | PermissionReplied
   | TuiToastShow
@@ -142,7 +142,7 @@ class SSEManager {
         this.onSessionIdle?.(instanceId, event as SessionIdle)
         break
       case "session.status":
-        this.onSessionStatus?.(instanceId, event as SessionStatus2)
+        this.onSessionStatus?.(instanceId, event as SessionStatusUpdated)
         break
       case "permission.asked":
         this.onPermissionUpdated?.(instanceId, event as PermissionAsked)
@@ -170,6 +170,7 @@ class SSEManager {
 
   private updateConnectionStatus(instanceId: string, status: ConnectionStatus): void {
     setConnectionStatus((prev) => {
+      if (prev.get(instanceId) === status) return prev
       const next = new Map(prev)
       next.set(instanceId, status)
       return next
@@ -182,7 +183,7 @@ class SSEManager {
   onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
   onTuiToast?: (instanceId: string, event: TuiToastShow) => void
   onSessionIdle?: (instanceId: string, event: SessionIdle) => void
-  onSessionStatus?: (instanceId: string, event: SessionStatus2) => void
+  onSessionStatus?: (instanceId: string, event: SessionStatusUpdated) => void
   onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
   onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void

@@ -5,10 +5,11 @@ import type {
   SessionCreated,
   SessionExecutionFailed,
   SessionIdle,
+  SessionMoved,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatus2,
+  SessionStatusUpdated,
   TuiToastShow,
 } from "@opencode-ai/client"
 import { getLogger } from "../lib/logger"
@@ -40,13 +41,14 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktrees } from "./worktrees"
+import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -58,7 +60,19 @@ const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
 }>()
+const nativeLifecycleGenerations = new Map<string, number>()
 let activeRetryToast: ToastHandle | null = null
+
+function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
+  const key = `${instanceId}\0${sessionId}`
+  const generation = (nativeLifecycleGenerations.get(key) ?? 0) + 1
+  nativeLifecycleGenerations.set(key, generation)
+  return generation
+}
+
+function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
+  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+}
 
 function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
   const store = messageStoreBus.getOrCreate(instanceId)
@@ -98,20 +112,34 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       })
       return
     case "session.moved":
-      handleSessionMoved(instanceId, event.data.sessionID, event.data.location.directory)
+      handleSessionMoved(instanceId, event.data)
       return
     case "session.forked":
       void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
       return
     case "session.compaction.started":
+      advanceNativeLifecycle(instanceId, event.data.sessionID)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: true,
+        directory: event.location?.directory,
+      })
+      return
     case "session.execution.interrupted":
-      setTerminalNativeSessionStatus(instanceId, event.data.sessionID, true, event.location?.directory)
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: true,
+        interrupted: true,
+        refreshMessages: true,
+        directory: event.location?.directory,
+      })
       return
     case "session.execution.succeeded":
-      setTerminalNativeSessionStatus(instanceId, event.data.sessionID, false, event.location?.directory)
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: false,
+        directory: event.location?.directory,
+      })
       return
   }
 
@@ -125,7 +153,41 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     event.type.startsWith("session.reasoning.") ||
     event.type.startsWith("session.tool.")
   ) {
+    advanceNativeLifecycle(instanceId, sessionId)
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
+  }
+}
+
+async function reconcileTerminalNativeSessionStatus(
+  instanceId: string,
+  sessionId: string,
+  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; directory?: string },
+): Promise<void> {
+  const generation = advanceNativeLifecycle(instanceId, sessionId)
+  let activeSessions: Record<string, unknown> | null = null
+  try {
+    activeSessions = await getRootClient(instanceId).session.active()
+  } catch (error) {
+    log.warn("Failed to reconcile terminal session state", { instanceId, sessionId, error })
+  }
+  if (!isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
+
+  if (activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, sessionId)) {
+    withSession(instanceId, sessionId, (session) => { session.generationRecovery = null })
+    const existing = sessions().get(instanceId)?.get(sessionId)
+    if (existing) setSessionStatus(instanceId, sessionId, "working", { force: true })
+    else ensureSessionStatus(instanceId, sessionId, "working", options.directory)
+    return
+  }
+
+  if (options.interrupted) {
+    withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
+  }
+  setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
+  if (options.refreshMessages) {
+    void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+      log.warn("Failed to refresh interrupted session messages", { instanceId, sessionId, error })
+    })
   }
 }
 
@@ -137,51 +199,27 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   speakCompletedAssistantText(instanceId, sessionId)
 }
 
-function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
-  const normalized = directory.replace(/\\/g, "/").toLowerCase()
-  const targetInstanceId = Array.from(instances().values()).find((instance) => {
-    const directories = [instance.folder, ...getWorktrees(instance.id).map((worktree) => worktree.directory)]
-    return directories.some((candidate) => candidate.replace(/\\/g, "/").toLowerCase() === normalized)
-  })?.id
+function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
+  const { sessionID: sessionId, location } = data
+  const normalized = normalizeSessionDirectory(location.directory)
+  const targetInstanceIds = Array.from(instances().values()).flatMap((instance) => {
+    const directories = [
+      instance.folder,
+      ...getWorktrees(instance.id).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
+    ]
+    return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized) ? [instance.id] : []
+  })
 
-  if (!targetInstanceId || targetInstanceId === sourceInstanceId) {
-    void fetchSessions(sourceInstanceId, { reset: true })
-    return
+  if (targetInstanceIds.length === 1 && targetInstanceIds[0] === sourceInstanceId) {
+    withSession(sourceInstanceId, sessionId, (session) => {
+      session.location = location
+      session.projectID = data.projectID
+      session.subpath = data.subpath
+    })
   }
 
-  const moved = sessions().get(sourceInstanceId)?.get(sessionId)
-  setSessions((previous) => {
-    const next = new Map(previous)
-    const source = new Map(next.get(sourceInstanceId) ?? [])
-    source.delete(sessionId)
-    if (source.size) next.set(sourceInstanceId, source)
-    else next.delete(sourceInstanceId)
-    if (moved) {
-      const target = new Map(next.get(targetInstanceId) ?? [])
-      target.set(sessionId, { ...moved, instanceId: targetInstanceId, location: { directory } })
-      next.set(targetInstanceId, target)
-    }
-    return next
-  })
-  removeSessionListId(sourceInstanceId, sessionId)
-  if (moved && !moved.parentId) prependSessionListId(targetInstanceId, sessionId)
-  messageStoreBus.getOrCreate(sourceInstanceId).clearSession(sessionId)
-  void Promise.allSettled([
-    fetchSessions(sourceInstanceId, { reset: true }),
-    fetchSessions(targetInstanceId, { reset: true }),
-  ]).then(() => {
-    setSessions((previous) => {
-      const current = previous.get(sourceInstanceId)
-      if (!current?.has(sessionId)) return previous
-      const next = new Map(previous)
-      const source = new Map(current)
-      source.delete(sessionId)
-      if (source.size) next.set(sourceInstanceId, source)
-      else next.delete(sourceInstanceId)
-      return next
-    })
-    removeSessionListId(sourceInstanceId, sessionId)
-  })
+  void Promise.allSettled([...new Set([sourceInstanceId, ...targetInstanceIds])]
+    .map((instanceId) => fetchSessions(instanceId, { reset: true })))
 }
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
@@ -442,6 +480,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
+  nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
@@ -449,6 +488,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   const sessionId = event.data.sessionID
   if (!sessionId) return
 
+  advanceNativeLifecycle(instanceId, sessionId)
   if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
     const label = getSessionTitle(instanceId, sessionId)
@@ -461,10 +501,11 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
-function handleSessionStatus(instanceId: string, event: SessionStatus2): void {
+function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): void {
   const sessionId = event.data.sessionID
   if (!sessionId) return
 
+  advanceNativeLifecycle(instanceId, sessionId)
   const rawStatus = event.data.status
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
@@ -496,6 +537,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
+  advanceNativeLifecycle(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
@@ -519,7 +561,12 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
 function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
   const error = event.data.error
   const sessionId = event.data.sessionID
-  if (sessionId) setTerminalNativeSessionStatus(instanceId, sessionId, true, event.location?.directory)
+  if (sessionId) {
+    void reconcileTerminalNativeSessionStatus(instanceId, sessionId, {
+      failed: true,
+      directory: event.location?.directory,
+    })
+  }
   log.error(`[SSE] Session error:`, error)
 
   let message = tGlobal("sessionEvents.sessionError.unknown")

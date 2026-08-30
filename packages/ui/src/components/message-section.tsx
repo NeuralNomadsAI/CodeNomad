@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
+import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
 import { ArrowUpDown, ChevronDown, ChevronUp, Pause, Search, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
@@ -15,12 +15,21 @@ import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import { partHasRenderableText } from "../types/message"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
+import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
+import { getLogger } from "../lib/logger"
+import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
+import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
+import type { SessionInboxUser } from "@opencode-ai/client"
+import { getFormQueue } from "../stores/forms"
+import { resolveFormToolTarget } from "./form-request-tool-target"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -28,6 +37,7 @@ const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const log = getLogger("session")
 
 export interface MessageSectionProps {
   instanceId: string
@@ -43,10 +53,21 @@ export interface MessageSectionProps {
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
+  hasMoreMessages?: boolean
+  onLoadMoreMessages?: () => Promise<void>
+  onLoadNewerMessages?: () => Promise<void>
+  onLoadLatestMessages?: () => Promise<void>
+  onLoadOldestMessages?: () => Promise<void>
+  getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
   onExplicitBottomPinCancelled?: () => void
+  pendingPrompts?: ReadonlyMap<string, SessionInboxUser>
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
@@ -62,7 +83,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    return messageIds().filter((messageId) => {
+    const visible = messageIds().filter((messageId) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -71,7 +92,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       if (record.role !== "assistant") {
-        return false
+        return true
       }
 
       const info = resolvedStore.getMessageInfo(messageId)
@@ -86,9 +107,121 @@ export default function MessageSection(props: MessageSectionProps) {
       const timeInfo = info.time as { created: number; completed?: number } | undefined
       return Boolean(timeInfo && (timeInfo.completed === undefined || timeInfo.completed === 0))
     })
+    if (!props.pendingPrompts?.size) return visible
+    const visibleSet = new Set(visible)
+    return [
+      ...visible.filter((messageId) => !props.pendingPrompts!.has(messageId)),
+      ...Array.from(props.pendingPrompts.keys()).filter((messageId) => visibleSet.has(messageId)),
+    ]
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
+  const technicalCleanupTranscript = createMemo<TechnicalCleanupTranscriptItem[]>(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    return messageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+        const partId = typeof part.id === "string" ? part.id : ""
+        if (!partId) return []
+        if (part.type === "tool" || part.type === "reasoning") {
+          return [{ messageId, partId, type: part.type }]
+        }
+        if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
+          return [{ messageId, partId, type: "boundary" as const }]
+        }
+        return []
+      })
+    })
+  })
+  const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
+    technicalCleanupTranscript(),
+    messageId,
+    partId,
+  )
+  const [technicalCleanupHoverTarget, setTechnicalCleanupHoverTarget] = createSignal<{ messageId: string; partId: string } | null>(null)
+  const technicalCleanupPartKeys = createMemo<ReadonlySet<string>>(() => {
+    const target = technicalCleanupHoverTarget()
+    if (!target) return new Set()
+    return new Set(technicalCleanupParts(target.messageId, target.partId).map((part) => technicalPartKey(part.messageId, part.partId)))
+  })
+  const handleTechnicalCleanupHoverChange = (messageId: string, partId: string, hovered: boolean) => {
+    setTechnicalCleanupHoverTarget(hovered ? { messageId, partId } : null)
+  }
+  const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
+    .filter((form) => form.sessionID === props.sessionId)
+    .flatMap((form) => {
+      const target = resolveFormToolTarget(form, store())
+      return target ? [technicalPartKey(target.messageId, target.partId)] : []
+    })))
+  const technicalGroupProjection = createMemo(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    const pendingForms = pendingFormToolTargets()
+    const items = visibleMessageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      const completed = record.status === "complete" || record.status === "error"
+      const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
+      const messageInfo = resolvedStore.getMessageInfo(messageId)
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+        if (part.type === "step-finish") {
+          return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
+        }
+        if (!isTechnicalGroupingVisiblePart(part)) return []
+        const partId = typeof part.id === "string" ? part.id : ""
+        const kind = getTechnicalGroupKind(part)
+        const pending = part.type === "tool" && Boolean(
+          part.pendingPermission?.active
+          || (partId && resolvedStore.getPermissionState(messageId, partId)?.active)
+          || (partId && pendingForms.has(technicalPartKey(messageId, partId)))
+        )
+        if (part.type === "tool" && resolveToolVisibility(preferences(), part.tool) === "hidden" && !pending) return []
+        if (!kind || !partId) return [null]
+        if ((kind === "exploration" || kind === "shell") && pending) return [null]
+        return [{
+          messageId,
+          partId,
+          part,
+          completed,
+          revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
+        }]
+      })
+    })
+    return projectTranscriptTechnicalGroups(items)
+  })
+  const technicalGroupForPart = (messageId: string, partId: string) => technicalGroupProjection().byPartKey.get(technicalPartKey(messageId, partId))
+  const technicalGroupingSignature = (messageId: string) => {
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record) return ""
+    const groups = Array.from(new Set(record.partIds.flatMap((partId) => {
+      const group = technicalGroupForPart(messageId, partId)
+      return group ? [group.signature] : []
+    }))).join(";")
+    const pendingForms = pendingFormToolTargets()
+    const tools = record.partIds.flatMap((partId) => {
+      const part = record.parts[partId]?.data
+      if (part?.type !== "tool") return []
+      const pending = Boolean(
+        part.pendingPermission?.active
+        || resolvedStore.getPermissionState(messageId, partId)?.active
+        || pendingForms.has(technicalPartKey(messageId, partId))
+      )
+      return [`${partId}:${resolveToolVisibility(preferences(), part.tool)}:${pending ? 1 : 0}`]
+    }).join(";")
+    return `${groups}|${tools}`
+  }
+  const [technicalGroupExpansion, setTechnicalGroupExpansion] = createSignal(new Map<string, boolean>())
+  const isTechnicalGroupExpanded = (groupId: string, defaultExpanded: boolean) => technicalGroupExpansion().get(groupId) ?? defaultExpanded
+  const setTechnicalGroupExpanded = (groupId: string, expanded: boolean) => setTechnicalGroupExpansion((current) => {
+    const next = new Map(current)
+    next.set(groupId, expanded)
+    return next
+  })
 
   const preferenceSignature = createMemo(() => {
     const pref = preferences()
@@ -120,46 +253,37 @@ export default function MessageSection(props: MessageSectionProps) {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
   const [searchedQuery, setSearchedQuery] = createSignal("")
   const [isSearchPending, setIsSearchPending] = createSignal(false)
+  const [failedSearchQuery, setFailedSearchQuery] = createSignal("")
+  const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
+  const searchLocatorAuthority = createSearchLocatorAuthority()
+  let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
 
-  const messageIndexById = createMemo(() => {
-    const ids = messageIds()
-    const map = new Map<string, number>()
-    for (let i = 0; i < ids.length; i++) {
-      map.set(ids[i], i)
-    }
-    return map
-  })
-
-  const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
+  const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
+  const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
 
   const activeSearchMatch = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return null
     const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
     return matches[index] ?? null
   })
 
-  const searchResultMessageIds = createMemo(() => new Set(searchMatches().map((match) => match.messageId)))
+  const searchResultMessageIds = createMemo(() => new Set(currentSearchMatches().map((match) => match.messageId)))
 
   const trimmedSearchQuery = createMemo(() => searchQuery().trim())
   const isSearchSettled = createMemo(() => {
     const query = trimmedSearchQuery()
-    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && searchedQuery().trim() === query
+    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && hasMessageSearchAuthority(query, searchedQuery())
   })
-
-  const lastAssistantIndex = createMemo(() => {
-    const messageId = lastAssistantMessageId()
-    if (!messageId) return -1
-    return messageIndexById().get(messageId) ?? -1
-  })
+  const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
   const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
   const timelineSegments = createMemo(() => {
     sessionRevision()
-    const ids = messageIds()
+    const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
 
@@ -199,7 +323,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const searchMatchedTimelineSegmentIds = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return new Set<string>()
     const result = new Set<string>()
     for (const segment of timelineSegments()) {
@@ -242,6 +366,20 @@ export default function MessageSection(props: MessageSectionProps) {
   let restoringScrollSnapshot = false
   let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
+  let pagingWindow = false
+  let retryAnchorRestore: (() => void) | null = null
+  const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+
+  function registerListApi(api: VirtualFollowListApi) {
+    if (listApi() !== api) {
+      scrollRestoreGeneration += 1
+      restoringScrollSnapshot = false
+      setDidRestoreScroll(false)
+      pagingWindow = false
+      retryAnchorRestore = null
+    }
+    setListApi(api)
+  }
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -258,6 +396,9 @@ export default function MessageSection(props: MessageSectionProps) {
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
+        pagingWindow = false
+        retryAnchorRestore = null
+        setOlderMessageLoadFailed(false)
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -275,6 +416,10 @@ export default function MessageSection(props: MessageSectionProps) {
           }
           return
         }
+        scrollRestoreGeneration += 1
+        restoringScrollSnapshot = false
+        pagingWindow = false
+        retryAnchorRestore = null
         persistMessageScrollSnapshot({ requireActive: false })
       },
     ),
@@ -299,7 +444,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = listApi()?.captureScrollSnapshot()
+      const snapshot = overlayWindowOnSnapshot(listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
         store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
@@ -417,6 +562,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!isActive()) return
     if (props.loading) return
     if (visibleMessageIds().length === 0) return
+    if (restoringScrollSnapshot) return
 
     const snapshot = initialScrollSnapshot()
     if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
@@ -431,40 +577,67 @@ export default function MessageSection(props: MessageSectionProps) {
     restoredWithoutSnapshot = false
     const restoreSessionId = props.sessionId
     const restoreGeneration = ++scrollRestoreGeneration
-    const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
-      restoreSessionId,
-      restoreGeneration,
-      props.sessionId,
-      scrollRestoreGeneration,
-    )
+    const isCurrentRestore = () => isActive()
+      && api === listApi()
+      && isScrollRestoreGenerationCurrent(
+        restoreSessionId,
+        restoreGeneration,
+        props.sessionId,
+        scrollRestoreGeneration,
+      )
     restoringScrollSnapshot = true
-    api.restoreScrollSnapshot(snapshot, {
-      behavior: "auto",
-      fallback: () => {
-        if (!isCurrentRestore()) return
-        api.setAutoScroll(true)
-        api.scrollToBottom({ immediate: true })
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-      onApplied: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setLastGoodScrollSnapshot(restoreSessionId, snapshot)
-        setDidRestoreScroll(true)
-      },
-      onCancelled: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-    })
+    const restore = async () => {
+      setOlderMessageLoadFailed(false)
+      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && props.onLoadMoreMessages) {
+        try {
+          await loadPagesUntilAnchor({
+            hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
+            hasMore: () => Boolean(props.hasMoreMessages),
+            isCurrent: isCurrentRestore,
+            loadMore: props.onLoadMoreMessages,
+            getCursor: () => props.getMessageHistoryCursor?.(),
+          })
+        } catch (error) {
+          if (!isCurrentRestore()) return
+          retryAnchorRestore = () => void restore()
+          setOlderMessageLoadFailed(true)
+          log.error("Failed to load older messages while restoring scroll", { instanceId: props.instanceId, sessionId: restoreSessionId, error })
+          return
+        }
+      }
+      if (!isCurrentRestore()) return
+      retryAnchorRestore = null
+
+      api.restoreScrollSnapshot(snapshot, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setLastGoodScrollSnapshot(restoreSessionId, snapshot)
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
+    }
+    void restore()
   })
 
   onCleanup(() => {
     const allowCapture = !restoringScrollSnapshot
     scrollRestoreGeneration += 1
     restoringScrollSnapshot = false
+    retryAnchorRestore = null
     persistMessageScrollSnapshot({ allowCapture, requireActive: false })
   })
 
@@ -478,17 +651,34 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function closeSearch() {
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
     setIsSearchOpen(false)
     setSearchQuery("")
     setDebouncedSearchQuery("")
     setSearchedQuery("")
     setIsSearchPending(false)
+    setFailedSearchQuery("")
     setSearchMatches([])
     setActiveSearchIndex(0)
   }
 
+  function updateSearchQuery(query: string) {
+    if (query === searchQuery()) return
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
+    setSearchQuery(query)
+  }
+
+  onCleanup(() => {
+    searchLocatorAuthority.reset()
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+  })
+
   function moveSearchMatch(direction: 1 | -1) {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) return
     setActiveSearchIndex((index) => (index + direction + count) % count)
   }
@@ -587,6 +777,69 @@ export default function MessageSection(props: MessageSectionProps) {
     listApi()?.notifyContentRendered()
   }
 
+  function overlayWindowOnSnapshot(snapshot: VirtualFollowScrollSnapshot | undefined) {
+    if (!snapshot) return snapshot
+    return { ...snapshot, ...toWindowSnapshot(store().getMessageWindow(props.sessionId) ?? { kind: "latest", newerCursors: [] }) }
+  }
+
+  function waitTwoFrames() {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  }
+
+  async function pageWindow(
+    direction: "older" | "newer" | "latest" | "oldest",
+    after: (api: VirtualFollowListApi) => void,
+  ) {
+    const api = listApi()
+    if (!api || !isActive() || pagingWindow) return
+    const load = direction === "older"
+      ? props.onLoadMoreMessages
+      : direction === "newer"
+        ? props.onLoadNewerMessages
+        : direction === "oldest"
+          ? props.onLoadOldestMessages
+          : props.onLoadLatestMessages
+    if (!load) {
+      if (direction === "oldest") after(api)
+      return
+    }
+    if (direction === "older" && !props.hasMoreMessages) return
+    if (direction === "oldest" && !props.hasMoreMessages) {
+      after(api)
+      return
+    }
+    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
+    const sessionId = props.sessionId
+    const generation = scrollRestoreGeneration
+    const isCurrent = () => isActive()
+      && api === listApi()
+      && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
+    pagingWindow = true
+    try {
+      if (!isCurrent()) return
+      await load()
+      if (!isCurrent()) return
+      api.setAutoScroll(direction === "latest")
+      api.notifyContentRendered()
+      await waitTwoFrames()
+      if (!isCurrent()) return
+      after(api)
+      api.setAutoScroll(direction === "latest")
+      api.notifyContentRendered()
+    } catch (error) {
+      if (isCurrent()) {
+        setOlderMessageLoadFailed(true)
+        log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
+      }
+    } finally {
+      if (isCurrent()) pagingWindow = false
+    }
+  }
+
+  function messageWindowPageKey() {
+    return getMessageWindowPageKey(store().getMessageWindow(props.sessionId))
+  }
+
   createEffect(() => {
     if (!props.onQuoteSelection) {
       clearQuoteSelection()
@@ -600,6 +853,7 @@ export default function MessageSection(props: MessageSectionProps) {
       setActiveSearchIndex(0)
       setSearchedQuery("")
       setIsSearchPending(false)
+      setFailedSearchQuery("")
       setSearchMatches([])
       return
     }
@@ -611,31 +865,96 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
-    sessionRevision()
     const query = debouncedSearchQuery()
     const includeThinking = Boolean(preferences().showThinkingBlocks)
-    if (query.trim().length < SEARCH_MIN_CHARS) {
+    const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
+    const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
+    searchRetryGeneration()
+    if (!isActive() || query.trim().length < SEARCH_MIN_CHARS) {
+      setIsSearchPending(false)
       return
     }
 
     setIsSearchPending(true)
-    const frame = requestAnimationFrame(() => {
-      const matches = buildSessionSearchMatches({
-        store: store(),
-        sessionId: props.sessionId,
-        query,
-        includeThinking,
+    setSearchedQuery("")
+    setFailedSearchQuery("")
+    const instanceId = props.instanceId
+    const sessionId = props.sessionId
+    const generation = ++searchGeneration
+    const endTraversal = beginMessageHistoryTraversal(instanceId, sessionId)
+    let frame: number | undefined
+    const isCurrentSearch = () => generation === searchGeneration
+      && isActive()
+      && isSearchOpen()
+      && props.instanceId === instanceId
+      && props.sessionId === sessionId
+      && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
+      && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
+      && debouncedSearchQuery() === query
+    void loadCompleteMessageHistory({
+      getPageKey: messageWindowPageKey,
+      isCurrent: isCurrentSearch,
+      isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
+      loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
+      loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
+    }).then((matches) => {
+      if (!matches) {
+        if (isCurrentSearch()) setIsSearchPending(false)
+        return
+      }
+      if (!isCurrentSearch()) return
+      frame = requestAnimationFrame(() => {
+        if (!isCurrentSearch()) return
+        batch(() => {
+          setSearchMatches(matches)
+          setSearchedQuery(query)
+          setActiveSearchIndex(0)
+          setIsSearchPending(false)
+        })
       })
-      setSearchMatches(matches)
-      setSearchedQuery(query)
-      setActiveSearchIndex(0)
+    }).catch((error) => {
+      if (!isCurrentSearch()) return
       setIsSearchPending(false)
+      setFailedSearchQuery(query)
+      log.error("Failed to load message history for search", { instanceId, sessionId, error })
+    })
+    onCleanup(() => {
+      endTraversal()
+      if (generation === searchGeneration) searchGeneration += 1
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    })
+  })
+
+  createEffect(() => {
+    sessionRevision()
+    const query = searchedQuery()
+    if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
+    const includeThinking = Boolean(preferences().showThinkingBlocks)
+    const currentResidentIds = messageIds()
+    const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking })
+    const frame = requestAnimationFrame(() => {
+      if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
+      const activeId = activeSearchMatch()?.id
+      const next = reconcileResidentSearchMatches({
+        previous: searchMatches(),
+        currentResidentIds,
+        currentMatches,
+      })
+      const activeIndex = activeId ? next.findIndex((match) => match.id === activeId) : -1
+      const nextActiveIndex = activeIndex >= 0
+        ? activeIndex
+        : Math.min(activeSearchIndex(), Math.max(0, next.length - 1))
+      batch(() => {
+        setSearchMatches(next)
+        setActiveSearchIndex(nextActiveIndex)
+      })
     })
     onCleanup(() => cancelAnimationFrame(frame))
   })
 
   createEffect(() => {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) {
       if (activeSearchIndex() !== 0) setActiveSearchIndex(0)
       return
@@ -645,13 +964,38 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   })
 
-  let lastScrolledSearchMatchId: string | null = null
   createEffect(() => {
     const match = activeSearchMatch()
     if (!match || !isSearchOpen()) return
-    if (match.id === lastScrolledSearchMatchId) return
-    lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { block: "start" })
+    const locatorAuthority = searchLocatorAuthority.claim(match.id)
+    if (!locatorAuthority) return
+    const locate = async () => {
+      const endTraversal = beginMessageHistoryTraversal(props.instanceId, props.sessionId)
+      try {
+      if (!messageIds().includes(match.messageId)) {
+        await props.onLoadOldestMessages?.()
+        await loadPagesUntilAnchor({
+          hasAnchor: () => messageIds().includes(match.messageId),
+          hasMore: () => !isLatestWindow(store().getMessageWindow(props.sessionId)),
+          isCurrent: () => searchLocatorAuthority.isCurrent(locatorAuthority)
+            && activeSearchMatch()?.id === match.id
+            && isSearchOpen(),
+          loadMore: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+          getCursor: messageWindowPageKey,
+          maxPages: MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT,
+        })
+      }
+      if (searchLocatorAuthority.isCurrent(locatorAuthority) && activeSearchMatch()?.id === match.id) {
+        listApi()?.scrollToKey(match.messageId, { block: "start" })
+      }
+      } finally {
+        endTraversal()
+        searchLocatorAuthority.reset(locatorAuthority)
+      }
+    }
+    void locate().catch((error) => {
+      if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
+    })
   })
 
 
@@ -745,6 +1089,7 @@ export default function MessageSection(props: MessageSectionProps) {
           initialScrollToBottom={() => false}
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
+          measurementResetKey={messageWindowPageKey}
           followToken={followToken}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
           onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
@@ -759,6 +1104,10 @@ export default function MessageSection(props: MessageSectionProps) {
             clearQuoteSelection()
             persistMessageScrollSnapshot()
           }}
+          onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
+          onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
           onActiveKeyChange={(messageId) => {
             if (!messageId) return
@@ -777,7 +1126,7 @@ export default function MessageSection(props: MessageSectionProps) {
           }}
           scrollToTopAriaLabel={() => t("messageSection.scroll.toFirstAriaLabel")}
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
-          registerApi={(api) => setListApi(api)}
+          registerApi={registerListApi}
           registerState={(state) => setListState(state)}
           renderControls={(state, api) => (
             <div
@@ -825,7 +1174,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToTop())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      void pageWindow("oldest", (next) => next.scrollToTop({ immediate: true }))
+                    })}
                     aria-label={t("messageSection.scroll.toFirstAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -837,7 +1188,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   <button
                     type="button"
                     class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
+                    onPointerUp={(event) => runScrollControlAction(event, () => {
+                      void pageWindow("latest", (next) => next.scrollToBottom({ immediate: true }))
+                    })}
                     aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   >
                     <span class="message-scroll-icon" aria-hidden="true">
@@ -850,7 +1203,24 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
+              <Show when={olderMessageLoadFailed()}>
+                <div class="flex justify-center py-2">
+                  <button
+                    type="button"
+                    class="button-tertiary"
+                    onClick={() => {
+                      setOlderMessageLoadFailed(false)
+                      const retry = retryAnchorRestore
+                      if (retry) retry()
+                      else void pageWindow("older", (api) => api.scrollToBottom({ immediate: true }))
+                    }}
+                  >
+                    {t("messageSection.loadError.reload")}
+                  </button>
+                </div>
+              </Show>
+
+              <Show when={!props.loading && !props.loadError && !props.hasMoreMessages && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
@@ -896,15 +1266,13 @@ export default function MessageSection(props: MessageSectionProps) {
                 </div>
               </Show>
 
-              <Show when={!props.loading && props.loadError}>
-                {(loadError) => (
-                  <LoadErrorState
-                    title={t("messageSection.loadError.title")}
-                    error={loadError()}
-                    retryLabel={t("messageSection.loadError.reload")}
-                    onRetry={() => props.onReloadMessages?.()}
-                  />
-                )}
+              <Show when={!props.loading && Boolean(props.loadError)}>
+                <LoadErrorState
+                  title={t("messageSection.loadError.title")}
+                  error={props.loadError!}
+                  retryLabel={t("messageSection.loadError.reload")}
+                  onRetry={() => props.onReloadMessages?.()}
+                />
               </Show>
             </>
           )}
@@ -915,17 +1283,29 @@ export default function MessageSection(props: MessageSectionProps) {
               sessionId={props.sessionId}
               store={store}
               messageIndex={index}
-              lastAssistantIndex={lastAssistantIndex}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               onRevert={props.onRevert}
               onFork={props.onFork}
+              pendingPrompt={props.pendingPrompts?.get(messageId)}
+              pendingPromptBusy={props.pendingPromptBusy}
+              onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+              onPendingPromptEdit={props.onPendingPromptEdit}
+              onPendingPromptRemove={props.onPendingPromptRemove}
               onContentRendered={handleContentRendered}
-              searchQuery={debouncedSearchQuery}
+              searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
+              pendingFormToolTargets={pendingFormToolTargets}
+              technicalGroupForPart={technicalGroupForPart}
+              technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
+              technicalCleanupParts={technicalCleanupParts}
+              technicalCleanupPartKeys={technicalCleanupPartKeys}
+              onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
+              isTechnicalGroupExpanded={isTechnicalGroupExpanded}
+              setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
           )}
           renderOverlay={() => (
@@ -944,7 +1324,9 @@ export default function MessageSection(props: MessageSectionProps) {
                         value={searchQuery()}
                         placeholder={t("messageSection.search.placeholder")}
                         onInput={(event) => {
-                          setSearchQuery(event.currentTarget.value)
+                          setSearchedQuery("")
+                          setFailedSearchQuery("")
+                          updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
@@ -965,18 +1347,20 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.minChars", { count: String(SEARCH_MIN_CHARS) })
                           : isSearchPending()
                             ? t("messageSection.search.count.searching")
-                          : searchMatches().length === 0
+                          : searchFailed()
+                            ? t("messageSection.search.failed")
+                          : currentSearchMatches().length === 0
                             ? t("messageSection.search.count.none")
                             : t("messageSection.search.count.matches", {
                                 current: String(activeSearchIndex() + 1),
-                                total: String(searchMatches().length),
+                                total: String(currentSearchMatches().length),
                               })}
                       </span>
                       <button
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(-1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.previousAriaLabel")}
                         title={t("messageSection.search.previousAriaLabel")}
                       >
@@ -986,7 +1370,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.nextAriaLabel")}
                         title={t("messageSection.search.nextAriaLabel")}
                       >
@@ -1006,15 +1390,26 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>
-                  <Show when={isSearchSettled() && searchMatches().length === 0}>
+                  <Show when={searchFailed()}>
+                    <div class="modal-empty-state message-search-empty">
+                      <span>{t("messageSection.search.failed")}</span>
+                      <button
+                        type="button"
+                        class="button-tertiary"
+                        onClick={() => setSearchRetryGeneration((generation) => generation + 1)}
+                      >
+                        {t("messageSection.search.retry")}
+                      </button>
+                    </div>
+                  </Show>
+                  <Show when={isSearchSettled() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>
               </Show>
 
-              <Show when={quoteSelection()}>
-                {(selection) => (
-                  <div class="message-quote-popover" style={{ top: `${selection().top}px`, left: `${selection().left}px` }}>
+              <Show when={Boolean(quoteSelection())}>
+                <div class="message-quote-popover" style={{ top: `${quoteSelection()!.top}px`, left: `${quoteSelection()!.left}px` }}>
                     <div class="message-quote-button-group">
                       <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
                         {t("messageSection.quote.addAsQuote")}
@@ -1027,7 +1422,6 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </div>
-                )}
               </Show>
             </>
           )}

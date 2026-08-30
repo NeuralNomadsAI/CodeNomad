@@ -8,9 +8,11 @@ import type { AuthEntry, AuthFile, ProviderResult, ProviderUsage } from "./types
 const REQUEST_TIMEOUT_MS = 15_000
 
 function authFileCandidates(): string[] {
+  if (process.env.OPENCODE_AUTH_FILE !== undefined) {
+    return process.env.OPENCODE_AUTH_FILE ? [process.env.OPENCODE_AUTH_FILE] : []
+  }
   const home = os.homedir()
   const candidates = [
-    process.env.OPENCODE_AUTH_FILE,
     process.env.OPENCODE_DATA_DIR ? path.join(process.env.OPENCODE_DATA_DIR, "auth.json") : undefined,
     process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, "opencode", "auth.json") : undefined,
     path.join(home, ".local", "share", "opencode", "auth.json"),
@@ -21,16 +23,25 @@ function authFileCandidates(): string[] {
   return Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))
 }
 
-export function readOpenCodeAuth(): AuthFile {
-  for (const candidate of authFileCandidates()) {
-    try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(candidate, "utf8"))
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AuthFile
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue
-    }
+function readAuthFile(file: string): AuthFile | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as AuthFile : null
+  } catch {
+    return null
   }
-  return {}
+}
+
+function readAuthCandidate(): { auth: AuthFile; file: string } | null {
+  for (const file of authFileCandidates()) {
+    const auth = readAuthFile(file)
+    if (auth) return { auth, file }
+  }
+  return null
+}
+
+export function readOpenCodeAuth(): AuthFile {
+  return readAuthCandidate()?.auth ?? {}
 }
 
 export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
@@ -43,18 +54,55 @@ export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
   return null
 }
 
+export function getOAuthEntry(aliases: readonly string[]): AuthEntry | null {
+  const auth = readOpenCodeAuth()
+  for (const alias of aliases) {
+    const value = auth[alias]
+    if (value && typeof value === "object" && !Array.isArray(value) && (value as AuthEntry).type === "oauth") {
+      const entry = value as AuthEntry
+      if (getString(entry.access) || getString(entry.token)) return entry
+    }
+  }
+  return null
+}
+
 export function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 export function getCredential(aliases: readonly string[], fields: readonly string[]): string | null {
-  const entry = getAuthEntry(aliases)
-  if (!entry) return null
-  for (const field of fields) {
-    const value = getString(entry[field])
-    if (value) return value
+  const auth = readOpenCodeAuth()
+  for (const alias of aliases) {
+    const raw = auth[alias]
+    const entry = typeof raw === "string" && raw.trim()
+      ? { token: raw.trim() }
+      : raw && typeof raw === "object" && !Array.isArray(raw) ? raw as AuthEntry : null
+    if (!entry) continue
+    for (const field of fields) {
+      const value = getString(entry[field])
+      if (value) return value
+    }
   }
   return null
+}
+
+export function decodeJwtClaims(token: string): Record<string, any> | null {
+  try {
+    const payload = token.split(".")[1]
+    return payload ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null
+  } catch {
+    return null
+  }
+}
+
+export function oauthTokenNeedsRefresh(entry: AuthEntry, skewMs = 120_000): boolean {
+  const access = getString(entry.access) ?? getString(entry.token)
+  if (!access) return true
+  const deadline = Date.now() + skewMs
+  const storedExpiry = Number(entry.expires)
+  if (Number.isFinite(storedExpiry) && storedExpiry <= deadline) return true
+  const jwtExpiry = Number(decodeJwtClaims(access)?.exp) * 1000
+  return Number.isFinite(jwtExpiry) && jwtExpiry <= deadline
 }
 
 export function asObject(value: unknown): Record<string, any> | null {

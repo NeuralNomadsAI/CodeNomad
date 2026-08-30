@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 use url::Url;
 
 #[derive(Default)]
 pub(super) struct RendererAccess {
-    state: Mutex<RendererAccessState>,
+    state: Mutex<HashMap<String, RendererAccessState>>,
 }
 
 #[derive(Default)]
@@ -15,6 +16,7 @@ struct RendererAccessState {
 }
 
 pub(super) struct PendingNavigation {
+    window_id: String,
     previous_origin: Option<String>,
     staged_origin: Option<String>,
 }
@@ -29,12 +31,22 @@ fn origin_key(url: &Url) -> Result<String, String> {
 
 impl RendererAccess {
     pub(super) fn claim(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
+        self.claim_for("test-window", access_token, renderer_url)
+    }
+
+    pub(super) fn claim_for(
+        &self,
+        window_id: &str,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<(), String> {
         if access_token.is_empty() {
             return Err("Client state access token must not be empty".to_string());
         }
 
         let renderer_origin = origin_key(renderer_url)?;
-        let mut state = self.state.lock().map_err(|err| err.to_string())?;
+        let mut states = self.state.lock().map_err(|err| err.to_string())?;
+        let state = states.entry(window_id.to_string()).or_default();
         if state.token.is_none()
             || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
         {
@@ -55,12 +67,24 @@ impl RendererAccess {
     }
 
     pub(super) fn validate(&self, access_token: &str, renderer_url: &Url) -> Result<u64, String> {
+        self.validate_for("test-window", access_token, renderer_url)
+    }
+
+    pub(super) fn validate_for(
+        &self,
+        window_id: &str,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<u64, String> {
         if access_token.is_empty() {
             return Err("Client state access token must not be empty".to_string());
         }
 
         let renderer_origin = origin_key(renderer_url)?;
-        let state = self.state.lock().map_err(|err| err.to_string())?;
+        let states = self.state.lock().map_err(|err| err.to_string())?;
+        let Some(state) = states.get(window_id) else {
+            return Err("Client state access has not been claimed by this renderer".to_string());
+        };
         if state.token.as_deref() == Some(access_token)
             && state.committed_origin.as_deref() == Some(renderer_origin.as_str())
         {
@@ -76,21 +100,31 @@ impl RendererAccess {
     }
 
     pub(super) fn is_generation_current(&self, generation: u64) -> bool {
+        self.is_generation_current_for("test-window", generation)
+    }
+
+    pub(super) fn is_generation_current_for(&self, window_id: &str, generation: u64) -> bool {
         self.state
             .lock()
-            .map(|state| state.generation == generation)
+            .map(|state| {
+                state
+                    .get(window_id)
+                    .is_some_and(|state| state.generation == generation)
+            })
             .unwrap_or(false)
     }
 
-    pub(super) fn allows_claim_origin(&self, renderer_url: &Url) -> bool {
+    pub(super) fn allows_claim_origin_for(&self, window_id: &str, renderer_url: &Url) -> bool {
         let Ok(renderer_origin) = origin_key(renderer_url) else {
             return false;
         };
         self.state
             .lock()
-            .map(|state| {
-                state.committed_origin.as_deref() == Some(renderer_origin.as_str())
-                    || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
+            .map(|states| {
+                states.get(window_id).is_some_and(|state| {
+                    state.committed_origin.as_deref() == Some(renderer_origin.as_str())
+                        || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
+                })
             })
             .unwrap_or(false)
     }
@@ -99,7 +133,16 @@ impl RendererAccess {
         &self,
         target_url: Option<&Url>,
     ) -> Result<PendingNavigation, String> {
-        let mut state = self.state.lock().map_err(|err| err.to_string())?;
+        self.begin_navigation_for("test-window", target_url)
+    }
+
+    pub(super) fn begin_navigation_for(
+        &self,
+        window_id: &str,
+        target_url: Option<&Url>,
+    ) -> Result<PendingNavigation, String> {
+        let mut states = self.state.lock().map_err(|err| err.to_string())?;
+        let state = states.entry(window_id.to_string()).or_default();
         let previous_origin = state.pending_origin.clone();
         let staged_origin = match target_url {
             Some(url) => Some(origin_key(url)?),
@@ -109,22 +152,35 @@ impl RendererAccess {
         };
         state.pending_origin = staged_origin.clone();
         Ok(PendingNavigation {
+            window_id: window_id.to_string(),
             previous_origin,
             staged_origin,
         })
     }
 
     pub(super) fn cancel_navigation(&self, navigation: PendingNavigation) {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
-        if state.pending_origin == navigation.staged_origin {
-            state.pending_origin = navigation.previous_origin;
+        let mut states = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(state) = states.get_mut(&navigation.window_id) {
+            if state.pending_origin == navigation.staged_origin {
+                state.pending_origin = navigation.previous_origin;
+            }
         }
     }
 
-    pub(super) fn is_claimed(&self) -> bool {
+    pub(super) fn is_claimed_for(&self, window_id: &str) -> bool {
         self.state
             .lock()
-            .map(|state| state.token.is_some())
+            .map(|state| {
+                state
+                    .get(window_id)
+                    .is_some_and(|state| state.token.is_some())
+            })
             .unwrap_or(false)
+    }
+
+    pub(super) fn remove(&self, window_id: &str) {
+        if let Ok(mut states) = self.state.lock() {
+            states.remove(window_id);
+        }
     }
 }

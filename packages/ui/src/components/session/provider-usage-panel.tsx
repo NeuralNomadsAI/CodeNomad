@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Comp
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { useConfig } from "../../stores/preferences"
 
 interface ProviderUsagePanelProps {
   providerId: string
@@ -12,8 +13,12 @@ interface ProviderUsagePanelProps {
 const REFRESH_INTERVAL_MS = 60_000
 const usageCache = new Map<string, { value: ProviderUsageResponse | null; updatedAt: number }>()
 
+export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) =>
+  label !== "credits_balance" || showCreditBalance
+
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const source = createMemo(() => {
     const providerId = props.providerId.trim()
     if (!providerId) return null
@@ -65,6 +70,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   })
 
   const entries = createMemo(() => Object.entries(usage()?.windows ?? {}))
+  const displayedEntries = createMemo(() =>
+    entries().filter(([label]) => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
+  )
 
   const windowLabel = (label: string) => {
     const key = ({
@@ -76,6 +84,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       daily: "daily",
       monthly: "monthly",
       credits: "credits",
+      credits_balance: "credits",
       billing_cycle: "billingCycle",
       session: "session",
       premium: "premium",
@@ -125,7 +134,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
               }
             >
               <div class="space-y-2">
-                <For each={entries()}>
+                <For each={displayedEntries()}>
                   {([label, window]) => (
                     <div>
                       <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">

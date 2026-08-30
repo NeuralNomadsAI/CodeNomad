@@ -1,5 +1,6 @@
 import { resolvePastedPlaceholders } from "../../lib/prompt-placeholders"
 import type { Attachment } from "../../types/attachment"
+import type { PromptDelivery } from "./types"
 
 export type PromptSubmissionMode = "message" | "shell" | "slash"
 
@@ -7,6 +8,16 @@ export interface PromptSubmissionResult {
   historyEntry: string
   submitPrompt: string
   resolvedCommandArgs: string
+}
+
+export function resolvePromptDelivery(
+  working: boolean,
+  preferred: PromptDelivery,
+  alternate = false,
+): PromptDelivery {
+  if (!working) return "steer"
+  if (!alternate) return preferred
+  return preferred === "steer" ? "queue" : "steer"
 }
 
 export function preparePromptSubmission(input: {

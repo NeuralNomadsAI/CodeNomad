@@ -7,6 +7,7 @@ import {
   clientStateIsPrimary, flushClientState, restorePreviousStateEnabled, updateRestorableSession,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
+import { storage } from "../storage"
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
@@ -125,7 +126,6 @@ export function useAppSessionCapture() {
   const instanceLifecycleTokens = new Map<string, number>()
   let nextInstanceLifecycleToken = 0
   let disposed = false
-  let nativeShutdownStarted = false
   const hydrationController = new AbortController()
   let timer: ReturnType<typeof setTimeout> | null = null
   let preservation: RestorableSessionPreservation | null = null
@@ -151,21 +151,23 @@ export function useAppSessionCapture() {
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
     })
   }
+  let nativeShutdownGeneration: number | null = null
   const capture = () => {
     timer = null
-    if (enabled() && !disposed && !nativeShutdownStarted) {
+    if (enabled() && !disposed && nativeShutdownGeneration === null) {
       const state = mergedState()
       if (state.tabs.length > 0) nativeFallbackState = state
       updateRestorableSession(state)
     }
   }
   const schedule = () => {
-    if (!enabled() || disposed || nativeShutdownStarted) return
+    if (!enabled() || disposed || nativeShutdownGeneration !== null) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
-  const flush = async (nativeShutdown = false) => {
-    if (nativeShutdown) nativeShutdownStarted = true
+  const flush = async (nativeShutdownGenerationRequest?: number) => {
+    const nativeShutdown = nativeShutdownGenerationRequest !== undefined
+    if (nativeShutdown) nativeShutdownGeneration = nativeShutdownGenerationRequest
     if (timer) clearTimeout(timer)
     timer = null
     if (enabled()) {
@@ -177,12 +179,15 @@ export function useAppSessionCapture() {
         : current
       updateRestorableSession(state)
     }
-    await flushClientState()
+    await Promise.all([
+      flushClientState(),
+      ...(nativeShutdown ? [storage.flushWrites()] : []),
+    ])
   }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
-  const register = <T,>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
-    void flush(nativeShutdown).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  const register = <T extends { generation: number }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
+    void flush(nativeShutdown ? payload.generation : undefined).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
@@ -193,6 +198,14 @@ export function useAppSessionCapture() {
           ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
         register<{ generation: number }>("client-state:navigation-flush-requested",
           ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
+        listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
+          if (nativeShutdownGeneration !== payload.generation) return
+          nativeShutdownGeneration = null
+          schedule()
+        }).then((unlisten) => {
+          if (nativeDisposed) unlisten()
+          else nativeUnlisteners.push(unlisten)
+        }),
       ]).then(() => undefined)
     : Promise.resolve()
   const markScrollAuthority = (instanceId: string, sessionId: string) => {

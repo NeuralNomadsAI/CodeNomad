@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, ShieldCheck, X } from "lucide-solid"
-import type { FormAnswer, FormValue, IntegrationMethod, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode-ai/client"
+import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode-ai/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { isLocalTauriHost } from "../../lib/runtime-env"
@@ -18,6 +18,7 @@ import {
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
+import { toRequestLocation } from "../../stores/request-locations"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
@@ -82,6 +83,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   let pendingOauthPopup: Window | null = null
   let loadVersion = 0
   let authOperationVersion = 0
+  let authCatalogLocation: LocationRef | null = null
+  let loadedInstanceId: string | null = null
+  let loadedClient: OpenCodeClient | null = null
   let oauthCodeInput: HTMLInputElement | undefined
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
@@ -89,6 +93,11 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const current = instance()
     return current?.status === "ready" ? current.client ?? null : null
   })
+  const requestLocation = (location: LocationRef) => toRequestLocation(location)
+  const isActiveCatalogLocation = (location: LocationRef) => {
+    const active = getActiveCatalogLocation(props.instanceId)
+    return active.directory === location.directory && active.workspaceID === location.workspaceID
+  }
 
   const providerNameById = createMemo(() => {
     const names = new Map<string, string>()
@@ -252,11 +261,27 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   createEffect(() => {
     const version = ++loadVersion
-    resetProviderData()
-    if (!props.embedded && !props.open) return
+    if (!props.embedded && !props.open) {
+      loadedInstanceId = null
+      loadedClient = null
+      resetProviderData()
+      return
+    }
+    const instanceId = props.instanceId
     const authClient = client()
-    if (!authClient) return
-    void loadProviderData(authClient, version)
+    if (!authClient) {
+      loadedInstanceId = null
+      loadedClient = null
+      resetProviderData()
+      return
+    }
+    if (loadedInstanceId !== instanceId || loadedClient !== authClient) {
+      resetProviderData()
+      loadedInstanceId = instanceId
+      loadedClient = authClient
+    }
+    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    void loadProviderData(authClient, version, catalogLocation)
   })
 
   createEffect(() => {
@@ -268,17 +293,22 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     disposePendingAuth()
   })
 
-  async function loadProviderData(authClient: OpenCodeClient, version = ++loadVersion): Promise<void> {
+  async function loadProviderData(
+    authClient: OpenCodeClient,
+    version: number,
+    catalogLocation: LocationRef,
+  ): Promise<void> {
+    const isCurrentLoad = () => version === loadVersion && client() === authClient && isActiveCatalogLocation(catalogLocation)
     setLoading(true)
     setLoadError(null)
     try {
-      const location = { location: getActiveCatalogLocation(props.instanceId) }
+      const location = { location: requestLocation(catalogLocation) }
       const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
         authClient.provider.list(location),
         authClient.model.list(location),
         authClient.integration.list(location),
       ])
-      if (version !== loadVersion) return
+      if (!isCurrentLoad()) return
       const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data).map((provider) => ({
         ...provider,
         models: buildProviderVisibilityModels(provider.id, providerResponse.data, modelResponse.data),
@@ -291,15 +321,16 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       setMethodsByProvider(methods)
       setSelectedProviderId((current) => current ?? listed[0]?.id ?? integrationResponse.data[0]?.id ?? null)
     } catch (error) {
-      if (version !== loadVersion) return
+      if (!isCurrentLoad()) return
       setLoadError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.loadFailed")))
     } finally {
-      if (version === loadVersion) setLoading(false)
+      if (isCurrentLoad()) setLoading(false)
     }
   }
 
   function disposePendingAuth() {
     authOperationVersion += 1
+    authCatalogLocation = null
     callbackAbortController?.abort()
     callbackAbortController = null
     if (pendingOauthPopup && !pendingOauthPopup.closed) pendingOauthPopup.close()
@@ -347,21 +378,22 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     return version === authOperationVersion && props.instanceId === instanceId && client() === authClient
   }
 
-  async function refreshAfterAuth(authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
+  async function refreshAfterAuth(authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await fetchProviders(instanceId).catch(() => undefined)
+    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await loadProviderData(authClient).catch(() => undefined)
+    await loadProviderData(authClient, ++loadVersion, { ...getActiveCatalogLocation(instanceId) }).catch(() => undefined)
   }
 
   async function refreshProviderData() {
     const authClient = client()
     const instanceId = props.instanceId
     if (!authClient) return
+    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
     setLoading(true)
-    await fetchProviders(instanceId).catch(() => undefined)
+    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (client() !== authClient || props.instanceId !== instanceId) return
-    await loadProviderData(authClient)
+    await loadProviderData(authClient, ++loadVersion, catalogLocation)
   }
 
   function closeModelManager() {
@@ -371,26 +403,26 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     })
   }
 
-  async function submitApiAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
+  async function submitApiAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     await authClient.integration.connect.key({
       integrationID: providerId,
       key: apiKey().trim(),
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
-      location: getActiveCatalogLocation(instanceId),
+      location: requestLocation(catalogLocation),
     })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await refreshAfterAuth(authClient, instanceId, operationVersion)
+    await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
     if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
   }
 
-  async function submitOAuthAuthorize(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
+  async function submitOAuthAuthorize(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     const method = selectedMethod()
     if (method.type !== "oauth") throw new Error(t("settings.providers.errors.noAuthorization"))
     const response = await authClient.integration.oauth.connect({
       integrationID: providerId,
       methodID: method.id,
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
-      location: getActiveCatalogLocation(instanceId),
+      location: requestLocation(catalogLocation),
     })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const data = response.data
@@ -414,7 +446,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     callbackAbortController = new AbortController()
     while (true) {
       const result = await authClient.integration.oauth.status(
-        { integrationID: providerId, attemptID: data.attemptID, location: getActiveCatalogLocation(instanceId) },
+        { integrationID: providerId, attemptID: data.attemptID, location: requestLocation(catalogLocation) },
         { signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
@@ -424,17 +456,17 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     }
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     callbackAbortController = null
-    await refreshAfterAuth(authClient, instanceId, operationVersion)
+    await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
     if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
   }
 
-  async function submitCommandAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number) {
+  async function submitCommandAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     const method = selectedMethod()
     if (method.type !== "command") throw new Error(t("settings.providers.errors.noAuthorization"))
     const response = await authClient.integration.command.connect({
       integrationID: providerId,
       methodID: method.id,
-      location: getActiveCatalogLocation(instanceId),
+      location: requestLocation(catalogLocation),
     })
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const attemptID = response.data.attemptID
@@ -444,7 +476,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     callbackAbortController = new AbortController()
     while (true) {
       const result = await authClient.integration.command.status(
-        { integrationID: providerId, attemptID, location: getActiveCatalogLocation(instanceId) },
+        { integrationID: providerId, attemptID, location: requestLocation(catalogLocation) },
         { signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
@@ -455,7 +487,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     }
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     callbackAbortController = null
-    await refreshAfterAuth(authClient, instanceId, operationVersion)
+    await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
     if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
   }
 
@@ -464,21 +496,23 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const authClient = client()
     if (!providerId || !authClient || !canSubmit()) return
     const instanceId = props.instanceId
+    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
     const operationVersion = ++authOperationVersion
+    authCatalogLocation = catalogLocation
     setStage("authorizing")
     setActionError(null)
     try {
       if (selectedMethod().type === "key") {
-        await submitApiAuth(providerId, authClient, instanceId, operationVersion)
+        await submitApiAuth(providerId, authClient, instanceId, operationVersion, catalogLocation)
         return
       }
       if (selectedMethod().type === "command") {
-        await submitCommandAuth(providerId, authClient, instanceId, operationVersion)
+        await submitCommandAuth(providerId, authClient, instanceId, operationVersion, catalogLocation)
         return
       }
       pendingOauthPopup = prepareOAuthPopupWindow()
       setAuthorizationLaunchBlocked(isBrowserHostForOAuth() && pendingOauthPopup === null)
-      await submitOAuthAuthorize(providerId, authClient, instanceId, operationVersion)
+      await submitOAuthAuthorize(providerId, authClient, instanceId, operationVersion, catalogLocation)
     } catch (error) {
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       if (pendingOauthPopup && !pendingOauthPopup.closed) {
@@ -499,6 +533,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const authClient = client()
     if (!providerId || !authClient || !code().trim()) return
     const instanceId = props.instanceId
+    const catalogLocation = authCatalogLocation
+    if (!catalogLocation) return
     const operationVersion = ++authOperationVersion
     setStage("authorizing")
     setActionError(null)
@@ -509,10 +545,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         integrationID: providerId,
         attemptID,
         code: code().trim(),
-        location: getActiveCatalogLocation(instanceId),
+        location: requestLocation(catalogLocation),
       })
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      await refreshAfterAuth(authClient, instanceId, operationVersion)
+      await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
     } catch (error) {
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
@@ -526,6 +562,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const provider = availableProviders().find((item) => item.id === providerId)
     if (!authClient || !provider) return
     const instanceId = props.instanceId
+    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
     disposePendingAuth()
     const operationVersion = ++authOperationVersion
     setActionError(null)
@@ -540,10 +577,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       if (disconnectMode !== "credential-remove") return
       await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({
         credentialID,
-        location: getActiveCatalogLocation(instanceId),
+        location: requestLocation(catalogLocation),
       })))
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      await refreshAfterAuth(authClient, instanceId, operationVersion)
+      await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
     } catch (error) {
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
@@ -558,18 +595,19 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const commandAttemptID = commandAttemptId()
     const authClient = client()
     const instanceId = props.instanceId
-    if (providerId && attemptID && authClient) {
+    const catalogLocation = authCatalogLocation
+    if (providerId && attemptID && authClient && catalogLocation) {
       void authClient.integration.oauth.cancel({
         integrationID: providerId,
         attemptID,
-        location: getActiveCatalogLocation(instanceId),
+        location: requestLocation(catalogLocation),
       }).catch(() => undefined)
     }
-    if (providerId && commandAttemptID && authClient) {
+    if (providerId && commandAttemptID && authClient && catalogLocation) {
       void authClient.integration.command.cancel({
         integrationID: providerId,
         attemptID: commandAttemptID,
-        location: getActiveCatalogLocation(instanceId),
+        location: requestLocation(catalogLocation),
       }).catch(() => undefined)
     }
     disposePendingAuth()

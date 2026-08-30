@@ -6,6 +6,8 @@ import {
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  classifyVirtualItemKeyChange,
+  getBottomAnchoredViewportOffset,
   getKeyboardScrollIntent,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
@@ -195,6 +197,26 @@ describe("virtual follow behavior", () => {
 
     assert.deepEqual(result.state.mode, { type: "following" })
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
+  })
+
+  it("keeps the viewport bottom anchored when its height changes", () => {
+    assert.equal(getBottomAnchoredViewportOffset(2400, 200), 2600)
+    assert.equal(getBottomAnchoredViewportOffset(2600, -200), 2400)
+    assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
+  })
+
+  it("invalidates measurements and follows when a capped window slides", () => {
+    const previous = Array.from({ length: 200 }, (_, index) => `m${index}`)
+    const next = [...previous.slice(1), "compaction"]
+
+    assert.deepEqual(classifyVirtualItemKeyChange(previous, next), {
+      resetMeasurements: true,
+      endChanged: true,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(next, next), {
+      resetMeasurements: false,
+      endChanged: false,
+    })
   })
 
   it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {

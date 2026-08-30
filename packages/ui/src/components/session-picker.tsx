@@ -2,7 +2,8 @@ import { Component, createSignal, Show, For, createEffect } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { isSelectablePrimaryAgent, type Session, type Agent } from "../types/session"
 import { getParentSessions, createSession, setActiveParentSession } from "../stores/sessions"
-import { instances, stopInstance } from "../stores/instances"
+import { instances } from "../stores/instances"
+import { closeInstanceTab } from "../stores/app-tabs"
 import { agents } from "../stores/sessions"
 import { getLogger } from "../lib/logger"
 import { useI18n } from "../lib/i18n"
@@ -67,7 +68,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
   }
 
   async function handleCancel() {
-    stopInstance(props.instanceId)
+    closeInstanceTab(props.instanceId)
     props.onClose()
   }
 

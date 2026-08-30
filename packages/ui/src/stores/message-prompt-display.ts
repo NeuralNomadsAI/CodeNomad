@@ -6,6 +6,11 @@ const LEGACY_STORAGE_KEY = "codenomad:prompt-display:v2"
 let loaded = false
 const promptDisplayOverrides = new Map<string, PromptDisplayMetadata>()
 
+function storageKey(): string {
+  const windowId = typeof window === "undefined" ? "" : window.__CODENOMAD_WINDOW_ID__?.trim()
+  return windowId ? `${STORAGE_KEY}:${windowId}` : STORAGE_KEY
+}
+
 function makeKey(_instanceId: string, sessionId: string, messageId: string): string {
   return `${sessionId}:${messageId}`
 }
@@ -40,16 +45,26 @@ function ensureLoaded(): void {
   if (!storage) return
 
   try {
-    const raw = storage.getItem(STORAGE_KEY)
+    const key = storageKey()
+    const raw = storage.getItem(key)
     if (raw) {
       loadStoredEntries(JSON.parse(raw) as Record<string, PromptDisplayMetadata>, false)
     }
-    const legacyRaw = storage.getItem(LEGACY_STORAGE_KEY)
-    if (legacyRaw) {
-      loadStoredEntries(JSON.parse(legacyRaw) as Record<string, PromptDisplayMetadata>, true)
+    const migrateIntoScopedKey = key !== STORAGE_KEY && !raw
+    const legacyV3Raw = migrateIntoScopedKey ? storage.getItem(STORAGE_KEY) : null
+    if (legacyV3Raw) {
+      loadStoredEntries(JSON.parse(legacyV3Raw) as Record<string, PromptDisplayMetadata>, false)
     }
-    if (!raw && !legacyRaw) return
-    if (persist() && legacyRaw) storage.removeItem(LEGACY_STORAGE_KEY)
+    const legacyV2Raw = key === STORAGE_KEY || migrateIntoScopedKey
+      ? storage.getItem(LEGACY_STORAGE_KEY)
+      : null
+    if (legacyV2Raw) {
+      loadStoredEntries(JSON.parse(legacyV2Raw) as Record<string, PromptDisplayMetadata>, true)
+    }
+    if (!legacyV3Raw && !legacyV2Raw) return
+    if (!persist()) return
+    if (legacyV3Raw) storage.removeItem(STORAGE_KEY)
+    if (legacyV2Raw) storage.removeItem(LEGACY_STORAGE_KEY)
   } catch {
     promptDisplayOverrides.clear()
   }
@@ -68,7 +83,7 @@ function persist(): boolean {
   if (!storage) return false
 
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(promptDisplayOverrides)))
+    storage.setItem(storageKey(), JSON.stringify(Object.fromEntries(promptDisplayOverrides)))
     return true
   } catch {
     // Ignore persistence failures.

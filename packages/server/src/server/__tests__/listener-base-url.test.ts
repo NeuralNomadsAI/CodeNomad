@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { resolvePluginBaseUrl } from "../listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "../listener-base-url"
 
 describe("resolvePluginBaseUrl", () => {
   it("keeps loopback URLs for default local listeners", () => {
@@ -43,5 +43,16 @@ describe("resolvePluginBaseUrl", () => {
       }),
       "http://127.0.0.1:9899",
     )
+  })
+})
+
+describe("resolveAutomationBridgeUrl", () => {
+  it("uses IPv4 loopback for an internal HTTP listener", () => {
+    assert.equal(resolveAutomationBridgeUrl({ protocol: "http", bindHost: "0.0.0.0", port: 3210 }), "http://127.0.0.1:3210")
+  })
+
+  it("rejects HTTPS and non-loopback listeners", () => {
+    assert.throws(() => resolveAutomationBridgeUrl({ protocol: "https", bindHost: "127.0.0.1", port: 3210 }), /loopback HTTP/)
+    assert.throws(() => resolveAutomationBridgeUrl({ protocol: "http", bindHost: "192.168.1.2", port: 3210 }), /loopback HTTP/)
   })
 })

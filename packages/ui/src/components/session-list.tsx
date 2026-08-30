@@ -70,6 +70,16 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
   const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
+  let failedSortExhaustion: string | undefined
+
+  createEffect(() => {
+    const selected = normalizeSessionDirectory(worktreeDirectory())
+    if (!selected) return
+    const exists = getWorktrees(props.instanceId).some((worktree) => (
+      normalizeSessionDirectory(worktree.serviceDirectory ?? worktree.directory) === selected
+    ))
+    if (!exists) setWorktreeDirectory("")
+  })
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
@@ -115,6 +125,21 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+
+  createEffect(() => {
+    const sort = sortBy()
+    const key = `${props.instanceId}:${sort}`
+    if (sort === "activity") {
+      failedSortExhaustion = undefined
+      return
+    }
+    if (normalizedQuery() || failedSortExhaustion === key
+      || !getSessionHasMore(props.instanceId) || isFetchingSessions()) return
+    void loadMoreSessions(props.instanceId).catch((error) => {
+      failedSortExhaustion = key
+      log.error("Failed to load all sessions for sorting:", error)
+    })
+  })
 
   const handleRetrySessions = () => {
     void fetchSessions(props.instanceId, { reset: true }).catch((error) => {
@@ -537,7 +562,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const showWorktreeBadge = createMemo(() => {
       if (isChild()) return false
-      if (getGitRepoStatus(props.instanceId) === false) return false
+      if (getGitRepoStatus(props.instanceId) !== true) return false
       return Boolean(worktreeSlug())
     })
 
@@ -917,7 +942,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             )}
           </Show>
 
-          <Show when={!sessionListError() && isFetchingSessions() && visibleProjection().ids.length === 0}>
+          <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>
             <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
               <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
             </div>
@@ -939,33 +964,27 @@ const SessionList: Component<SessionListProps> = (props) => {
                  {(sessionId, index) => {
                    const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
                    return (
-                     <Show when={row()}>
-                       {(current) => (
-                         <SessionRow
-                           session={current().thread.session}
-                           depth={current().depth}
-                           hasChildren={current().hasChildren}
-                           expanded={current().expanded}
-                           onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
-                           isLastChild={current().isLastChild}
-                           isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
-                         />
-                       )}
+                     <Show when={Boolean(row())}>
+                       <SessionRow
+                         session={row()!.thread.session}
+                         depth={row()!.depth}
+                         hasChildren={row()!.hasChildren}
+                         expanded={row()!.expanded}
+                         onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
+                         isLastChild={row()!.isLastChild}
+                         isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
+                       />
                      </Show>
                    )
                  }}
                </Virtualizer>
              </Show>
              <Show when={hasMore() || isFetchingSessions()}>
-               <div
-                 ref={(el) => setSentinelEl(el)}
-                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
-                 data-session-sentinel
-               >
-                 <Show when={isFetchingSessions()}>
-                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
-                 </Show>
-               </div>
+                <div
+                  ref={(el) => setSentinelEl(el)}
+                  class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                  data-session-sentinel
+                />
              </Show>
            </div>
          </Show>

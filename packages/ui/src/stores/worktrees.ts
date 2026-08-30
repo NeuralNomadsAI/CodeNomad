@@ -141,13 +141,17 @@ async function deleteWorktree(
   } catch (error) {
     deleteError = error
   }
-  await Promise.all([
-    reloadWorktrees(instanceId),
-    refreshSessions(instanceId),
-  ]).catch((error) => {
-    if (!deleteError) throw error
-    log.warn("Failed to refresh after worktree deletion error", { instanceId, slug: trimmed, error })
-  })
+  const refreshers = [() => reloadWorktrees(instanceId), () => refreshSessions(instanceId)]
+  const refreshes = await Promise.allSettled(refreshers.map((refresh) => refresh()))
+  const failed = refreshes.flatMap((refresh, index) => refresh.status === "rejected" ? [index] : [])
+  if (failed.length) {
+    const retries = await Promise.allSettled(failed.map((index) => refreshers[index]!()))
+    for (const retry of retries) {
+      if (retry.status === "rejected") {
+        log.warn("Failed to refresh after worktree deletion", { instanceId, slug: trimmed, error: retry.reason })
+      }
+    }
+  }
   if (deleteError) {
     throw deleteError
   }
@@ -217,13 +221,17 @@ async function setWorktreeSlugForParentSession(
     } catch (error) {
       moveError = error
     }
-    await refreshSessions(instanceId).catch((error) => {
-      if (!moveError) throw error
-      log.warn("Failed to refresh sessions after family move error", { instanceId, rootSessionId, error })
-    })
+    try {
+      await refreshSessions(instanceId)
+    } catch {
+      await refreshSessions(instanceId).catch((error) => {
+        log.warn("Failed to refresh sessions after family move", { instanceId, rootSessionId, error })
+      })
+    }
     if (moveError) {
+      log.warn("Failed to move session family", { instanceId, rootSessionId, error: moveError })
       showToastNotification({
-        message: moveError instanceof Error && moveError.message ? moveError.message : tGlobal("sessionList.worktreeMove.error"),
+        message: tGlobal("sessionList.worktreeMove.error"),
         variant: "error",
       })
       throw moveError

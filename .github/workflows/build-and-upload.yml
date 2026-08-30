@@ -95,9 +95,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-darwin-x64 --no-save
-
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
@@ -256,9 +253,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-win32-x64-msvc --no-save
-
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
@@ -307,9 +301,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
-
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
@@ -451,28 +442,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-darwin-x64 --no-save
-
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
 
       - name: Verify bundled Node resource (Tauri macOS x64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-x64
-
-      - name: Ensure tauri native binary
-        working-directory: packages/tauri-app
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              echo "Retrying Tauri CLI install (attempt $attempt)..."
-            fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-x64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
-            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
-          done
-          echo "Tauri CLI failed to load after retries" >&2
-          exit 1
 
       - name: Build macOS bundle (Tauri)
         working-directory: packages/tauri-app
@@ -541,28 +515,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-darwin-arm64 --no-save
-
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
 
       - name: Verify bundled Node resource (Tauri macOS arm64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-arm64
-
-      - name: Ensure tauri native binary
-        working-directory: packages/tauri-app
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              echo "Retrying Tauri CLI install (attempt $attempt)..."
-            fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-darwin-arm64@2.9.4 --no-save --no-audit --no-fund --workspaces=false
-            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
-          done
-          echo "Tauri CLI failed to load after retries" >&2
-          exit 1
 
       - name: Build macOS bundle (Tauri, arm64)
         working-directory: packages/tauri-app
@@ -632,29 +589,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-win32-x64-msvc --no-save
-
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
 
       - name: Verify bundled Node resource (Tauri Windows)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@win32-x64
-
-      - name: Ensure tauri native binary
-        shell: bash
-        working-directory: packages/tauri-app
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              echo "Retrying Tauri CLI install (attempt $attempt)..."
-            fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-win32-x64-msvc@2.9.4 --no-save --no-audit --no-fund --workspaces=false
-            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
-          done
-          echo "Tauri CLI failed to load after retries" >&2
-          exit 1
 
       - name: Build Windows bundle (Tauri)
         shell: bash
@@ -739,28 +678,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-
       - name: Prebuild (Tauri)
         run: npm run prebuild --workspace @codenomad/tauri-app
 
       - name: Verify bundled Node resource (Tauri Linux)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@linux-x64
-
-      - name: Ensure tauri native binary
-        working-directory: packages/tauri-app
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if [ "$attempt" -gt 1 ]; then
-              echo "Retrying Tauri CLI install (attempt $attempt)..."
-            fi
-            npm install @tauri-apps/cli@2.9.4 @tauri-apps/cli-linux-x64-gnu@2.9.4 --no-save --no-audit --no-fund --workspaces=false
-            node -e "require('@tauri-apps/cli'); console.log('Tauri CLI loaded')" && exit 0
-          done
-          echo "Tauri CLI failed to load after retries" >&2
-          exit 1
 
       - name: Build Debian package (Tauri)
         working-directory: packages/tauri-app
@@ -953,11 +875,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
-      - name: Ensure rollup native binary
-        run: npm install @rollup/rollup-linux-arm64-gnu --no-save
-
       - name: Build Linux bundle (Tauri arm64)
         env:
+          CODENOMAD_NODE_TARGET: linux-arm64
           TAURI_BUILD_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc

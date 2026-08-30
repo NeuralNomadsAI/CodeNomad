@@ -2,28 +2,30 @@
 
 ## Package
 
-CodeNomad keeps the experimental `@opencode-ai/client` protocol aligned in `packages/server/package.json` and `packages/ui/package.json`. The runtime CLI is independently updated and startup validates service health and API compatibility without requiring that exact dependency version. This is distinct from the current public `@opencode-ai/sdk` documentation.
+CodeNomad server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently; startup validates its authenticated loopback endpoint and health response without an exact version gate, while contract parity is reviewed at upgrade and release time. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
 
 - Promise client: `import { OpenCode } from "@opencode-ai/client"`
-- Service lifecycle: `import { Service } from "@opencode-ai/client/service"`
+- Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
 - Declarations: `node_modules/@opencode-ai/client/dist/promise/`
 
-Do not import `@opencode-ai/sdk`; its wrapper shapes, `{ data, error }` conventions, and `createOpencodeClient()` do not apply to this pinned experimental protocol build.
+Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNomad intentionally changes to an embedded, process-owned host.
 
 ## Used Native APIs
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | `Service.discover/headers`; custom launch and authenticated stop | `packages/server/src/workspaces/opencode-service.ts` |
+| Service | CLI `service status/start/get password`; `Service.headers` for authenticated health/API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
 | Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
-| Questions | `question.request.list` and reply/reject APIs | UI interruption flow |
+| Forms | `client.form.request.list`, `client.form.reply`, `client.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
+
+Native Forms own pending interruption state. The allowlisted Question request/reply/reject routes are compatibility-only. The Question tool renderer may display compatible output, but no Question queue/state architecture should return.
 
 ## Routing
 

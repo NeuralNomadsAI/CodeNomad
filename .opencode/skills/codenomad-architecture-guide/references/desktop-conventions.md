@@ -1,136 +1,51 @@
 # Desktop Conventions
 
-## Dual Platform: Electron + Tauri
+## Shared Model
 
-CodeNomad supports two desktop platforms:
-- **Electron** (primary, mature)
-- **Tauri** (emerging, Rust-based)
+CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update channel plus config profile: each scope has one native singleton process and one CodeNomad backend, with multiple UUID-backed windows. A second launch focuses the MRU window unless `--new-window` requests another window.
 
-## Electron
+OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 
-### Directory Structure
+Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM comment inspection is web-only.
 
-```
-packages/electron-app/electron/
-├── main/           # Main process code
-│   ├── main.ts     # Entry point, window management
-│   ├── menu.ts     # Application menu
-│   ├── ipc.ts      # IPC handlers
-│   ├── storage.ts  # File system storage
-│   ├── permissions.ts  # Media permissions
-│   ├── user-shell.ts   # Shell command execution
-│   └── process-manager.ts  # CLI process management
-├── preload/        # Preload scripts
-│   └── index.cjs   # API exposure to renderer
-└── resources/      # Bundled resources
-    └── cli-supervisor.cjs  # Process supervisor
-```
+## Current Host Paths
 
-### Main Process Responsibilities
+| Concern | Electron | Tauri |
+|---|---|---|
+| Entry and host wiring | `packages/electron-app/electron/main/main.ts` | `packages/tauri-app/src-tauri/src/main.rs` |
+| Backend process | `packages/electron-app/electron/main/process-manager.ts` | `packages/tauri-app/src-tauri/src/cli_manager.rs` |
+| Launch and singleton behavior | `packages/electron-app/electron/main/startup.ts` | `packages/tauri-app/src-tauri/src/launch.rs`, `identity.rs`, `local_windows.rs` |
+| Native commands | `packages/electron-app/electron/main/ipc.ts` | command handlers registered in `packages/tauri-app/src-tauri/src/main.rs` |
+| Renderer bridge | `packages/electron-app/electron/preload/index.cjs` | Tauri invoke/plugins through `packages/ui/src/lib/native/tauri/functions.ts` |
+| Client state | `packages/electron-app/electron/main/client-state.ts` and `client-state-*.ts` | `packages/tauri-app/src-tauri/src/client_state.rs` and `client_state/` |
+| Shutdown | `packages/electron-app/electron/main/multiwindow-lifecycle.ts` | `packages/tauri-app/src-tauri/src/shutdown.rs` |
+| Workspace open | `packages/electron-app/electron/main/workspace-open.ts` | `packages/tauri-app/src-tauri/src/workspace_open.rs` |
 
-- Create and manage browser windows
-- Spawn and monitor CLI server process
-- Handle native APIs (file dialogs, notifications)
-- Manage application lifecycle
-
-### IPC Pattern
-
-```typescript
-// Main process handler
-// packages/electron-app/electron/main/ipc.ts
-function setupCliIPC() {
-  ipcMain.handle("dialog:open", async (_, options) => {
-    return dialog.showOpenDialog(options)
-  })
-}
-
-// Preload exposure
-// packages/electron-app/electron/preload/index.cjs
-contextBridge.exposeInMainWorld("electronAPI", {
-  openDialog: (options) => ipcRenderer.invoke("dialog:open", options)
-})
-```
-
-## Tauri
-
-### Directory Structure
-
-```
-packages/tauri-app/
-├── src-tauri/
-│   ├── src/           # Rust backend code
-│   │   ├── main.rs           # Entry point
-│   │   ├── cli_manager.rs    # CLI process management
-│   │   ├── cert_manager.rs   # TLS certificate management
-│   │   └── linux_tls.rs      # Linux TLS handling
-│   └── capabilities/  # Permission capabilities
-└── src/             # Frontend code (same as UI)
-```
-
-### Rust Backend
-
-- Commands exposed to frontend via `#[tauri::command]`
-- Process management similar to Electron's process-manager.ts
-- Certificate management for HTTPS
-
-### Command Pattern
-
-```rust
-// packages/tauri-app/src-tauri/src/main.rs
-#[tauri::command]
-fn open_dialog(options: DialogOptions) -> Result<DialogResult, String> {
-  // Implementation
-}
-```
-
-## Parity Rules
-
-| Scenario | Rule |
-|----------|------|
-| Existing IPC/handlers (pre-Tauri) | MUST implement in both Electron + Tauri |
-| New features | Implement in Electron first, Tauri if time permits |
-| Native APIs | Use `packages/ui/src/lib/native/` abstraction layer |
+The desktop process managers start and supervise the CodeNomad backend. They do not own or stop the shared OpenCode daemon.
 
 ## Native Abstractions
 
-CodeNomad abstracts native APIs to work across Electron, Tauri, and Web:
+- Shared dispatch and dialogs: `packages/ui/src/lib/native/native-functions.ts`
+- Shared types: `packages/ui/src/lib/native/types.ts`
+- Electron adapter: `packages/ui/src/lib/native/electron/functions.ts`
+- Tauri adapter: `packages/ui/src/lib/native/tauri/functions.ts`
+- Desktop file drop: `packages/ui/src/lib/native/desktop-file-drop.ts`
+- Client state: `packages/ui/src/lib/native/client-state.ts`
+- Remote windows: `packages/ui/src/lib/native/remote-window.ts`
+- Runtime detection: `packages/ui/src/lib/runtime-env.ts`
 
-| Feature | Abstraction File |
-|---------|-----------------|
-| File dialogs | `packages/ui/src/lib/native/native-functions.ts` |
-| Desktop file drop | `packages/ui/src/lib/native/desktop-file-drop.ts` |
-| Electron-specific | `packages/ui/src/lib/native/electron/functions.ts` |
-| Wake lock | `packages/ui/src/lib/native/wake-lock.ts` |
-| Remote windows | `packages/ui/src/lib/native/remote-window.ts` |
-| CLI restart | `packages/ui/src/lib/native/cli.ts` |
+Use these abstractions instead of importing host APIs into feature components.
 
-### Abstraction Pattern
+## Strict Parity
 
-```typescript
-// packages/ui/src/lib/native/native-functions.ts
-export type NativeDialogResult = string | string[] | null
+- Every desktop behavior change must ship for Electron and Tauri in the same change. There is no Electron-first or follow-up parity exception.
+- Keep lifecycle, singleton identity, window restore, client-state safety, navigation security, native commands, and shutdown semantics equivalent.
+- Add or update tests for both hosts. Include Web behavior when the shared abstraction has a browser fallback.
+- Platform-specific implementation details may differ, but user-visible behavior and security boundaries must not.
 
-export async function openNativeFileDialogs(
-  options?: Omit<NativeDialogOptions, "mode" | "multiple">
-): Promise<string[]> {
-  const result = await openNativeDialog({ mode: "file", multiple: true, ...options })
-  // Platform-specific implementation
-}
-```
+## Checklist
 
-## Platform Detection
-
-```typescript
-// packages/ui/src/lib/runtime-env.ts
-export function isElectronHost(): boolean { /* ... */ }
-export function isTauriHost(): boolean { /* ... */ }
-export function isWebHost(): boolean { /* ... */ }
-```
-
-## Checklist for Desktop Features
-
-- [ ] Electron main-process changes? (`packages/electron-app/electron/main/`)
-- [ ] Tauri Rust changes? (`packages/tauri-app/src-tauri/src/`)
-- [ ] Preload API exposure? (`packages/electron-app/electron/preload/`)
-- [ ] Native abstraction? (`packages/ui/src/lib/native/`)
-- [ ] Cross-platform test (Electron + Tauri + Web)
+- [ ] Electron main/preload behavior updated and tested
+- [ ] Tauri Rust/plugin behavior updated and tested
+- [ ] Shared UI native abstraction remains host-agnostic
+- [ ] Multi-window, restore, navigation, and shutdown invariants preserved

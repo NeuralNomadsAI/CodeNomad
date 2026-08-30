@@ -33,6 +33,7 @@ export interface ModelPreference {
 }
 
 export type DiffViewMode = "split" | "unified"
+export type FollowUpBehavior = "steer" | "queue"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
@@ -94,6 +95,7 @@ export interface UiSettings {
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
+  followUpBehavior: FollowUpBehavior
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
@@ -103,6 +105,7 @@ export interface UiSettings {
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
+  showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
   modelVisibility: ModelVisibilityPreferences
@@ -180,12 +183,13 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
-  showKeyboardShortcutHints: true,
+  showKeyboardShortcutHints: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
-  showTimelineTools: true,
+  showTimelineTools: false,
   holdLongAssistantReplies: true,
-  promptSubmitOnEnter: false,
+  promptSubmitOnEnter: true,
+  followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
@@ -194,8 +198,9 @@ const defaultUiSettings: UiSettings = {
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   usageMetricsExpansion: "collapsed",
+  showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
-  keepUnseenSubagentIdleStatus: false,
+  keepUnseenSubagentIdleStatus: true,
   modelVisibility: {},
 
   osNotificationsEnabled: false,
@@ -282,6 +287,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    followUpBehavior:
+      sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
+        ? sanitized.followUpBehavior
+        : defaultUiSettings.followUpBehavior,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
@@ -300,6 +309,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.usageMetricsExpansion,
       usageMetricsFallback,
     ),
+    showProviderUsageCreditBalance:
+      sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
@@ -450,7 +461,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   }
 }
 
-function normalizeServerConfig(
+export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
 ): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
@@ -459,7 +470,9 @@ function normalizeServerConfig(
     source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
       ? source.logLevel
       : "DEBUG"
-  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode2"
+  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() && source.opencodeBinary !== "opencode"
+    ? source.opencodeBinary
+    : "opencode2"
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)

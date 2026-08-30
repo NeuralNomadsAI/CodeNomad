@@ -8,7 +8,6 @@ export interface ActionOverflowMenuItem {
   icon?: JSXElement
   disabled?: boolean
   checked?: boolean
-  destructive?: boolean
   onSelect: () => void | Promise<void>
   onMouseEnter?: () => void
   onMouseLeave?: () => void
@@ -52,7 +51,6 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
               {(item) => (
                 <DropdownMenu.Item
                   class="action-overflow-item"
-                  data-destructive={item.destructive ? "true" : undefined}
                   role={typeof item.checked === "boolean" ? "menuitemcheckbox" : undefined}
                   aria-checked={typeof item.checked === "boolean" ? item.checked : undefined}
                   disabled={item.disabled}

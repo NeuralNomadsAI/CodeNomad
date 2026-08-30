@@ -76,6 +76,16 @@ describe("message store scroll snapshots", () => {
     }
   })
 
+  it("clears loaded transcript authority when an instance id is unregistered", () => {
+    const instanceId = "reused-message-authority"
+    messageStoreBus.getOrCreate(instanceId)
+    setMessagesLoaded((prev) => new Map(prev).set(instanceId, new Set(["session-1"])))
+
+    messageStoreBus.unregisterInstance(instanceId)
+
+    assert.equal(messagesLoaded().has(instanceId), false)
+  })
+
   it("does not replace newer runtime scroll with a late native seed", () => {
     const instanceId = "scroll-late-seed"
     const store = messageStoreBus.getOrCreate(instanceId)

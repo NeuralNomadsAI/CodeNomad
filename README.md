@@ -72,6 +72,8 @@ npx @neuralnomads/codenomad-dev --password <your-password> --launch
 
 SideCars let you open local web tools inside CodeNomad as tabs.
 
+Previews use token-scoped URLs inside opaque-origin sandboxes. Loopback HTTP native previews receive a dedicated `.preview.localhost` origin so root routes, POSTs, and live reload behave normally; HTTPS, LAN, and web hosts use the capability path. Element comments use a source-checked message bridge.
+
 <details>
 <summary><strong>Configuration</strong></summary>
 

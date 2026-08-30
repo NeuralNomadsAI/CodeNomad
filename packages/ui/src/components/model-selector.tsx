@@ -1,4 +1,4 @@
-import { Combobox } from "@kobalte/core/combobox"
+import { Combobox, useComboboxContext } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
 import { ChevronDown, PlugZap, Star } from "lucide-solid"
@@ -44,6 +44,12 @@ const compareIds = (left: string, right: string) => left.localeCompare(right, un
 
 const isProviderHeaderOption = (option: PickerOption): option is ProviderHeaderOption => "type" in option && option.type === "header"
 
+function ComboboxInputValue(props: { value: string }) {
+  const context = useComboboxContext()
+  createEffect(() => context.setInputValue(props.value))
+  return null
+}
+
 export default function ModelSelector(props: ModelSelectorProps) {
   const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
@@ -51,12 +57,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [manualAll, setManualAll] = createSignal(false)
   const [explicitFavorites, setExplicitFavorites] = createSignal(false)
   const [autoFavoritesEligibleAtOpen, setAutoFavoritesEligibleAtOpen] = createSignal(false)
-  const [searchDirty, setSearchDirty] = createSignal(false)
-  const [initialQuery, setInitialQuery] = createSignal("")
-  const [initialQueryReady, setInitialQueryReady] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
   const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
-  let triggerRef!: HTMLButtonElement
   let searchInputRef!: HTMLInputElement
   let listboxRef!: HTMLUListElement
   let suppressNextClose = false
@@ -142,11 +144,13 @@ export default function ModelSelector(props: ModelSelectorProps) {
     return `${current.providerId}/${current.modelId}`
   })
 
-  const searchActive = createMemo(() => {
-    if (!searchDirty()) return false
-    const next = inputValue().trim()
-    return next.length > 0
-  })
+  const currentModelLabel = createMemo(() =>
+    t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") }),
+  )
+
+  const searchActive = createMemo(() => isOpen()
+    && inputValue().trim().length > 0
+    && inputValue() !== currentModelLabel())
 
   const favoritesOnlyEnabled = createMemo(() => {
     if (searchActive()) return false
@@ -162,10 +166,8 @@ export default function ModelSelector(props: ModelSelectorProps) {
   })
 
   const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {
-    const query = searchActive() ? inputValue().trim().toLowerCase() : ""
     const groups = new Map<string, ModelGroup>()
     for (const model of visibleOptions()) {
-      if (query && !model.searchText.toLowerCase().includes(query)) continue
       const existing = groups.get(model.providerId)
       if (existing) {
         existing.models.push(model)
@@ -195,10 +197,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
     return resolvePickerValue(currentModelValue(), options)
   })
 
-  const currentModelLabel = createMemo(() =>
-    t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") }),
-  )
-
   const currentModelAccessibleLabel = createMemo(() => {
     const current = currentModelValue()
     if (!current) return currentModelLabel()
@@ -214,28 +212,35 @@ export default function ModelSelector(props: ModelSelectorProps) {
     await props.onModelChange({ providerId: value.providerId, modelId: value.id })
   }
 
-  const customFilter = () => true
+  const customFilter = (option: PickerOption, input: string) => {
+    const query = input.trim().toLowerCase()
+    if (!query) return true
+    if (!isProviderHeaderOption(option)) return option.searchText.toLowerCase().includes(query)
+    return visibleOptions().some((model) => model.providerId === option.providerId
+      && model.searchText.toLowerCase().includes(query))
+  }
+
+  const restoreSelectedInput = () => {
+    setInputValue(currentModelLabel())
+    queueMicrotask(() => searchInputRef?.select())
+  }
+
+  const closePicker = () => {
+    setIsOpen(false)
+    restoreSelectedInput()
+  }
 
   createEffect(() => {
     if (isOpen()) {
       setManualAll(false)
       setExplicitFavorites(false)
       setAutoFavoritesEligibleAtOpen(hasFavorites() && currentModelIsFavorite())
-      setSearchDirty(false)
-      setInitialQuery("")
-      setInputValue("")
-      setInitialQueryReady(false)
       setTimeout(() => {
-        const seeded = searchInputRef?.value ?? ""
-        setInitialQuery(seeded)
-        setInputValue(seeded)
-        setInitialQueryReady(true)
         searchInputRef?.focus()
         searchInputRef?.select()
       }, 100)
     } else {
-      setInitialQueryReady(false)
-      setSearchDirty(false)
+      setInputValue(currentModelLabel())
       setAutoFavoritesEligibleAtOpen(false)
     }
   })
@@ -262,16 +267,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
     wasCurrentModelFavorite = nowCurrentModelFavorite
   })
 
-  const handleSearchInput = (event: InputEvent & { currentTarget: HTMLInputElement }) => {
-    const next = event.currentTarget.value
-    setInputValue(next)
-    if (!initialQueryReady()) return
-    if (searchDirty()) return
-    if (next !== initialQuery()) {
-      setSearchDirty(true)
-    }
-  }
-
   const preventListboxPress = (event: PointerEvent | MouseEvent) => {
     event.preventDefault()
     event.stopImmediatePropagation?.()
@@ -297,12 +292,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
     setManualAll(false)
   }
 
-  const showAllModels = () => {
-    setManualAll(true)
-    setExplicitFavorites(false)
-    setAutoFavoritesEligibleAtOpen(false)
-    setTimeout(() => searchInputRef?.focus(), 0)
-  }
+  const favoritesToggleLabel = () => t(favoritesOnlyEnabled()
+    ? "modelSelector.favoritesOnly.showAll"
+    : "modelSelector.favoritesOnly.toggle.ariaLabel")
 
   return (
     <div class="sidebar-selector">
@@ -310,14 +302,20 @@ export default function ModelSelector(props: ModelSelectorProps) {
         open={isOpen()}
         value={comboboxValue()}
         onChange={handleChange}
-        onOpenChange={(next) => {
+        onOpenChange={(next, triggerMode) => {
           if (!next && suppressNextClose) return
           setIsOpen(next)
+          if (!next) restoreSelectedInput()
+          else if (triggerMode !== "input") setInputValue("")
         }}
+        onInputChange={setInputValue}
+        noResetInputOnBlur
         options={pickerOptions()}
         optionValue="key"
         optionTextValue="searchText"
-        optionLabel={(option) => (isProviderHeaderOption(option) ? option.providerName : option.name)}
+        optionLabel={(option) => isProviderHeaderOption(option)
+          ? option.providerName
+          : t("modelSelector.trigger.primary", { model: option.name })}
         optionDisabled={(option) => isProviderHeaderOption(option) || Boolean(option.unavailable)}
         placeholder={t("modelSelector.placeholder.search")}
         defaultFilter={customFilter}
@@ -397,18 +395,15 @@ export default function ModelSelector(props: ModelSelectorProps) {
           )
         }}
       >
+        <ComboboxInputValue value={inputValue()} />
         <Combobox.Control class="relative w-full" data-model-selector-control>
           <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelAccessibleLabel()} />
-          <Combobox.Trigger
-            ref={triggerRef}
-            class="selector-trigger"
-            aria-label={currentModelAccessibleLabel()}
-          >
+          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 {currentModelLabel()}
               </span>
-          {currentModelValue() && (
+              {currentModelValue() && (
                 <span class="selector-trigger-secondary" dir="ltr">
                   {currentModelValue()!.providerId}/{currentModelValue()!.id}
                 </span>
@@ -427,13 +422,18 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 <Combobox.Input
                   ref={searchInputRef}
                   class="selector-search-input flex-1 min-w-0"
+                  value={inputValue()}
                   placeholder={t("modelSelector.placeholder.search")}
-                  onInput={handleSearchInput}
+                  aria-label={t("modelSelector.placeholder.search")}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") queueMicrotask(restoreSelectedInput)
+                  }}
                 />
                 <button
                   type="button"
                   class="selector-favorites-toggle"
-                  aria-label={t("modelSelector.favoritesOnly.toggle.ariaLabel")}
+                  aria-label={favoritesToggleLabel()}
+                  title={favoritesToggleLabel()}
                   aria-pressed={favoritesOnlyEnabled()}
                   disabled={!hasFavorites() || searchActive()}
                   data-active={favoritesOnlyEnabled()}
@@ -463,32 +463,12 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 onClick={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  setIsOpen(false)
+                  closePicker()
                   setProvidersModalOpen(true)
                 }}
               >
                 <PlugZap class="w-4 h-4" />
                 <span class="selector-option-label">{t("modelSelector.manageProviders")}</span>
-              </button>
-              <button
-                type="button"
-                class="selector-option selector-option-action w-full"
-                style={{ display: favoritesOnlyEnabled() && !searchActive() ? "flex" : "none" }}
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                }}
-                onPointerDown={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                }}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  showAllModels()
-                }}
-              >
-                <span class="selector-option-label">{t("modelSelector.favoritesOnly.showAll")}</span>
               </button>
             </div>
           </Combobox.Content>

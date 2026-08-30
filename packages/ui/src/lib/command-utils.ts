@@ -7,16 +7,7 @@ import { tGlobal } from "./i18n"
 
 const log = getLogger("actions")
 
-export function commandRequiresArguments(template?: string): boolean {
-  if (!template) return false
-  return /\$(?:\d+|ARGUMENTS)/.test(template)
-}
-
 export async function promptForCommandArguments(command: CommandInfo): Promise<string | null> {
-  if (!commandRequiresArguments(command.template)) {
-    return ""
-  }
-
   try {
     return await showPromptDialog(tGlobal("commands.custom.argumentsPrompt.message", { name: command.name }), {
       title: tGlobal("commands.custom.argumentsPrompt.title"),

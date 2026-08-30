@@ -1,5 +1,19 @@
 import type { BrowserWindow } from "electron"
-import type { ClientStateManager, NativeWindowState, WindowBounds } from "./client-state"
+import type { ClientStateManager } from "./client-state"
+
+export interface WindowBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface NativeWindowState {
+  bounds: WindowBounds
+  maximized: boolean
+  fullscreen: boolean
+  zoomFactor: number
+}
 
 export const DEFAULT_WINDOW_WIDTH = 1400
 export const DEFAULT_WINDOW_HEIGHT = 900
@@ -15,6 +29,7 @@ export interface DisplayWorkArea {
   y: number
   width: number
   height: number
+  scaleFactor?: number
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -25,13 +40,28 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum)
 }
 
+function physicalBounds(bounds: WindowBounds, scaleFactor: number): WindowBounds {
+  return {
+    x: bounds.x * scaleFactor,
+    y: bounds.y * scaleFactor,
+    width: bounds.width * scaleFactor,
+    height: bounds.height * scaleFactor,
+  }
+}
+
 function intersectionArea(bounds: WindowBounds, area: DisplayWorkArea): number {
+  const scaleFactor = isFiniteNumber(area.scaleFactor) && area.scaleFactor > 0 ? area.scaleFactor : 1
+  bounds = physicalBounds(bounds, scaleFactor)
+  area = physicalBounds(area, scaleFactor)
   const width = Math.max(0, Math.min(bounds.x + bounds.width, area.x + area.width) - Math.max(bounds.x, area.x))
   const height = Math.max(0, Math.min(bounds.y + bounds.height, area.y + area.height) - Math.max(bounds.y, area.y))
   return width * height
 }
 
 function centerDistanceSquared(bounds: WindowBounds, area: DisplayWorkArea): number {
+  const scaleFactor = isFiniteNumber(area.scaleFactor) && area.scaleFactor > 0 ? area.scaleFactor : 1
+  bounds = physicalBounds(bounds, scaleFactor)
+  area = physicalBounds(area, scaleFactor)
   const x = bounds.x + bounds.width / 2 - (area.x + area.width / 2)
   const y = bounds.y + bounds.height / 2 - (area.y + area.height / 2)
   return x * x + y * y
@@ -100,16 +130,19 @@ export function clampWindowBounds(bounds: WindowBounds, displays: DisplayWorkAre
     return centerDistanceSquared(normalized, area) < centerDistanceSquared(normalized, best) ? area : best
   })
 
-  const maximumWidth = Math.max(1, Math.floor(display.width))
-  const maximumHeight = Math.max(1, Math.floor(display.height))
-  const minimumWidth = Math.min(MIN_WINDOW_WIDTH, maximumWidth)
-  const minimumHeight = Math.min(MIN_WINDOW_HEIGHT, maximumHeight)
-  const width = clamp(normalized.width, minimumWidth, maximumWidth)
-  const height = clamp(normalized.height, minimumHeight, maximumHeight)
-  const x = clamp(normalized.x, display.x, display.x + maximumWidth - width)
-  const y = clamp(normalized.y, display.y, display.y + maximumHeight - height)
+  const scaleFactor = isFiniteNumber(display.scaleFactor) && display.scaleFactor > 0 ? display.scaleFactor : 1
+  const physical = physicalBounds(normalized, scaleFactor)
+  const physicalDisplay = physicalBounds(display, scaleFactor)
+  const maximumWidth = Math.max(1, Math.floor(physicalDisplay.width))
+  const maximumHeight = Math.max(1, Math.floor(physicalDisplay.height))
+  const minimumWidth = Math.min(MIN_WINDOW_WIDTH * scaleFactor, maximumWidth)
+  const minimumHeight = Math.min(MIN_WINDOW_HEIGHT * scaleFactor, maximumHeight)
+  const width = clamp(physical.width, minimumWidth, maximumWidth)
+  const height = clamp(physical.height, minimumHeight, maximumHeight)
+  const x = clamp(physical.x, physicalDisplay.x, physicalDisplay.x + maximumWidth - width)
+  const y = clamp(physical.y, physicalDisplay.y, physicalDisplay.y + maximumHeight - height)
 
-  return { x, y, width, height }
+  return { x: x / scaleFactor, y: y / scaleFactor, width: width / scaleFactor, height: height / scaleFactor }
 }
 
 export function restoreWindowState(window: BrowserWindow, state: NativeWindowState | undefined, bounds: WindowBounds | undefined) {
@@ -160,6 +193,7 @@ export class WindowStateTracker {
     private readonly window: BrowserWindow,
     private readonly clientState: ClientStateManager,
     initialState?: NativeWindowState,
+    private readonly windowId = clientState.activeWindowId,
   ) {
     this.desiredZoomFactor = normalizeZoomFactor(initialState?.zoomFactor)
     const [x, y] = typeof window.getPosition === "function" ? window.getPosition() : [0, 0]
@@ -241,7 +275,7 @@ export class WindowStateTracker {
       maximized: this.window.isMaximized(),
       fullscreen: this.window.isFullScreen(),
       zoomFactor: this.desiredZoomFactor,
-    })
+    }, this.windowId)
   }
 
   private captureNormalBounds(): void {

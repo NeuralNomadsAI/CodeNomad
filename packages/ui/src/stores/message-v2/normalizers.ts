@@ -84,7 +84,7 @@ export interface NormalizedSessionMessage {
 }
 
 function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
-  return { ...error, name: error.type, data: { message: error.message } }
+  return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
 }
 
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
@@ -121,9 +121,9 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       ? {
           mode: assistant.agent,
           agent: assistant.agent,
-          providerID: assistant.model.providerID,
-          modelID: assistant.model.id,
-          variant: assistant.model.variant,
+          providerID: assistant.model?.providerID,
+          modelID: assistant.model?.id,
+          variant: assistant.model?.variant,
           cost: assistant.cost,
           tokens: assistant.tokens,
           error: assistant.error ? structuredError(assistant.error) : undefined,
@@ -163,6 +163,11 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         state: normalizedState,
       } as unknown as ClientPart
     })
+    if (parts.length === 0 && source.error) {
+      parts = [normalizeMessagePart({
+        id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id,
+      }) as ClientPart]
+    }
   } else if (source.type === "user") {
     parts = [
       normalizeMessagePart({ id: `${source.id}-text`, type: "text", text: source.text, sessionID: sessionId, messageID: source.id }),

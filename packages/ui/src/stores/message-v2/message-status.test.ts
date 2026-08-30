@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { deriveMessageStatus, shouldShowGeneratingPlaceholder } from "./message-status.ts"
+import { deriveMessageStatus, getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "./message-status.ts"
 
 // This derivation is the single source of truth shared by the live SSE path
 // (session-events) and the REST snapshot path (session-api). It follows the
@@ -37,5 +37,16 @@ describe("shouldShowGeneratingPlaceholder", () => {
     assert.equal(shouldShowGeneratingPlaceholder(false, "assistant", "complete"), false)
     assert.equal(shouldShowGeneratingPlaceholder(false, "assistant", "streaming"), true)
     assert.equal(shouldShowGeneratingPlaceholder(true, "assistant", "streaming"), false)
+  })
+})
+
+describe("getUserMessageMenuState", () => {
+  it("maps sending to queue, then steer, then consumed history", () => {
+    assert.equal(getUserMessageMenuState("sending"), "queue")
+    assert.equal(getUserMessageMenuState("sent"), "queue")
+    assert.equal(getUserMessageMenuState("complete", "queue"), "queue")
+    assert.equal(getUserMessageMenuState("complete", "steer"), "steer")
+    assert.equal(getUserMessageMenuState("complete"), "history")
+    assert.equal(getUserMessageMenuState("error"), "failed")
   })
 })

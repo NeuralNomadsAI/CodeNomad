@@ -1,0 +1,88 @@
+.message-technical-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background-color: var(--message-assistant-bg);
+}
+
+.message-technical-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--message-part-header-gap);
+  min-width: 0;
+  width: 100%;
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+.message-technical-group-toggle:hover {
+  background-color: var(--surface-hover);
+}
+
+.message-technical-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--border-base);
+}
+
+.message-technical-group-disclosure {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.message-technical-group-spinner {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.message-technical-group-title,
+.message-technical-group-meta {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  line-height: var(--message-part-header-title-line-height);
+}
+
+.message-technical-group-title {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--message-part-header-title);
+  font-weight: var(--message-part-header-title-font-weight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-technical-group-meta {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.message-technical-group-parts {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-inline-start: 1.25rem;
+  border-inline-start: 1px solid var(--border-base);
+}
+
+.message-reasoning-group-parts {
+  gap: 1px;
+  margin-inline-start: 0.45rem;
+  padding-inline-start: 0.75rem;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-technical-group-toggle {
+  flex-wrap: wrap;
+}
+
+.session-center-column[data-session-center-width="narrow"] .message-technical-group-title {
+  flex: 1 1 calc(100% - 3rem);
+}

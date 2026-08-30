@@ -18,7 +18,9 @@ import {
   stopManagedChild,
 } from "./process-stop"
 import { SerializedLifecycle } from "./serialized-lifecycle"
+import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
 import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
+import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -143,8 +145,13 @@ export class CliProcessManager extends EventEmitter {
   private bootstrapToken: string | null = null
   private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
+  private cancelPendingStart?: (error: Error) => void
   private shutdownStatus: "complete" | "incomplete" | null = null
   private lifecycle = new SerializedLifecycle()
+
+  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number) => Promise<unknown>) {
+    super()
+  }
 
   start(options: StartOptions): Promise<CliStatus> {
     return this.lifecycle.enqueue(() => this.startNow(options))
@@ -163,7 +170,14 @@ export class CliProcessManager extends EventEmitter {
   }
 
   shutdown(): Promise<void> {
-    return this.lifecycle.stop(() => this.stopNow())
+    return this.lifecycle.stop(() => this.stopNow(), () => {
+      this.requestedStop = true
+      this.cancelPendingStart?.(new Error("CLI startup interrupted by shutdown"))
+    })
+  }
+
+  recoverAfterFailedShutdown(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.resume(() => this.startNow(options))
   }
 
   private async startNow(options: StartOptions): Promise<CliStatus> {
@@ -171,6 +185,7 @@ export class CliProcessManager extends EventEmitter {
     if (this.child) {
       await this.stopNow()
       if (this.child) throw new Error("CLI process did not exit before restart")
+      if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
     }
 
     this.stdoutBuffer = ""
@@ -185,7 +200,8 @@ export class CliProcessManager extends EventEmitter {
     const listeningMode = this.resolveListeningMode()
     const host = resolveHostForMode(listeningMode)
     const args = this.buildCliArgs(options, host)
-    const cliEntry = await this.resolveCliEntry(options)
+    const cliEntry = await this.awaitStartupStep(this.resolveCliEntry(options))
+    if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
 
     console.info(
       `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
@@ -193,6 +209,7 @@ export class CliProcessManager extends EventEmitter {
 
     const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
     env.ELECTRON_RUN_AS_NODE = "1"
+    env.CODENOMAD_NATIVE_PARENT = "1"
 
     const spawnDetails = supportsUserShell()
       ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
@@ -217,27 +234,34 @@ export class CliProcessManager extends EventEmitter {
 
     const stdout = child.stdout as NodeJS.ReadableStream | undefined
     const stderr = child.stderr as NodeJS.ReadableStream | undefined
+    child.stdin?.on("error", (error) => {
+      if (!isClosedPipeError(error)) console.warn("[cli] stdin error", error)
+    })
 
     stdout?.on("data", (data: Buffer) => {
-      this.handleStream(data.toString(), "stdout")
+      if (this.child !== child) return
+      this.handleStream(data.toString(), "stdout", child)
     })
 
     stderr?.on("data", (data: Buffer) => {
-      this.handleStream(data.toString(), "stderr")
+      if (this.child !== child) return
+      this.handleStream(data.toString(), "stderr", child)
     })
 
     child.on("error", (error) => {
+      if (!shouldReportManagedProcessError(this.requestedStop, this.child === child)) return
       console.error("[cli] failed to start CLI:", error)
       this.updateStatus({ state: "error", error: error.message })
       this.emit("error", error)
     })
 
     child.on("exit", (code, signal) => {
-      if (this.child !== child) return
-      const failed = this.status.state !== "ready"
-      const error = failed ? this.status.error ?? `CLI exited with code ${code ?? 0}${signal ? ` (${signal})` : ""}` : undefined
+      const exit = resolveManagedProcessExit(this.status.error, code, signal, this.requestedStop, this.child === child)
+      if (!exit) return
+      const failed = exit.state === "error"
+      const error = exit.error
       console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
-      this.updateStatus({ state: failed ? "error" : "stopped", error })
+      this.updateStatus({ state: exit.state, error })
       if (failed && error) {
         this.emit("error", new Error(error))
       }
@@ -249,18 +273,22 @@ export class CliProcessManager extends EventEmitter {
     return new Promise<CliStatus>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.handleTimeout()
-        reject(new Error("CLI startup timeout"))
+        finish(reject, new Error("CLI startup timeout"))
       }, 60000)
 
-      this.once("ready", (status) => {
+      const finish = <T>(settle: (value: T) => void, value: T) => {
         clearTimeout(timeout)
-        resolve(status)
-      })
-
-      this.once("error", (error) => {
-        clearTimeout(timeout)
-        reject(error)
-      })
+        this.off("ready", onReady)
+        this.off("error", onError)
+        if (this.cancelPendingStart === cancel) this.cancelPendingStart = undefined
+        settle(value)
+      }
+      const onReady = (status: CliStatus) => finish(resolve, status)
+      const onError = (error: Error) => finish(reject, error)
+      const cancel = (error: Error) => finish(reject, error)
+      this.cancelPendingStart = cancel
+      this.once("ready", onReady)
+      this.once("error", onError)
     })
   }
 
@@ -352,6 +380,22 @@ export class CliProcessManager extends EventEmitter {
     return this.authCookieName
   }
 
+  private awaitStartupStep<T>(operation: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const finish = () => {
+        if (this.cancelPendingStart !== cancel) return false
+        this.cancelPendingStart = undefined
+        return true
+      }
+      const cancel = (error: Error) => { if (finish()) reject(error) }
+      this.cancelPendingStart = cancel
+      operation.then(
+        (value) => { if (finish()) resolve(value) },
+        (error) => { if (finish()) reject(error) },
+      )
+    })
+  }
+
   private resolveListeningMode(): ListeningMode {
     return readListeningModeFromConfig()
   }
@@ -379,17 +423,17 @@ export class CliProcessManager extends EventEmitter {
     this.emit("error", new Error("CLI did not start in time"))
   }
 
-  private handleStream(chunk: string, stream: "stdout" | "stderr") {
+  private handleStream(chunk: string, stream: "stdout" | "stderr", child: ChildProcess) {
     if (stream === "stdout") {
       this.stdoutBuffer += chunk
-      this.processBuffer("stdout")
+      this.processBuffer("stdout", child)
     } else {
       this.stderrBuffer += chunk
-      this.processBuffer("stderr")
+      this.processBuffer("stderr", child)
     }
   }
 
-  private processBuffer(stream: "stdout" | "stderr") {
+  private processBuffer(stream: "stdout" | "stderr", child: ChildProcess) {
     const buffer = stream === "stdout" ? this.stdoutBuffer : this.stderrBuffer
     const lines = buffer.split("\n")
     const trailing = lines.pop() ?? ""
@@ -403,6 +447,19 @@ export class CliProcessManager extends EventEmitter {
     for (const line of lines) {
       const trimmed = line.trim()
       if (!trimmed) continue
+
+      if (stream === "stdout" && trimmed.startsWith("CODENOMAD_NATIVE_REQUEST:")) {
+        const request = parseNativeRequest(trimmed)
+        if (request) {
+          void dispatchNativeRequest(
+            child,
+            request,
+            this.nativeRequestHandler ?? (async (method) => { throw new Error(`Unsupported native method: ${method}`) }),
+            () => this.child === child && !this.requestedStop,
+          )
+        }
+        continue
+      }
 
       if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
         if (this.shutdownStatus === "incomplete") continue

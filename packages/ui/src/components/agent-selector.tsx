@@ -1,5 +1,5 @@
-import { Select } from "@kobalte/core/select"
-import { Show, createEffect, createMemo } from "solid-js"
+import { Combobox } from "@kobalte/core/combobox"
+import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
 import { ChevronDown } from "lucide-solid"
 import { findAgentById, getSelectableAgentsForSession, type Agent } from "../types/session"
@@ -32,11 +32,21 @@ export default function AgentSelector(props: AgentSelectorProps) {
     return getSelectableAgentsForSession(instanceAgents(), props.currentAgent, isChildSession())
   })
   const selectedAgent = createMemo(() => findAgentById(availableAgents(), props.currentAgent))
+  const [isOpen, setIsOpen] = createSignal(false)
+  let searchInputRef: HTMLInputElement | undefined
 
   createEffect(() => {
     if (instanceAgents().length === 0) {
       fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
     }
+  })
+
+  createEffect(() => {
+    if (!isOpen()) return
+    setTimeout(() => {
+      searchInputRef?.focus()
+      searchInputRef?.select()
+    }, 0)
   })
 
   const handleChange = async (value: Agent | null) => {
@@ -47,62 +57,70 @@ export default function AgentSelector(props: AgentSelectorProps) {
 
   return (
     <div class="sidebar-selector">
-      <Select
+      <Combobox<Agent>
+        open={isOpen()}
+        onOpenChange={setIsOpen}
         value={selectedAgent()}
         onChange={handleChange}
         options={availableAgents()}
         optionValue="id"
         optionTextValue="name"
+        optionLabel="name"
         placeholder={t("agentSelector.placeholder")}
+        defaultFilter={(agent, query) => `${agent.name} ${agent.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())}
+        allowsEmptyCollection
         itemComponent={(itemProps) => (
-          <Select.Item
+          <Combobox.Item
             item={itemProps.item}
             class="selector-option"
           >
             <div class="flex flex-col flex-1 min-w-0">
-              <Select.ItemLabel class="selector-option-label flex items-center gap-2">
+              <Combobox.ItemLabel class="selector-option-label flex items-center gap-2">
                 <span>{itemProps.item.rawValue.name}</span>
                 <Show when={itemProps.item.rawValue.mode === "subagent"}>
                   <span class="neutral-badge">{t("agentSelector.badge.subagent")}</span>
                 </Show>
-              </Select.ItemLabel>
+              </Combobox.ItemLabel>
               <Show when={itemProps.item.rawValue.description}>
-                <Select.ItemDescription class="selector-option-description">
+                <Combobox.ItemDescription class="selector-option-description">
                   {itemProps.item.rawValue.description.length > 50
                     ? itemProps.item.rawValue.description.slice(0, 50) + "..."
                     : itemProps.item.rawValue.description}
-                </Select.ItemDescription>
+                </Combobox.ItemDescription>
               </Show>
             </div>
-          </Select.Item>
+          </Combobox.Item>
         )}
       >
-        <Select.Trigger
-          data-agent-selector
-          class="selector-trigger"
-        >
-          <div class="flex-1 min-w-0">
-            <Select.Value<Agent>>
-              {() => (
-                <div class="selector-trigger-label selector-trigger-label--stacked">
-                  <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                    {t("agentSelector.trigger.primary", { agent: selectedAgent()?.name || t("agentSelector.none") })}
-                  </span>
-                </div>
-              )}
-            </Select.Value>
-          </div>
-          <Select.Icon class="selector-trigger-icon">
-            <ChevronDown class="w-3 h-3" />
-          </Select.Icon>
-        </Select.Trigger>
+        <Combobox.Control class="relative w-full">
+          <Combobox.Input class="sr-only" data-agent-selector aria-label={t("agentSelector.placeholder")} />
+          <Combobox.Trigger class="selector-trigger">
+            <div class="flex-1 min-w-0">
+              <div class="selector-trigger-label selector-trigger-label--stacked">
+                <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                  {t("agentSelector.trigger.primary", { agent: selectedAgent()?.name || t("agentSelector.none") })}
+                </span>
+              </div>
+            </div>
+            <Combobox.Icon class="selector-trigger-icon">
+              <ChevronDown class="w-3 h-3" />
+            </Combobox.Icon>
+          </Combobox.Trigger>
+        </Combobox.Control>
 
-        <Select.Portal>
-          <Select.Content class="selector-popover max-h-80 overflow-auto p-1">
-            <Select.Listbox class="selector-listbox" />
-          </Select.Content>
-        </Select.Portal>
-      </Select>
+        <Combobox.Portal>
+          <Combobox.Content class="selector-popover">
+            <div class="selector-search-container">
+              <Combobox.Input
+                ref={searchInputRef}
+                class="selector-search-input"
+                placeholder={t("agentSelector.placeholder")}
+              />
+            </div>
+            <Combobox.Listbox class="selector-listbox" />
+          </Combobox.Content>
+        </Combobox.Portal>
+      </Combobox>
     </div>
   )
 }

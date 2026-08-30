@@ -23,7 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
-import { resolvePluginBaseUrl } from "./server/listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -34,6 +34,8 @@ import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShut
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { NativeParent } from "./native-parent"
+import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, installAutomationPlugin, publishAutomationBridge } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
 
@@ -98,6 +100,7 @@ interface ShutdownStdinSource {
 export function installShutdownStdinHandler(
   source: ShutdownStdinSource,
   shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+  handleLine?: (line: string) => boolean,
 ): void {
   let buffer = ""
   let requested = false
@@ -106,7 +109,12 @@ export function installShutdownStdinHandler(
     buffer += chunk.toString()
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ""
-    if (!lines.some((line) => line.trim() === STDIN_SHUTDOWN_COMMAND)) return
+    let shutdownRequested = false
+    for (const line of lines) {
+      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+      else handleLine?.(line)
+    }
+    if (!shutdownRequested) return
 
     requested = true
     source.off?.("data", onData)
@@ -360,8 +368,6 @@ async function main() {
     logger: logger.child({ component: "tls" }),
   })
 
-  const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
-
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
   const workspaceManager = new WorkspaceManager({
@@ -370,8 +376,9 @@ async function main() {
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    nodeExtraCaCertsPath,
   })
+  const nativeParent = new NativeParent()
+  const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
     unrestricted: options.unrestrictedRoot,
@@ -463,11 +470,11 @@ async function main() {
   // - Remote access disabled: both listen on loopback.
   // - HTTP-only mode: respect --host (used for dev/testing).
   const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
-  const httpBindHost = options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
+  const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
 
-  const httpServer = options.http
+  const httpServer = options.http || nativeParent.available
     ? createHttpServer({
         bindHost: httpBindHost,
         bindPort: httpBindPort,
@@ -489,6 +496,8 @@ async function main() {
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -515,6 +524,8 @@ async function main() {
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -526,7 +537,8 @@ async function main() {
     httpsServer ? httpsServer.start() : Promise.resolve(null),
   ])
 
-  const localStart = httpStart ?? httpsStart
+  const visibleHttpStart = options.http ? httpStart : null
+  const localStart = visibleHttpStart ?? httpsStart
   if (!localStart) {
     throw new Error("No listeners started")
   }
@@ -557,7 +569,7 @@ async function main() {
   // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
   // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
-    httpStart: httpStart ? { protocol: "http", bindHost: httpBindHost, port: httpStart.port } : null,
+    httpStart: visibleHttpStart ? { protocol: "http", bindHost: httpBindHost, port: visibleHttpStart.port } : null,
     httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
     remoteUrl,
   })
@@ -568,6 +580,21 @@ async function main() {
   serverMeta.remotePort = remoteStart?.port
   serverMeta.host = options.host
   serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
+
+  let removeAutomationBridge: (() => Promise<void>) | undefined
+  if (nativeParent.available) {
+    try {
+      await installAutomationPlugin()
+      if (!httpStart) throw new Error("Developer Automation HTTP listener did not start")
+      const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
+      removeAutomationBridge = await publishAutomationBridge({
+        ...automationBridge,
+        url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
+      })
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to install the OpenCode automation plugin")
+    }
+  }
 
   if (serverMeta.remotePort && remoteUrl) {
     serverMeta.addresses = remoteAddresses.length
@@ -612,6 +639,8 @@ async function main() {
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
+            nativeParent.close()
+            await removeAutomationBridge?.()
             yoloManager.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
@@ -629,7 +658,7 @@ async function main() {
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown)
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {

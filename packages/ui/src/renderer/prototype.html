@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Prototype visuel de l'espace de travail CodeNomad" />
+    <title>CodeNomad - Work Trace prototype</title>
+    <link rel="stylesheet" href="./prototype/prototype.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="workspace-strip">
+        <a class="brand" href="#conversation" aria-label="CodeNomad, aller a la conversation">
+          <span class="brand-mark" aria-hidden="true">CN</span>
+          <span>CodeNomad</span>
+        </a>
+
+        <nav class="workspace-tabs" aria-label="Espaces de travail ouverts">
+          <button class="workspace-tab is-active" type="button" aria-current="page">
+            <span class="workspace-state" aria-hidden="true"></span>
+            opencode-v2-foundation
+          </button>
+          <button class="workspace-tab secondary-workspace" type="button">design-system</button>
+          <button class="workspace-add" type="button" aria-label="Ouvrir un espace de travail">+</button>
+        </nav>
+
+        <div class="workspace-actions">
+          <span class="branch-label">main</span>
+          <button class="quiet-button" type="button">Share</button>
+          <button class="icon-button" type="button" aria-label="Ouvrir les reglages">Settings</button>
+        </div>
+      </header>
+
+      <div class="workbench">
+        <aside class="session-sidebar" aria-labelledby="sessions-heading">
+          <div class="sidebar-heading">
+            <div>
+              <p class="eyebrow">Workspace</p>
+              <h1 id="sessions-heading">Sessions</h1>
+            </div>
+            <button class="new-session" type="button" aria-label="Creer une session">New</button>
+          </div>
+
+          <nav class="session-nav" aria-label="Liste des sessions">
+            <p class="session-group">Today</p>
+            <ul>
+              <li class="session-row is-active">
+                <a class="session-link" href="#conversation" aria-current="page">
+                  <span class="session-copy">
+                    <strong>Solid UI landscape</strong>
+                    <small>Working now</small>
+                  </span>
+                </a>
+                <button class="row-action" type="button" aria-label="Actions pour Solid UI landscape">...</button>
+              </li>
+              <li class="session-row">
+                <a class="session-link" href="#conversation">
+                  <span class="session-copy">
+                    <strong>V2 event migration</strong>
+                    <small>12 min ago</small>
+                  </span>
+                </a>
+                <button class="row-action" type="button" aria-label="Actions pour V2 event migration">...</button>
+              </li>
+              <li class="session-row">
+                <a class="session-link" href="#conversation">
+                  <span class="session-copy">
+                    <strong>Workspace bootstrap</strong>
+                    <small>38 min ago</small>
+                  </span>
+                </a>
+                <button class="row-action" type="button" aria-label="Actions pour Workspace bootstrap">...</button>
+              </li>
+            </ul>
+
+            <p class="session-group">Yesterday</p>
+            <ul>
+              <li class="session-row">
+                <a class="session-link" href="#conversation">
+                  <span class="session-copy">
+                    <strong>Provider fallback</strong>
+                    <small>Yesterday</small>
+                  </span>
+                </a>
+                <button class="row-action" type="button" aria-label="Actions pour Provider fallback">...</button>
+              </li>
+              <li class="session-row">
+                <a class="session-link" href="#conversation">
+                  <span class="session-copy">
+                    <strong>Permission prompts</strong>
+                    <small>Yesterday</small>
+                  </span>
+                </a>
+                <button class="row-action" type="button" aria-label="Actions pour Permission prompts">...</button>
+              </li>
+            </ul>
+          </nav>
+
+          <button class="run-profile" type="button" aria-label="Modifier le profil d'execution: Build, GPT-5.6, High">
+            <span class="profile-label">Run profile</span>
+            <span>Build</span>
+            <span aria-hidden="true">/</span>
+            <span>GPT-5.6</span>
+            <span aria-hidden="true">/</span>
+            <span>High</span>
+          </button>
+        </aside>
+
+        <main class="conversation" id="conversation">
+          <header class="conversation-header">
+            <div>
+              <p class="eyebrow">Session 24</p>
+              <h2>Solid UI landscape</h2>
+            </div>
+            <div class="conversation-meta">
+              <span class="live-state"><span aria-hidden="true"></span> Agent working</span>
+              <button class="quiet-button compact" type="button">Stop</button>
+            </div>
+          </header>
+
+          <div class="stream">
+            <article class="message user-message" aria-labelledby="user-message-heading">
+              <header class="message-heading">
+                <h3 id="user-message-heading">You</h3>
+                <time datetime="2026-08-28T14:32:00">14:32</time>
+              </header>
+              <p>
+                Analyse les bibliotheques d'interface SolidJS actuelles. Compare leur approche des composants,
+                de l'accessibilite et du theming, puis propose une direction concrete pour CodeNomad.
+              </p>
+            </article>
+
+            <section class="work-trace" aria-labelledby="trace-heading">
+              <header class="trace-header">
+                <div>
+                  <p class="eyebrow">Route active</p>
+                  <h3 id="trace-heading">Work Trace</h3>
+                </div>
+                <span class="trace-count">6 operations / 18s</span>
+              </header>
+
+              <ol class="trace-list">
+                <li class="trace-item is-done">
+                  <span class="trace-marker" aria-label="Termine"></span>
+                  <div class="trace-operation">
+                    <div class="trace-line">
+                      <code>webfetch</code>
+                      <strong>solid-ui.com timeline</strong>
+                      <time datetime="PT2S">2.1s</time>
+                    </div>
+                    <p>Release history and component scope</p>
+                  </div>
+                </li>
+                <li class="trace-item is-done">
+                  <span class="trace-marker" aria-label="Termine"></span>
+                  <div class="trace-operation">
+                    <div class="trace-line">
+                      <code>command</code>
+                      <strong>inspect local UI primitives</strong>
+                      <time datetime="PT1S">0.8s</time>
+                    </div>
+                    <p>Found 14 reusable controls</p>
+                  </div>
+                </li>
+                <li class="trace-item is-done">
+                  <span class="trace-marker" aria-label="Termine"></span>
+                  <div class="trace-operation">
+                    <div class="trace-line">
+                      <code>webfetch</code>
+                      <strong>Ariakit examples</strong>
+                      <time datetime="PT4S">3.6s</time>
+                    </div>
+                    <p>Composite widgets and accessibility patterns</p>
+                  </div>
+                </li>
+                <li class="trace-item is-done">
+                  <span class="trace-marker" aria-label="Termine"></span>
+                  <div class="trace-operation">
+                    <div class="trace-line">
+                      <code>webfetch</code>
+                      <strong>Radix playground</strong>
+                      <time datetime="PT3S">2.9s</time>
+                    </div>
+                    <p>Primitive composition and state attributes</p>
+                  </div>
+                </li>
+                <li class="trace-item is-error">
+                  <span class="trace-marker" aria-label="Erreur"></span>
+                  <details open>
+                    <summary>
+                      <span class="trace-line">
+                        <code>webfetch</code>
+                        <strong>Park UI components</strong>
+                        <time datetime="PT5S">5.0s</time>
+                      </span>
+                    </summary>
+                    <div class="trace-error">
+                      <strong>Request blocked: 403</strong>
+                      <p>The documentation rejected the automated request. Continued with the public repository metadata.</p>
+                    </div>
+                  </details>
+                </li>
+                <li class="trace-item is-active">
+                  <span class="trace-marker" aria-label="En cours"></span>
+                  <div class="trace-operation">
+                    <div class="trace-line">
+                      <code>webfetch</code>
+                      <strong>GC Solid UI</strong>
+                      <time datetime="PT4S">3.9s</time>
+                    </div>
+                    <p>Reading form and navigation conventions</p>
+                  </div>
+                </li>
+              </ol>
+            </section>
+
+            <article class="message assistant-message" aria-labelledby="assistant-message-heading">
+              <header class="message-heading">
+                <h3 id="assistant-message-heading">CodeNomad</h3>
+                <time datetime="2026-08-28T14:33:00">14:33</time>
+              </header>
+              <p>
+                La meilleure base n'est pas une bibliotheque visuelle complete. Ariakit offre les primitives
+                accessibles les plus utiles, tandis que l'approche Radix confirme un contrat simple fonde sur les etats.
+              </p>
+              <p>
+                Je recommande de conserver les composants SolidJS internes, d'unifier leurs attributs d'etat et de
+                reprendre seulement les comportements clavier eprouves. Le theming reste pilote par les tokens CodeNomad.
+              </p>
+              <ul class="response-points">
+                <li><strong>Now:</strong> stabiliser Select, Dialog et Menu.</li>
+                <li><strong>Next:</strong> documenter les etats clavier et focus.</li>
+                <li><strong>Avoid:</strong> ajouter un second systeme de styles.</li>
+              </ul>
+            </article>
+          </div>
+
+          <form class="composer">
+            <label class="sr-only" for="prompt">Message a CodeNomad</label>
+            <textarea id="prompt" name="prompt" rows="2" placeholder="Ask a follow-up or describe the next change..."></textarea>
+            <div class="composer-actions">
+              <div>
+                <button class="composer-button" type="button">Attach</button>
+                <button class="composer-button" type="button">Context</button>
+              </div>
+              <div class="composer-submit">
+                <span>Enter to send</span>
+                <button class="send-button" type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+        </main>
+
+        <aside class="inspector" aria-labelledby="inspector-heading">
+          <h2 class="sr-only" id="inspector-heading">Session inspector</h2>
+          <div class="inspector-tabs" role="tablist" aria-label="Session details">
+            <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true">Status</button>
+            <button class="inspector-tab" type="button" role="tab" aria-selected="false">Files <span>3</span></button>
+            <button class="inspector-tab" type="button" role="tab" aria-selected="false">Git <span>2</span></button>
+          </div>
+
+          <div class="inspector-content" role="tabpanel" aria-label="Status">
+            <section class="inspector-section" aria-labelledby="usage-heading">
+              <div class="section-title-row">
+                <h3 id="usage-heading">Usage</h3>
+                <span>48%</span>
+              </div>
+              <progress value="48" max="100">48%</progress>
+              <dl class="usage-list">
+                <div><dt>Context</dt><dd>91k / 190k</dd></div>
+                <div><dt>Cost</dt><dd>$0.84</dd></div>
+                <div><dt>Elapsed</dt><dd>02:18</dd></div>
+              </dl>
+            </section>
+
+            <section class="inspector-section yolo-section" aria-labelledby="yolo-heading">
+              <div>
+                <h3 id="yolo-heading">YOLO</h3>
+                <p>Run trusted tools without prompts.</p>
+              </div>
+              <label class="switch-control">
+                <input type="checkbox" checked />
+                <span>On</span>
+              </label>
+            </section>
+
+            <section class="inspector-section" aria-labelledby="shells-heading">
+              <div class="section-title-row">
+                <h3 id="shells-heading">Running shells</h3>
+                <span>2 active</span>
+              </div>
+              <ul class="shell-list">
+                <li>
+                  <span class="shell-state" aria-hidden="true"></span>
+                  <div><strong>pnpm dev</strong><small>ui / 4m 12s</small></div>
+                  <button type="button" aria-label="Stop pnpm dev">Stop</button>
+                </li>
+                <li>
+                  <span class="shell-state" aria-hidden="true"></span>
+                  <div><strong>typecheck</strong><small>workspace / 18s</small></div>
+                  <button type="button" aria-label="Stop typecheck">Stop</button>
+                </li>
+              </ul>
+            </section>
+
+            <section class="inspector-section" aria-labelledby="plan-heading">
+              <div class="section-title-row">
+                <h3 id="plan-heading">Plan</h3>
+                <span>2 / 4</span>
+              </div>
+              <ol class="plan-list">
+                <li class="is-complete">Map current primitives</li>
+                <li class="is-complete">Compare accessibility models</li>
+                <li class="is-current">Draft a CodeNomad direction</li>
+                <li>List migration risks</li>
+              </ol>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </body>
+</html>

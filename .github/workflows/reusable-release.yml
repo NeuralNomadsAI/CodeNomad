@@ -13,6 +13,11 @@ on:
         required: false
         default: ""
         type: string
+      base_version:
+        description: "Base version override (defaults to package.json version)"
+        required: false
+        default: ""
+        type: string
       dist_tag:
         description: "npm dist-tag to publish under"
         required: false
@@ -62,9 +67,10 @@ jobs:
       - name: Compute release versions
         id: versions
         env:
+          BASE_VERSION_INPUT: ${{ inputs.base_version }}
           VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
+          BASE_VERSION=${BASE_VERSION_INPUT:-$(node -p "require('./package.json').version")}
           VERSION="${BASE_VERSION}${VERSION_SUFFIX}"
           TAG="v${VERSION}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -75,15 +81,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.versions.outputs.tag }}
+          TARGET: ${{ inputs.ref || github.ref }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
             if [ "${IS_PRERELEASE}" = "true" ]; then
-              gh release create "$TAG" --title "$TAG" --generate-notes --prerelease
+              gh release create "$TAG" --target "$TARGET" --title "$TAG" --generate-notes --prerelease
             else
-              gh release create "$TAG" --title "$TAG" --generate-notes
+              gh release create "$TAG" --target "$TARGET" --title "$TAG" --generate-notes
             fi
           fi
 

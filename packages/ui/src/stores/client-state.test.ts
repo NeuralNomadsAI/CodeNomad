@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
 type ClientState = typeof import("./client-state.ts")
 type NativeApi = Record<string, (...args: any[]) => any>; type TransactionKind = "clear" | "disable"
 const layoutKey = "opencode-session-sidebar-width-v8"; let moduleId = 0
@@ -12,8 +13,9 @@ class MemoryStorage {
   setItem(key: string, value: string) { this.values.set(key, String(value)) }
 }
 const session = (sidecarId: string) => ({ tabs: [{ kind: "sidecar" as const, sidecarId }], activeTabIndex: 0 })
-const snapshot = (sidecarId: string, layout: Record<string, string> = {}) => ({ version: 1, revision: 1, savedAt: 1, layout, session: session(sidecarId) })
-const loadResult = (saved: unknown = null, isPrimary = true) => ({ isPrimary, restoreEnabled: true, snapshot: saved })
+const snapshot = (sidecarId: string, layout: Record<string, string> = {}) => ({ version: 1 as const, revision: 1, savedAt: 1, layout, session: session(sidecarId) })
+const loadResult = (saved: unknown = null, isPrimary = true, partitionProtocolVersion?: 1) =>
+  ({ isPrimary, restoreEnabled: true, snapshot: saved, partitionProtocolVersion })
 const deferred = <T>() => {
   let resolve!: (value: T) => void, reject!: (error: Error) => void
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
@@ -117,6 +119,20 @@ describe("failed destructive transactions", () => {
   }
 })
 describe("future envelopes and clear races", () => {
+  it("fences every malformed non-null snapshot", async () => {
+    for (const malformed of [{ version: 2.5 }, { version: "2" }, {}, [], 7, "snapshot", true]) {
+      let saves = 0
+      const state = await boot({
+        loadClientState: async () => loadResult(malformed),
+        saveClientState: async () => { saves += 1; return true },
+      })
+      state.writeClientLayoutValue(layoutKey, "350")
+      state.updateRestorableSession(session("overwrite"))
+      await state.flushClientState()
+      assert.equal(saves, 0, JSON.stringify(malformed))
+    }
+  })
+
   it("serializes overlapping clear and disable transactions without stranding writes", async () => {
     const clear = deferred<boolean>(), disable = deferred<boolean>()
     const clearStarted = deferred<void>(), disableStarted = deferred<void>()
@@ -151,7 +167,7 @@ describe("future envelopes and clear races", () => {
   it("clears a future envelope while suppressing recapture for the run", async () => {
     let clears = 0, saves = 0
     const state = await boot({
-      loadClientState: async () => loadResult({ version: 2, future: true }),
+      loadClientState: async () => loadResult({ version: 3, future: true }),
       saveClientState: async () => { saves += 1; return true },
       clearClientState: async () => { clears += 1; return true },
     })
@@ -165,7 +181,7 @@ describe("future envelopes and clear races", () => {
   it("keeps ownership of a future envelope after disable is rejected", async () => {
     let clears = 0
     const state = await boot({
-      loadClientState: async () => loadResult({ version: 2, future: true }),
+      loadClientState: async () => loadResult({ version: 3, future: true }),
       setClientStateRestoreEnabled: async () => false,
       clearClientState: async () => { clears += 1; return true },
     })
@@ -245,6 +261,197 @@ describe("secondary hosts", () => {
         assert.equal(storage.getItem("codenomad-client-snapshot-v1"), null)
         assert.equal(storage.getItem("codenomad-client-restore-enabled-v1"), null)
       }
+    })
+  }
+})
+
+describe("partitioned client state", () => {
+  it("restores a degraded graph and permits a repairing write", async () => {
+    const persisted = {
+      version: 1 as const, revision: 3, savedAt: 4, layout: { [layoutKey]: "390" },
+      session: { activeTabIndex: 0, tabs: [{
+        kind: "workspace" as const, folder: "/work", activeSessionId: "active",
+        drafts: { active: "keep", stale: "drop" }, attachments: {}, scrollSnapshots: {},
+        unseenIdleSince: {}, generationRecovery: {},
+      }] },
+    }
+    const encoded = await encodeClientSnapshotV2(persisted)
+    const manifest = JSON.parse(encoded.partitions[encoded.root.sessionPartition]!)
+    const workspace = JSON.parse(encoded.partitions[manifest.session.tabs[0].workspacePartition]!)
+    const staleDocument = workspace.sessions.stale.documentPartition
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => key === staleDocument ? null : encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+    })
+
+    const restored = state.loadedRestorableSession()?.tabs[0]
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.active : undefined, "keep")
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.stale : undefined, undefined)
+    assert.equal(state.readClientLayoutValue(layoutKey), "390")
+    state.updateRestorableSession(session("repaired"))
+    await state.flushClientState()
+    assert.equal(commits.length, 1)
+  })
+
+  it("commits one atomic graph without a monolithic save or automatic load rewrite", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored", { [layoutKey]: "380" }))
+    const commits: any[] = []; let monolithicSaves = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      saveClientState: async () => { monolithicSaves += 1; return true },
+    })
+    assert.equal(state.loadedRestorableSession()?.tabs[0]?.kind, "sidecar")
+    assert.equal(state.readClientLayoutValue(layoutKey), "380")
+    assert.equal(commits.length, 0, "load does not automatically rewrite the graph")
+    assert.equal(monolithicSaves, 0)
+
+    state.updateRestorableSession(session("next")); await state.flushClientState()
+    assert.equal(monolithicSaves, 0)
+    assert.equal(commits.length, 1)
+    assert.equal(commits[0].snapshot.version, 2)
+    assert.equal(Object.prototype.hasOwnProperty.call(commits[0].snapshot, "session"), false)
+    assert.deepEqual(commits[0].partitionKeys, [...commits[0].partitionKeys].sort())
+    assert.deepEqual(commits[0].snapshot.partitionKeys, commits[0].partitionKeys)
+    assert.deepEqual(Object.keys(commits[0].partitions), commits[0].partitionKeys)
+    const manifest = JSON.parse(commits[0].partitions[commits[0].snapshot.sessionPartition])
+    assert.equal(manifest.format, 2)
+    assert.equal(manifest.session.tabs[0].sidecarId, "next")
+  })
+
+  it("uses the V1 monolithic save when partition capability is absent", async () => {
+    const saved: any[] = []; let commits = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(snapshot("old")),
+      saveClientState: async (_token, value) => { saved.push(value); return true },
+      commitClientStatePartitions: async () => { commits += 1; return true },
+    })
+    await state.flushClientState()
+    assert.equal(saved.length, 0, "loading V1 alone does not rewrite it")
+    state.updateRestorableSession(session("fallback")); await state.flushClientState()
+    assert.equal(commits, 0)
+    assert.equal(saved[0].version, 1)
+    assert.equal(saved[0].session.tabs[0].sidecarId, "fallback")
+  })
+
+  it("keeps an oversized V1 draft attachment dirty instead of truncating or overwriting it", async () => {
+    let nativeSaves = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(null),
+      saveClientState: async () => { nativeSaves += 1; return true },
+    })
+    const data = Buffer.alloc(1024 * 1024, 7).toString("base64")
+    state.updateRestorableSession({ tabs: [{
+      kind: "workspace", folder: "/work", activeSessionId: "active",
+      drafts: { active: "Review [Image #1]" },
+      attachments: { active: [{
+        id: "large", type: "file", display: "[Image #1]", url: "", filename: "large.bin",
+        mediaType: "application/octet-stream",
+        source: { type: "file", path: "large.bin", mime: "application/octet-stream", data },
+      }] },
+      scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+    }], activeTabIndex: 0 })
+
+    await assert.rejects(state.flushClientState(), /V1 1 MiB limit/)
+    await assert.rejects(state.flushClientState(), /V1 1 MiB limit/)
+    const restored = state.loadedRestorableSession()?.tabs[0]
+    const source = restored?.kind === "workspace" ? restored.attachments.active?.[0]?.source : undefined
+    assert.equal(nativeSaves, 0)
+    assert.equal(restored?.kind === "workspace" ? restored.drafts.active : undefined, "Review [Image #1]")
+    assert.equal(source?.type === "file" ? source.data : undefined, data)
+  })
+
+  it("migrates a loaded V1 snapshot on the next real partition-capable save", async () => {
+    const commits: any[] = []; let saves = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(snapshot("old"), true, 1),
+      loadClientStatePartition: async () => null,
+      commitClientStatePartitions: async (_token, value) => { commits.push(value); return true },
+      saveClientState: async () => { saves += 1; return true },
+    })
+    await state.flushClientState()
+    assert.equal(commits.length, 0, "load does not automatically migrate")
+    state.updateRestorableSession(session("migrated")); await state.flushClientState()
+    assert.equal(saves, 0)
+    assert.equal(commits.length, 1)
+    assert.equal(commits[0].snapshot.version, 2)
+    const manifest = JSON.parse(commits[0].partitions[commits[0].snapshot.sessionPartition])
+    assert.equal(manifest.session.tabs[0].sidecarId, "migrated")
+  })
+
+  for (const missing of ["commitClientStatePartitions", "loadClientStatePartition"] as const) {
+    it(`falls back to V1 when Electron advertises a stale capability without ${missing}`, async () => {
+      const saved: any[] = []
+      const api: NativeApi = {
+        loadClientState: async () => loadResult(snapshot("old"), true, 1),
+        saveClientState: async (_token, value) => { saved.push(value); return true },
+        commitClientStatePartitions: async () => true,
+        loadClientStatePartition: async () => null,
+      }
+      delete api[missing]
+      const state = await boot(api)
+      state.updateRestorableSession(session("fallback")); await state.flushClientState()
+      assert.equal(saved.length, 1)
+      assert.equal(saved[0].version, 1)
+    })
+  }
+
+  it("keeps a V2 root fenced when Electron advertises a stale partial capability", async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("stored")); let writes = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      saveClientState: async () => { writes += 1; return true },
+    })
+    state.updateRestorableSession(session("overwrite")); await state.flushClientState()
+    assert.equal(state.loadedRestorableSession(), null)
+    assert.equal(writes, 0)
+  })
+
+  it("retries a rejected partition commit promise", async () => {
+    let attempts = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(null, true, 1),
+      loadClientStatePartition: async () => null,
+      commitClientStatePartitions: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error("transient partition failure")
+        return true
+      },
+    })
+    state.updateRestorableSession(session("retry")); await state.flushClientState()
+    assert.equal(attempts, 2)
+  })
+
+  for (const kind of ["malformed root", "missing partition", "hash mismatch"] as const) {
+    it(`fences writes for a ${kind}`, async () => {
+      const encoded = await encodeClientSnapshotV2(snapshot("stored"))
+      let writes = 0
+      const state = await boot({
+        loadClientState: async () => loadResult(kind === "malformed root"
+          ? { ...encoded.root, sessionPartition: "bad" } : encoded.root, true, 1),
+        loadClientStatePartition: async () => kind === "missing partition" ? null : "wrong partition",
+        commitClientStatePartitions: async () => { writes += 1; return true },
+      })
+      state.updateRestorableSession(session("overwrite")); await state.flushClientState()
+      assert.equal(state.loadedRestorableSession(), null)
+      assert.equal(writes, 0)
+    })
+  }
+
+  for (const kind of ["clear", "disable"] as const) {
+    it(`keeps ${kind} available while malformed V2 state is fenced`, async () => {
+      let escapes = 0
+      const state = await boot({
+        loadClientState: async () => loadResult({ version: 2 }, true, 1),
+        clearClientState: async () => { escapes += 1; return true },
+        setClientStateRestoreEnabled: async () => { escapes += 1; return true },
+      })
+      await (kind === "clear" ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false))
+      assert.equal(escapes, 1)
     })
   }
 })

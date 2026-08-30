@@ -31,9 +31,11 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     const connection = ConnectionQuerySchema.parse(request.query ?? {})
     deps.logger.debug({ clientId }, "SSE client connected")
 
-    const origin = request.headers.origin ?? "*"
-    reply.raw.setHeader("Access-Control-Allow-Origin", origin)
-    reply.raw.setHeader("Access-Control-Allow-Credentials", "true")
+    for (const [name, value] of Object.entries(reply.getHeaders())) {
+      if ((name === "vary" || name.startsWith("access-control-")) && value !== undefined) {
+        reply.raw.setHeader(name, value)
+      }
+    }
     reply.raw.setHeader("Content-Type", "text/event-stream")
     reply.raw.setHeader("Cache-Control", "no-cache")
     reply.raw.setHeader("Connection", "keep-alive")

@@ -4,6 +4,7 @@
 @import "./messaging/virtual-follow-list.css";
 @import "./messaging/message-selection.css";
 @import "./messaging/delete-overlays.css";
+@import "./messaging/technical-groups.css";
 @import "./messaging/message-timeline.css";
 @import "./messaging/tool-call.css";
 @import "./messaging/log-view.css";

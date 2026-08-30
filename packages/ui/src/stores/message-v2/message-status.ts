@@ -31,3 +31,12 @@ export function shouldShowGeneratingPlaceholder(
 ): boolean {
   return !hasContent && role === "assistant" && status === "streaming"
 }
+
+export function getUserMessageMenuState(
+  status: MessageStatus,
+  delivery?: "queue" | "steer",
+): "queue" | "steer" | "history" | "failed" {
+  if (status === "error") return "failed"
+  if (delivery) return delivery
+  return status === "complete" ? "history" : "queue"
+}

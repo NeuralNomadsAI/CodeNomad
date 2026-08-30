@@ -4,11 +4,24 @@ import { after, afterEach, before, describe, it } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
-import { abortSession, executeCustomCommand, runShellCommand, sendMessage, updateSessionAgent, updateSessionModel } from "./session-actions.ts"
+import { addInstance, removeInstance, updateInstance } from "./instances.ts"
+import {
+  abortSession,
+  deleteMessagePart,
+  deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
+  executeCustomCommand,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
+  runShellCommand,
+  sendMessage,
+  updateSessionAgent,
+  updateSessionModel,
+} from "./session-actions.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setProviders, setSessions } from "./session-state.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -80,18 +93,25 @@ afterEach(() => {
 describe("voice instruction sync", () => {
   it("syncs the enabled instruction before a slash command", async () => {
     const calls: string[] = []
+    let commandInput: unknown
     seed({ session: {
       instructions: { entry: {
         put: async () => { calls.push("put") },
         remove: async () => { calls.push("remove") },
       } },
-      command: async () => { calls.push("command") },
+      command: async (input: unknown) => { calls.push("command"); commandInput = input },
     } })
     setConversationModeEnabled(instanceId, true)
 
     await executeCustomCommand(instanceId, sessionId, "review", "")
 
     assert.deepEqual(calls, ["put", "command"])
+    assert.deepEqual(commandInput, {
+      sessionID: sessionId,
+      command: "review",
+      text: "",
+      delivery: "steer",
+    })
   })
 
   it("removes a stale instruction before a shell command", async () => {
@@ -148,6 +168,243 @@ describe("session interruption", () => {
     await abortSession(instanceId, sessionId)
 
     assert.deepEqual(interrupted.sort(), ["child-working", "grandchild-working", sessionId].sort())
+  })
+})
+
+describe("native message content mutation", () => {
+  it("removes one terminal assistant part and projects the updated response", async () => {
+    const messageId = "assistant-message"
+    const content = [
+      { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } },
+      {
+        type: "tool",
+        id: "tool-1",
+        name: "bash",
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "ok" }] },
+        time: { created: 2, completed: 3 },
+      },
+      { type: "text", text: "done" },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: async () => ({
+        id: messageId,
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "provider", id: "old" },
+        time: { created: 1, completed: 3 },
+        content,
+      }),
+      messageUpdate: async (input: any) => {
+        updateInput = input
+        return {
+          id: messageId,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "provider", id: "old" },
+          time: { created: 1, completed: 3 },
+          content: input.content,
+        }
+      },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "error",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "thinking" },
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await deleteMessagePart(instanceId, sessionId, messageId, "tool-1")
+
+    assert.deepEqual(updateInput, {
+      sessionID: sessionId,
+      messageID: messageId,
+      content: [content[0], content[2]],
+    })
+    assert.equal(store.getMessage(messageId)?.parts["tool-1"], undefined)
+    assert.deepEqual(store.getMessage(messageId)?.partIds, [
+      `${messageId}-reasoning-0`,
+      `${messageId}-text-1`,
+    ])
+  })
+
+  it("serializes concurrent deletions from the same assistant message", async () => {
+    const messageId = "assistant-concurrent"
+    let remote: any = {
+      id: messageId,
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 4 },
+      content: [
+        { type: "tool", id: "tool-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { type: "text", text: "done" },
+      ],
+    }
+    seed({ session: {
+      message: async () => structuredClone(remote),
+      messageUpdate: async (input: any) => {
+        remote = { ...remote, content: input.content }
+        return structuredClone(remote)
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-1`, type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await Promise.all([
+      deleteMessagePart(instanceId, sessionId, messageId, "tool-1"),
+      deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-1`),
+    ])
+
+    assert.deepEqual(remote.content, [{ type: "text", text: "done" }])
+  })
+
+  it("removes a selected range without touching tools after the response", async () => {
+    const messageId = "assistant-range"
+    const content = [
+      { type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
+      { type: "tool", id: "tool-before", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 2, completed: 3 } },
+      { type: "text", text: "response" },
+      { type: "tool", id: "tool-after", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 4, completed: 5 } },
+      { type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }),
+      messageUpdate: async (input: any) => {
+        updateInput = input
+        return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before" },
+        { id: "tool-before", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "response" },
+        { id: "tool-after", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after" },
+      ],
+    })
+
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, [`${messageId}-reasoning-0`, "tool-before"])
+
+    assert.deepEqual(updateInput.content, [content[2], content[3], content[4]])
+    assert.ok(messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts["tool-after"])
+  })
+
+  it("removes a technical group with one update per message", async () => {
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 2 }, content: [
+        { type: "tool", id: "shell-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "text", text: "first" },
+      ] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 3, completed: 4 }, content: [
+        { type: "tool", id: "shell-2", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 3, completed: 4 } },
+        { type: "text", text: "second" },
+      ] }],
+    ])
+    const updates: any[] = []
+    seed({ session: {
+      message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+      messageUpdate: async (input: any) => {
+        updates.push(input)
+        return { ...messages.get(input.messageID), content: input.content }
+      },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    for (const [messageId, message] of messages) {
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "assistant",
+        status: "complete",
+        parts: [{ id: message.content[0].id, type: "tool", tool: "bash" }, { id: `${messageId}-text-1`, type: "text", text: message.content[1].text }],
+      })
+    }
+
+    await deleteTechnicalPartGroup(instanceId, sessionId, [
+      { messageId: "assistant-1", partId: "shell-1" },
+      { messageId: "assistant-2", partId: "shell-2" },
+    ])
+
+    assert.deepEqual(updates.map((update) => [update.messageID, update.content]), [
+      ["assistant-1", [{ type: "text", text: "first" }]],
+      ["assistant-2", [{ type: "text", text: "second" }]],
+    ])
+  })
+
+  it("plans every completed response and re-reads it before session cleanup", async () => {
+    const text = (value: string) => ({ type: "text", text: value })
+    const reasoning = { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } }
+    const tool = {
+      type: "tool",
+      id: "tool-1",
+      name: "bash",
+      state: { status: "completed", input: {}, content: [text("ok")] },
+      time: { created: 2, completed: 3 },
+    }
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 3 }, content: [reasoning, text("first")] }],
+      ["assistant-active", { id: "assistant-active", type: "assistant", time: { created: 4 }, content: [tool] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 5, completed: 7 }, content: [tool, text("second")] }],
+    ])
+    const updates: any[] = []
+    let page = 0
+    seed({
+      message: { list: async () => {
+        page += 1
+        return page === 1
+          ? { data: [messages.get("assistant-1"), messages.get("assistant-active")], cursor: { next: "page-2" } }
+          : { data: [messages.get("assistant-2")], cursor: {} }
+      } },
+      session: {
+        message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+        messageUpdate: async (input: any) => {
+          updates.push(input)
+          return { ...messages.get(input.messageID), content: input.content }
+        },
+      },
+    })
+
+    const plan = await planSessionTechnicalPartDeletion(instanceId, sessionId)
+    messages.get("assistant-1").content = [reasoning, text("updated")]
+    const failed = await executeSessionTechnicalPartDeletion(plan)
+
+    assert.deepEqual(plan, {
+      instanceId,
+      sessionId,
+      toolCount: 1,
+      reasoningCount: 1,
+      messageIds: ["assistant-1", "assistant-2"],
+    })
+    assert.equal(failed, 0)
+    assert.deepEqual(updates, [
+      { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
+      { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },
+    ])
+    const store = messageStoreBus.getOrCreate(instanceId)
+    assert.deepEqual(store.getMessage("assistant-1")?.partIds, ["assistant-1-text-0"])
+    assert.deepEqual(store.getMessage("assistant-2")?.partIds, ["assistant-2-text-0"])
   })
 })
 
@@ -216,10 +473,71 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("admits concurrent prompts in submission order", async () => {
+    const prompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        prompts.push(input.text)
+        if (input.text === "first") await firstPending
+        return { id: input.id }
+      },
+    } })
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(prompts, ["first"])
+    releaseFirst()
+    await Promise.all([first, second])
+    assert.deepEqual(prompts, ["first", "second"])
+  })
+
+  it("uses the current client when a queued prompt starts after reconnect", async () => {
+    const oldPrompts: string[] = []
+    const newPrompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const oldClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        oldPrompts.push(input.text)
+        await firstPending
+        return { id: input.id }
+      },
+    } }
+    seed(oldClient)
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const newClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { newPrompts.push(input.text); return { id: input.id } },
+    } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, newClient)
+    updateInstance(instanceId, { client: newClient as any })
+    releaseFirst()
+
+    await Promise.all([first, second])
+    assert.deepEqual(oldPrompts, ["first"])
+    assert.deepEqual(newPrompts, ["second"])
+  })
+
   it("sends agent attachments with mention offsets and the selected model variant", async () => {
     const calls: Array<{ type: string; input: any }> = []
     seed({ session: {
       instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async (input: unknown) => { calls.push({ type: "agent", input }) },
       switchModel: async (input: unknown) => { calls.push({ type: "model", input }) },
       prompt: async (input: unknown) => { calls.push({ type: "prompt", input }) },
     } })
@@ -239,12 +557,66 @@ describe("native prompt serialization", () => {
     }])
 
     assert.deepEqual(calls[0], {
+      type: "agent",
+      input: { sessionID: sessionId, agent: "build" },
+    })
+    assert.deepEqual(calls[1], {
       type: "model",
       input: { sessionID: sessionId, model: { providerID: "provider", id: "old", variant: "high" } },
     })
-    assert.deepEqual(calls[1]?.input.agents, [{
+    assert.deepEqual(calls[2]?.input.agents, [{
       name: "reviewer",
       mention: { start: 4, end: 13, text: "@reviewer" },
     }])
   })
+
+  it("preserves structured queued payload fields after composer editing", async () => {
+    let promptInput: any
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { promptInput = input; return { id: input.id } },
+    } })
+
+    await sendMessage(instanceId, sessionId, "edited @reviewer @skill", [{
+      id: "file",
+      type: "file",
+      display: "@notes.txt",
+      url: "data:text/plain;base64,bm90ZXM=",
+      filename: "notes.txt",
+      mediaType: "text/plain",
+      source: { type: "file", path: "notes.txt", mime: "text/plain" },
+    }, {
+      id: "agent",
+      type: "agent",
+      display: "@reviewer",
+      url: "",
+      filename: "reviewer",
+      mediaType: "text/plain",
+      source: { type: "agent", name: "reviewer" },
+    }], {
+      restoredPayload: {
+        text: "original @reviewer @skill\n\nhidden note",
+        metadata: { displayText: "original @reviewer @skill", source: "queued" },
+        files: [{
+          data: "bm90ZXM=",
+          mime: "text/plain",
+          source: { type: "inline" },
+          name: "notes.txt",
+          description: "Notes",
+          mention: { start: 0, end: 10, text: "@notes.txt" },
+        }],
+        agents: [{ name: "reviewer", mention: { start: 9, end: 18, text: "@reviewer" } }],
+        skills: [{ id: "skill", name: "Skill", mention: { start: 19, end: 25, text: "@skill" } }],
+      },
+    })
+
+    assert.equal(promptInput.text, "edited @reviewer @skill\n\nhidden note")
+    assert.equal(promptInput.files[0].description, "Notes")
+    assert.deepEqual(promptInput.agents[0].mention, { start: 7, end: 16, text: "@reviewer" })
+    assert.deepEqual(promptInput.skills, [{ id: "skill", mention: { start: 17, end: 23, text: "@skill" } }])
+    assert.deepEqual(promptInput.metadata, { displayText: "edited @reviewer @skill", source: "queued" })
+  })
+
 })

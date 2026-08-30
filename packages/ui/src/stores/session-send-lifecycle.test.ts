@@ -43,6 +43,7 @@ function setup(
   const client = {
     session: {
       prompt,
+      switchAgent: async () => undefined,
       switchModel: async () => undefined,
       instructions: { entry },
     },
@@ -167,9 +168,7 @@ describe("optimistic send lifecycle", () => {
   it("retires an accepted send after an asynchronous session error", async () => {
     const instanceId = "send-session-error"
     const sessionId = "session"
-    let request: any
-    const cleanup = setup(instanceId, sessionId, async (input) => {
-      request = input
+    const cleanup = setup(instanceId, sessionId, async () => {
       return { id: "pending", sessionID: sessionId }
     })
 
@@ -195,12 +194,11 @@ describe("optimistic send lifecycle", () => {
   it("does not reload an accepted send on native success", async () => {
     const instanceId = "send-session-success"
     const sessionId = "session"
-    let request: any
     let refreshCalls = 0
     const cleanup = setup(
       instanceId,
       sessionId,
-      async (input) => { request = input; return { id: "pending", sessionID: sessionId } },
+      async () => ({ id: "pending", sessionID: sessionId }),
       undefined,
       async () => { refreshCalls += 1; return { data: [] } },
     )
@@ -228,9 +226,7 @@ describe("optimistic send lifecycle", () => {
   it("marks accepted sends failed when native execution is interrupted", async () => {
     const instanceId = "send-session-interrupted"
     const sessionId = "session"
-    let request: any
-    const cleanup = setup(instanceId, sessionId, async (input) => {
-      request = input
+    const cleanup = setup(instanceId, sessionId, async () => {
       return { id: "pending", sessionID: sessionId }
     })
 

@@ -1,14 +1,16 @@
 import { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
-import { getWorktreeGitDiff, getWorktreeGitStatus } from "../../workspaces/git-status"
+import { getWorktreeGitDiff, getWorktreeGitStatus, invalidateWorktreeGitStatus } from "../../workspaces/git-status"
 import { commitWorktreeChanges, isGitMutationError, stageWorktreePaths, unstageWorktreePaths } from "../../workspaces/git-mutations"
 import { cloneGitRepository, isGitCloneError } from "../../workspaces/git-clone"
 import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
+import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
+  worktreeDeletionFence: WorktreeDeletionFence
 }
 
 const WorkspaceCreateSchema = z.object({
@@ -189,7 +191,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (query.worktree && query.worktree !== "root") {
         const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
         if (!directory) return
-        deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+        const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, () => {
+          deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+        })
+        if (!mutation) return
         reply.code(204)
         return
       }
@@ -242,7 +247,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
-      await stageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
+        await stageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+        await invalidateWorktreeGitStatus(directory)
+      })
+      if (!mutation) return
       return { ok: true as const }
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -258,7 +267,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
-      await unstageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+      const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
+        await unstageWorktreePaths({ workspaceFolder: directory, paths: body.paths })
+        await invalidateWorktreeGitStatus(directory)
+      })
+      if (!mutation) return
       return { ok: true as const }
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -274,12 +287,41 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
-      const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
-      return { ok: true as const, ...result }
+      const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
+        const result = await commitWorktreeChanges({ workspaceFolder: directory, message: body.message })
+        await invalidateWorktreeGitStatus(directory)
+        return result
+      })
+      if (!mutation) return
+      return { ok: true as const, ...mutation.value }
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
   })
+}
+
+async function runWorktreeMutation<T>(
+  deps: RouteDeps,
+  workspaceId: string,
+  directory: string,
+  reply: FastifyReply,
+  operation: () => T | Promise<T>,
+): Promise<{ value: T } | null> {
+  const identity = await deps.workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
+  if (!identity) {
+    reply.code(403).send({ error: "Worktree does not belong to workspace" })
+    return null
+  }
+  const release = deps.worktreeDeletionFence.enter([identity])
+  if (!release) {
+    reply.code(409).send({ error: "Worktree deletion is in progress" })
+    return null
+  }
+  try {
+    return { value: await operation() }
+  } finally {
+    release()
+  }
 }
 
 async function resolveGitWorktreeDirectory(

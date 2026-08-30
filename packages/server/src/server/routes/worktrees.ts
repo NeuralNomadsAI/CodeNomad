@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { stat } from "node:fs/promises"
+import path from "node:path"
 import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
@@ -14,15 +16,18 @@ import type {
   WorktreeSessionMoveResponse,
 } from "../../api-types"
 import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
-import { invalidateWorktreeDirectoryCache } from "../../workspaces/worktree-directory"
+import { invalidateWorktreeCache } from "../../workspaces/worktree-directory"
 import {
   moveProjectSessionFamily,
+  listCompleteProjectSessions,
   ProjectSessionError,
   removeProjectWorktree,
 } from "../../workspaces/project-session-families"
+import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
+  worktreeDeletionFence: WorktreeDeletionFence
 }
 
 const WorktreeCreateSchema = z.object({
@@ -91,7 +96,8 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         slug,
         logger: request.log,
       })
-      invalidateWorktreeDirectoryCache(workspace.id)
+      invalidateWorktreeCache(workspace.id)
+      await refreshOpenCodeWorktrees(deps.workspaceManager, workspace.id, request.log)
 
       reply.code(201)
       return created
@@ -122,12 +128,12 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       })
       const target = worktrees.find((worktree) => worktree.slug === worktreeSlug)
       if (!target) throw new ProjectSessionError("Worktree not found", 404)
-      const projectDirectory = deps.workspaceManager.getServiceDirectory(workspace.id)
+      const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
       const targetDirectory = await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, target.directory)
-      if (!projectDirectory || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
+      if (!projectLocation || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
       const moved = await moveProjectSessionFamily({
         client: await deps.workspaceManager.getSharedServiceClient(),
-        projectDirectory,
+        projectLocation,
         sessionId: request.params.sessionId,
         targetDirectory,
         validateTarget: async () => {
@@ -140,6 +146,21 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           return refreshed.some((worktree) => worktree.slug === worktreeSlug
             && worktree.registeredDirectory === target.registeredDirectory
             && worktree.head === target.head)
+        },
+        runMutation: async (directories, operation) => {
+          const identities = await Promise.all(directories.map((directory) => (
+            deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, directory)
+          )))
+          if (identities.some((identity) => !identity)) {
+            throw new ProjectSessionError("Unable to identify session worktrees", 409)
+          }
+          const release = deps.worktreeDeletionFence.enter(identities as string[])
+          if (!release) throw new ProjectSessionError("A session worktree is being removed", 409)
+          try {
+            return await operation()
+          } finally {
+            release()
+          }
         },
       })
       const response: WorktreeSessionMoveResponse = { ...moved, worktreeSlug }
@@ -184,24 +205,28 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+      const targetHostDirectory = match.registeredDirectory ?? match.directory
+      const targetIdentity = await deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, match.directory)
+      const pathIdentity = await readPathIdentity(targetHostDirectory)
+      if (!targetIdentity || !pathIdentity) throw new ProjectSessionError("Unable to identify worktree before deletion", 409)
       let releaseDeletion: () => void
       try {
-        releaseDeletion = await deps.workspaceManager.reserveWorktreeDeletion(match.registeredDirectory ?? match.directory)
+        releaseDeletion = await deps.workspaceManager.reserveWorktreeDeletion(targetHostDirectory)
       } catch (error) {
         throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to reserve worktree deletion", 409)
       }
       try {
         const client = await deps.workspaceManager.getSharedServiceClient()
-        const projectDirectory = deps.workspaceManager.getServiceDirectory(workspace.id)
-        const targetHostDirectory = match.registeredDirectory ?? match.directory
+        const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
         const rootHostDirectory = worktrees.find((worktree) => worktree.kind === "root")!.directory
         const [targetDirectory, rootDirectory] = await Promise.all([
           deps.workspaceManager.getServiceDirectoryForPath(workspace.id, match.directory),
           deps.workspaceManager.getServiceDirectoryForPath(workspace.id, rootHostDirectory),
         ])
-        if (!projectDirectory || !targetDirectory || !rootDirectory) {
+        if (!projectLocation || !targetDirectory || !rootDirectory) {
           throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
         }
+        const targetServiceRoot = resolveServiceWorktreeRoot(targetHostDirectory, match.directory, targetDirectory)
         const isTargetRegistered = async () => {
           const refreshed = await strictWorktrees({
             repoRoot,
@@ -209,16 +234,32 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             logger: request.log,
             failClosed: true,
           })
-          return refreshed.some((worktree) => worktree.slug === slug
-            && worktree.kind === "worktree"
-            && worktree.registeredDirectory === match.registeredDirectory
-            && worktree.head === match.head)
+          const current = refreshed.find((worktree) => worktree.slug === slug && worktree.kind === "worktree")
+          return Boolean(current
+            && current.registeredDirectory === match.registeredDirectory
+            && current.head === match.head
+            && current.branch === match.branch
+            && samePathIdentity(pathIdentity, await readPathIdentity(targetHostDirectory)))
         }
         await removeProjectWorktree({
           client,
-          projectDirectory,
+          projectLocation,
           targetDirectory,
           rootDirectory,
+          matchesTarget: async (directory) => servicePathContains(targetServiceRoot, directory),
+          validateBeforeRemove: async (projectID) => {
+            await assertNoOtherProjectSessions(client, projectID, targetServiceRoot)
+          },
+          runMutation: async (directories, operation) => {
+            const identities = await Promise.all(directories.map(async (directory) => (
+              await deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, directory)
+                ?? (servicePathContains(targetServiceRoot, directory) ? targetIdentity : undefined)
+            )))
+            if (identities.some((identity) => !identity)) {
+              throw new ProjectSessionError("Unable to identify session worktrees", 409)
+            }
+            return deps.worktreeDeletionFence.run(targetIdentity, identities as string[], operation)
+          },
           remove: async () => {
             if (!await isTargetRegistered()) {
               throw new ProjectSessionError("Worktree changed before deletion", 409)
@@ -236,7 +277,8 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           },
           isTargetRegistered,
         })
-        invalidateWorktreeDirectoryCache(workspace.id)
+        invalidateWorktreeCache(workspace.id)
+        await refreshOpenCodeWorktrees(deps.workspaceManager, workspace.id, request.log)
       } finally {
         releaseDeletion()
       }
@@ -253,6 +295,70 @@ function strictWorktrees(params: Parameters<typeof listWorktrees>[0]) {
   return listWorktrees(params).catch((error) => {
     throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to read Git worktree inventory", 502)
   })
+}
+
+type PathIdentity = { dev: number; ino: number; birthtimeMs: number }
+
+async function readPathIdentity(directory: string): Promise<PathIdentity | undefined> {
+  try {
+    const value = await stat(directory)
+    return { dev: value.dev, ino: value.ino, birthtimeMs: value.birthtimeMs }
+  } catch {
+    return undefined
+  }
+}
+
+function samePathIdentity(left: PathIdentity, right: PathIdentity | undefined): boolean {
+  return Boolean(right && left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs)
+}
+
+function resolveServiceWorktreeRoot(hostRoot: string, hostWorkspace: string, serviceWorkspace: string): string {
+  const relative = path.relative(hostRoot, hostWorkspace)
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new ProjectSessionError("Workspace path is outside the registered worktree", 409)
+  }
+  const servicePath = /^[A-Za-z]:[\\/]|^(?:\\\\|\/\/)/.test(serviceWorkspace) ? path.win32 : path.posix
+  return relative.split(/[\\/]/).filter(Boolean).reduce((directory) => servicePath.dirname(directory), serviceWorkspace)
+}
+
+function servicePathContains(root: string, candidate: string): boolean {
+  const servicePath = /^[A-Za-z]:[\\/]|^(?:\\\\|\/\/)/.test(root) ? path.win32 : path.posix
+  const relative = servicePath.relative(root, candidate)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${servicePath.sep}`) && !servicePath.isAbsolute(relative))
+}
+
+async function assertNoOtherProjectSessions(
+  client: Awaited<ReturnType<WorkspaceManager["getSharedServiceClient"]>>,
+  currentProjectID: string,
+  targetRoot: string,
+): Promise<void> {
+  for (const project of await client.project.list()) {
+    if (project.id === currentProjectID) continue
+    const blocker = (await listCompleteProjectSessions(client, project.id))
+      .find((session) => servicePathContains(targetRoot, session.location.directory))
+    if (blocker) {
+      throw new ProjectSessionError(`Session from another project blocks deletion: ${blocker.id}`, 409)
+    }
+  }
+}
+
+async function refreshOpenCodeWorktrees(
+  manager: WorkspaceManager,
+  workspaceId: string,
+  logger: FastifyInstance["log"],
+): Promise<void> {
+  const location = manager.getServiceLocation(workspaceId)
+  if (!location) return
+  try {
+    const client = await manager.getSharedServiceClient()
+    const signal = AbortSignal.timeout(5_000)
+    const resolved = await client.location.get({
+      location: { directory: location.directory, workspace: location.workspaceID },
+    }, { signal })
+    await client.worktree.refresh({ projectID: resolved.project.id }, { signal })
+  } catch (error) {
+    logger.warn({ err: error }, "Failed to refresh OpenCode worktrees")
+  }
 }
 
 function handleError(error: unknown, reply: FastifyReply) {

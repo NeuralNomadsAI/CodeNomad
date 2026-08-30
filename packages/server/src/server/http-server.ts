@@ -5,11 +5,12 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { connect as connectTcp, type Socket } from "net"
 import path from "path"
+import type { Readable } from "stream"
 import { connect as connectTls, type TLSSocket } from "tls"
-import { fetch, type Headers } from "undici"
+import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type OpenCodeClient } from "@opencode-ai/client"
+import { isInvalidRequestError, isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode-ai/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -40,8 +41,13 @@ import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
+import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
+import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
+import type { NativeParent } from "../native-parent"
+import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
+import { DeveloperCdp } from "../developer-cdp"
 
 interface HttpServerDeps {
   bindHost: string
@@ -66,6 +72,8 @@ interface HttpServerDeps {
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
+  nativeParent: NativeParent
+  automationBridgeToken: string
 }
 
 interface HttpServerStartResult {
@@ -170,6 +178,11 @@ export function createHttpServer(deps: HttpServerDeps) {
         return
       }
 
+      if (origin === "null") {
+        cb(null, true)
+        return
+      }
+
        if (allowedDevOrigins.has(origin)) {
          cb(null, true)
          return
@@ -214,7 +227,29 @@ export function createHttpServer(deps: HttpServerDeps) {
       pathname.startsWith("/api/remote-proxy/sessions/") &&
       deps.authManager.isLoopbackRequest(request)
 
-    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete) {
+    const encodedPreviewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
+    const hostPreviewToken = parsePreviewCapabilityHost(request.headers.host)
+    let isPreviewCapability = false
+    if (hostPreviewToken) {
+      isPreviewCapability = Boolean(deps.previewManager.get(hostPreviewToken))
+    } else if (encodedPreviewToken) {
+      try {
+        isPreviewCapability = Boolean(deps.previewManager.get(decodeURIComponent(encodedPreviewToken)))
+      } catch {
+        // Malformed capability paths remain subject to normal authentication.
+      }
+    }
+
+    if (request.headers.origin === "null" && !isPreviewCapability) {
+      reply.code(403).send({ error: "Opaque origins may access preview capabilities only" })
+      return
+    }
+
+    const isAutomationBridge = isAutomationPluginRequest(request, {
+      authManager: deps.authManager,
+      bridgeToken: deps.automationBridgeToken,
+    })
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete || isPreviewCapability || isAutomationBridge) {
       done()
       return
     }
@@ -257,7 +292,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     reply.code(404).send({ message: "UI bundle missing" })
   })
 
-  registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager })
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
@@ -272,7 +308,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
   })
-  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerStorageRoutes(app, {
     instanceStore: deps.instanceStore,
     eventBus: deps.eventBus,
@@ -283,6 +319,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
+  const developerCdp = new DeveloperCdp()
+  registerAutomationPluginRoute(app, {
+    authManager: deps.authManager,
+    bridgeToken: deps.automationBridgeToken,
+    nativeParent: deps.nativeParent,
+    developerCdp,
+    workspaceManager: deps.workspaceManager,
+  })
+  app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app)
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
@@ -297,7 +342,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: proxyLogger,
   })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence })
 
 
   if (deps.uiDevServerUrl) {
@@ -362,11 +407,16 @@ export function createHttpServer(deps: HttpServerDeps) {
 export interface InstanceProxyWorkspaceManager {
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
+  invalidateSharedServiceConnection?(): void
   getInstanceAuthorizationHeader(id: string): string | undefined
   getServiceDirectory?(id: string): string | undefined
+  getServiceLocation?(id: string): LocationRef | undefined
   getServiceDirectoryForPath?(id: string, directory: string): Promise<string | undefined>
+  getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
+  ownsLocation(id: string, location: LocationRef): ReturnType<WorkspaceManager["ownsLocation"]>
+  ownsLocationWorkspace(id: string, workspaceID: string): ReturnType<WorkspaceManager["ownsLocationWorkspace"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -374,6 +424,7 @@ export interface InstanceProxyWorkspaceManager {
 interface InstanceProxyDeps {
   workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
+  worktreeDeletionFence: WorktreeDeletionFence
 }
 
 interface SideCarProxyDeps {
@@ -426,38 +477,45 @@ function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps
 }
 
 function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps) {
-  const proxyBaseHandler = async (
-    request: FastifyRequest<{ Params: { token: string } }>,
-    reply: FastifyReply,
-  ) => {
-    await proxyPreviewRequest({
-      request,
-      reply,
-      previewManager: deps.previewManager,
-      logger: deps.logger,
-      pathSuffix: "",
-    })
-  }
+  app.register(async (previewApp) => {
+    previewApp.removeAllContentTypeParsers()
+    previewApp.addContentTypeParser("*", (_request, body, done) => done(null, body))
+    const capabilityHost = /^[0-9a-f-]{36}\.preview\.localhost(?::\d+)?$/i
+    const hostHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+      const token = parsePreviewCapabilityHost(request.headers.host)
+      if (!token) return reply.code(404).send({ error: "Preview not found" })
+      const pathname = (request.raw.url ?? request.url ?? "/").split("?")[0] ?? "/"
+      await proxyPreviewRequest({
+        request,
+        reply,
+        previewManager: deps.previewManager,
+        logger: deps.logger,
+        token,
+        publicBase: "",
+        pathSuffix: pathname.replace(/^\/+/, ""),
+      })
+    }
 
-  const proxyWildcardHandler = async (
-    request: FastifyRequest<{ Params: { token: string; "*": string } }>,
-    reply: FastifyReply,
-  ) => {
-    await proxyPreviewRequest({
-      request,
-      reply,
-      previewManager: deps.previewManager,
-      logger: deps.logger,
-      pathSuffix: request.params["*"] ?? "",
+    previewApp.all("/", { constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/*", { constraints: { host: capabilityHost } }, hostHandler)
+    previewApp.all("/previews/:token", async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
+      await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
     })
-  }
-
-  app.all("/previews/:token", proxyBaseHandler)
-  app.all("/previews/:token/*", proxyWildcardHandler)
+    previewApp.all("/previews/:token/*", async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
+      await proxyPreviewRequest({
+        request,
+        reply,
+        previewManager: deps.previewManager,
+        logger: deps.logger,
+        pathSuffix: request.params["*"] ?? "",
+      })
+    })
+  })
 }
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
+    if (parsePreviewCapabilityHost(request.headers.host)) return
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
     if (!parsed) {
@@ -481,7 +539,17 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
 function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
-    const parsed = parsePreviewUpgradePath(rawUrl)
+    const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
+    let parsed = parsePreviewUpgradePath(rawUrl)
+    if (capabilityToken) {
+      try {
+        const url = new URL(rawUrl, "http://localhost")
+        parsed = { token: capabilityToken, pathname: url.pathname, search: url.search }
+      } catch {
+        rejectUpgrade(socket as Socket, 400, "Bad Request")
+        return
+      }
+    }
     if (!parsed) {
       return
     }
@@ -520,6 +588,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeDeletionFence: deps.worktreeDeletionFence,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -533,6 +602,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         request,
         reply,
         workspaceManager: deps.workspaceManager,
+        worktreeDeletionFence: deps.worktreeDeletionFence,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -547,15 +617,32 @@ async function proxyWorkspaceRequest(args: {
   request: FastifyRequest
   reply: FastifyReply
   workspaceManager: InstanceProxyWorkspaceManager
+  worktreeDeletionFence: WorktreeDeletionFence
   logger: Logger
   pathSuffix?: string
 }) {
-  const { request, reply, workspaceManager, logger } = args
+  const { request, reply, workspaceManager, logger, worktreeDeletionFence } = args
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
 
   if (!workspace) {
     reply.code(404).send({ error: "Workspace not found" })
+    return
+  }
+
+  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
+  if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  const routeUrl = buildInstanceTargetUrl("http://127.0.0.1", args.pathSuffix)
+  if (!routeUrl) {
+    reply.code(400).send({ error: "Invalid workspace instance path" })
+    return
+  }
+  const pathname = decodeURIComponent(routeUrl.pathname)
+  if (!isAllowedInstanceApiRoute(request.method, pathname)) {
+    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
     return
   }
 
@@ -565,22 +652,12 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
-  if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
-    reply.code(400).send({ error: "Invalid workspace instance path" })
-    return
-  }
   const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
   if (!targetUrl) {
     reply.code(400).send({ error: "Invalid workspace instance path" })
     return
   }
   appendIncomingQuery(targetUrl, request.raw.url ?? "")
-  const pathname = decodeURIComponent(targetUrl.pathname)
-  if (!isAllowedInstanceApiRoute(request.method, pathname)) {
-    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
-    return
-  }
   if (pathname.replace(/\/+$/, "") === "/api/session/active") {
     if (request.method !== "GET") {
       reply.code(405).send({ error: "Method not allowed" })
@@ -591,7 +668,7 @@ async function proxyWorkspaceRequest(args: {
     const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
       try {
         const session = await client.session.get({ sessionID: sessionId })
-        return await workspaceManager.ownsDirectory(workspaceId, session.location.directory) ? [sessionId, status] as const : null
+        return await workspaceManager.ownsLocation(workspaceId, session.location) ? [sessionId, status] as const : null
       } catch {
         return null
       }
@@ -613,25 +690,82 @@ async function proxyWorkspaceRequest(args: {
   }
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
-    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
+    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project") || targetUrl.searchParams.has("workspace"))
+  if (request.method === "GET"
+    && pathname.replace(/\/+$/, "") === "/api/session"
+    && !targetUrl.searchParams.has("cursor")
+    && !targetUrl.searchParams.has("workspace")) {
+    const workspaceID = workspaceManager.getServiceLocation?.(workspaceId)?.workspaceID
+    if (workspaceID) targetUrl.searchParams.set("workspace", workspaceID)
+  }
   const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
     return
   }
+  const sessionCursor = targetUrl.searchParams.get("cursor")
+  if (sessionCursor) {
+    const page = await (await workspaceManager.getSharedServiceClient()).session.list({ cursor: sessionCursor })
+    const ownership = await Promise.all(page.data.map((session) => workspaceManager.ownsLocation(workspaceId, session.location)))
+    if (ownership.some((owned) => !owned)) {
+      reply.code(403).send({ error: "Session list does not belong to workspace" })
+      return
+    }
+    reply.send(page)
+    return
+  }
   const serviceDirectory = workspaceManager.getServiceDirectory?.(workspaceId) ?? workspace.path
+  let globalFormLocation: LocationRef | undefined
+  if (isGlobalFormAction(pathname, request.method)) {
+    const directoryHeader = request.headers["x-opencode-directory"]
+    const workspaceHeader = request.headers["x-opencode-workspace"]
+    if (Array.isArray(directoryHeader) || Array.isArray(workspaceHeader)) {
+      reply.code(400).send({ error: "Invalid Form location" })
+      return
+    }
+    let directory: string | undefined
+    if (directoryHeader !== undefined) {
+      try {
+        directory = decodeURIComponent(directoryHeader)
+      } catch {
+        reply.code(400).send({ error: "Invalid Form location" })
+        return
+      }
+      if (!directory.trim()) {
+        reply.code(400).send({ error: "Invalid Form location" })
+        return
+      }
+    }
+    if (workspaceHeader !== undefined && !workspaceHeader.trim()) {
+      reply.code(400).send({ error: "Invalid Form location" })
+      return
+    }
+    if (directory !== undefined || workspaceHeader !== undefined) {
+      globalFormLocation = {
+        directory: directory ?? workspace.path,
+        ...(workspaceHeader ? { workspaceID: workspaceHeader } : {}),
+      }
+    }
+  }
   const imported = prepareSessionImport(
     pathname,
     request.method,
     stripLocationSelectors(targetUrl, request.body, workspace.path, serviceDirectory),
     serviceDirectory,
   )
-  const requestLocations = readRequestDirectories(targetUrl, imported.body)
+  const requestLocations = readRequestDirectories(targetUrl, imported.body, workspace.path)
+  if (globalFormLocation) {
+    requestLocations.directories.push(globalFormLocation.directory)
+    requestLocations.locations.push(globalFormLocation)
+  }
   requestLocations.directories.push(...imported.directories)
+  requestLocations.locations.push(...imported.locations)
   requestLocations.invalid ||= imported.invalid
   readNativeCwd(targetUrl, imported.body, requestLocations)
   const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
-  if (requestLocations.invalid || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))) {
+  if (requestLocations.invalid
+    || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))
+    || !(await allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations))) {
     reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
     return
   }
@@ -645,6 +779,17 @@ async function proxyWorkspaceRequest(args: {
       return
     }
     translatedDirectories.set(directory, translated)
+  }
+  const mutationIdentities = new Set<string>()
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    for (const directory of requestLocations.directories) {
+      const identity = await workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
+      if (!identity) {
+        reply.code(403).send({ error: "Location does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(identity)
+    }
   }
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await allPathsOwned(workspaceManager, workspaceId, promptFiles.paths))) {
@@ -720,51 +865,92 @@ async function proxyWorkspaceRequest(args: {
     try {
       session = await (await workspaceManager.getSharedServiceClient()).session.get({ sessionID: sessionId })
     } catch (error) {
+      if (isInvalidRequestError(error)) {
+        reply.code(400).send({ error: "Invalid session ID" })
+        return
+      }
       if (isSessionNotFoundError(error)) {
         reply.code(404).send({ error: "Session not found" })
         return
       }
       throw error
     }
-    if (!(await workspaceManager.ownsDirectory(workspaceId, session.location.directory))) {
+    if (!(await workspaceManager.ownsLocation(workspaceId, session.location))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
+    const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
+    if (!sessionWorktree) {
+      reply.code(403).send({ error: "Session does not belong to workspace" })
+      return
+    }
+    mutationIdentities.add(sessionWorktree)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-
+  const releaseMutation = request.method === "GET" || request.method === "HEAD"
+    ? undefined
+    : worktreeDeletionFence.enter([...mutationIdentities])
+  if (request.method !== "GET" && request.method !== "HEAD" && !releaseMutation) {
+    reply.code(409).send({ error: "Worktree deletion is in progress" })
+    return
+  }
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
 
-  return reply.from(targetUrl.toString(), {
-    ...(body !== request.body ? { body } : {}),
-    rewriteRequestHeaders: (_originalRequest, headers) => {
-      const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
+  try {
+    return reply.from(targetUrl.toString(), {
+      ...(body !== request.body ? { body } : {}),
+      rewriteRequestHeaders: (_originalRequest, headers) => {
+        const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
+        if (globalFormLocation) {
+          outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
+          if (globalFormLocation.workspaceID) outgoingHeaders["x-opencode-workspace"] = globalFormLocation.workspaceID
+        }
 
-      if (logger.isLevelEnabled("trace")) {
-        logger.trace(
-          {
-            workspaceId,
-            method: request.method,
-            targetUrl: targetUrl.toString(),
-            contentType: request.headers["content-type"],
-            headers: redactSecrets(outgoingHeaders),
-          },
-          "Proxy -> OpenCode request",
-        )
-      }
+        if (logger.isLevelEnabled("trace")) {
+          logger.trace(
+            {
+              workspaceId,
+              method: request.method,
+              targetUrl: targetUrl.toString(),
+              contentType: request.headers["content-type"],
+              headers: redactSecrets(outgoingHeaders),
+            },
+            "Proxy -> OpenCode request",
+          )
+        }
 
-      return outgoingHeaders
-    },
-    rewriteHeaders: stripInstanceProxyResponseCookies,
-    onError: (proxyReply, { error }) => {
-      logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
-      if (!proxyReply.sent) {
-        proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
-      }
-    },
-  })
+        return outgoingHeaders
+      },
+      rewriteHeaders: sanitizeInstanceProxyResponseHeaders,
+      onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
+        if (proxyReply.statusCode === 401) {
+          workspaceManager.invalidateSharedServiceConnection?.()
+        }
+        const upstream = upstreamResponse as typeof upstreamResponse & { readableEnded?: boolean; destroyed?: boolean }
+        const release = () => releaseMutation?.()
+        if (upstream.readableEnded || upstream.destroyed) release()
+        else {
+          upstream.once("end", release)
+          upstream.once("close", release)
+          upstream.once("error", release)
+        }
+        proxyReply.send(upstream)
+      },
+      onError: (proxyReply, { error }) => {
+        workspaceManager.invalidateSharedServiceConnection?.()
+        releaseMutation?.()
+        logger.error({ err: error, workspaceId, targetUrl: targetUrl.toString() }, "Failed to proxy workspace request")
+        if (!proxyReply.sent) {
+          proxyReply.code(502).send({ error: "Workspace instance proxy failed" })
+        }
+      },
+    })
+  } catch (error) {
+    releaseMutation?.()
+    throw error
+  }
 }
 
 function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {
@@ -774,8 +960,13 @@ function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {
   return targetUrl
 }
 
-function readRequestDirectories(targetUrl: URL, body: unknown): { directories: string[]; invalid: boolean } {
+function readRequestDirectories(
+  targetUrl: URL,
+  body: unknown,
+  defaultDirectory: string,
+): { directories: string[]; locations: LocationRef[]; invalid: boolean } {
   const directories: string[] = []
+  const locations: LocationRef[] = []
   let invalid = false
   for (const key of ["location[directory]", "directory"]) {
     for (const value of targetUrl.searchParams.getAll(key)) {
@@ -783,6 +974,16 @@ function readRequestDirectories(targetUrl: URL, body: unknown): { directories: s
       else invalid = true
     }
   }
+  const queryWorkspaces = targetUrl.searchParams.getAll("location[workspace]")
+  const queryDirectories = targetUrl.searchParams.getAll("location[directory]")
+  if (queryWorkspaces.length > 1 || queryDirectories.length > 1) invalid = true
+  if (queryWorkspaces.length === 1) {
+    const workspaceID = queryWorkspaces[0]
+    if (!workspaceID.trim()) invalid = true
+    else locations.push({ directory: queryDirectories[0] ?? defaultDirectory, workspaceID })
+  }
+  if (targetUrl.pathname.replace(/\/+$/, "") !== "/api/session" && targetUrl.searchParams.has("workspace")) invalid = true
+  if (targetUrl.searchParams.has("workspaceID") || targetUrl.searchParams.has("location[workspaceID]")) invalid = true
 
   if (body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)) {
     const input = body as Record<string, unknown>
@@ -793,21 +994,35 @@ function readRequestDirectories(targetUrl: URL, body: unknown): { directories: s
     if ("location" in input) {
       const location = input.location
       if (location && typeof location === "object" && !Array.isArray(location)) {
-        const directory = (location as Record<string, unknown>).directory
+        const source = location as Record<string, unknown>
+        const directory = source.directory
         if (typeof directory === "string" && directory.trim()) directories.push(directory)
         else invalid = true
+        if (source.workspace !== undefined) invalid = true
+        if (source.workspaceID !== undefined) {
+          if (typeof source.workspaceID === "string" && source.workspaceID.trim() && typeof directory === "string" && directory.trim()) {
+            locations.push({ directory, workspaceID: source.workspaceID })
+          } else invalid = true
+        }
       } else if (location !== null && location !== undefined) {
         invalid = true
       }
     }
+    if (/^\/api\/session\/[^/]+\/move\/?$/.test(targetUrl.pathname) && "workspaceID" in input) {
+      if (typeof input.workspaceID === "string" && input.workspaceID.trim() && typeof input.directory === "string" && input.directory.trim()) {
+        locations.push({ directory: input.directory, workspaceID: input.workspaceID })
+      } else invalid = true
+    } else if ("workspaceID" in input) {
+      invalid = true
+    }
   }
-  return { directories, invalid }
+  return { directories, locations, invalid }
 }
 
 function readNativeCwd(
   targetUrl: URL,
   body: unknown,
-  locations: { directories: string[]; invalid: boolean },
+  locations: { directories: string[]; locations: LocationRef[]; invalid: boolean },
 ) {
   if (!/^\/api\/(?:shell|pty)\/?$/.test(targetUrl.pathname) || !body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return
   const input = body as Record<string, unknown>
@@ -837,8 +1052,9 @@ function sanitizeInstanceProxyRequestHeaders(
   return result
 }
 
-function stripInstanceProxyResponseCookies(headers: Record<string, string | string[] | undefined>) {
-  return Object.fromEntries(Object.entries(headers).filter(([key]) => !["set-cookie", "set-cookie2"].includes(key.toLowerCase())))
+function sanitizeInstanceProxyResponseHeaders(headers: Record<string, string | string[] | undefined>) {
+  const blocked = new Set(["proxy-authenticate", "set-cookie", "set-cookie2", "www-authenticate"])
+  return Object.fromEntries(Object.entries(headers).filter(([key]) => !blocked.has(key.toLowerCase())))
 }
 
 export function redactSecrets(value: unknown): unknown {
@@ -855,6 +1071,11 @@ export function redactSecrets(value: unknown): unknown {
 
 async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, directories: string[]) {
   return (await Promise.all(directories.map((directory) => manager.ownsDirectory(workspaceId, directory)))).every(Boolean)
+}
+
+async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[]) {
+  const unique = new Map(locations.map((location) => [`${location.directory}\0${location.workspaceID ?? ""}`, location]))
+  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location)))).every(Boolean)
 }
 
 async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
@@ -904,46 +1125,34 @@ async function authorizeSessionList(
   const cursors = targetUrl.searchParams.getAll("cursor")
   if (cursors.length > 1) return "invalid"
   if (cursors.length === 1) {
-    const scope = decodeSessionListCursor(cursors[0])
-    if (!scope) return "invalid"
-    for (const key of ["directory", "location[directory]", "project", "subpath"]) targetUrl.searchParams.delete(key)
-    return ownsSessionListScope(manager, workspaceId, scope)
+    return cursors[0] && [...targetUrl.searchParams.keys()].every((key) => key === "cursor") ? "allowed" : "invalid"
   }
 
   const projects = targetUrl.searchParams.getAll("project")
   const subpaths = targetUrl.searchParams.getAll("subpath")
-  if (projects.length > 1 || subpaths.length > 1 || (subpaths.length && !projects.length)) return "invalid"
-  if (!projects.length) return "allowed"
+  const workspaces = targetUrl.searchParams.getAll("workspace")
+  const directories = targetUrl.searchParams.getAll("directory")
+  if (projects.length > 1 || subpaths.length > 1 || workspaces.length > 1 || directories.length > 1
+    || (subpaths.length && !projects.length)) return "invalid"
+  const workspace = workspaces[0]
+  const directory = directories[0]
+  if ((workspace !== undefined && !workspace.trim()) || (directory !== undefined && !directory.trim())) return "invalid"
+  if (!projects.length) {
+    if (workspace && directory) return ownsSessionListScope(manager, workspaceId, { workspace, directory })
+    if (workspace) return ownsSessionListScope(manager, workspaceId, { workspace })
+    return "allowed"
+  }
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { project, subpath })
+  return ownsSessionListScope(manager, workspaceId, { ...(workspace ? { workspace } : {}), project, subpath })
 }
 
-function decodeSessionListCursor(cursor: string): { directory: string } | { project: string; subpath?: string } | null {
-  if (!cursor || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null
-    const anchor = value.anchor as Record<string, unknown> | undefined
-    if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)
-      || typeof anchor.id !== "string" || !anchor.id
-      || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
-      || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
-    if (value.workspace !== undefined && typeof value.workspace !== "string") return null
-    if (value.search !== undefined && typeof value.search !== "string") return null
-    if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
-    if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
-      return { directory: value.directory }
-    }
-    if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
-      if (value.subpath === undefined) return { project: value.project }
-      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) return { project: value.project, subpath: value.subpath }
-    }
-    return null
-  } catch {
-    return null
-  }
+type SessionListScope = {
+  workspace?: string
+  directory?: string
+  project?: string
+  subpath?: string
 }
 
 function isSafeRelativePath(value: string): boolean {
@@ -953,9 +1162,15 @@ function isSafeRelativePath(value: string): boolean {
 async function ownsSessionListScope(
   manager: InstanceProxyWorkspaceManager,
   workspaceId: string,
-  scope: { directory: string } | { project: string; subpath?: string },
+  scope: SessionListScope,
 ): Promise<"allowed" | "foreign"> {
-  if ("directory" in scope) return await manager.ownsDirectory(workspaceId, scope.directory) ? "allowed" : "foreign"
+  if (scope.directory) {
+    const owned = scope.workspace
+      ? await manager.ownsLocation(workspaceId, { directory: scope.directory, workspaceID: scope.workspace })
+      : await manager.ownsDirectory(workspaceId, scope.directory)
+    return owned ? "allowed" : "foreign"
+  }
+  if (!scope.project) return scope.workspace && await manager.ownsLocationWorkspace(workspaceId, scope.workspace) ? "allowed" : "foreign"
   const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
@@ -963,7 +1178,10 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  return await manager.ownsDirectory(workspaceId, directory) ? "allowed" : "foreign"
+  const owned = scope.workspace
+    ? await manager.ownsLocation(workspaceId, { directory, workspaceID: scope.workspace })
+    : await manager.ownsDirectory(workspaceId, directory)
+  return owned ? "allowed" : "foreign"
 }
 
 function getPtyRouteId(pathname: string): string | null {
@@ -1005,14 +1223,15 @@ function hasDotSegment(value: string): boolean {
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
-    ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider)$/],
+    ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider|reference|skill)$/],
+    ["GET", /^\/api\/(?:mcp\/resource|websearch\/provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],
     ["GET", /^\/api\/(?:permission|question)\/request$/],
     ["GET", /^\/api\/form\/request$/],
     ["GET", /^\/api\/project\/current$/],
     ["GET", /^\/api\/project$/],
-    ["GET", /^\/api\/vcs\/status$/],
+    ["GET", /^\/api\/vcs(?:\/status)?$/],
     ["GET", /^\/api\/fs\/(?:list|read\/.+)$/],
     ["GET", /^\/api\/(?:pty|shell)(?:\/[^/]+(?:\/output)?)?$/],
     ["POST", /^\/api\/(?:pty|shell)$/],
@@ -1029,9 +1248,14 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/session(?:\/active)?$/],
     ["POST", /^\/api\/session(?:\/import)?$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
+    ["PATCH", /^\/api\/session\/[^/]+\/message\/[^/]+$/],
+    ["GET", /^\/api\/session\/[^/]+\/inbox$/],
+    ["GET", /^\/api\/session\/[^/]+\/(?:permission|form)$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],
-    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|fork)$/],
-    ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
+    ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
+    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|background|fork)$/],
+    ["POST", /^\/api\/session\/[^/]+\/inbox\/[^/]+\/(?:steer|queue)$/],
+    ["POST", /^\/api\/session\/[^/]+\/revert\/(?:stage|clear)$/],
     ["PUT", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["DELETE", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],
@@ -1099,9 +1323,6 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
       for (const value of values) targetUrl.searchParams.append(key, value === workspaceDirectory ? serviceDirectory : value)
     }
   }
-  for (const key of ["workspace", "workspaceID", "location[workspace]", "location[workspaceID]"]) {
-    targetUrl.searchParams.delete(key)
-  }
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return body
   const input = body as Record<string, unknown>
   const canonicalInput = { ...input }
@@ -1110,7 +1331,7 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
   }
   const location = input.location
   if (!location || typeof location !== "object" || Array.isArray(location) || Buffer.isBuffer(location)) return canonicalInput
-  const { workspace: _workspace, workspaceID: _workspaceID, ...canonicalLocation } = location as Record<string, unknown>
+  const canonicalLocation = { ...(location as Record<string, unknown>) }
   if (canonicalLocation.directory === workspaceDirectory) canonicalLocation.directory = serviceDirectory
   return { ...canonicalInput, location: canonicalLocation }
 }
@@ -1182,7 +1403,7 @@ function replacePromptFileUris(body: unknown, replacements: ReadonlyMap<string, 
 }
 
 function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
-  const result = { body, directories: [] as string[], invalid: false }
+  const result = { body, directories: [] as string[], locations: [] as LocationRef[], invalid: false }
   if (pathname !== "/api/session/import" || method !== "POST") return result
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
     result.invalid = true
@@ -1203,8 +1424,17 @@ function prepareSessionImport(pathname: string, method: string, body: unknown, d
     }
     const location = value as Record<string, unknown>
     if (location.directory === null || location.directory === undefined) location.directory = directory
-    if (typeof location.directory === "string" && location.directory.trim()) result.directories.push(location.directory)
-    else result.invalid = true
+    if (typeof location.directory !== "string" || !location.directory.trim()) {
+      result.invalid = true
+      return
+    }
+    result.directories.push(location.directory)
+    if (location.workspace !== undefined) result.invalid = true
+    if (location.workspaceID !== undefined) {
+      if (typeof location.workspaceID === "string" && location.workspaceID.trim()) {
+        result.locations.push({ directory: location.directory, workspaceID: location.workspaceID })
+      } else result.invalid = true
+    }
   }
 
   addLocation(input, "location")
@@ -1408,36 +1638,9 @@ function buildProxyHeaders(headers: FastifyRequest["headers"]): Record<string, s
   return result
 }
 
-function buildFetchProxyHeaders(headers: FastifyRequest["headers"], targetOrigin: string): Record<string, string> {
-  const sanitized = sanitizeSideCarProxyRequestHeaders(
-    headers as Record<string, string | string[] | undefined>,
-    targetOrigin,
-  )
-  const result: Record<string, string> = {}
-  for (const [key, value] of Object.entries(sanitized)) {
-    if (!value) continue
-    if (key.toLowerCase() === "cookie") continue
-    result[key] = Array.isArray(value) ? value.join(",") : value
-  }
-  return result
-}
-
-function headersToRecord(headers: Headers): Record<string, string | string[] | undefined> {
-  const result: Record<string, string> = {}
-  headers.forEach((value, key) => {
-    result[key.toLowerCase()] = value
-  })
-  return result
-}
-
 function getHeaderValue(headers: Record<string, string | string[] | undefined>, key: string): string | undefined {
   const value = headers[key.toLowerCase()]
   return Array.isArray(value) ? value[0] : value
-}
-
-function shouldForwardRequestBody(method: string): boolean {
-  const normalized = method.toUpperCase()
-  return normalized !== "GET" && normalized !== "HEAD"
 }
 
 function isHtmlContentType(contentType: string): boolean {
@@ -1449,12 +1652,20 @@ function isCssContentType(contentType: string): boolean {
   return contentType.toLowerCase().includes("text/css")
 }
 
-function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css"): string {
+function isJavaScriptContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase()
+  return normalized.includes("javascript") || normalized.includes("ecmascript")
+}
+
+export function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css" | "js", targetOrigin = "http://localhost"): string {
   if (kind === "css") {
     return rewriteCssPreviewUrls(body, publicBase)
   }
+  if (kind === "js") {
+    return rewritePreviewJavaScriptImports(body, publicBase)
+  }
 
-  return rewriteCssPreviewUrls(
+  const rewritten = rewriteCssPreviewUrls(
     body
       .replace(/\b(src|href|action|poster|data)=(["'])\/(?!\/)([^"']*)\2/gi, (_match, attr: string, quote: string, pathValue: string) => {
         return `${attr}=${quote}${publicBase}/${pathValue}${quote}`
@@ -1464,6 +1675,19 @@ function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" |
       }),
     publicBase,
   )
+  const withInlineModules = rewritten.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (script, attributes: string, source: string) => {
+    if (/\btype\s*=\s*(["'])module\1/i.test(attributes)) {
+      return script.replace(source, rewritePreviewJavaScriptImports(source, publicBase))
+    }
+    if (/\btype\s*=\s*(["'])importmap\1/i.test(attributes)) {
+      return script.replace(source, rewritePreviewImportMap(source, publicBase))
+    }
+    return script
+  })
+  const bridge = buildPreviewRuntimeBridge(publicBase, targetOrigin)
+  return /<head(?:\s[^>]*)?>/i.test(withInlineModules)
+    ? withInlineModules.replace(/<head(\s[^>]*)?>/i, `<head$1>${bridge}`)
+    : `${bridge}${withInlineModules}`
 }
 
 function rewriteCssPreviewUrls(body: string, publicBase: string): string {
@@ -1524,9 +1748,11 @@ async function proxyPreviewRequest(args: {
   reply: FastifyReply
   previewManager: PreviewManager
   logger: Logger
+  token?: string
+  publicBase?: string
   pathSuffix?: string
 }) {
-  const token = (args.request.params as { token?: string }).token ?? ""
+  const token = args.token ?? (args.request.params as { token?: string }).token ?? ""
   const preview = args.previewManager.get(token)
   if (!preview) {
     args.reply.code(404).send({ error: "Preview not found" })
@@ -1537,7 +1763,8 @@ async function proxyPreviewRequest(args: {
   const queryIndex = rawUrl.indexOf("?")
   const search = queryIndex >= 0 ? rawUrl.slice(queryIndex) : ""
   const pathSuffix = args.pathSuffix ?? ""
-  const requestPath = pathSuffix ? `${args.previewManager.buildProxyBasePath(token)}/${pathSuffix.replace(/^\/+/, "")}` : args.previewManager.buildProxyBasePath(token)
+  const publicBase = args.publicBase ?? args.previewManager.buildProxyBasePath(token)
+  const requestPath = pathSuffix ? `${publicBase}/${pathSuffix.replace(/^\/+/, "")}` : publicBase
   const targetUrl = args.previewManager.buildTargetUrl(token, requestPath, search)
   if (!targetUrl) {
     args.reply.code(404).send({ error: "Preview not found" })
@@ -1551,10 +1778,10 @@ async function proxyPreviewRequest(args: {
     logger: args.logger,
     targetUrl: targetUrl.toString(),
     targetOrigin: targetUrl.origin,
-    publicBase: args.previewManager.buildProxyBasePath(token),
+    publicBase,
     logContext: { previewToken: token },
     errorMessage: "Preview proxy failed",
-    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin),
+    rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin, publicBase),
   })
 }
 
@@ -1600,43 +1827,49 @@ async function proxyPreviewTargetRequest(args: {
   errorMessage: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
-  try {
-    const response = await fetch(args.targetUrl, {
-      method: args.request.method,
-      headers: buildFetchProxyHeaders(args.request.headers, args.targetOrigin),
-      body: shouldForwardRequestBody(args.request.method) ? (args.request.raw as any) : undefined,
-      duplex: shouldForwardRequestBody(args.request.method) ? "half" : undefined,
-      redirect: "manual",
-    } as any)
-
-    const headers = args.rewriteHeaders(headersToRecord(response.headers))
-    const contentType = getHeaderValue(headers, "content-type") ?? response.headers.get("content-type") ?? ""
-    delete headers["content-length"]
-    delete headers["content-encoding"]
-
-    for (const [key, value] of Object.entries(headers)) {
-      if (value !== undefined) args.reply.header(key, value)
-    }
-    args.reply.code(response.status)
-
-    if (!response.body || args.request.method === "HEAD") {
-      args.reply.send()
-      return
-    }
-
-    if (isHtmlContentType(contentType) || isCssContentType(contentType)) {
-      const text = await response.text()
-      args.reply.send(rewritePreviewBodyUrls(text, args.publicBase, isCssContentType(contentType) ? "css" : "html"))
-      return
-    }
-
-    args.reply.send(Buffer.from(await response.arrayBuffer()))
-  } catch (error) {
-    args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
-    if (!args.reply.sent) {
-      args.reply.code(502).send({ error: args.errorMessage })
-    }
-  }
+  let responseKind: "html" | "css" | "js" | null = null
+  await args.reply.from(args.targetUrl, {
+    rewriteRequestHeaders: (_originalRequest, headers) => {
+      const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
+      delete next["accept-encoding"]
+      return next
+    },
+    rewriteHeaders: (headers) => {
+      const next = args.rewriteHeaders(headers as Record<string, string | string[] | undefined>)
+      const contentType = getHeaderValue(next, "content-type") ?? ""
+      responseKind = isHtmlContentType(contentType) ? "html" : isCssContentType(contentType) ? "css" : isJavaScriptContentType(contentType) ? "js" : null
+      if (responseKind) {
+        delete next["content-length"]
+        delete next["content-encoding"]
+      }
+      if (args.request.headers.origin === "null") {
+        next["access-control-allow-origin"] = "null"
+        delete next["access-control-allow-credentials"]
+      }
+      return next
+    },
+    onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
+      const upstream = upstreamResponse as unknown as Readable
+      if (!responseKind || args.request.method === "HEAD") {
+        proxyReply.send(upstream)
+        return
+      }
+      void (async () => {
+        try {
+          const chunks: Buffer[] = []
+          for await (const chunk of upstream) chunks.push(Buffer.from(chunk))
+          proxyReply.send(rewritePreviewBodyUrls(Buffer.concat(chunks).toString(), args.publicBase, responseKind!, args.targetOrigin))
+        } catch (error) {
+          args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
+          if (!proxyReply.sent) proxyReply.code(502).send({ error: args.errorMessage })
+        }
+      })()
+    },
+    onError: (proxyReply, { error }) => {
+      args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
+      if (!proxyReply.sent) proxyReply.code(502).send({ error: args.errorMessage })
+    },
+  })
 }
 
 async function proxyTargetRequest(args: {
@@ -1709,6 +1942,11 @@ function parsePreviewUpgradePath(rawUrl: string): { token: string; pathname: str
   }
 }
 
+export function parsePreviewCapabilityHost(host: string | undefined): string | null {
+  const hostname = host?.replace(/:\d+$/, "").toLowerCase() ?? ""
+  return hostname.match(/^([0-9a-f-]{36})\.preview\.localhost$/)?.[1] ?? null
+}
+
 async function proxySideCarWebSocketUpgrade(args: {
   request: import("http").IncomingMessage
   socket: Socket
@@ -1774,7 +2012,7 @@ async function proxyPreviewWebSocketUpgrade(args: {
   }
 
   const session = authManager.getSessionFromHeaders(request.headers)
-  if (!session) {
+  if (!session && !previewManager.get(token)) {
     rejectUpgrade(socket, 401, "Unauthorized")
     return
   }
@@ -1970,6 +2208,7 @@ function rewritePreviewResponseHeaders(
   headers: Record<string, string | string[] | undefined>,
   token: string,
   targetOrigin: string,
+  publicBase = `/previews/${encodeURIComponent(token)}`,
 ) {
   const next = { ...headers }
   delete next["x-frame-options"]
@@ -1984,7 +2223,13 @@ function rewritePreviewResponseHeaders(
     return next
   }
 
-  const publicBase = `/previews/${encodeURIComponent(token)}`
+  if (location.startsWith("//")) {
+    const parsed = new URL(location, targetOrigin)
+    next.location = parsed.origin === targetOrigin
+      ? `${publicBase}${parsed.pathname}${parsed.search}${parsed.hash}`
+      : parsed.href
+    return next
+  }
   if (location.startsWith("/")) {
     next.location = `${publicBase}${location}`
     return next
@@ -2022,6 +2267,7 @@ function sanitizeSideCarProxyRequestHeaders(
 function getBlockedSideCarRequestHeaders(): Set<string> {
   return new Set([
     "host",
+    "expect",
     "authorization",
     "proxy-authorization",
     "forwarded",

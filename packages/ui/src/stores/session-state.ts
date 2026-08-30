@@ -365,6 +365,33 @@ function invalidateSessionMessageLoad(instanceId: string, sessionId: string): vo
 
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
 
+function clearInstanceMessageLoads(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const key of messageLoadEpochs.keys()) {
+    if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  }
+  setMessagesLoaded((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setMessageLoadErrors((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setLoading((prev) => {
+    if (!prev.loadingMessages.has(instanceId)) return prev
+    const loadingMessages = new Map(prev.loadingMessages)
+    loadingMessages.delete(instanceId)
+    return { ...prev, loadingMessages }
+  })
+}
+
+messageStoreBus.onInstanceDestroyed(clearInstanceMessageLoads)
+
 function getDraftKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
 }
@@ -1004,8 +1031,7 @@ function getVisibleSessionIds(instanceId: string): string[] {
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
-  const root = getSessionRoot(instanceId, sessionId)
-  if (!root) return
+  const root = getSessionRoot(instanceId, sessionId) ?? session
   ensureSessionAncestorsExpanded(instanceId, sessionId)
 
   batch(() => {
@@ -1208,6 +1234,7 @@ export {
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
+  clearInstanceMessageLoads,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,

@@ -4,6 +4,7 @@ export type RequestLocation = NonNullable<LocationGetInput["location"]>
 
 type RequestLocationWorktree = {
   directory?: string
+  workspaceID?: string
 }
 
 export function createRequestLocation(directory?: string): RequestLocation {
@@ -22,13 +23,16 @@ export function buildV2RequestLocations(
   worktrees: RequestLocationWorktree[],
 ): RequestLocation[] {
   const locations = [createRequestLocation(directory)]
-  const seen = new Set(directory ? [directory] : [])
+  const seen = new Set(directory ? [`${directory}\0`] : [])
 
   for (const worktree of worktrees) {
     const worktreeDirectory = worktree.directory?.trim()
-    if (!worktreeDirectory || seen.has(worktreeDirectory)) continue
-    seen.add(worktreeDirectory)
-    locations.push(createRequestLocation(worktreeDirectory))
+    const key = `${worktreeDirectory}\0${worktree.workspaceID ?? ""}`
+    if (!worktreeDirectory || seen.has(key)) continue
+    seen.add(key)
+    locations.push(worktree.workspaceID
+      ? { directory: worktreeDirectory, workspace: worktree.workspaceID }
+      : createRequestLocation(worktreeDirectory))
   }
 
   return locations

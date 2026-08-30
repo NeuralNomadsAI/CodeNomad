@@ -574,9 +574,7 @@ pub async fn open_workspace_target(
     path: Option<String>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    if window.label() != "main" {
-        return Err("Workspace open requests are limited to the local main window".into());
-    }
+    crate::identity::local_window_id(window.label())?;
     let config = state
         .manager
         .local_cli_access()

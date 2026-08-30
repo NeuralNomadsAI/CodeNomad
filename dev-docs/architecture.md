@@ -2,7 +2,7 @@
 
 ## Overview
 
-CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the experimental `@opencode-ai/client` protocol, with server and UI kept on the same latest reviewed `next` release. This is not the current public `@opencode-ai/sdk` contract.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the latest experimental `@opencode-ai/client@beta` contract in both server and UI. The public `@opencode-ai/sdk` is an alternative embedded host; CodeNomad uses the network client.
 
 ```text
 Desktop host -> CodeNomad server -> one shared OpenCode service
@@ -11,23 +11,30 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-There is no `@opencode-ai/sdk` integration and no `packages/opencode-plugin` package.
+There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow CodeNomad-owned Developer Automation adapter is documented in [DEVELOPER_AUTOMATION.md](DEVELOPER_AUTOMATION.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` uses native discovery and headers while retaining a custom launcher that serializes lifecycle changes with cross-process leases, records the registration and authenticated endpoint, proves daemon and CodeNomad PIDs with process-start identity in the host or WSL namespace, and binds that proof to a launch command/environment hash. Live peer leases can inherit that proof; only the final verified CodeNomad process may call `Service.stop`. WSL daemons use the same authenticated graceful-stop request instead because the published fallback signals PIDs in the caller's namespace.
+`packages/server/src/workspaces/opencode-service.ts` runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, and pins that identity while active. It connects to one externally owned global daemon and never stops it on backend shutdown. CodeNomad owns no private daemon port, database, registration, or PID.
 
-The V2 service always uses `~/.local/share/opencode2/opencode.db`. V1 and V2 must use separate databases because their schemas are incompatible.
+OpenCode owns the daemon's standard state and database. Configured allowed environment variables and `NODE_EXTRA_CA_CERTS` apply only if CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored. WSL support requires Windows localhost forwarding and executes the Linux CLI lifecycle inside the selected distribution without cross-namespace PID operations.
 
 `packages/server/src/workspaces/manager.ts` treats selected folders as native OpenCode locations:
 
 1. Validate the directory with `client.location.get`.
 2. Store the returned `LocationRef` and publish the logical workspace.
 3. Reuse the shared service for every additional directory.
-4. Queue eviction after the final logical owner is deleted.
-5. Flush queued evictions only during proven final shared-service shutdown, then stop only the exact daemon covered by transferable CodeNomad process proof.
+4. On explicit **Stop Workspace**, evict the location and its resources from the global service, then remove CodeNomad's logical workspace.
 
-Workspaces are not OpenCode processes and do not own ports or PIDs.
+Workspaces are not OpenCode processes and do not own ports or PIDs. Closing an ordinary tab or native window only detaches local UI state and never evicts the location.
+
+## Native Profiles, Windows, And Client State
+
+Electron and Tauri run one native singleton process and one CodeNomad backend per channel/config profile. A second launch focuses the most-recent window by default; `--new-window` creates another UUID-backed window. Stable, dev, and non-default config profiles isolate singleton identity, backend/browser storage, and client state.
+
+OpenCode sessions and messages remain shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership, and garbage collection runs after publication while retaining every partition referenced by any window.
+
+Previews use unguessable capabilities for HTTP and WebSocket traffic. Native previews route a token-scoped `.preview.localhost` origin to the pinned target; web clients use the equivalent path route. SideCar/browser frames remain opaque-origin sandboxes without `allow-same-origin`; preview element comments use a source-checked message bridge instead of parent DOM access.
 
 ## API Boundaries
 
@@ -37,6 +44,7 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/workspaces/:id/worktrees/:slug/git-status|git-diff|git-stage|git-unstage|git-commit`
 - `/api/events` and `/api/client-connections/pong`
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
+- `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
 
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Upstream additions require an explicit proxy review and are not available automatically.
 
@@ -63,8 +71,9 @@ Current native events include session lifecycle/output events (`session.created`
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
+| Developer Automation launch and CDP feedback | CodeNomad desktop hosts and authenticated automation adapter |
 
-Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; Developer Automation is the only reviewed adapter exception.
 
 ## Persistence
 
@@ -79,6 +88,7 @@ CodeNomad configuration resolves through `packages/server/src/config/location.ts
 - `packages/server/src/workspaces/instance-events.ts`
 - `packages/server/src/workspaces/git-mutations.ts`
 - `packages/server/src/permissions/auto-accept-manager.ts`
+- `packages/server/src/opencode/automation-plugin.ts`
 - `packages/ui/src/lib/sdk-manager.ts`
 - `packages/ui/src/lib/api-client.ts`
 - `packages/ui/src/stores/session-api.ts`

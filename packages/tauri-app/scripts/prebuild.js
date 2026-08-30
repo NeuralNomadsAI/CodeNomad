@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const fs = require("fs")
 const path = require("path")
-const { execSync } = require("child_process")
+const { execFileSync, execSync } = require("child_process")
 const { pathToFileURL } = require("url")
 
 const root = path.resolve(__dirname, "..")
@@ -13,38 +13,32 @@ const serverDest = path.resolve(root, "src-tauri", "resources", "server")
 const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
 const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
-const { copyPackagedServerResources } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
+const { copyPackagedServerResources, stagePackagedServer } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
 
-const serverInstallCommand =
-  "npm install --omit=dev --ignore-scripts --workspaces=false --package-lock=false --install-strategy=shallow --fund=false --audit=false"
-const serverDevInstallCommand =
-  "npm install --workspace @neuralnomads/codenomad --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
-const uiDevInstallCommand =
-  "npm install --workspace @codenomad/ui --include-workspace-root=false --install-strategy=nested --fund=false --audit=false"
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
 
 const envWithRootBin = {
   ...process.env,
-  PATH: `${path.join(workspaceRoot, "node_modules/.bin")}:${process.env.PATH}`,
+  PATH: `${path.join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH}`,
 }
 
-const braceExpansionPath = path.join(
-  serverRoot,
-  "node_modules",
-  "@fastify",
-  "static",
-  "node_modules",
-  "brace-expansion",
-  "package.json",
-)
-
-const serverBuildDependencyPaths = [
-  path.join(serverRoot, "node_modules", "typescript", "package.json"),
-  path.join(serverRoot, "node_modules", "@types", "node-forge", "package.json"),
-  path.join(serverRoot, "node_modules", "@types", "yauzl", "package.json"),
-]
-
-const viteBinPath = path.join(uiRoot, "node_modules", ".bin", "vite")
+const platformKey = `${process.platform}-${process.arch}`
+const platformBuildDependencies = {
+  "linux-x64": "@rollup/rollup-linux-x64-gnu",
+  "linux-arm64": "@rollup/rollup-linux-arm64-gnu",
+  "darwin-arm64": "@rollup/rollup-darwin-arm64",
+  "darwin-x64": "@rollup/rollup-darwin-x64",
+  "win32-arm64": "@rollup/rollup-win32-arm64-msvc",
+  "win32-x64": "@rollup/rollup-win32-x64-msvc",
+}
+const esbuildPlatformPackages = {
+  "linux-x64": "@esbuild/linux-x64",
+  "linux-arm64": "@esbuild/linux-arm64",
+  "darwin-arm64": "@esbuild/darwin-arm64",
+  "darwin-x64": "@esbuild/darwin-x64",
+  "win32-arm64": "@esbuild/win32-arm64",
+  "win32-x64": "@esbuild/win32-x64",
+}
 
 async function ensureMonacoAssets() {
   const helperPath = path.join(uiRoot, "scripts", "monaco-public-assets.js")
@@ -69,7 +63,7 @@ function ensureServerBuild() {
     stdio: "inherit",
     env: {
       ...process.env,
-      PATH: `${path.join(workspaceRoot, "node_modules/.bin")}:${process.env.PATH}`,
+      PATH: `${path.join(workspaceRoot, "node_modules", ".bin")}${path.delimiter}${process.env.PATH}`,
     },
   })
 
@@ -104,126 +98,45 @@ function syncServerUiBundle() {
   })
 }
 
-function ensureServerDevDependencies() {
-  if (serverBuildDependencyPaths.every((filePath) => fs.existsSync(filePath))) {
-    return
-  }
-
-  console.log("[prebuild] ensuring server build dependencies (with dev)...")
-  execSync(serverDevInstallCommand, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-    env: envWithRootBin,
+function resolveEsbuildExecutable(rootPath, platform = process.platform, arch = process.arch) {
+  const packageName = esbuildPlatformPackages[`${platform}-${arch}`]
+  if (!packageName) throw new Error(`unsupported esbuild platform ${platform}-${arch}`)
+  const esbuildPackagePath = require.resolve("esbuild/package.json", { paths: [rootPath] })
+  const esbuildPackage = JSON.parse(fs.readFileSync(esbuildPackagePath, "utf8"))
+  const platformPackagePath = require.resolve(`${packageName}/package.json`, {
+    paths: [path.dirname(esbuildPackagePath)],
   })
+  const platformPackage = JSON.parse(fs.readFileSync(platformPackagePath, "utf8"))
+  if (platformPackage.version !== esbuildPackage.version || !platformPackage.os?.includes(platform) || !platformPackage.cpu?.includes(arch)) {
+    throw new Error(`${packageName} does not match esbuild ${esbuildPackage.version} for ${platform}-${arch}`)
+  }
+  const executable = path.join(path.dirname(platformPackagePath), ...(platform === "win32" ? ["esbuild.exe"] : ["bin", "esbuild"]))
+  if (!fs.existsSync(executable)) throw new Error(`esbuild executable is missing at ${executable}`)
+  return { executable, version: esbuildPackage.version }
 }
 
-function ensureServerDependencies() {
-  if (fs.existsSync(braceExpansionPath)) {
-    return
-  }
-
-  console.log("[prebuild] ensuring server production dependencies...")
-  execSync(serverInstallCommand, {
-    cwd: serverRoot,
-    stdio: "inherit",
-  })
-}
-
-function ensureUiDevDependencies() {
-  if (fs.existsSync(viteBinPath)) {
-    return
-  }
-
-  console.log("[prebuild] ensuring ui build dependencies...")
-  execSync(uiDevInstallCommand, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-    env: envWithRootBin,
-  })
-}
-
-function ensureRollupPlatformBinary() {
-  const platformKey = `${process.platform}-${process.arch}`
-  const platformPackages = {
-    "linux-x64": "@rollup/rollup-linux-x64-gnu",
-    "linux-arm64": "@rollup/rollup-linux-arm64-gnu",
-    "darwin-arm64": "@rollup/rollup-darwin-arm64",
-    "darwin-x64": "@rollup/rollup-darwin-x64",
-    "win32-arm64": "@rollup/rollup-win32-arm64-msvc",
-    "win32-x64": "@rollup/rollup-win32-x64-msvc",
-  }
-
-  const pkgName = platformPackages[platformKey]
-  if (!pkgName) {
-    return
-  }
-
-  const platformPackagePath = path.join(workspaceRoot, "node_modules", "@rollup", pkgName.split("/").pop())
-  if (fs.existsSync(platformPackagePath)) {
-    return
-  }
-
-  let rollupVersion = ""
-  try {
-    rollupVersion = require(path.join(workspaceRoot, "node_modules", "rollup", "package.json")).version
-  } catch (error) {
-    // leave version empty; fallback install will use latest compatible
-  }
-
-  const packageSpec = rollupVersion ? `${pkgName}@${rollupVersion}` : pkgName
-
-  console.log("[prebuild] installing rollup platform binary (optional dep workaround)...")
-  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --fund=false --audit=false`, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
-  })
-}
-
-function ensureEsbuildPlatformBinary() {
-  const platformKey = `${process.platform}-${process.arch}`
-  const platformPackages = {
-    "linux-arm": "@esbuild/linux-arm",
-    "linux-arm64": "@esbuild/linux-arm64",
-    "linux-ia32": "@esbuild/linux-ia32",
-    "linux-x64": "@esbuild/linux-x64",
-    "darwin-arm64": "@esbuild/darwin-arm64",
-    "darwin-x64": "@esbuild/darwin-x64",
-    "win32-arm64": "@esbuild/win32-arm64",
-    "win32-ia32": "@esbuild/win32-ia32",
-    "win32-x64": "@esbuild/win32-x64",
-  }
-
-  const pkgName = platformPackages[platformKey]
-  if (!pkgName) {
-    return
-  }
-
-  const platformPackageName = pkgName.split("/").pop()
-  const platformPackagePaths = [
-    path.join(serverRoot, "node_modules", "@esbuild", platformPackageName),
-    path.join(workspaceRoot, "node_modules", "@esbuild", platformPackageName),
-  ]
-  if (platformPackagePaths.some((packagePath) => fs.existsSync(packagePath))) {
-    return
-  }
-
-  let esbuildVersion = ""
-  for (const baseRoot of [serverRoot, workspaceRoot]) {
+function requireRootBuildDependencies() {
+  const platformPackage = platformBuildDependencies[platformKey]
+  if (!platformPackage) throw new Error(`[prebuild] unsupported build host ${platformKey}`)
+  const dependencies = ["typescript", "@types/node-forge", "@types/yauzl", "vite", "esbuild", platformPackage]
+  const missing = dependencies.filter((dependency) => {
     try {
-      esbuildVersion = require(path.join(baseRoot, "node_modules", "esbuild", "package.json")).version
-      break
-    } catch (error) {
-      // try the next install root; fallback install will use latest compatible
+      require.resolve(`${dependency}/package.json`, { paths: [workspaceRoot] })
+      return false
+    } catch {
+      return true
     }
-  }
-
-  const packageSpec = esbuildVersion ? `${pkgName}@${esbuildVersion}` : pkgName
-
-  console.log("[prebuild] installing esbuild platform binary (optional dep workaround)...")
-  execSync(`npm install ${packageSpec} --no-save --ignore-scripts --package-lock=false --fund=false --audit=false`, {
-    cwd: workspaceRoot,
-    stdio: "inherit",
   })
+  if (missing.length) {
+    throw new Error(`[prebuild] missing root dependencies: ${missing.join(", ")}. Run npm ci --workspaces --include=optional from ${workspaceRoot}`)
+  }
+  try {
+    const esbuild = resolveEsbuildExecutable(workspaceRoot)
+    const installedVersion = execFileSync(esbuild.executable, ["--version"], { encoding: "utf8" }).trim()
+    if (installedVersion !== esbuild.version) throw new Error(`expected ${esbuild.version}, received ${installedVersion}`)
+  } catch (error) {
+    throw new Error(`[prebuild] root esbuild executable is unavailable: ${error.message}. Run npm ci --workspaces --include=optional from ${workspaceRoot}`)
+  }
 }
 
 function copyUiLoadingAssets() {
@@ -245,23 +158,28 @@ function copyUiLoadingAssets() {
   console.log(`[prebuild] prepared UI loading assets from ${uiDist}`)
 }
 
-;(async () => {
-  ensureServerDevDependencies()
-  ensureUiDevDependencies()
+async function main() {
+  requireRootBuildDependencies()
   await ensureMonacoAssets()
-  ensureRollupPlatformBinary()
-  ensureEsbuildPlatformBinary()
   ensureServerBuild()
-  ensureServerDependencies()
   ensureUiBuild()
   syncServerUiBundle()
-  copyPackagedServerResources({
+  const staged = stagePackagedServer({
+    workspaceRoot,
     serverRoot,
-    serverDest,
     log: (message) => console.log(`[prebuild] ${message}`),
   })
+  try {
+    copyPackagedServerResources({
+      serverRoot: staged.stagedServerRoot,
+      serverDest,
+      log: (message) => console.log(`[prebuild] ${message}`),
+    })
+  } finally {
+    fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
+  }
   copyUiLoadingAssets()
-  await prepareBundledNodeRuntime({ resourcesRoot })
+  await prepareBundledNodeRuntime({ resourcesRoot, target: staged.target })
   execSync(
     `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(workspaceRoot, "scripts", "smoke-packaged-resources.cjs"))} --resources ${JSON.stringify(resourcesRoot)} --loading ${JSON.stringify(uiLoadingDest)}`,
     {
@@ -269,7 +187,13 @@ function copyUiLoadingAssets() {
       stdio: "inherit",
     },
   )
-})().catch((err) => {
-  console.error("[prebuild] failed:", err)
-  process.exit(1)
-})
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[prebuild] failed:", err)
+    process.exit(1)
+  })
+}
+
+module.exports = { resolveEsbuildExecutable }

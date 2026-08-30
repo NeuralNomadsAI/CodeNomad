@@ -1,7 +1,5 @@
 import {
-  batch,
   createComponent,
-  createEffect,
   createMemo,
   createSignal,
   onCleanup,
@@ -10,19 +8,21 @@ import {
   type JSX,
   type Setter,
 } from "solid-js"
-import MenuIcon from "@suid/icons-material/Menu"
+import MenuOpenIcon from "@suid/icons-material/MenuOpen"
 
 import type { TranslateParams } from "../../../lib/i18n"
 
-import type { DrawerViewState, LayoutMode } from "./types"
-import { persistOpenState, persistPinState, readStoredOpenState, readStoredPinState } from "./storage"
+import type { DrawerViewState } from "./types"
+import { resolveEmbeddedDrawers } from "./drawer-layout"
 
 export interface UseDrawerChromeOptions {
   t: (key: string, params?: TranslateParams) => string
-  active: Accessor<boolean>
-  layoutMode: Accessor<LayoutMode>
-  leftPinningSupported: Accessor<boolean>
-  rightPinningSupported: Accessor<boolean>
+  hostWidth: Accessor<number>
+  minimumCenterWidth: number
+  minimumLeftWidth: number
+  minimumRightWidth: number
+  leftWidth: Accessor<number>
+  rightWidth: Accessor<number>
   leftDrawerContentEl: Accessor<HTMLElement | null>
   rightDrawerContentEl: Accessor<HTMLElement | null>
   leftToggleButtonEl: Accessor<HTMLElement | null>
@@ -35,14 +35,12 @@ export interface DrawerChromeApi {
   leftOpen: Accessor<boolean>
   rightPinned: Accessor<boolean>
   rightOpen: Accessor<boolean>
+  leftPanelWidth: Accessor<number>
+  rightPanelWidth: Accessor<number>
   setLeftOpen: Setter<boolean>
   setRightOpen: Setter<boolean>
   leftDrawerState: Accessor<DrawerViewState>
   rightDrawerState: Accessor<DrawerViewState>
-  pinLeft: () => void
-  unpinLeft: () => void
-  pinRight: () => void
-  unpinRight: () => void
   closeLeft: () => void
   closeRight: () => void
   closeFloatingDrawersIfAny: () => boolean
@@ -55,10 +53,34 @@ export interface DrawerChromeApi {
 }
 
 export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeApi {
-  const [leftPinned, setLeftPinned] = createSignal(true)
-  const [leftOpen, setLeftOpen] = createSignal(true)
-  const [rightPinned, setRightPinned] = createSignal(true)
-  const [rightOpen, setRightOpen] = createSignal(true)
+  const initialLayout = resolveEmbeddedDrawers({
+    hostWidth: options.hostWidth(),
+    minimumCenterWidth: options.minimumCenterWidth,
+    minimumLeftWidth: options.minimumLeftWidth,
+    minimumRightWidth: options.minimumRightWidth,
+    leftWidth: options.leftWidth(),
+    rightWidth: options.rightWidth(),
+    leftOpen: true,
+    rightOpen: true,
+  })
+  const [leftOpen, setLeftOpen] = createSignal(initialLayout.left)
+  const [rightOpen, setRightOpen] = createSignal(initialLayout.right)
+  const embeddedDrawers = createMemo(() =>
+    resolveEmbeddedDrawers({
+      hostWidth: options.hostWidth(),
+      minimumCenterWidth: options.minimumCenterWidth,
+      minimumLeftWidth: options.minimumLeftWidth,
+      minimumRightWidth: options.minimumRightWidth,
+      leftWidth: options.leftWidth(),
+      rightWidth: options.rightWidth(),
+      leftOpen: leftOpen(),
+      rightOpen: rightOpen(),
+    }),
+  )
+  const leftPinned = createMemo(() => embeddedDrawers().left)
+  const rightPinned = createMemo(() => embeddedDrawers().right)
+  const leftPanelWidth = createMemo(() => embeddedDrawers().leftWidth)
+  const rightPanelWidth = createMemo(() => embeddedDrawers().rightWidth)
 
   const measureDrawerHost = () => options.measureDrawerHost?.()
 
@@ -77,45 +99,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     }
   }
 
-  const persistPinIfSupported = (side: "left" | "right", value: boolean) => {
-    if (side === "left" && !options.leftPinningSupported()) return
-    if (side === "right" && !options.rightPinningSupported()) return
-    persistPinState(side, value)
-  }
-
-  createEffect(() => {
-    switch (options.layoutMode()) {
-      case "desktop": {
-        const leftSaved = readStoredPinState("left", true)
-        const rightSaved = readStoredPinState("right", true)
-        setLeftPinned(leftSaved)
-        setLeftOpen(leftSaved || readStoredOpenState("left", false))
-        setRightPinned(rightSaved)
-        setRightOpen(rightSaved || readStoredOpenState("right", false))
-        break
-      }
-      case "tablet": {
-        setLeftPinned(true)
-        setLeftOpen(true)
-        setRightPinned(false)
-        setRightOpen(false)
-        break
-      }
-      default:
-        setLeftPinned(false)
-        setLeftOpen(false)
-        setRightPinned(false)
-        setRightOpen(false)
-        break
-    }
-  })
-
-  createEffect(() => {
-    if (options.layoutMode() !== "desktop" || !options.active()) return
-    persistOpenState("left", leftOpen())
-    persistOpenState("right", rightOpen())
-  })
-
   const leftDrawerState = createMemo<DrawerViewState>(() => {
     if (leftPinned()) return "pinned"
     return leftOpen() ? "floating-open" : "floating-closed"
@@ -127,63 +110,19 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   })
 
   const leftAppBarButtonLabel = () => {
-    const state = leftDrawerState()
-    if (state === "pinned") return options.t("instanceShell.leftDrawer.toggle.pinned")
     return options.t("instanceShell.leftDrawer.toggle.open")
   }
 
   const rightAppBarButtonLabel = () => {
-    const state = rightDrawerState()
-    if (state === "pinned") return options.t("instanceShell.rightDrawer.toggle.pinned")
     return options.t("instanceShell.rightDrawer.toggle.open")
   }
 
   const leftAppBarButtonIcon = () => {
-    return createComponent(MenuIcon, { fontSize: "small" })
+    return createComponent(MenuOpenIcon, { fontSize: "small", sx: { transform: "scaleX(-1)" } })
   }
 
   const rightAppBarButtonIcon = () => {
-    return createComponent(MenuIcon, { fontSize: "small", sx: { transform: "scaleX(-1)" } })
-  }
-
-  const pinLeft = () => {
-    blurIfInside(options.leftDrawerContentEl())
-    batch(() => {
-      setLeftPinned(true)
-      setLeftOpen(true)
-    })
-    persistPinIfSupported("left", true)
-    measureDrawerHost()
-  }
-
-  const unpinLeft = () => {
-    blurIfInside(options.leftDrawerContentEl())
-    batch(() => {
-      setLeftPinned(false)
-      setLeftOpen(true)
-    })
-    persistPinIfSupported("left", false)
-    measureDrawerHost()
-  }
-
-  const pinRight = () => {
-    blurIfInside(options.rightDrawerContentEl())
-    batch(() => {
-      setRightPinned(true)
-      setRightOpen(true)
-    })
-    persistPinIfSupported("right", true)
-    measureDrawerHost()
-  }
-
-  const unpinRight = () => {
-    blurIfInside(options.rightDrawerContentEl())
-    batch(() => {
-      setRightPinned(false)
-      setRightOpen(true)
-    })
-    persistPinIfSupported("right", false)
-    measureDrawerHost()
+    return createComponent(MenuOpenIcon, { fontSize: "small" })
   }
 
   const handleLeftAppBarButtonClick = () => {
@@ -201,14 +140,12 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   }
 
   const closeLeft = () => {
-    if (leftDrawerState() === "pinned") return
     blurIfInside(options.leftDrawerContentEl())
     setLeftOpen(false)
     focusTarget(options.leftToggleButtonEl())
   }
 
   const closeRight = () => {
-    if (rightDrawerState() === "pinned") return
     blurIfInside(options.rightDrawerContentEl())
     setRightOpen(false)
     focusTarget(options.rightToggleButtonEl())
@@ -248,14 +185,12 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     leftOpen,
     rightPinned,
     rightOpen,
+    leftPanelWidth,
+    rightPanelWidth,
     setLeftOpen,
     setRightOpen,
     leftDrawerState,
     rightDrawerState,
-    pinLeft,
-    unpinLeft,
-    pinRight,
-    unpinRight,
     closeLeft,
     closeRight,
     closeFloatingDrawersIfAny,

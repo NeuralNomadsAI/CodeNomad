@@ -7,8 +7,6 @@ import type { DrawerViewState } from "./types"
 import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
-import PushPinIcon from "@suid/icons-material/PushPin"
-import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
@@ -35,9 +33,7 @@ interface SessionSidebarProps {
   onToggleSearch: () => void
 
   keyboardShortcuts: Accessor<KeyboardShortcut[]>
-  isPhoneLayout: Accessor<boolean>
   drawerState: Accessor<DrawerViewState>
-  leftPinned: Accessor<boolean>
 
   onSelectSession: (sessionId: string) => void
   onNewSession: () => Promise<void> | void
@@ -45,8 +41,6 @@ interface SessionSidebarProps {
   onSidebarModelChange: (sessionId: string, model: { providerId: string; modelId: string }) => Promise<void>
   onDraftAgentChange?: (agent: string) => Promise<void>
   onDraftModelChange?: (model: { providerId: string; modelId: string }) => Promise<void>
-  onPinLeftDrawer: () => void
-  onUnpinLeftDrawer: () => void
   onCloseLeftDrawer: () => void
 
   setContentEl: (el: HTMLElement | null) => void
@@ -100,27 +94,15 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             >
               <InfoOutlinedIcon fontSize="small" />
             </IconButton>
-            <Show when={!props.isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.leftPinned() ? props.t("instanceShell.leftDrawer.unpin") : props.t("instanceShell.leftDrawer.pin")}
-                onClick={() => (props.leftPinned() ? props.onUnpinLeftDrawer() : props.onPinLeftDrawer())}
-              >
-                {props.leftPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
-            <Show when={props.drawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
-                title={props.t("instanceShell.leftDrawer.toggle.close")}
-                onClick={props.onCloseLeftDrawer}
-              >
-                <MenuOpenIcon fontSize="small" />
-              </IconButton>
-            </Show>
+            <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.leftDrawer.toggle.close")}
+              title={props.t("instanceShell.leftDrawer.toggle.close")}
+              onClick={props.onCloseLeftDrawer}
+            >
+              <MenuOpenIcon fontSize="small" />
+            </IconButton>
           </div>
         </div>
         <div class="session-sidebar-shortcuts">
@@ -151,7 +133,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
         <div class="session-sidebar-separator" />
         <Show
-          when={props.activeSession()}
+          when={props.activeSession()?.id}
           fallback={
             <Show when={props.draftAgent && props.draftModel && props.onDraftAgentChange && props.onDraftModelChange}>
               <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
@@ -186,39 +168,43 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             </Show>
           }
         >
-          {(activeSession) => (
-            <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-              <WorktreeSelector instanceId={props.instanceId} sessionId={activeSession().id} />
+          <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
+            <WorktreeSelector instanceId={props.instanceId} sessionId={props.activeSessionId() ?? ""} />
 
-              <AgentSelector
-                instanceId={props.instanceId}
-                sessionId={activeSession().id}
-                currentAgent={activeSession().agent}
-                onAgentChange={(agent) => props.onSidebarAgentChange(activeSession().id, agent)}
-              />
+            <AgentSelector
+              instanceId={props.instanceId}
+              sessionId={props.activeSessionId() ?? ""}
+              currentAgent={props.activeSession()?.agent ?? ""}
+              onAgentChange={(agent) => {
+                const sessionId = props.activeSessionId()
+                return sessionId ? props.onSidebarAgentChange(sessionId, agent) : Promise.resolve()
+              }}
+            />
 
-              <ModelSelector
-                instanceId={props.instanceId}
-                sessionId={activeSession().id}
-                currentModel={activeSession().model}
-                onModelChange={(model) => props.onSidebarModelChange(activeSession().id, model)}
-              />
+            <ModelSelector
+              instanceId={props.instanceId}
+              sessionId={props.activeSessionId() ?? ""}
+              currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }}
+              onModelChange={(model) => {
+                const sessionId = props.activeSessionId()
+                return sessionId ? props.onSidebarModelChange(sessionId, model) : Promise.resolve()
+              }}
+            />
 
-              <ThinkingSelector instanceId={props.instanceId} currentModel={activeSession().model} />
+            <ThinkingSelector instanceId={props.instanceId} currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }} />
 
-              <KeyboardHint
-                class="session-sidebar-selector-hints"
-                ariaHidden={true}
-                shortcuts={[
-                  keyboardRegistry.get("open-agent-selector"),
-                  keyboardRegistry.get("focus-model"),
-                  keyboardRegistry.get("focus-variant"),
-                ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
-                separator=" "
-                showDescription={false}
-              />
-            </div>
-          )}
+            <KeyboardHint
+              class="session-sidebar-selector-hints"
+              ariaHidden={true}
+              shortcuts={[
+                keyboardRegistry.get("open-agent-selector"),
+                keyboardRegistry.get("focus-model"),
+                keyboardRegistry.get("focus-variant"),
+              ].filter((shortcut): shortcut is KeyboardShortcut => Boolean(shortcut))}
+              separator=" "
+              showDescription={false}
+            />
+          </div>
         </Show>
       </div>
     </div>

@@ -11,7 +11,7 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
-import { showAlertDialog } from "../../stores/alerts"
+import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -22,6 +22,7 @@ import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
+import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion } from "../../stores/session-actions"
 
 const log = getLogger("actions")
 
@@ -50,7 +51,7 @@ export interface UseCommandsOptions {
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
   handleCloseActiveTab: () => Promise<void>
-  handleCloseInstance: (instanceId: string) => Promise<void>
+  handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   getActiveInstance: () => Instance | null
@@ -130,6 +131,19 @@ export function useCommands(options: UseCommandsOptions) {
       shortcut: { key: "W", meta: true },
       action: async () => {
         await options.handleCloseActiveTab()
+      },
+    })
+
+    commandRegistry.register({
+      id: "stop-instance",
+      label: () => tGlobal("commands.stopInstance.label"),
+      description: () => tGlobal("commands.stopInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.stopInstance.keywords"),
+      disabled: () => !activeInstance(),
+      action: async () => {
+        const instance = activeInstance()
+        if (instance) await options.handleStopInstance(instance.id)
       },
     })
 
@@ -326,6 +340,54 @@ export function useCommands(options: UseCommandsOptions) {
       },
     })
 
+    commandRegistry.register({
+      id: "remove-session-tools-and-reasoning",
+      label: () => tGlobal("commands.removeSessionTechnicalParts.label"),
+      description: () => tGlobal("commands.removeSessionTechnicalParts.description"),
+      category: "Session",
+      keywords: () => splitKeywords("commands.removeSessionTechnicalParts.keywords"),
+      disabled: () => {
+        const sessionId = activeSessionIdForInstance()
+        return !activeInstance() || !sessionId || sessionId === "info"
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return
+        try {
+          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId)
+          if (plan.messageIds.length === 0) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
+              title: tGlobal("commands.removeSessionTechnicalParts.empty.title"),
+              variant: "info",
+            })
+            return
+          }
+          const confirmed = await showConfirmDialog(tGlobal("commands.removeSessionTechnicalParts.confirm.message", {
+            toolCount: plan.toolCount,
+            reasoningCount: plan.reasoningCount,
+          }), {
+            title: tGlobal("commands.removeSessionTechnicalParts.confirm.title"),
+            confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
+            variant: "warning",
+          })
+          if (!confirmed) return
+          const failed = await executeSessionTechnicalPartDeletion(plan)
+          if (failed > 0) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed }), {
+              title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+              variant: "error",
+            })
+          }
+        } catch (error) {
+          showAlertDialog(error instanceof Error ? error.message : String(error), {
+            title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+            variant: "error",
+          })
+        }
+      },
+    })
+
     function escapeCss(value: string) {
       if (typeof CSS !== "undefined" && typeof (CSS as any).escape === "function") {
         return (CSS as any).escape(value)
@@ -420,6 +482,35 @@ export function useCommands(options: UseCommandsOptions) {
           })
         }
 
+      },
+    })
+
+    commandRegistry.register({
+      id: "redo",
+      label: () => tGlobal("commands.redoLastMessage.label"),
+      description: () => tGlobal("commands.redoLastMessage.description"),
+      category: "Session",
+      keywords: () => ["/redo", ...splitKeywords("commands.redoLastMessage.keywords")],
+      disabled: () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return true
+        const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
+        return !(messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session?.revert)
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance?.client || !sessionId || sessionId === "info") return
+        try {
+          await instance.client.session.revert.clear({ sessionID: sessionId })
+        } catch (error) {
+          log.error("Failed to clear session revert", error)
+          showAlertDialog(tGlobal("commands.redoLastMessage.failed.message"), {
+            title: tGlobal("commands.redoLastMessage.failed.title"),
+            variant: "error",
+          })
+        }
       },
     })
 

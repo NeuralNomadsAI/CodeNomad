@@ -2,15 +2,13 @@
 
 ## Shared Service
 
-`WorkspaceManager` owns one `OpenCodeSharedService`. Production discovers an existing endpoint or launches one with CodeNomad's detached launcher. The wrapper creates one server-side Promise client, performs health checks, invalidates failed connections, and calls native `Service.stop` for a proven host daemon. WSL uses native authenticated health stop so no Windows PID fallback can run.
+`WorkspaceManager` owns one `OpenCodeSharedService`. Production runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, creates one Promise client, and invalidates failed connections. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations.
 
-Lifecycle leases serialize processes and carry transferable proof: registration and endpoint credentials, daemon PID/process-start identity, host/WSL namespace, and launch signature. A peer can inherit proof, but only the final verified process may send the authenticated stop and wait for that daemon to exit.
-
-V2 forces `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db`. Never point V1 and V2 at the same database. The configured/inherited environment is part of the launch signature and applies when the service starts/restarts.
+OpenCode owns standard state/database. Allowed configured environment variables apply only to `service start` for a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
 
 ## Locations And Directories
 
-Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory/workspace ID. Final-owner deletion queues `client.debug.location.evict`; proven final shared-service shutdown flushes it after excluding live peers.
+Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory/workspace ID. Explicit Stop Workspace calls `client.debug.location.evict` before removing the logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
 
 The instance proxy is method/path allowlisted, rejects unowned paths, `directory`, `location.directory`, and `location[directory]` values, and verifies session location before forwarding. Keep this check at the server trust boundary; new upstream routes require explicit review.
 

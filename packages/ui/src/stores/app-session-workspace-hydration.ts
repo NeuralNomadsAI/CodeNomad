@@ -42,14 +42,16 @@ export async function hydrateRestoredWorkspaceState(
   if (!hasAuthoritativeSessionSelection(instanceId)) {
     hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
   }
+  hydrateWorkspacePromptState(
+    instanceId,
+    snapshot,
+    new Set(sessions.map(({ id }) => id)),
+    NO_SESSION_DRAFT_SESSION_ID,
+  )
 
   await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
-    Object.keys(snapshot.scrollSnapshots),
-    Object.keys(snapshot.unseenIdleSince),
-    Object.keys(snapshot.generationRecovery),
-    snapshot.expandedSessionIds ?? [],
   ]), signal)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null

@@ -4,6 +4,7 @@ import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerWorkspaceRoutes } from "./workspaces"
 
 describe("workspace routes", () => {
@@ -31,7 +32,7 @@ describe("workspace routes", () => {
         calls.push(["cancel", requestId])
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const response = await app.inject({
       method: "POST",
@@ -93,7 +94,7 @@ describe("workspace routes", () => {
         return true
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const cancellation = app.inject({
       method: "POST",
@@ -111,6 +112,55 @@ describe("workspace routes", () => {
     assert.equal(release.body, "Workspace creation request not found")
     finishDeletion()
     assert.equal((await cancellation).statusCode, 204)
+    await app.close()
+  })
+
+  it("marks a non-owned creation response as reused", async () => {
+    const app = Fastify({ logger: false })
+    let finishCreation!: () => void
+    const creation = new Promise<void>((resolve) => { finishCreation = resolve })
+    const descriptor: WorkspaceDescriptor = {
+      id: "shared-workspace",
+      path: "C:/work",
+      status: "ready",
+      proxyPath: "/workspaces/shared-workspace/instance",
+      binaryId: "C:/tools/opencode.exe",
+      binaryLabel: "opencode.exe",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    let ownerRequestId: string | undefined
+    const workspaceManager = {
+      create: async (_path: string, _name: string | undefined, options: { requestId?: string }) => {
+        const owner = ownerRequestId === undefined
+        ownerRequestId ??= options.requestId
+        await creation
+        return {
+          workspace: owner ? { ...descriptor, requestId: options.requestId } : descriptor,
+          created: owner,
+        }
+      },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+
+    const owner = app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      payload: { path: "C:/work", requestId: "owner-request" },
+    })
+    const reused = app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      payload: { path: "C:/work", requestId: "reuse-request" },
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    finishCreation()
+
+    const [ownerResponse, reusedResponse] = await Promise.all([owner, reused])
+    assert.equal(ownerResponse.statusCode, 201)
+    assert.deepEqual(ownerResponse.json(), { ...descriptor, requestId: "owner-request" })
+    assert.equal(reusedResponse.statusCode, 201)
+    assert.deepEqual(reusedResponse.json(), { ...descriptor, reused: true })
     await app.close()
   })
 })

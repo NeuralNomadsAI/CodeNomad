@@ -48,6 +48,19 @@ export function isScrollRestoreMeasurementReady(input: {
   return input.itemCount === 0 || (input.hasHandle && input.scrollSize > 0 && input.viewportSize > 0)
 }
 
+export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDelta: number): number {
+  return Math.max(0, offset + viewportHeightDelta)
+}
+
+export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
+  const sharedLength = Math.min(previous.length, next.length)
+  const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])
+  return {
+    resetMeasurements: previous.length > 0 && next.length > 0 && !keepsPrefix,
+    endChanged: previous.length > 0 && previous.at(-1) !== next.at(-1),
+  }
+}
+
 export interface ViewportAnchorCandidate {
   key: string
   top: number
@@ -227,8 +240,13 @@ export function resolveAutoPinHoldElement(
   return resolved === undefined ? itemWrapper : resolved
 }
 
-export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+export function isSnapshotAutoFollowing(snapshot: {
+  atBottom: boolean
+  followModeType?: FollowMode["type"]
+  windowIsLatest?: boolean
+} | null | undefined) {
   if (!snapshot) return true
+  if (snapshot.windowIsLatest === false) return false
   return snapshot.atBottom && snapshot.followModeType !== "escaped"
 }
 

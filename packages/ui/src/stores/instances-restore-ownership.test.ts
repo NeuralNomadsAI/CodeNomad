@@ -25,11 +25,10 @@ it("only restore-scoped creations are owned by abort cleanup", async () => {
   }
 
   try {
-    await createInstance("/ordinary", undefined, { activate: false })
+    await createInstance("/ordinary", undefined)
     assert.equal(tracked.some(({ id }) => id === "ordinary"), false)
 
     const restored = await createInstance("/restore", undefined, {
-      activate: false,
       signal: new AbortController().signal,
     })
     assert.ok(restored.requestId)

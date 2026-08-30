@@ -4,6 +4,7 @@ import {
   type Session,
 } from "../types/session"
 import type { Message } from "../types/message"
+import type { Instance } from "../types/instance"
 import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode-ai/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
@@ -19,7 +20,6 @@ import {
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   getAuthoritativelyDeletedSessionIdsForInstance,
-  getDescendantSessions,
   isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
@@ -51,6 +51,7 @@ import {
   setSessionListError,
   setSessionExpanded,
   getSessionNextCursor,
+  getSessionListIds,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
@@ -58,22 +59,32 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
+import {
+  emptyLatestWindow,
+  isLatestWindow,
+  planNewerWindow,
+  planOlderWindow,
+  toWindowSnapshot,
+  windowFromSnapshot,
+  withOlderCursor,
+  type MessageWindowState,
+} from "./message-v2/message-window"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
-  getWorktrees,
-} from "./worktrees"
-import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
 } from "./session-list-options"
+
+const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
 import { toRequestLocation } from "./request-locations"
+import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -81,9 +92,53 @@ const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
+const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
+const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
-const MAX_DESCENDANT_SESSION_REQUESTS = 1_000_000
+const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
+const messagePageRequests = new Map<string, Promise<void>>()
+const messageHistoryAuthorities = new Map<string, object>()
+const MESSAGE_STREAM_SCOPE = "message-stream"
+const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
+const LATEST_WINDOW_RETRY_DELAY_MS = 50
+const MESSAGE_CURSOR_SEEK_LIMIT = 1000
+type MessageWindowIntent = "open" | "older" | "newer" | "latest" | "oldest"
 let nextSessionListRequestId = 0
+let nextAgentRequestId = 0
+let nextProviderRequestId = 0
+
+function messagePageKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}\0${sessionId}`
+}
+
+function captureInstanceRequestAuthority(instanceId: string): () => boolean {
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  return () => getOpenCodeInstanceGeneration(instanceId) === generation
+}
+
+function beginMessageHistoryTraversal(instanceId: string, sessionId: string): () => void {
+  const key = messagePageKey(instanceId, sessionId)
+  const authority = {}
+  messageHistoryAuthorities.set(key, authority)
+  invalidateSessionMessageLoad(instanceId, sessionId)
+  for (const requestKey of messagePageRequests.keys()) {
+    if (requestKey.startsWith(`${key}\0`)) messagePageRequests.delete(requestKey)
+  }
+  return () => {
+    if (messageHistoryAuthorities.get(key) !== authority) return
+    messageHistoryAuthorities.delete(key)
+    invalidateSessionMessageLoad(instanceId, sessionId)
+  }
+}
+
+function invalidateMessageHistoryTraversal(instanceId: string, sessionId: string): void {
+  const key = messagePageKey(instanceId, sessionId)
+  messageHistoryAuthorities.delete(key)
+  invalidateSessionMessageLoad(instanceId, sessionId)
+  for (const requestKey of messagePageRequests.keys()) {
+    if (requestKey.startsWith(`${key}\0`)) messagePageRequests.delete(requestKey)
+  }
+}
 
 function catalogLocationKey(location: LocationRef): string {
   return `${location.directory}\0${location.workspaceID ?? ""}`
@@ -124,6 +179,8 @@ function isLatestSessionListRequest(instanceId: string, requestId: number): bool
 
 function clearSessionListRequestState(instanceId: string): void {
   sessionListRequestIds.delete(instanceId)
+  sessionPageRequests.delete(instanceId)
+  sessionPageTraversals.delete(instanceId)
   setSessionListError(instanceId, null)
   setLoading((prev) => {
     if (!prev.fetchingSessions.has(instanceId)) return prev
@@ -136,8 +193,29 @@ function clearSessionListRequestState(instanceId: string): void {
 function clearSessionCatalogState(instanceId: string): void {
   catalogLocations.delete(instanceId)
   catalogRefreshes.delete(instanceId)
-  agentRequestIds.delete(instanceId)
-  providerRequestIds.delete(instanceId)
+  const prefix = `${instanceId}\0`
+  for (const key of agentRequestIds.keys()) {
+    if (key.startsWith(prefix)) agentRequestIds.delete(key)
+  }
+  for (const key of providerRequestIds.keys()) {
+    if (key.startsWith(prefix)) providerRequestIds.delete(key)
+  }
+  for (const key of agentRefreshes.keys()) {
+    if (!key.startsWith(prefix)) continue
+    agentRefreshes.get(key)!.cancelled = true
+    agentRefreshes.delete(key)
+  }
+  for (const key of providerRefreshes.keys()) {
+    if (!key.startsWith(prefix)) continue
+    providerRefreshes.get(key)!.cancelled = true
+    providerRefreshes.delete(key)
+  }
+  for (const key of messagePageRequests.keys()) {
+    if (key.startsWith(prefix)) messagePageRequests.delete(key)
+  }
+  for (const key of messageHistoryAuthorities.keys()) {
+    if (key.startsWith(prefix)) messageHistoryAuthorities.delete(key)
+  }
 }
 
 type V2SessionListOptions = {
@@ -177,45 +255,27 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
   return false
 }
 
-async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions): Promise<ProjectSessionListResponse> {
+async function fetchV2Sessions(
+  instanceId: string,
+  options: V2SessionListOptions,
+  signal?: AbortSignal,
+): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
   const project = options.project ?? getInstanceMetadata(instanceId)?.project?.id
-  const listOptions = { ...options, project, order: options.order ?? "desc" as const }
-  if (project) delete listOptions.directory
-  const response = await client.session.list(buildProjectSessionListOptions(listOptions))
-  const sessionsById = new Map(response.data.map((session) => [session.id, session]))
+  const scopedProject = project === "global" ? undefined : project
+  const directory = options.directory ?? instances().get(instanceId)?.folder
+  const listOptions: V2SessionListOptions = options.cursor
+    ? { cursor: options.cursor }
+    : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
+  if (scopedProject) delete listOptions.directory
 
-  if (options.parentID === null && !options.search) {
-    const pending = response.data.map((session) => session.id)
-    const visited = new Set<string>()
-    let requests = 0
-    while (pending.length) {
-      const parentID = pending.shift()!
-      if (visited.has(parentID)) continue
-      visited.add(parentID)
-      let cursor: string | undefined
-      const seenCursors = new Set<string>()
-      do {
-        if (++requests > MAX_DESCENDANT_SESSION_REQUESTS) throw new Error("Descendant session traversal limit exceeded")
-        const children = await client.session.list(buildProjectSessionListOptions({
-          project: project ?? sessionsById.get(parentID)?.projectID,
-          parentID,
-          order: "asc",
-          cursor,
-        }))
-        for (const child of children.data) {
-          sessionsById.set(child.id, child)
-          if (!visited.has(child.id)) pending.push(child.id)
-        }
-        cursor = children.cursor?.next ?? undefined
-        if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated child session cursor: ${cursor}`)
-        if (cursor) seenCursors.add(cursor)
-      } while (cursor)
-    }
-  }
+  const response = await client.session.list(
+    buildProjectSessionListOptions(listOptions),
+    signal ? { signal } : undefined,
+  )
 
   return {
-    data: Array.from(sessionsById.values()),
+    data: response.data,
     complete: !response.cursor?.next,
     nextCursor: response.cursor?.next ?? undefined,
   }
@@ -223,6 +283,55 @@ async function fetchV2Sessions(instanceId: string, options: V2SessionListOptions
 
 function getV2SessionItems(response: ProjectSessionListResponse): SDKSession[] {
   return response.data
+}
+
+async function fetchCompleteProjectSessionInventory(
+  instanceId: string,
+  signal?: AbortSignal,
+  isCurrent: () => boolean = () => true,
+): Promise<SDKSession[]> {
+  const project = getInstanceMetadata(instanceId)?.project?.id
+  if (!project) return []
+  const inventory = new Map<string, SDKSession>()
+  const seenCursors = new Set<string>()
+  let pageCount = 1
+  let response = await fetchV2Sessions(instanceId, { project, order: "desc" }, signal)
+  while (true) {
+    if (!isCurrent()) return []
+    for (const session of response.data) inventory.set(session.id, session)
+    if (!response.nextCursor) break
+    if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session inventory exceeded the page limit")
+    if (seenCursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+    seenCursors.add(response.nextCursor)
+    response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
+  }
+  return Array.from(inventory.values())
+}
+
+function getDisconnectedCapturedSessionIds(
+  captured: Map<string, Session>,
+  current: Map<string, Session>,
+  validRootIds: ReadonlySet<string>,
+): string[] {
+  const stale: string[] = []
+  for (const sessionId of captured.keys()) {
+    let currentId: string | null = sessionId
+    const seen = new Set<string>()
+    let valid = false
+    while (currentId) {
+      if (seen.has(currentId)) break
+      seen.add(currentId)
+      const session = current.get(currentId)
+      if (!session) break
+      if (session.parentId === null) {
+        valid = validRootIds.has(session.id)
+        break
+      }
+      currentId = session.parentId
+    }
+    if (!valid) stale.push(sessionId)
+  }
+  return stale
 }
 
 function withActiveSessionState(
@@ -252,75 +361,73 @@ async function hydrateRestoredSessionChain(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
   signal?: AbortSignal,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
   const client = getRootClient(instanceId)
-  const pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const isRequestCurrent = () => generationCurrent() && isCurrent()
+  let pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
   while (pending.length > 0) {
+    if (!isRequestCurrent()) return
     signal?.throwIfAborted()
-    const sessionId = pending.shift()!
-    if (visited.has(sessionId)) continue
-    visited.add(sessionId)
-    if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) continue
+    const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
+    pending = []
+    level.forEach((sessionId) => visited.add(sessionId))
+    const parents = await Promise.all(level.map(async (sessionId) => {
+      if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return null
 
-    let session = sessions().get(instanceId)?.get(sessionId)
-    if (!session) {
-      try {
-        signal?.throwIfAborted()
-        const apiSession = await client.session.get({ sessionID: sessionId })
-        signal?.throwIfAborted()
-        setSessions((prev) => {
-          if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
-          const next = new Map(prev)
-          const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-          instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
-          next.set(instanceId, instanceSessions)
-          return next
-        })
-        session = sessions().get(instanceId)?.get(sessionId)
-        if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
-      } catch (error) {
-        if (signal?.aborted) throw error
-        log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
-        continue
+      let session = sessions().get(instanceId)?.get(sessionId)
+      if (!session) {
+        try {
+          signal?.throwIfAborted()
+          const apiSession = await client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
+          signal?.throwIfAborted()
+          if (!isRequestCurrent()) return null
+          setSessions((prev) => {
+            if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
+            const next = new Map(prev)
+            const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+            instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
+            next.set(instanceId, instanceSessions)
+            return next
+          })
+          session = sessions().get(instanceId)?.get(sessionId)
+          if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
+        } catch (error) {
+          if (signal?.aborted) throw error
+          log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
+          return null
+        }
       }
-    }
-    if (session?.parentId) pending.push(session.parentId)
+      return session?.parentId ?? null
+    }))
+    pending = parents.filter((id): id is string => Boolean(id))
   }
 }
 
-async function ensureV2ParentChainsLoaded(instanceId: string, apiSessions: SDKSession[], directory?: string): Promise<void> {
+async function ensureV2ParentChainsLoaded(
+  instanceId: string,
+  apiSessions: SDKSession[],
+  signal?: AbortSignal,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  if (!isCurrent()) return
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
 
-  if (!apiSessions.some((session) => hasMissingParentChain(session, loaded))) return
-
-  const page = await fetchV2Sessions(instanceId, { directory })
-  const items = getV2SessionItems(page)
-  if (items.length === 0) return
-
-  setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-    const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
-
-    for (const apiSession of items) {
-      if (deletedSessionIds.has(apiSession.id)) continue
-      const existingSession = instanceSessions.get(apiSession.id)
-      instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
-      loaded.set(apiSession.id, apiSession)
-    }
-
-    next.set(instanceId, instanceSessions)
-    return next
-  })
+  const missingChains = apiSessions
+    .filter((session) => hasMissingParentChain(session, loaded))
+    .map((session) => session.parentID)
+  if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent)
 }
 
 async function fetchSessions(instanceId: string, options?: {
   reset?: boolean
   strictStatus?: boolean
   registerInvalidation?: (invalidate: () => void) => void
+  signal?: AbortSignal
 }): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -328,6 +435,11 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const client = instance.client
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const isCurrent = () => isLatestSessionListRequest(instanceId, requestId)
+    && instances().get(instanceId)?.client === client
+    && generationCurrent()
   options?.registerInvalidation?.(() => {
     if (isLatestSessionListRequest(instanceId, requestId)) clearSessionListRequestState(instanceId)
   })
@@ -342,23 +454,64 @@ async function fetchSessions(instanceId: string, options?: {
   try {
     const sessionListOptions = { ...(instance.folder ? { directory: instance.folder } : {}), parentID: null as null, order: "desc" as const }
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
+    const existingCatalogIds = new Set(getSessionListIds(instanceId))
 
     log.info("session.list", { instanceId, limit: PROJECT_SESSION_LIST_LIMIT, directory: sessionListOptions.directory })
     const [response, activeSessions] = await Promise.all([
-      fetchV2Sessions(instanceId, sessionListOptions),
-      getRootClient(instanceId).session.active().catch((error) => {
+      fetchV2Sessions(instanceId, sessionListOptions, options?.signal),
+      getRootClient(instanceId).session.active(options?.signal ? { signal: options.signal } : undefined).catch((error) => {
         log.warn("Failed to refresh active sessions", { instanceId, error })
         return null
       }),
     ])
-    if (!isLatestSessionListRequest(instanceId, requestId)) {
+    if (!isCurrent()) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
       return
     }
-    const apiSessions = getV2SessionItems(response)
+    const rootApiSessions = getV2SessionItems(response)
+    const hasProjectInventory = Boolean(getInstanceMetadata(instanceId)?.project?.id)
+    if (hasProjectInventory) {
+      const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+      setSessions((prev) => {
+        const next = new Map(prev)
+        const instanceSessions = new Map(next.get(instanceId) ?? new Map())
+        for (const apiSession of rootApiSessions) {
+          const existingSession = existingSessions.get(apiSession.id)
+          const fetched = withActiveSessionState(instanceId, apiSession, existingSession, activeSessions)
+          const merged = mergeFetchedSessionRuntimeState(
+            fetched,
+            existingSession,
+            instanceSessions.get(apiSession.id),
+            deletedSessionIds.has(apiSession.id),
+          )
+          if (merged) instanceSessions.set(apiSession.id, merged)
+        }
+        next.set(instanceId, instanceSessions)
+        return next
+      })
+      setSessionPage(
+        instanceId,
+        rootApiSessions.filter((session) => !session.parentID && !deletedSessionIds.has(session.id)).map((session) => session.id),
+        Boolean(response.nextCursor),
+        options?.reset ?? true,
+        response.nextCursor,
+      )
+    }
+    let inventory: SDKSession[] = []
+    let inventoryComplete = false
+    try {
+      inventory = await fetchCompleteProjectSessionInventory(instanceId, options?.signal, isCurrent)
+      inventoryComplete = hasProjectInventory
+    } catch (error) {
+      if (options?.signal?.aborted) throw error
+      log.warn("Failed to enrich the session list with project descendants", { instanceId, error })
+    }
+    if (!isCurrent()) return
+    const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
+    const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
     const sessionMap = new Map<string, Session>()
 
-    for (const apiSession of getV2SessionItems(response)) {
+    for (const apiSession of apiSessions) {
       const existingSession = existingSessions?.get(apiSession.id)
       sessionMap.set(apiSession.id, withActiveSessionState(instanceId, apiSession, existingSession, activeSessions))
     }
@@ -381,18 +534,25 @@ async function fetchSessions(instanceId: string, options?: {
       next.set(instanceId, instanceSessions)
       return next
     })
+    await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
+    if (!isCurrent()) return
 
-    if (response.complete) {
-      const fetchedIds = new Set(apiSessions.map((session) => session.id))
-      for (const sessionId of existingSessions.keys()) {
-        if (!fetchedIds.has(sessionId)) removeSessionRuntimeState(instanceId, sessionId, false)
+    if (inventoryComplete || (!hasProjectInventory && response.complete)) {
+      const authoritativeSessions = inventoryComplete ? inventory : rootApiSessions
+      const fetchedRootIds = new Set(authoritativeSessions.filter((session) => !session.parentID).map((session) => session.id))
+      const concurrentRootIds = new Set(Array.from(sessions().get(instanceId)?.values() ?? [])
+        .filter((session) => !existingSessions.has(session.id) && session.parentId === null)
+        .map((session) => session.id))
+      const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
+      const currentSessions = sessions().get(instanceId) ?? new Map()
+      for (const sessionId of getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds)) {
+        removeSessionRuntimeState(instanceId, sessionId, false)
       }
     }
-
     const rootIds: string[] = []
     const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
-    for (const apiSession of getV2SessionItems(response)) {
+    for (const apiSession of rootApiSessions) {
       const root = getSessionRoot(instanceId, apiSession.id)
       if (root) {
         if (!seenRootIds.has(root.id)) {
@@ -403,6 +563,24 @@ async function fetchSessions(instanceId: string, options?: {
         missingRootSessionIds.push(apiSession.id)
       }
     }
+    if (!response.complete) {
+      for (const sessionId of existingCatalogIds) {
+        const session = sessions().get(instanceId)?.get(sessionId)
+        if (session?.parentId === null && !seenRootIds.has(sessionId)) {
+          seenRootIds.add(sessionId)
+          rootIds.push(sessionId)
+        }
+      }
+    }
+    const concurrentRootIds = getSessionListIds(instanceId).filter((sessionId) => {
+      const session = sessions().get(instanceId)?.get(sessionId)
+      return !existingCatalogIds.has(sessionId) && session?.parentId === null && !seenRootIds.has(sessionId)
+    })
+    for (let index = concurrentRootIds.length - 1; index >= 0; index -= 1) {
+      const sessionId = concurrentRootIds[index]!
+      seenRootIds.add(sessionId)
+      rootIds.unshift(sessionId)
+    }
 
     if (missingRootSessionIds.length > 0) {
       log.warn("Some V2 session list items could not be attached to a loaded root", {
@@ -412,6 +590,11 @@ async function fetchSessions(instanceId: string, options?: {
     }
 
     setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    sessionPageTraversals.set(instanceId, {
+      cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
+      pages: 1,
+    })
+    for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -430,8 +613,9 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
   } catch (error) {
-    log.error("Failed to fetch sessions:", error)
-    if (isLatestSessionListRequest(instanceId, requestId)) {
+    const aborted = options?.signal?.aborted === true
+    if (!aborted) log.error("Failed to fetch sessions:", error)
+    if (!aborted && isLatestSessionListRequest(instanceId, requestId)) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error
@@ -449,7 +633,9 @@ async function fetchSessions(instanceId: string, options?: {
 async function loadMoreSessions(instanceId: string): Promise<void> {
   const pending = sessionPageRequests.get(instanceId)
   if (pending) return pending
-  const request = loadNextSessionPage(instanceId).finally(() => sessionPageRequests.delete(instanceId))
+  const request = loadNextSessionPage(instanceId).finally(() => {
+    if (sessionPageRequests.get(instanceId) === request) sessionPageRequests.delete(instanceId)
+  })
   sessionPageRequests.set(instanceId, request)
   return request
 }
@@ -459,19 +645,34 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   if (!cursor) return
   const instance = instances().get(instanceId)
   if (!instance?.client) throw new Error("Instance not ready")
+  const client = instance.client
+  const listRequestId = sessionListRequestIds.get(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const isCurrent = () => instances().get(instanceId)?.client === client
+    && sessionListRequestIds.get(instanceId) === listRequestId
+    && generationCurrent()
   const [response, activeSessions] = await Promise.all([
-    fetchV2Sessions(instanceId, { directory: instance.folder, parentID: null, order: "desc", cursor }),
+    fetchV2Sessions(instanceId, { cursor }),
     getRootClient(instanceId).session.active().catch((error) => {
       log.warn("Failed to refresh active sessions", { instanceId, error })
       return null
     }),
   ])
-  if (getSessionNextCursor(instanceId) !== cursor) return
+  if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
+  const traversal = sessionPageTraversals.get(instanceId) ?? { cursors: new Set([cursor]), pages: 1 }
+  if (traversal.pages >= MAX_SESSION_LIST_PAGES) throw new Error("Session pagination exceeded the page limit")
+  if (response.nextCursor && traversal.cursors.has(response.nextCursor)) {
+    throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+  }
+  traversal.pages += 1
+  if (response.nextCursor) traversal.cursors.add(response.nextCursor)
+  sessionPageTraversals.set(instanceId, traversal)
+  const pageSessions = response.data
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   setSessions((previous) => {
     const next = new Map(previous)
     const current = new Map(next.get(instanceId) ?? [])
-    for (const item of response.data) {
+    for (const item of pageSessions) {
       if (!deleted.has(item.id)) {
         const existing = current.get(item.id)
         const fetched = withActiveSessionState(instanceId, item, existing, activeSessions)
@@ -482,8 +683,15 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     next.set(instanceId, current)
     return next
   })
+  await ensureV2ParentChainsLoaded(instanceId, pageSessions, undefined, isCurrent)
+  if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
   const roots = response.data.filter((item) => !item.parentID).map((item) => item.id)
+  for (const item of response.data) {
+    const root = getSessionRoot(instanceId, item.id)
+    if (root && !roots.includes(root.id)) roots.push(root.id)
+  }
   setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
+  for (const rootId of roots) updateThreadTotalsForParent(instanceId, rootId)
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
@@ -496,16 +704,31 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   }
 
   const requestId = beginSessionSearch(instanceId, trimmedQuery)
+  const client = instance.client
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const isCurrent = () => isLatestSessionSearch(instanceId, trimmedQuery, requestId)
+    && instances().get(instanceId)?.client === client
+    && generationCurrent()
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    const response = await fetchV2Sessions(instanceId, {
+    let response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
       directory: instance.folder,
     })
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
-
-    const searchResults = getV2SessionItems(response)
+    const results = new Map<string, SDKSession>()
+    const cursors = new Set<string>()
+    let pageCount = 1
+    while (true) {
+      if (!isCurrent()) return
+      for (const session of getV2SessionItems(response)) results.set(session.id, session)
+      if (!response.nextCursor) break
+      if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
+      if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+      cursors.add(response.nextCursor)
+      response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+    }
+    const searchResults = Array.from(results.values())
 
     if (searchResults.length === 0) {
       setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
@@ -526,9 +749,9 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, instance.folder)
+    await ensureV2ParentChainsLoaded(instanceId, searchResults, undefined, isCurrent)
 
-    if (!isLatestSessionSearch(instanceId, trimmedQuery, requestId)) return
+    if (!isCurrent()) return
 
     const hydratedSessions = sessions().get(instanceId)
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -597,15 +820,18 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     ? sessions().get(instanceId)?.get(activeId)?.location
     : undefined
   const client = getRootClient(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
 
   const defaultModel = await getDefaultModel(instanceId, selectedAgent)
+  if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
 
   if (selectedAgent && isModelValid(instanceId, defaultModel)) {
     await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
   }
 
   setLoading((prev) => {
@@ -623,6 +849,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
         : null,
       location: activeLocation ?? { directory: instance.folder },
     })
+    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
     const session = toClientSessionV2(instanceId, info)
     session.agent = selectedAgent
     session.model = defaultModel
@@ -696,6 +923,7 @@ async function forkSession(
   }
 
   const client = getRootClient(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
   const request = {
     sessionID: sourceSessionId,
@@ -706,6 +934,7 @@ async function forkSession(
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
   const info = await client.session.fork(request)
+  if (!generationCurrent()) throw new Error("Session fork was superseded by reconnect")
   const forkedSession = toClientSessionV2(instanceId, info)
 
   setSessions((prev) => {
@@ -756,6 +985,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   }
 
   const client = getRootClient(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -768,6 +998,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
     await client.session.remove({ sessionID: sessionId })
+    if (!generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
 
     removeSessionRuntimeState(instanceId, sessionId)
 
@@ -809,6 +1040,9 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   removeSessionListId(instanceId, sessionId)
 
   // Drop normalized message state and caches for this session.
+  const pageKey = messagePageKey(instanceId, sessionId)
+  messagePageRequests.delete(pageKey)
+  messageHistoryAuthorities.delete(pageKey)
   messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
   clearCacheForSession(instanceId, sessionId)
 
@@ -840,15 +1074,39 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
   }
 }
 
-async function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
+function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const key = `${instanceId}\0${catalogLocationKey(location)}`
+  const existing = agentRefreshes.get(key)
+  if (existing) {
+    if (refresh) existing.pending = true
+    return existing.promise
+  }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  state.promise = (async () => {
+    let result: boolean
+    do {
+      state.pending = false
+      result = await loadAgents(instanceId, location)
+    } while (state.pending && !state.cancelled)
+    return result
+  })().finally(() => {
+    if (agentRefreshes.get(key) === state) agentRefreshes.delete(key)
+  })
+  agentRefreshes.set(key, state)
+  return state.promise
+}
+
+async function loadAgents(instanceId: string, location: LocationRef): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
-  const requestId = (agentRequestIds.get(instanceId) ?? 0) + 1
-  agentRequestIds.set(instanceId, requestId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
+  const requestId = ++nextAgentRequestId
+  agentRequestIds.set(requestKey, requestId)
 
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
@@ -877,7 +1135,7 @@ async function fetchAgents(instanceId: string, location = getActiveCatalogLocati
         : undefined,
     }))
 
-    if (agentRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
+    if (!generationCurrent() || agentRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setAgents((prev) => {
       const next = new Map(prev)
       next.set(instanceId, agentList)
@@ -890,15 +1148,39 @@ async function fetchAgents(instanceId: string, location = getActiveCatalogLocati
   }
 }
 
-async function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId)): Promise<boolean> {
+function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const key = `${instanceId}\0${catalogLocationKey(location)}`
+  const existing = providerRefreshes.get(key)
+  if (existing) {
+    if (refresh) existing.pending = true
+    return existing.promise
+  }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  state.promise = (async () => {
+    let result: boolean
+    do {
+      state.pending = false
+      result = await loadProviders(instanceId, location)
+    } while (state.pending && !state.cancelled)
+    return result
+  })().finally(() => {
+    if (providerRefreshes.get(key) === state) providerRefreshes.delete(key)
+  })
+  providerRefreshes.set(key, state)
+  return state.promise
+}
+
+async function loadProviders(instanceId: string, location: LocationRef): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
 
   const rootClient = getRootClient(instanceId)
-  const requestId = (providerRequestIds.get(instanceId) ?? 0) + 1
-  providerRequestIds.set(instanceId, requestId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
+  const requestId = ++nextProviderRequestId
+  providerRequestIds.set(requestKey, requestId)
 
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
@@ -916,7 +1198,7 @@ async function fetchProviders(instanceId: string, location = getActiveCatalogLoc
       id: providerId,
       name: providersById.get(providerId)?.name ?? providerId,
       defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
-      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId).sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
+      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId && model.status !== "deprecated").sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
         id: model.id,
         name: model.name,
         providerId,
@@ -926,7 +1208,7 @@ async function fetchProviders(instanceId: string, location = getActiveCatalogLoc
       })),
     }))
 
-    if (providerRequestIds.get(instanceId) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
+    if (!generationCurrent() || providerRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {
       const next = new Map(prev)
       next.set(instanceId, providerList)
@@ -939,112 +1221,186 @@ async function fetchProviders(instanceId: string, location = getActiveCatalogLoc
   }
 }
 
+function currentMessageWindow(instanceId: string, sessionId: string): MessageWindowState {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  return store.getMessageWindow(sessionId) ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE))
+}
+
+function planMessageWindowLoad(
+  current: MessageWindowState,
+  intent: MessageWindowIntent,
+): { cursor?: string; order?: "asc" | "desc"; next: MessageWindowState; forward?: boolean; seekNewer?: string } | null {
+  if (intent === "older") return planOlderWindow(current)
+  if (intent === "newer") return planNewerWindow(current)
+  if (intent === "latest") return { next: emptyLatestWindow() }
+  if (intent === "oldest") {
+    return { order: "asc", next: { kind: "history", newerCursors: [] } }
+  }
+  return {
+    cursor: current.kind === "history" ? current.resumeCursor : undefined,
+    next: current.kind === "history" ? { ...current } : emptyLatestWindow(),
+  }
+}
+
+function commitMessageWindow(
+  instanceId: string,
+  sessionId: string,
+  window: MessageWindowState,
+) {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.setMessageWindow(sessionId, window)
+  const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  store.setScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE, {
+    scrollTop: existing?.scrollTop ?? 0,
+    atBottom: existing?.atBottom ?? window.kind === "latest",
+    scrollRatio: existing?.scrollRatio,
+    maxScrollTop: existing?.maxScrollTop,
+    anchorKey: existing?.anchorKey,
+    anchorOffset: existing?.anchorOffset,
+    followModeType: existing?.followModeType,
+    ...toWindowSnapshot(window),
+  })
+}
+
+function markSessionMessagesLoaded(instanceId: string, sessionId: string) {
+  setMessagesLoaded((prev) => {
+    const next = new Map(prev)
+    const loadedSet = next.get(instanceId) || new Set()
+    loadedSet.add(sessionId)
+    next.set(instanceId, loadedSet)
+    return next
+  })
+}
+
 async function loadMessages(
   instanceId: string,
   sessionId: string,
   options?: {
     force?: boolean
-    skipChildren?: boolean
+    intent?: MessageWindowIntent
     registerInvalidation?: (invalidate: () => void) => void
+    signal?: AbortSignal
+    revisionRetry?: number
   },
 ): Promise<void> {
   const force = options?.force ?? false
-  const skipChildren = options?.skipChildren ?? false
+  const intent = options?.intent ?? "open"
+  const revisionRetry = options?.revisionRetry ?? 0
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const storedWindow = store.getMessageWindow(sessionId)
+  const currentWindow = storedWindow ?? windowFromSnapshot(store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE))
+  const planned = planMessageWindowLoad(currentWindow, intent)
+  if (!planned) return
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
-  if (alreadyLoaded && !force) {
-    return
-  }
+  if (alreadyLoaded && !force) return
 
   const previousError = getSessionMessagesLoadError(instanceId, sessionId)
-  if (previousError && !force) {
-    return
-  }
+  if (previousError && !force) return
 
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading && !force) {
-    return
-  }
+  if (isLoading && !force) return
 
   const instance = instances().get(instanceId)
-  if (!instance || !instance.client) {
-    throw new Error("Instance not ready")
-  }
+  if (!instance || !instance.client) throw new Error("Instance not ready")
 
+  const instanceClient = instance.client
   const client = getRootClient(instanceId)
-
-  const instanceSessions = sessions().get(instanceId)
-  const session = instanceSessions?.get(sessionId)
-  if (!session) {
-    throw new Error("Session not found")
-  }
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) throw new Error("Session not found")
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
+  const isCurrentLoad = () => instances().get(instanceId)?.client === instanceClient
+    && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
+    && sessions().get(instanceId)?.has(sessionId)
+    && generationCurrent()
+    && (!historyAuthority || messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId)) === historyAuthority)
+  const isCurrent = () => isCurrentLoad()
+    && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
+    && store.getMessageWindow(sessionId) === storedWindow
   options?.registerInvalidation?.(() => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
   })
-  const messageRevision = messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId)
+  const messageRevision = store.getSessionRevision(sessionId)
+  const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
   let retryAfterRevisionConflict = false
+  const showLoading = intent === "open" || intent === "latest"
 
-  setLoading((prev) => {
-    const next = { ...prev }
-    const loadingSet = next.loadingMessages.get(instanceId) || new Set()
-    loadingSet.add(sessionId)
-    next.loadingMessages.set(instanceId, loadingSet)
-    return next
-  })
+  if (showLoading) {
+    setLoading((prev) => {
+      const next = { ...prev }
+      const loadingSet = next.loadingMessages.get(instanceId) || new Set()
+      loadingSet.add(sessionId)
+      next.loadingMessages.set(instanceId, loadingSet)
+      return next
+    })
+  }
   setSessionMessagesLoadError(instanceId, sessionId, null)
 
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
-    const apiMessages: SessionMessagesResponse["data"] = []
-    let cursor: string | undefined
-    const seenCursors = new Set<string>()
-    do {
-      const response: SessionMessagesResponse = await client.message.list({
+    let response: SessionMessagesResponse
+    let resolvedNext = planned.next
+    let responseAscending = planned.order === "asc" || planned.forward
+    if (planned.seekNewer) {
+      const seen = new Set<string>()
+      let cursor: string | undefined
+      for (let page = 0; ; page += 1) {
+        if (page >= MESSAGE_CURSOR_SEEK_LIMIT) throw new Error(tGlobal("messageSection.loadError.detail"))
+        response = await client.message.list({
+          sessionID: sessionId,
+          limit: 200,
+          ...(cursor ? { cursor } : { order: "desc" }),
+        }, options?.signal ? { signal: options.signal } : undefined)
+        if (!isCurrent()) return
+        if (response.cursor?.next === planned.seekNewer) {
+          resolvedNext = cursor
+            ? { kind: "history", resumeCursor: cursor, newerCursors: [null, null] }
+            : emptyLatestWindow()
+          break
+        }
+        const next = response.cursor?.next
+        if (!next || seen.has(next)) throw new Error(tGlobal("messageSection.loadError.detail"))
+        seen.add(next)
+        cursor = next
+      }
+      responseAscending = false
+    } else {
+      response = await client.message.list({
         sessionID: sessionId,
         limit: 200,
-        ...(cursor ? { cursor } : { order: "asc" }),
-      })
-      apiMessages.push(...response.data)
-      cursor = response.cursor?.next ?? undefined
-      if (cursor && seenCursors.has(cursor)) throw new Error(`Repeated message cursor: ${cursor}`)
-      if (cursor) seenCursors.add(cursor)
-    } while (cursor)
-
-    if (!instances().has(instanceId)
-      || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
-      || !sessions().get(instanceId)?.has(sessionId)) return
-
-    if (!Array.isArray(apiMessages)) {
-      return
+        ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
+      }, options?.signal ? { signal: options.signal } : undefined)
     }
-
-    const latestSession = sessions().get(instanceId)?.get(sessionId)
-    if (latestSession?.runtimeStatusKnown && latestSession.status === "idle") {
-      messageStoreBus.getOrCreate(instanceId).retirePendingSends(sessionId)
+    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
+    const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
+    if (planned.cursor && responseCursor === planned.cursor) {
+      throw new Error("Repeated message cursor")
     }
+    if (!isCurrent()) return
 
-    setSessionMessagesLoadError(instanceId, sessionId, null)
-
+    const forwardPage = intent === "oldest" || planned.forward
+    const nextWindow = forwardPage
+      ? newerCursor
+        ? { ...resolvedNext, olderCursor: undefined, newerCursors: [newerCursor] }
+        : emptyLatestWindow()
+      : withOlderCursor(resolvedNext, olderCursor)
+    const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
+      && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
+    const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
     if (apiMessages.length === 0) {
-      if (messageStoreBus.getOrCreate(instanceId).getSessionRevision(sessionId) !== messageRevision) {
+      if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+        retryAfterRevisionConflict = true
+      } else if (store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
-        // Authoritative empty snapshot: on a forced reconnect load the server
-        // returned zero messages, so clear any stale records left over from
-        // before the reconnect (hydrateMessages ignores empty input). Still
-        // in-flight optimistic sends are preserved by the store.
-        if (force) {
-          messageStoreBus.getOrCreate(instanceId).reconcileEmptyAuthoritativeSnapshot(sessionId)
-        }
-        setMessagesLoaded((prev) => {
-          const next = new Map(prev)
-          const loadedSet = next.get(instanceId) || new Set()
-          loadedSet.add(sessionId)
-          next.set(instanceId, loadedSet)
-          return next
-        })
+        store.reconcileEmptyAuthoritativeSnapshot(sessionId)
+        commitMessageWindow(instanceId, sessionId, nextWindow)
+        markSessionMessagesLoaded(instanceId, sessionId)
       }
     } else {
       const seenMessageIds = new Set<string>()
@@ -1065,31 +1421,25 @@ async function loadMessages(
       let agentName = ""
       let providerID = ""
       let modelID = ""
-
       for (let i = authoritativeApiMessages.length - 1; i >= 0; i--) {
-        const apiMessage = authoritativeApiMessages[i]
-        const info = messagesInfo.get(apiMessage.id)
-
-        if (info?.role === "assistant") {
-          agentName = info.mode || info.agent || ""
-          providerID = info.providerID || ""
-          modelID = info.modelID || ""
-          if (agentName && providerID && modelID) break
-        }
+        const info = messagesInfo.get(authoritativeApiMessages[i].id)
+        if (info?.role !== "assistant") continue
+        agentName = info.mode || info.agent || ""
+        providerID = info.providerID || ""
+        modelID = info.modelID || ""
+        if (agentName && providerID && modelID) break
       }
 
       if (!agentName && !providerID && !modelID) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!instances().has(instanceId)
-          || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
-          || !sessions().get(instanceId)?.has(sessionId)) return
+        if (!isCurrent()) return
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
       }
 
       setSessions((prev) => {
-        if (!instances().has(instanceId) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return prev
+        if (!isCurrent()) return prev
         const next = new Map(prev)
         const nextInstanceSessions = next.get(instanceId)
         if (!nextInstanceSessions) return next
@@ -1107,31 +1457,25 @@ async function loadMessages(
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-      if (!instances().has(instanceId) || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
-      if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, messageRevision)) {
+      if (!isCurrent()) return
+      const expectedRevision = nextWindow.kind === "latest" ? messageRevision : undefined
+      if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        setMessagesLoaded((prev) => {
-          const next = new Map(prev)
-          const loadedSet = next.get(instanceId) || new Set()
-          loadedSet.add(sessionId)
-          next.set(instanceId, loadedSet)
-          return next
-        })
+        commitMessageWindow(instanceId, sessionId, nextWindow)
+        markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
       }
     }
-  
-
-
   } catch (error) {
     log.error("Failed to load messages:", error)
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (isCurrent() && !message.includes("Stale read from")) {
       setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
     }
     throw error
   } finally {
-    if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) {
+    if (showLoading && isCurrentLoad()) {
       setLoading((prev) => {
         const next = { ...prev }
         const loadingSet = next.loadingMessages.get(instanceId)
@@ -1142,32 +1486,78 @@ async function loadMessages(
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return
+    if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
+      const error = new Error(tGlobal("messageSection.loadError.detail"))
+      setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
+      throw error
+    }
+    await new Promise((resolve) => setTimeout(resolve, LATEST_WINDOW_RETRY_DELAY_MS * (2 ** revisionRetry)))
+    options?.signal?.throwIfAborted()
+    if (!isCurrent()) return
     return loadMessages(instanceId, sessionId, {
       force: true,
-      skipChildren,
+      intent: intent === "open" && planned.cursor ? "latest" : intent,
       registerInvalidation: options?.registerInvalidation,
+      signal: options?.signal,
+      revisionRetry: revisionRetry + 1,
     })
   }
 
-  if (!instances().has(instanceId)
-    || !isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
-    || !sessions().get(instanceId)?.has(sessionId)) return
+  if (!isCurrent()) return
   updateSessionInfo(instanceId, sessionId)
+}
 
-  if (!skipChildren && session.parentId === null) {
-    for (const child of getDescendantSessions(instanceId, sessionId)) {
-      void loadMessages(instanceId, child.id, { skipChildren: true }).catch((error) =>
-        log.error("Failed to load child session messages", {
-          instanceId,
-          sessionId: child.id,
-          parentSessionId: sessionId,
-          error,
-        }),
-      )
-    }
-  }
+function enqueueMessageWindowLoad(
+  instanceId: string,
+  sessionId: string,
+  intent: Exclude<MessageWindowIntent, "open">,
+  signal?: AbortSignal,
+): Promise<void> {
+  const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
+  const pending = messagePageRequests.get(key)
+  if (pending) return pending
+  let request!: Promise<void>
+  request = loadMessages(instanceId, sessionId, { force: true, intent, signal }).then(
+    () => { if (messagePageRequests.get(key) === request) messagePageRequests.delete(key) },
+    (error) => {
+      if (messagePageRequests.get(key) === request) messagePageRequests.delete(key)
+      throw error
+    },
+  )
+  messagePageRequests.set(key, request)
+  return request
+}
+
+function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
+}
+
+function loadOlderMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
+}
+
+function loadNewerMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "newer", signal)
+}
+
+function loadLatestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "latest", signal)
+}
+
+function loadOldestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+  return enqueueMessageWindowLoad(instanceId, sessionId, "oldest", signal)
+}
+
+function hasMoreMessages(instanceId: string, sessionId: string): boolean {
+  return Boolean(currentMessageWindow(instanceId, sessionId).olderCursor)
+}
+
+function getMessageNextCursor(instanceId: string, sessionId: string): string | undefined {
+  return currentMessageWindow(instanceId, sessionId).olderCursor
+}
+
+function isLatestMessageWindow(instanceId: string, sessionId: string): boolean {
+  return isLatestWindow(currentMessageWindow(instanceId, sessionId))
 }
 
 export {
@@ -1185,6 +1575,16 @@ export {
   searchSessions,
   forkSession,
   loadMessages,
+  loadMoreMessages,
+  loadOlderMessageWindow,
+  loadNewerMessageWindow,
+  loadLatestMessageWindow,
+  loadOldestMessageWindow,
+  hasMoreMessages,
+  getMessageNextCursor,
+  isLatestMessageWindow,
+  beginMessageHistoryTraversal,
+  invalidateMessageHistoryTraversal,
   clearSessionListRequestState,
   clearSessionCatalogState,
 }

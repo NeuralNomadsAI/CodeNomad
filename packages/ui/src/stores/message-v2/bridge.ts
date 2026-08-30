@@ -40,6 +40,8 @@ export function seedSessionMessagesV2(
   messages: Message[],
   messageInfos?: Map<string, MessageInfo>,
   expectedRevision?: number,
+  preserveOmitted = false,
+  confirmPending = true,
 ): boolean {
   if (!session || !Array.isArray(messages)) return false
   const store = messageStoreBus.getOrCreate(instanceId)
@@ -71,7 +73,7 @@ export function seedSessionMessagesV2(
     bumpRevision: false,
   }))
 
-  store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values())
+  store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending })
   return true
 }
 

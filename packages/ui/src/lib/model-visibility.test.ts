@@ -56,16 +56,83 @@ test("provider refresh updates shared and modal catalogs without disposing activ
   const refresh = source.slice(start, end)
 
   assert.ok(start >= 0 && end > start)
-  assert.match(refresh, /await fetchProviders\(instanceId\)/)
-  assert.match(refresh, /await loadProviderData\(authClient\)/)
+  assert.match(refresh, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
+  assert.match(refresh, /await fetchProviders\(instanceId, catalogLocation, true\)/)
+  assert.match(refresh, /await loadProviderData\(authClient, \+\+loadVersion, catalogLocation\)/)
   assert.doesNotMatch(refresh, /global\.dispose/)
 })
 
-test("model picker wires collection-safe selection and an accessible current-model label", () => {
+test("model picker delegates keyboard selection to its accessible Kobalte input", () => {
   const source = fs.readFileSync(new URL("../components/model-selector.tsx", import.meta.url), "utf8")
+  const kobalteInput = fs.readFileSync(
+    new URL("../../../../node_modules/@kobalte/core/src/combobox/combobox-input.tsx", import.meta.url),
+    "utf8",
+  )
+  const kobalteBase = fs.readFileSync(
+    new URL("../../../../node_modules/@kobalte/core/src/combobox/combobox-base.tsx", import.meta.url),
+    "utf8",
+  )
   assert.match(source, /value=\{comboboxValue\(\)\}/)
+  assert.match(source, /optionTextValue="searchText"/)
+  assert.match(source, /optionLabel=\{\(option\) => isProviderHeaderOption\(option\)[\s\S]{0,160}modelSelector\.trigger\.primary/)
+  assert.match(source, /onInputChange=\{setInputValue\}/)
+  assert.match(source, /const context = useComboboxContext\(\)[\s\S]{0,100}context\.setInputValue\(props\.value\)/)
+  assert.match(source, /else if \(triggerMode !== "input"\) setInputValue\(""\)/)
+  assert.equal(source.match(/<Combobox\.Input/g)?.length, 2)
+  assert.match(source, /<Combobox\.Input class="sr-only" data-model-selector/)
+  const search = source.slice(source.indexOf('<div class="selector-search-container">'), source.indexOf("<Combobox.Listbox"))
+  assert.match(search, /<Combobox\.Input[\s\S]{0,300}value=\{inputValue\(\)\}/)
+  assert.match(search, /class="selector-input-group"[\s\S]*class="selector-favorites-toggle"/)
+  assert.match(search, /title=\{favoritesToggleLabel\(\)\}/)
+  assert.match(search, /aria-pressed=\{favoritesOnlyEnabled\(\)\}[\s\S]*disabled=\{!hasFavorites\(\) \|\| searchActive\(\)\}[\s\S]*data-active=\{favoritesOnlyEnabled\(\)\}/)
+  assert.doesNotMatch(search, /<input\b/)
+  assert.match(source, /onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Escape"\) queueMicrotask\(restoreSelectedInput\)/)
+  assert.doesNotMatch(source, /dispatchEvent\(new KeyboardEvent/)
+  assert.doesNotMatch(source, /const first = pickerOptions\(\)\.find/)
   assert.equal(source.match(/aria-label=\{currentModelAccessibleLabel\(\)\}/g)?.length, 2)
   assert.match(source, /id: `\$\{current\.providerId\}\/\$\{current\.id\}`/)
+  const grouping = source.slice(source.indexOf("const groupedVisibleOptions"), source.indexOf("const pickerOptions"))
+  const openEffectStart = source.indexOf("createEffect(() => {", source.indexOf("const customFilter"))
+  const openEffect = source.slice(openEffectStart, source.indexOf("createEffect(() => {", openEffectStart + 1))
+  const kobalteOnInput = kobalteInput.slice(kobalteInput.indexOf("const onInput:"), kobalteInput.indexOf("const onKeyDown:"))
+  assert.doesNotMatch(grouping, /inputValue|query/)
+  assert.doesNotMatch(openEffect.slice(openEffect.indexOf("if (isOpen())"), openEffect.indexOf("} else")), /setInputValue/)
+  assert.ok(kobalteOnInput.indexOf("callHandler(e, local.onInput)") < kobalteOnInput.indexOf("context.setInputValue(target.value)"))
+  assert.ok(kobalteOnInput.indexOf("context.setInputValue(target.value)") < kobalteOnInput.indexOf('context.open(false, "input")'))
+  assert.match(kobalteBase, /onInputChange\?: \(value: string\) => void/)
+  assert.doesNotMatch(kobalteBase.slice(kobalteBase.indexOf("export interface ComboboxBaseOptions"), kobalteBase.indexOf("export interface ComboboxBaseRenderProps")), /inputValue\?:/)
+  assert.match(source, /const closePicker = \(\) => \{\s*setIsOpen\(false\)\s*restoreSelectedInput\(\)/)
+  assert.match(source, /if \(!next\) restoreSelectedInput\(\)/)
+  assert.match(source, /closePicker\(\)\s*setProvidersModalOpen\(true\)/)
+  const footer = source.slice(source.indexOf('<div class="selector-footer">'), source.indexOf("</Combobox.Content>"))
+  assert.doesNotMatch(footer, /toggleFavoritesOnly/)
+  assert.doesNotMatch(footer, /favoritesOnly\.showAll/)
+})
+
+test("provider auth keeps its catalog location across deferred operation steps", () => {
+  const source = fs.readFileSync(
+    new URL("../components/provider-auth/provider-manager-modal.tsx", import.meta.url),
+    "utf8",
+  )
+  const oauth = source.slice(source.indexOf("async function submitOAuthAuthorize"), source.indexOf("async function submitCommandAuth"))
+  const command = source.slice(source.indexOf("async function submitCommandAuth"), source.indexOf("async function submitAuth()"))
+  const submit = source.slice(source.indexOf("async function submitAuth()"), source.indexOf("async function submitOAuthCode()"))
+  const complete = source.slice(source.indexOf("async function submitOAuthCode()"), source.indexOf("async function disconnectProvider"))
+  const cancel = source.slice(source.indexOf("function cancelOAuthWait()"), source.indexOf("function methodSummary"))
+
+  const loadEffect = source.slice(source.indexOf("createEffect(() => {"), source.indexOf("createEffect(() => {", source.indexOf("createEffect(() => {") + 1))
+  assert.match(loadEffect, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
+  assert.match(loadEffect, /loadProviderData\(authClient, version, catalogLocation\)/)
+  assert.match(source, /const isCurrentLoad = \(\) => version === loadVersion[\s\S]{0,160}isActiveCatalogLocation\(catalogLocation\)/)
+  assert.equal(oauth.match(/location: requestLocation\(catalogLocation\)/g)?.length, 2)
+  assert.equal(command.match(/location: requestLocation\(catalogLocation\)/g)?.length, 2)
+  assert.match(submit, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
+  assert.match(submit, /authCatalogLocation = catalogLocation/)
+  assert.match(complete, /const catalogLocation = authCatalogLocation/)
+  assert.match(complete, /location: requestLocation\(catalogLocation\)/)
+  assert.match(complete, /refreshAfterAuth\(authClient, instanceId, operationVersion, catalogLocation\)/)
+  assert.match(cancel, /const catalogLocation = authCatalogLocation/)
+  assert.equal(cancel.match(/location: requestLocation\(catalogLocation\)/g)?.length, 2)
 })
 
 test("serializes visibility writes across providers before installing server snapshots", () => {

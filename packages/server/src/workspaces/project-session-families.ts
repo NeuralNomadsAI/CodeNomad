@@ -22,34 +22,44 @@ export interface SessionFamilyMoveResult {
 interface ProjectContext {
   client: OpenCodeClient
   project: LocationGetOutput["project"]
+  workspaceID?: string
 }
 
 export async function listCompleteProjectSessions(
   client: OpenCodeClient,
   projectID: string,
+  workspaceID?: string,
 ): Promise<SessionInfo[]> {
   const sessions: SessionInfo[] = []
+  const sessionIds = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | undefined
   let page = 0
   do {
     if (++page > MAX_SESSION_PAGES) throw new ProjectSessionError("Session inventory exceeded the page limit", 502)
-    const response = await client.session.list({ project: projectID, limit: SESSION_PAGE_LIMIT, cursor })
+    const response = await client.session.list(cursor
+      ? { cursor }
+      : { project: projectID, workspace: workspaceID, limit: SESSION_PAGE_LIMIT, order: "asc" })
     if (!response || !Array.isArray(response.data) || !response.cursor || typeof response.cursor !== "object") {
       throw new ProjectSessionError("OpenCode returned an invalid session inventory", 502)
     }
     for (const session of response.data) {
-      if (!session?.id || session.projectID !== projectID || !session.location?.directory) {
+      if (!session?.id
+        || session.projectID !== projectID
+        || !session.location?.directory
+        || (workspaceID && session.location.workspaceID !== workspaceID)) {
         throw new ProjectSessionError("OpenCode returned a session outside the requested project", 409)
       }
+      if (sessionIds.has(session.id)) throw new ProjectSessionError("Session inventory contains duplicate sessions", 409)
+      sessionIds.add(session.id)
       sessions.push(session)
     }
 
     const rawNext = response.cursor.next
-    if (rawNext !== undefined && (typeof rawNext !== "string" || !rawNext.trim())) {
+    if (rawNext != null && (typeof rawNext !== "string" || !rawNext.trim())) {
       throw new ProjectSessionError("OpenCode returned an invalid session inventory cursor", 502)
     }
-    const next = rawNext
+    const next = rawNext ?? undefined
     if (next && cursors.has(next)) throw new ProjectSessionError(`Session inventory repeated cursor: ${next}`, 502)
     if (next) cursors.add(next)
     cursor = next
@@ -98,113 +108,152 @@ export function resolveSessionFamilies(sessions: SessionInfo[]): Map<string, Ses
 
 export async function moveProjectSessionFamily(params: {
   client: OpenCodeClient
-  projectDirectory: string
+  projectLocation: LocationRef
   sessionId: string
   targetDirectory: string
   validateTarget?: () => Promise<boolean>
+  runMutation?: <T>(directories: string[], operation: () => Promise<T>) => Promise<T>
 }): Promise<SessionFamilyMoveResult> {
-  return withProject(params.client, params.projectDirectory, async (context) => {
+  return withProject(params.client, params.projectLocation, async (context) => {
     if (params.validateTarget && !await params.validateTarget()) {
       throw new ProjectSessionError("Worktree changed before the session move", 409)
     }
-    const inventory = await listCompleteProjectSessions(context.client, context.project.id)
+    const inventory = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
     const families = resolveSessionFamilies(inventory)
     const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
     if (!family) throw new ProjectSessionError("Session not found in project", 404)
-    await assertInactive(context.client, family[1])
-    if (params.validateTarget && !await params.validateTarget()) {
-      throw new ProjectSessionError("Worktree changed before the session move", 409)
-    }
     const target = await resolveProjectLocation(context, params.targetDirectory)
-    await moveWithRollback(context, family[1], target)
-    return { rootSessionId: family[0], sessionIds: family[1].map(({ id }) => id) }
+    const move = async () => {
+      await assertInactive(context.client, family[1])
+      if (params.validateTarget && !await params.validateTarget()) {
+        throw new ProjectSessionError("Worktree changed before the session move", 409)
+      }
+      await moveWithRollback(context, family[1], target)
+      return { rootSessionId: family[0], sessionIds: family[1].map(({ id }) => id) }
+    }
+    return params.runMutation
+      ? params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move)
+      : move()
   })
 }
 
 export async function removeProjectWorktree(params: {
   client: OpenCodeClient
-  projectDirectory: string
+  projectLocation: LocationRef
   targetDirectory: string
   rootDirectory: string
   remove: () => Promise<void>
   isTargetRegistered: () => Promise<boolean>
+  matchesTarget?: (directory: string) => Promise<boolean>
+  validateBeforeRemove?: (projectID: string) => Promise<void>
+  runMutation?: <T>(directories: string[], operation: () => Promise<T>) => Promise<T>
 }): Promise<void> {
-  await withProject(params.client, params.projectDirectory, async (context) => {
-    if (!await params.isTargetRegistered()) {
-      throw new ProjectSessionError("Worktree changed before deletion", 409)
-    }
-    const inventory = await listCompleteProjectSessions(context.client, context.project.id)
-    const families = Array.from(resolveSessionFamilies(inventory).values())
-      .filter((family) => family.some((session) => directoryContains(params.targetDirectory, session.location.directory)))
-    await assertInactive(context.client, families.flat())
-    const original = new Map(families.flat().map((session) => [session.id, session.location]))
-    const moved: string[] = []
-    let root: LocationRef | undefined
-
-    try {
-      if (families.length) {
-        const destination = await resolveProjectLocation(context, params.rootDirectory)
-        root = destination
-        for (const family of families) await moveMembers(context, family, destination, moved)
-        await verifyInventory(context, moved, new Map(moved.map((id) => [id, destination])))
-        const refreshed = await listCompleteProjectSessions(context.client, context.project.id)
-        if (refreshed.some((session) => directoryContains(params.targetDirectory, session.location.directory))) {
-          throw new ProjectSessionError("Sessions remain attached to the worktree after evacuation", 409)
+  await withProject(params.client, params.projectLocation, async (context) => {
+    const matchesTarget = params.matchesTarget
+      ?? (async (directory: string) => directoryContains(params.targetDirectory, directory))
+    const initial = await listCompleteProjectSessions(context.client, context.project.id)
+    const destination = await resolveProjectLocation(context, params.rootDirectory)
+    const remove = async () => {
+      if (!await params.isTargetRegistered()) {
+        throw new ProjectSessionError("Worktree changed before deletion", 409)
+      }
+      const allSessions = await listCompleteProjectSessions(context.client, context.project.id)
+      const foreign = context.workspaceID
+        ? (await Promise.all(allSessions.map(async (session) => (
+            session.location.workspaceID !== context.workspaceID && await matchesTarget(session.location.directory)
+              ? session.id
+              : undefined
+          )))).filter((id): id is string => Boolean(id))
+        : []
+      if (foreign.length) {
+        throw new ProjectSessionError(`Sessions from another workspace block deletion: ${foreign.join(", ")}`, 409)
+      }
+      const inventory = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
+      const families: SessionInfo[][] = []
+      for (const family of resolveSessionFamilies(inventory).values()) {
+        if ((await Promise.all(family.map(({ location }) => matchesTarget(location.directory)))).some(Boolean)) {
+          families.push(family)
         }
       }
       await assertInactive(context.client, families.flat())
-      await params.remove()
-    } catch (error) {
-      const changed = root ? await refreshChangedSessionIds(context, moved, root) : []
-      if (changed.length) {
-        let registered: boolean
-        try {
-          registered = await params.isTargetRegistered()
-        } catch (inventoryError) {
-          throw new ProjectSessionError(
-            `${errorMessage(error)}; unable to verify worktree registration, rollback skipped: ${errorMessage(inventoryError)}`,
-            500,
-          )
+      const original = new Map(families.flat().map((session) => [session.id, session.location]))
+      const moved: string[] = []
+      let root: LocationRef | undefined
+
+      try {
+        if (families.length) {
+          root = destination
+          for (const family of families) await moveMembers(context, family, destination, moved)
+          await verifyInventory(context, moved, new Map(moved.map((id) => [id, destination])))
         }
-        // A mismatched identity may now be a replacement checkout; never move sessions into it.
-        if (registered) await rollback(context, changed, original, error)
+        const refreshed = await listCompleteProjectSessions(context.client, context.project.id)
+        if ((await Promise.all(refreshed.map(({ location }) => matchesTarget(location.directory)))).some(Boolean)) {
+          throw new ProjectSessionError("Sessions remain attached to the worktree after evacuation", 409)
+        }
+        await assertInactive(context.client, families.flat())
+        await params.validateBeforeRemove?.(context.project.id)
+        await params.remove()
+      } catch (error) {
+        const changed = root ? await refreshChangedSessionIds(context, moved, root) : []
+        if (changed.length) {
+          let registered: boolean
+          try {
+            registered = await params.isTargetRegistered()
+          } catch (inventoryError) {
+            throw new ProjectSessionError(
+              `${errorMessage(error)}; unable to verify worktree registration, rollback skipped: ${errorMessage(inventoryError)}`,
+              500,
+            )
+          }
+          // A mismatched identity may now be a replacement checkout; never move sessions into it.
+          if (registered) await rollback(context, changed, original, error)
+        }
+        throw asProjectError(error, "Unable to remove worktree")
       }
-      throw asProjectError(error, "Unable to remove worktree")
     }
+    return params.runMutation
+      ? params.runMutation([...initial.map(({ location }) => location.directory), params.targetDirectory, destination.directory], remove)
+      : remove()
   })
 }
 
 async function withProject<T>(
   client: OpenCodeClient,
-  directory: string,
+  requested: LocationRef,
   operation: (context: ProjectContext) => Promise<T>,
 ): Promise<T> {
   let location: LocationGetOutput
   try {
-    location = await client.location.get({ location: { directory } })
+    location = await client.location.get({
+      location: { directory: requested.directory, workspace: requested.workspaceID },
+    })
   } catch (error) {
     throw asProjectError(error, "Unable to resolve the workspace project")
   }
   if (!location?.project?.id) throw new ProjectSessionError("OpenCode could not resolve the workspace project", 502)
-  const previous = projectLocks.get(location.project.id) ?? Promise.resolve()
+  const workspaceID = location.workspaceID ?? requested.workspaceID
+  const lockKey = location.project.id
+  const previous = projectLocks.get(lockKey) ?? Promise.resolve()
   const run = previous.catch(() => undefined).then(async () => {
     try {
-      return await operation({ client, project: location.project })
+      return await operation({ client, project: location.project, workspaceID })
     } catch (error) {
       throw asProjectError(error, "Project session operation failed")
     }
   })
   const tail = run.then(() => undefined, () => undefined)
-  projectLocks.set(location.project.id, tail)
+  projectLocks.set(lockKey, tail)
   try {
     return await run
   } finally {
-    if (projectLocks.get(location.project.id) === tail) projectLocks.delete(location.project.id)
+    if (projectLocks.get(lockKey) === tail) projectLocks.delete(lockKey)
   }
 }
 
 async function resolveProjectLocation(context: ProjectContext, directory: string): Promise<LocationRef> {
-  const location = await context.client.location.get({ location: { directory } })
+  const location = await context.client.location.get({
+    location: { directory, workspace: context.workspaceID },
+  })
   if (!location?.directory || location.project?.id !== context.project.id) {
     throw new ProjectSessionError("Target worktree does not belong to the workspace project", 409)
   }
@@ -304,7 +353,7 @@ async function verifyInventory(
   expected: Map<string, LocationRef>,
 ): Promise<SessionInfo[]> {
   for (let attempt = 0; attempt < MOVE_VERIFY_ATTEMPTS; attempt += 1) {
-    const sessions = await listCompleteProjectSessions(context.client, context.project.id)
+    const sessions = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
     const refreshed = new Map(sessions.map((session) => [session.id, session]))
     if (sessionIds.every((sessionId) => {
       const session = refreshed.get(sessionId)

@@ -10,10 +10,11 @@
 ## OpenCode Service
 
 - Use `OpenCodeSharedService` in `packages/server/src/workspaces/opencode-service.ts`.
-- Keep one CodeNomad-managed shared-service lifecycle and one event subscription for all workspaces. Production lifecycle is custom and process-proofed; do not replace it with direct `Service.ensure`/`Service.stop`.
+- Keep one shared-service adapter and one event subscription for all workspaces. Use the selected host or WSL CLI's official status/start/password lifecycle, own no private service state/PID, and never stop the externally owned global daemon on backend shutdown.
 - Model workspaces with native `LocationRef`/directories in `packages/server/src/workspaces/manager.ts`.
-- Never spawn or stop OpenCode per workspace and never add plugin installation/packaging.
-- Force V2 `OPENCODE_DB` to `~/.local/share/opencode2/opencode.db` and never share the V1 database with V2.
+- Never spawn or stop OpenCode per workspace and never add general plugin installation/packaging. Developer Automation's reviewed, execution-gated adapter is the sole exception; definitions are global until OpenCode supports dynamic location-scoped registration.
+- Explicit Stop Workspace evicts the location; ordinary UI close never calls workspace deletion. WSL requires localhost forwarding and no cross-namespace PID operations.
+- Leave global service state/database ownership to OpenCode. Pass allowed environment only when starting a missing daemon; leave an existing daemon unchanged and ignore `OPENCODE_DB`/`XDG_STATE_HOME`.
 
 ## Trust Boundaries
 
@@ -35,11 +36,15 @@
 
 - Workspace/location manager: `packages/server/src/workspaces/manager.ts`
 - Shared service: `packages/server/src/workspaces/opencode-service.ts`
-- Launch adapter: `packages/server/src/workspaces/spawn.ts`
+- CLI lifecycle: `packages/server/src/workspaces/opencode-cli-service.ts`
+- Host lifecycle: `packages/server/src/workspaces/host-opencode-service.ts`
+- WSL lifecycle: `packages/server/src/workspaces/wsl-opencode-service.ts`
+- Spawn/path helpers: `packages/server/src/workspaces/spawn.ts`
 - OpenCode event bridge: `packages/server/src/workspaces/instance-events.ts`
 - Instance proxy: `packages/server/src/server/http-server.ts`
 - CodeNomad SSE: `packages/server/src/server/routes/events.ts`
 - Git reads/mutations: `packages/server/src/workspaces/git-status.ts`, `git-mutations.ts`
 - Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Developer Automation: `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/server/routes/automation-plugin.ts`
 
 Deleted paths such as `packages/server/src/workspaces/runtime.ts`, `packages/server/src/background-processes/`, `packages/server/src/plugins/`, and `packages/opencode-plugin/` are not valid extension points.

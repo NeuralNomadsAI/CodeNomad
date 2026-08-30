@@ -1,4 +1,4 @@
-import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { For, createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -6,7 +6,7 @@ import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse } from "../stores/instances"
-import { getFormQueue, type FormInfo } from "../stores/forms"
+import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
@@ -23,9 +23,6 @@ import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
 import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
-  DiffRenderOptions,
-  MarkdownRenderOptions,
-  AnsiRenderOptions,
   ToolCallPart,
   ToolOutputChrome,
   ToolRendererContext,
@@ -34,10 +31,8 @@ import type {
 import {
   buildToolSpeechText,
   ensureMarkdownContent,
-  getRelativePath,
   getToolName,
   isToolStateCompleted,
-  isToolStateError,
   isToolStateRunning,
   getDefaultToolAction,
   readToolStatePayload,
@@ -951,7 +946,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -1010,17 +1005,31 @@ export default function ToolCall(props: ToolCallProps) {
           {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
-        <ActionOverflowMenu
-          items={actionMenuItems()}
-          label={t("messageItem.actions.more")}
-          triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-wide"
-          minItems={1}
-        />
+        <For each={actionMenuItems()}>
+          {(item) => (
+            <button
+              type="button"
+              class="tool-call-header-icon-button tool-call-header-copy"
+              disabled={item.disabled}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                void item.onSelect()
+              }}
+              onPointerEnter={() => item.onMouseEnter?.()}
+              onPointerLeave={() => item.onMouseLeave?.()}
+              aria-label={item.label}
+              title={item.label}
+            >
+              {item.icon}
+            </button>
+          )}
+        </For>
         <ActionOverflowMenu
           items={actionMenuItems(true)}
           label={t("messageItem.actions.more")}
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
-          minItems={1}
+          minItems={2}
         />
         </div>
       </Show>

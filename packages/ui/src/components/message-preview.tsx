@@ -10,7 +10,6 @@ interface MessagePreviewProps {
 }
 
 const MessagePreview: Component<MessagePreviewProps> = (props) => {
-  const lastAssistantIndex = () => 0
 
   return (
     <div class="message-preview message-stream">
@@ -20,7 +19,6 @@ const MessagePreview: Component<MessagePreviewProps> = (props) => {
         sessionId={props.sessionId}
         store={props.store}
         messageIndex={0}
-        lastAssistantIndex={lastAssistantIndex}
         showThinking={() => false}
         thinkingDefaultExpanded={() => false}
         usageMetricsVisibility={() => "hidden"}

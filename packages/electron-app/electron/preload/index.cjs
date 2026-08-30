@@ -7,20 +7,25 @@ function resolveWindowContext() {
   return context === "remote" ? "remote" : "local"
 }
 
-function resolveRuntimeHost(windowContext) {
-  return "electron"
+function resolveWindowId() {
+  const prefix = "--codenomad-window-id="
+  const arg = process.argv.find((value) => typeof value === "string" && value.startsWith(prefix))
+  return arg ? arg.slice(prefix.length) : null
 }
 
 const windowContext = resolveWindowContext()
+const windowId = resolveWindowId()
 
 const localElectronAPI = {
   onCliStatus: (callback) => {
-    ipcRenderer.on("cli:status", (_, data) => callback(data))
-    return () => ipcRenderer.removeAllListeners("cli:status")
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on("cli:status", handler)
+    return () => ipcRenderer.removeListener("cli:status", handler)
   },
   onCliError: (callback) => {
-    ipcRenderer.on("cli:error", (_, data) => callback(data))
-    return () => ipcRenderer.removeAllListeners("cli:error")
+    const handler = (_, data) => callback(data)
+    ipcRenderer.on("cli:error", handler)
+    return () => ipcRenderer.removeListener("cli:error", handler)
   },
   getCliStatus: () => ipcRenderer.invoke("cli:getStatus"),
   restartCli: () => ipcRenderer.invoke("cli:restart"),
@@ -28,6 +33,14 @@ const localElectronAPI = {
   getDirectoryPaths: (paths) => ipcRenderer.invoke("filesystem:getDirectoryPaths", paths),
   openWorkspaceTarget: (payload) => ipcRenderer.invoke("workspace:openTarget", payload),
   setWorkspaceMenuEnabled: (enabled) => ipcRenderer.invoke("workspace:setMenuEnabled", Boolean(enabled)),
+  newWindow: () => ipcRenderer.invoke("window:new"),
+  nextPendingFolder: () => ipcRenderer.invoke("window:nextFolder"),
+  acknowledgePendingFolder: (folder, opened) => ipcRenderer.invoke("window:ackFolder", folder, Boolean(opened)),
+  onPendingFolders: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on("window:folders-pending", handler)
+    return () => ipcRenderer.removeListener("window:folders-pending", handler)
+  },
   onMenuAction: (callback) => {
     const handler = (_event, action) => callback(action)
     ipcRenderer.on("menu:action", handler)
@@ -47,9 +60,24 @@ const localElectronAPI = {
   claimClientStateAccess: (token) => ipcRenderer.invoke("client-state:claimAccess", token),
   loadClientState: (token) => ipcRenderer.invoke("client-state:load", token),
   saveClientState: (token, snapshot) => ipcRenderer.invoke("client-state:save", token, snapshot),
+  commitClientStatePartitions: (token, payload) => ipcRenderer.invoke("client-state:commitPartitions", token, payload),
+  loadClientStatePartition: (token, key) => ipcRenderer.invoke("client-state:loadPartition", token, key),
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  getDeveloperRun: () => ipcRenderer.invoke("developer-run:get"),
+  startDeveloperRun: (input) => ipcRenderer.invoke("developer-run:start", input),
+  stopDeveloperRun: () => ipcRenderer.invoke("developer-run:stop"),
+  onDeveloperRunStatus: (callback) => {
+    const handler = (_event, status) => callback(status)
+    ipcRenderer.on("developer-run:status", handler)
+    return () => ipcRenderer.removeListener("developer-run:status", handler)
+  },
+  onDeveloperRunLog: (callback) => {
+    const handler = (_event, log) => callback(log)
+    ipcRenderer.on("developer-run:log", handler)
+    return () => ipcRenderer.removeListener("developer-run:log", handler)
+  },
 }
 
 const remoteElectronAPI = {
@@ -63,4 +91,5 @@ contextBridge.exposeInMainWorld(
   windowContext === "local" ? localElectronAPI : remoteElectronAPI,
 )
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
-contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", resolveRuntimeHost(windowContext))
+contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_ID__", windowContext === "local" ? windowId : null)
+contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", "electron")

@@ -6,7 +6,11 @@ import { createShellStore, type ShellApi } from "./shell-store.ts"
 it("does not subscribe a calling effect to internal shell loading state", async () => {
   let listCalls = 0
   let effectRuns = 0
-  const api: ShellApi = { list: async () => { listCalls += 1; return [] }, remove: async () => {} }
+  const api: ShellApi = {
+    list: async () => { listCalls += 1; return [] },
+    remove: async () => {},
+    output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+  }
   const store = createShellStore(() => api)
   let dispose = () => {}
 

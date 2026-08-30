@@ -193,13 +193,13 @@
 
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-inline-start: 4px solid var(--message-assistant-border);
+  border-inline-start: 1px solid var(--message-assistant-border);
   margin-top: 0;
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-inline-start: 4px solid var(--message-assistant-border);
+  border-inline-start: 1px solid var(--message-assistant-border);
   border-block-start: none;
   border-block-end: none;
   margin: 0;
@@ -393,6 +393,10 @@
   color: var(--text-primary);
 }
 
+.message-compaction-card--failed {
+  color: var(--color-danger);
+}
+
 .message-compaction-row {
   @apply flex items-center gap-2;
   justify-content: center;
@@ -407,14 +411,27 @@
   font-weight: var(--font-weight-medium);
 }
 
+.message-compaction-content {
+  padding-top: 0.5rem;
+  color: var(--text-primary);
+}
+
+.message-compaction-card--failed .message-compaction-content {
+  color: var(--color-danger);
+}
+
+.message-compaction-card--failed .markdown-body {
+  color: var(--color-danger);
+}
+
 .message-step-start {
   background-color: var(--message-assistant-bg);
-  border-inline-start: 4px solid var(--message-assistant-border);
+  border-inline-start: 1px solid var(--message-assistant-border);
 }
 
 .message-step-finish {
   background-color: var(--message-assistant-bg);
-  border-inline-start: 4px solid var(--message-assistant-border);
+  border-inline-start: 1px solid var(--message-assistant-border);
   border-block-start: none;
   border-block-end: none;
   padding-top: 0;
@@ -528,26 +545,6 @@
   align-items: center;
   gap: 0;
   padding: 0.25rem var(--message-action-right-inset) 0.25rem 0;
-}
-
-.message-reasoning-actions > .action-overflow-trigger {
-  display: inline-flex;
-}
-
-.message-reasoning-actions > .action-overflow-trigger.action-overflow-narrow {
-  display: none;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .message-action-button:not(.action-overflow-trigger) {
-  display: none;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
-  display: none;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-reasoning-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
-  display: inline-flex;
 }
 
 .message-reasoning-toggle:hover {

@@ -45,6 +45,20 @@ describe("native session message normalization", () => {
     assert.equal(result.message.status, "complete")
   })
 
+  it("maps assistant messages that omit model metadata", () => {
+    const result = normalizeSessionMessage("session", {
+      id: "assistant",
+      type: "assistant",
+      agent: "build",
+      time: { created: 2 },
+      content: [],
+    } as unknown as SessionMessageInfo)
+
+    assert.equal(result.info.role, "assistant")
+    assert.equal(result.info.providerID, undefined)
+    assert.equal(result.info.modelID, undefined)
+  })
+
   it("normalizes native streaming tool input to the renderer pending state", () => {
     const source: SessionMessageInfo = {
       id: "assistant",
@@ -106,13 +120,17 @@ describe("native session message normalization", () => {
     ])
   })
 
-  it("maps completed shell and compaction records to terminal statuses", () => {
+  it("maps shell and compaction records to display statuses and text", () => {
     const shell = normalizeSessionMessage("session", {
       id: "shell", type: "shell", shellID: "sh", command: "pwd", status: "exited", exit: 0,
       output: { output: "/repo", cursor: 5, size: 5, truncated: false }, time: { created: 1, completed: 2 },
     }).message
     const compacted = normalizeSessionMessage("session", {
       id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", recent: "recent",
+      time: { created: 1 },
+    }).message
+    const running = normalizeSessionMessage("session", {
+      id: "running", type: "compaction", status: "running", reason: "auto", summary: "partial", recent: "recent",
       time: { created: 1 },
     }).message
     const failed = normalizeSessionMessage("session", {
@@ -122,7 +140,11 @@ describe("native session message normalization", () => {
 
     assert.equal(shell.status, "complete")
     assert.equal(compacted.status, "complete")
+    assert.equal((compacted.parts[0] as any).text, "summary")
+    assert.equal(running.status, "sent")
+    assert.equal((running.parts[0] as any).text, "partial")
     assert.equal(failed.message.status, "error")
+    assert.equal((failed.message.parts[0] as any).text, "too large")
     assert.deepEqual(failed.info.error, {
       type: "CompactionError", message: "too large", status: 413,
       name: "CompactionError", data: { message: "too large" },
@@ -140,5 +162,12 @@ describe("native session message normalization", () => {
       type: "ProviderError", message: "rate limited", status: 429,
       name: "ProviderError", data: { message: "rate limited" },
     })
+
+    const aborted = normalizeSessionMessage("session", {
+      id: "assistant-aborted", type: "assistant", agent: "build", model: { providerID: "p", id: "m" },
+      content: [], error: { type: "aborted", message: "Step interrupted" }, time: { created: 1 },
+    })
+    assert.equal(aborted.info.error?.name, "MessageAbortedError")
+    assert.equal(aborted.message.parts.length, 1)
   })
 })

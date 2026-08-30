@@ -1,44 +1,48 @@
 mod access;
 mod commands;
 mod cross_host;
+mod envelope;
 mod navigation;
+mod partitions;
 mod process;
 mod window;
 
 #[doc(hidden)]
 pub use commands::{
-    __cmd__client_state_claim_access, __cmd__client_state_clear, __cmd__client_state_load,
-    __cmd__client_state_navigation_flushed, __cmd__client_state_renderer_flushed,
-    __cmd__client_state_save, __cmd__client_state_set_restore_enabled,
+    __cmd__client_state_claim_access, __cmd__client_state_clear,
+    __cmd__client_state_commit_partitions, __cmd__client_state_load,
+    __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
+    __cmd__client_state_renderer_flushed, __cmd__client_state_save,
+    __cmd__client_state_set_restore_enabled,
 };
 pub use commands::{
-    client_state_claim_access, client_state_clear, client_state_load,
-    client_state_navigation_flushed, client_state_renderer_flushed, client_state_save,
-    client_state_set_restore_enabled,
+    client_state_claim_access, client_state_clear, client_state_commit_partitions,
+    client_state_load, client_state_load_partition, client_state_navigation_flushed,
+    client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
 };
 pub(crate) use navigation::{
-    before_main_window_navigation, before_main_window_navigation_if, NavigationKind,
+    before_window_navigation, before_window_navigation_if, NavigationKind,
 };
 pub use window::{
-    capture_and_flush_main_window, main_window_zoom, set_main_window_zoom, setup_main_window,
-    DEFAULT_ZOOM_LEVEL,
+    capture_and_flush_all_windows, capture_and_flush_window, local_window_zoom,
+    set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL,
 };
 
+use envelope::PersistedClientState;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
-use window::NativeWindowState;
 
-const CLIENT_STATE_VERSION: u64 = 1;
 const CLIENT_STATE_FILENAME: &str = "client-state.json";
-const MAX_CLIENT_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const MAX_CLIENT_SNAPSHOT_BYTES: usize = envelope::MAX_SNAPSHOT_BYTES;
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Serialize)]
@@ -50,36 +54,7 @@ pub(crate) struct RendererFlushRequest {
 #[derive(Default)]
 struct RendererFlush {
     request_lock: Mutex<()>,
-    next_generation: AtomicU64,
-    acknowledged_generation: AtomicU64,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PersistedClientState {
-    version: u64,
-    restore_enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    snapshot: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    window: Option<NativeWindowState>,
-    #[serde(skip)]
-    unsupported_future_envelope: bool,
-    #[serde(skip)]
-    writes_enabled: bool,
-}
-
-impl Default for PersistedClientState {
-    fn default() -> Self {
-        Self {
-            version: CLIENT_STATE_VERSION,
-            restore_enabled: true,
-            snapshot: None,
-            window: None,
-            unsupported_future_envelope: false,
-            writes_enabled: true,
-        }
-    }
+    windows: Mutex<HashMap<String, (u64, u64)>>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -88,16 +63,18 @@ pub struct ClientStateLoadResult {
     is_primary: bool,
     restore_enabled: bool,
     snapshot: Value,
+    partition_protocol_version: Option<u64>,
 }
 
 pub struct ClientState {
     state_path: PathBuf,
     process: process::ProcessState,
     state: Mutex<PersistedClientState>,
-    zoom_level: Mutex<f64>,
+    zoom_levels: Mutex<HashMap<String, f64>>,
     write_lock: Mutex<()>,
     save_generation: AtomicU64,
     renderer_access: access::RendererAccess,
+    ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
     write_state: StateWriter,
 }
@@ -106,21 +83,45 @@ type StateWriter =
     std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), String> + Send + Sync>;
 
 impl ClientState {
-    pub fn initialize(app: &AppHandle) -> Self {
+    pub(crate) fn stage_renderer_page_load(
+        &self,
+        window_id: &str,
+        url: &Url,
+    ) -> Result<(), String> {
+        self.renderer_access
+            .begin_navigation_for(window_id, Some(url))
+            .map(|_| ())
+    }
+
+    pub fn initialize(app: &AppHandle, scoped_client_state_directory: Option<&Path>) -> Self {
         match app.path().app_data_dir() {
             Ok(app_data_dir) => {
-                match (
-                    cross_host::election_directory(),
-                    cross_host::state_path(),
-                    cross_host::legacy_state_path(),
-                ) {
+                let paths = scoped_client_state_directory
+                    .map(|directory| {
+                        (
+                            Ok(directory.join("election")),
+                            Ok(directory.join(CLIENT_STATE_FILENAME)),
+                            Ok(None),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            cross_host::election_directory(),
+                            cross_host::state_path(),
+                            cross_host::legacy_state_path().map(Some),
+                        )
+                    });
+                match paths {
                     (Ok(election_dir), Ok(state_path), Ok(legacy_state_path)) => {
-                        let legacy_electron = cross_host::legacy_electron_data_directory();
+                        let legacy_electron = scoped_client_state_directory
+                            .is_none()
+                            .then(cross_host::legacy_electron_data_directory)
+                            .flatten();
                         Self::initialize_managed_at_with_election(
                             &app_data_dir,
                             &election_dir,
                             &state_path,
-                            Some(&legacy_state_path),
+                            legacy_state_path.as_deref(),
                             legacy_electron.as_deref(),
                         )
                     }
@@ -167,11 +168,10 @@ impl ClientState {
     }
 
     fn disabled(state_path: PathBuf) -> Self {
-        let state = PersistedClientState {
-            restore_enabled: false,
-            writes_enabled: false,
-            ..PersistedClientState::default()
-        };
+        let mut state = PersistedClientState::default();
+        let record = state.active_mut();
+        record.restore_enabled = false;
+        record.writes_enabled = false;
         Self::new(
             state_path,
             process::ProcessState::disabled(),
@@ -186,19 +186,28 @@ impl ClientState {
         state: PersistedClientState,
         write_state: StateWriter,
     ) -> Self {
-        let zoom_level = state
-            .restore_enabled
-            .then(|| state.window.as_ref().map(|window| window.zoom_factor))
-            .flatten()
-            .unwrap_or(DEFAULT_ZOOM_LEVEL);
+        let zoom_levels = state
+            .window_order
+            .iter()
+            .map(|id| {
+                let record = state.windows.get(id).expect("validated window order");
+                let zoom = record
+                    .restore_enabled
+                    .then(|| record.window.as_ref().map(|window| window.zoom_factor))
+                    .flatten()
+                    .unwrap_or(DEFAULT_ZOOM_LEVEL);
+                (id.clone(), zoom)
+            })
+            .collect();
         Self {
             state_path,
             process,
             state: Mutex::new(state),
-            zoom_level: Mutex::new(zoom_level),
+            zoom_levels: Mutex::new(zoom_levels),
             write_lock: Mutex::new(()),
             save_generation: AtomicU64::new(0),
             renderer_access: access::RendererAccess::default(),
+            ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
             write_state,
         }
@@ -258,12 +267,7 @@ impl ClientState {
         }
         let state = if registration.is_primary() {
             if future_legacy {
-                PersistedClientState {
-                    restore_enabled: false,
-                    unsupported_future_envelope: true,
-                    writes_enabled: false,
-                    ..PersistedClientState::default()
-                }
+                envelope::unsupported()
             } else {
                 read_client_state(state_path)
             }
@@ -283,36 +287,178 @@ impl ClientState {
         self.process.is_primary()
     }
 
-    fn claim_renderer_access(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
+    pub(crate) fn is_primary_process(&self) -> bool {
+        self.is_primary()
+    }
+
+    pub(crate) fn window_ids(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .map(|state| state.window_order.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn set_active_window(&self, window_id: &str) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        self.renderer_access.claim(access_token, renderer_url)
+        if !self.is_primary() {
+            return Ok(false);
+        }
+        let previous = {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            if state.unsupported_future_envelope || state.active_window_id == window_id {
+                return Ok(!state.unsupported_future_envelope);
+            }
+            state.record(window_id)?;
+            let previous = state.active_window_id.clone();
+            state.active_window_id = window_id.to_string();
+            previous
+        };
+        if let Err(error) = self.write_current_state() {
+            self.state
+                .lock()
+                .map_err(|err| err.to_string())?
+                .active_window_id = previous;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn active_window_id(&self) -> Result<String, String> {
+        self.state
+            .lock()
+            .map(|state| state.active_window_id.clone())
+            .map_err(|err| err.to_string())
+    }
+
+    fn claim_renderer_access(
+        &self,
+        window_id: &str,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<(), String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let persisted = self
+            .state
+            .lock()
+            .map_err(|err| err.to_string())?
+            .record(window_id)
+            .is_ok();
+        let ephemeral = self
+            .ephemeral_windows
+            .lock()
+            .map_err(|err| err.to_string())?
+            .contains(window_id);
+        if !persisted && !ephemeral {
+            return Err("Unknown client state window".to_string());
+        }
+        self.renderer_access
+            .claim_for(window_id, access_token, renderer_url)
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
+        let window_id = self.active_window_id()?;
+        self.load_window(&window_id)
+    }
+
+    fn load_window(&self, window_id: &str) -> Result<ClientStateLoadResult, String> {
         let state = self.state.lock().map_err(|err| err.to_string())?;
+        let record = match state.record(window_id) {
+            Ok(record) => record,
+            Err(_error)
+                if self
+                    .ephemeral_windows
+                    .lock()
+                    .map_err(|err| err.to_string())?
+                    .contains(window_id) =>
+            {
+                return Ok(ClientStateLoadResult {
+                    is_primary: false,
+                    restore_enabled: false,
+                    snapshot: Value::Null,
+                    partition_protocol_version: Some(partitions::PROTOCOL_VERSION),
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let is_primary = self.is_primary();
         Ok(ClientStateLoadResult {
             is_primary,
             restore_enabled: if is_primary || !self.process.is_registered() {
-                state.restore_enabled
+                record.restore_enabled
             } else {
-                true
+                false
             },
-            snapshot: if is_primary && state.restore_enabled {
-                state.snapshot.clone().unwrap_or(Value::Null)
+            snapshot: if is_primary && record.restore_enabled {
+                record.snapshot.clone().unwrap_or(Value::Null)
             } else {
                 Value::Null
             },
+            partition_protocol_version: Some(partitions::PROTOCOL_VERSION),
         })
     }
 
     #[cfg(test)]
+    fn load_partition_guarded(
+        &self,
+        key: &str,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<Option<String>, String> {
+        let window_id = self.active_window_id()?;
+        self.load_partition_guarded_for(&window_id, key, access_valid)
+    }
+
+    fn load_partition_guarded_for(
+        &self,
+        window_id: &str,
+        key: &str,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<Option<String>, String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !access_valid() {
+            return Err(
+                "Client state renderer authority changed before partition read".to_string(),
+            );
+        }
+        if !partitions::valid_key(key) {
+            return Err("Invalid client state partition key".to_string());
+        }
+        if !self.is_primary() {
+            return Ok(None);
+        }
+        let state = self.state.lock().map_err(|err| err.to_string())?;
+        let record = state.record(window_id)?;
+        if !record.restore_enabled
+            || !record.partition_root_supported
+            || !record
+                .partition_keys
+                .as_ref()
+                .is_some_and(|keys| keys.iter().any(|candidate| candidate == key))
+        {
+            return Ok(None);
+        }
+        drop(state);
+        self.partition_store()
+            .load(key, &|| self.is_primary() && access_valid())
+    }
+
+    #[cfg(test)]
     fn save_snapshot(&self, snapshot: Value) -> Result<bool, String> {
-        self.save_snapshot_guarded(snapshot, || true)
+        let window_id = self.active_window_id()?;
+        self.save_snapshot_guarded_for(&window_id, snapshot, || true)
     }
 
     fn save_snapshot_guarded(
         &self,
+        snapshot: Value,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
+        let window_id = self.active_window_id()?;
+        self.save_snapshot_guarded_for(&window_id, snapshot, access_valid)
+    }
+
+    fn save_snapshot_guarded_for(
+        &self,
+        window_id: &str,
         snapshot: Value,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
@@ -323,23 +469,99 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
-        if self.normal_writes_suppressed()? {
+        if self.normal_writes_suppressed(window_id)? {
             return Ok(true);
         }
         if serialized_value_size(&snapshot)? > MAX_CLIENT_SNAPSHOT_BYTES {
             return Err("Client snapshot exceeds the 1 MiB limit".to_string());
         }
 
-        self.mutate_and_write(|state| state.snapshot = Some(snapshot), &access_valid)
+        let result = self.mutate_and_write(
+            window_id,
+            |state| {
+                let record = state.record_mut(window_id)?;
+                record.snapshot = Some(snapshot);
+                record.partition_protocol_version = None;
+                record.partition_keys = None;
+                record.partition_root_supported = false;
+                Ok(())
+            },
+            &access_valid,
+        )?;
+        self.collect_partitions(&access_valid);
+        Ok(result)
+    }
+
+    #[cfg(test)]
+    fn commit_partitions_guarded(
+        &self,
+        payload: partitions::PartitionCommit,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
+        let window_id = self.active_window_id()?;
+        self.commit_partitions_guarded_for(&window_id, payload, access_valid)
+    }
+
+    fn commit_partitions_guarded_for(
+        &self,
+        window_id: &str,
+        payload: partitions::PartitionCommit,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !access_valid() {
+            return Err("Client state renderer authority changed before mutation".to_string());
+        }
+        let commit = payload.validate()?;
+        if !self.is_primary() {
+            return Ok(false);
+        }
+        if self.normal_writes_suppressed(window_id)? {
+            return Ok(true);
+        }
+        self.partition_store()
+            .prepare(&commit, &|| self.is_primary() && access_valid())?;
+        let snapshot = commit.snapshot.clone();
+        let partition_keys = commit.partition_keys.clone();
+        let result = self.mutate_and_write(
+            window_id,
+            |state| {
+                let record = state.record_mut(window_id)?;
+                record.snapshot = Some(snapshot);
+                record.partition_protocol_version = Some(partitions::PROTOCOL_VERSION);
+                record.partition_keys = Some(partition_keys);
+                record.partition_root_supported = true;
+                Ok(())
+            },
+            &access_valid,
+        )?;
+        self.collect_partitions(&access_valid);
+        Ok(result)
+    }
+
+    fn collect_partitions(&self, access_valid: &dyn Fn() -> bool) {
+        let retained = self
+            .state
+            .lock()
+            .map(|state| state.retained_partition_keys())
+            .unwrap_or_default();
+        if let Err(err) = self
+            .partition_store()
+            .sweep(&retained, &|| self.is_primary() && access_valid())
+        {
+            eprintln!("[client-state] failed to sweep partitions: {err}");
+        }
     }
 
     #[cfg(test)]
     fn set_restore_enabled(&self, enabled: bool) -> Result<bool, String> {
-        self.set_restore_enabled_guarded(enabled, || true)
+        let window_id = self.active_window_id()?;
+        self.set_restore_enabled_guarded(&window_id, enabled, || true)
     }
 
     fn set_restore_enabled_guarded(
         &self,
+        window_id: &str,
         enabled: bool,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
@@ -358,25 +580,40 @@ impl ClientState {
         {
             return Ok(false);
         }
-        self.mutate_and_write(
+        let result = self.mutate_and_write(
+            window_id,
             |state| {
-                state.restore_enabled = enabled;
+                let record = state.record_mut(window_id)?;
+                record.restore_enabled = enabled;
                 if !enabled {
-                    state.snapshot = None;
-                    state.window = None;
+                    record.snapshot = None;
+                    record.window = None;
+                    record.partition_protocol_version = None;
+                    record.partition_keys = None;
+                    record.partition_root_supported = false;
                 }
-                state.writes_enabled = enabled;
+                record.writes_enabled = enabled;
+                Ok(())
             },
             &access_valid,
-        )
+        )?;
+        if !enabled {
+            self.collect_partitions(&access_valid);
+        }
+        Ok(result)
     }
 
     #[cfg(test)]
     fn clear(&self) -> Result<bool, String> {
-        self.clear_guarded(|| true)
+        let window_id = self.active_window_id()?;
+        self.clear_guarded(&window_id, || true)
     }
 
-    fn clear_guarded(&self, access_valid: impl Fn() -> bool) -> Result<bool, String> {
+    fn clear_guarded(
+        &self,
+        window_id: &str,
+        access_valid: impl Fn() -> bool,
+    ) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
@@ -384,33 +621,55 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
-        self.mutate_and_write(
+        let result = self.mutate_and_write(
+            window_id,
             |state| {
-                if state.unsupported_future_envelope {
-                    *state = PersistedClientState::default();
+                let clearing_unsupported = state.unsupported_future_envelope;
+                state.unsupported_future_envelope = false;
+                let record = state.record_mut(window_id)?;
+                if clearing_unsupported {
+                    record.snapshot = None;
+                    record.window = None;
+                    record.partition_protocol_version = None;
+                    record.partition_keys = None;
+                    record.partition_root_supported = false;
+                    record.writes_enabled = true;
                 } else {
-                    state.snapshot = None;
-                    state.window = None;
-                    state.writes_enabled = false;
+                    record.snapshot = None;
+                    record.window = None;
+                    record.partition_protocol_version = None;
+                    record.partition_keys = None;
+                    record.partition_root_supported = false;
+                    record.writes_enabled = false;
                 }
+                Ok(())
             },
             &access_valid,
-        )
+        )?;
+        self.collect_partitions(&access_valid);
+        Ok(result)
     }
 
     fn flush(&self) -> Result<(), String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        if self.is_primary() && !self.normal_writes_suppressed()? {
+        let unsupported = self
+            .state
+            .lock()
+            .map_err(|err| err.to_string())?
+            .unsupported_future_envelope;
+        if self.is_primary() && !unsupported {
             self.write_current_state()?;
         }
         Ok(())
     }
 
-    fn normal_writes_suppressed(&self) -> Result<bool, String> {
-        self.state
-            .lock()
-            .map(|state| !state.writes_enabled || state.unsupported_future_envelope)
-            .map_err(|err| err.to_string())
+    fn normal_writes_suppressed(&self, window_id: &str) -> Result<bool, String> {
+        let state = self.state.lock().map_err(|err| err.to_string())?;
+        Ok(state.unsupported_future_envelope || !state.record(window_id)?.writes_enabled)
+    }
+
+    fn partition_store(&self) -> partitions::PartitionStore {
+        partitions::PartitionStore::new(self.state_path.parent().unwrap_or(Path::new("")))
     }
 
     fn write_current_state(&self) -> Result<(), String> {
@@ -433,13 +692,14 @@ impl ClientState {
 
     fn mutate_and_write(
         &self,
-        mutate: impl FnOnce(&mut PersistedClientState),
+        _window_id: &str,
+        mutate: impl FnOnce(&mut PersistedClientState) -> Result<(), String>,
         replacement_valid: &dyn Fn() -> bool,
     ) -> Result<bool, String> {
         let previous_state = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             let previous = state.clone();
-            mutate(&mut state);
+            mutate(&mut state)?;
             previous
         };
 
@@ -452,7 +712,76 @@ impl ClientState {
         }
     }
 
+    pub(crate) fn add_window(&self, window_id: String) -> Result<bool, String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !self.is_primary() {
+            return Ok(false);
+        }
+        let previous = {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            if state.unsupported_future_envelope {
+                return Ok(false);
+            }
+            let previous = state.clone();
+            state.add_window(window_id.clone())?;
+            previous
+        };
+        if let Err(err) = self.write_current_state() {
+            *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous;
+            return Err(err);
+        }
+        self.zoom_levels
+            .lock()
+            .map_err(|err| err.to_string())?
+            .insert(window_id, DEFAULT_ZOOM_LEVEL);
+        Ok(true)
+    }
+
+    pub(crate) fn register_ephemeral_window(&self, window_id: String) {
+        if let Ok(mut windows) = self.ephemeral_windows.lock() {
+            windows.insert(window_id);
+        }
+    }
+
+    pub(crate) fn unregister_window(&self, window_id: &str) {
+        self.renderer_access.remove(window_id);
+        if let Ok(mut windows) = self.ephemeral_windows.lock() {
+            windows.remove(window_id);
+        }
+        if let Ok(mut flushes) = self.renderer_flush.windows.lock() {
+            flushes.remove(window_id);
+        }
+    }
+
+    pub(crate) fn remove_window(&self, window_id: &str) -> Result<bool, String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !self.is_primary() {
+            return Ok(false);
+        }
+        let mut zoom_levels = self.zoom_levels.lock().map_err(|err| err.to_string())?;
+        let previous = {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            if state.unsupported_future_envelope {
+                return Ok(false);
+            }
+            let previous = state.clone();
+            if !state.remove_window(window_id)? {
+                return Ok(false);
+            }
+            previous
+        };
+        if let Err(err) = self.write_current_state() {
+            *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous;
+            return Err(err);
+        }
+        self.renderer_access.remove(window_id);
+        zoom_levels.remove(window_id);
+        self.collect_partitions(&|| true);
+        Ok(true)
+    }
+
     fn release_locks(&self) {
+        // Lock order fences takeover until root publication and partition GC leave write_lock.
         let _write = self
             .write_lock
             .lock()
@@ -460,23 +789,34 @@ impl ClientState {
         self.process.release_locks();
     }
 
-    pub(crate) fn wait_for_renderer_flush(&self, app: &AppHandle, require_claim: bool) {
+    pub(crate) fn wait_for_renderer_flush(
+        &self,
+        app: &AppHandle,
+        window_label: &str,
+        window_id: &str,
+        require_claim: bool,
+    ) {
         let _request = self
             .renderer_flush
             .request_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        if require_claim && !self.renderer_access.is_claimed() {
+        if require_claim && !self.renderer_access.is_claimed_for(window_id) {
             return;
         }
-        let Some(window) = app.get_webview_window("main") else {
+        let Some(window) = app.get_webview_window(window_label) else {
             return;
         };
-        let generation = self
-            .renderer_flush
-            .next_generation
-            .fetch_add(1, Ordering::SeqCst)
-            + 1;
+        let generation = {
+            let mut windows = self
+                .renderer_flush
+                .windows
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let state = windows.entry(window_id.to_string()).or_default();
+            state.0 += 1;
+            state.0
+        };
         if let Err(err) = window.emit(
             "client-state:navigation-flush-requested",
             RendererFlushRequest { generation },
@@ -486,23 +826,26 @@ impl ClientState {
         }
 
         let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
-        while self.renderer_flush.next_generation.load(Ordering::SeqCst) == generation
-            && self
-                .renderer_flush
-                .acknowledged_generation
-                .load(Ordering::SeqCst)
-                != generation
+        while self
+            .renderer_flush
+            .windows
+            .lock()
+            .ok()
+            .and_then(|windows| windows.get(window_id).copied())
+            .is_some_and(|state| state.0 == generation && state.1 != generation)
             && Instant::now() < deadline
         {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
 
-    fn acknowledge_renderer_flush(&self, generation: u64) {
-        if self.renderer_flush.next_generation.load(Ordering::SeqCst) == generation {
-            self.renderer_flush
-                .acknowledged_generation
-                .store(generation, Ordering::SeqCst);
+    fn acknowledge_renderer_flush(&self, window_id: &str, generation: u64) {
+        if let Ok(mut windows) = self.renderer_flush.windows.lock() {
+            if let Some(state) = windows.get_mut(window_id) {
+                if state.0 == generation {
+                    state.1 = generation;
+                }
+            }
         }
     }
 }
@@ -519,45 +862,13 @@ fn read_client_state(path: &Path) -> PersistedClientState {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => PersistedClientState::default(),
         Err(err) => {
             eprintln!("[client-state] failed to read state: {err}");
-            PersistedClientState::default()
+            envelope::unsupported()
         }
     }
 }
 
 fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
-    let Ok(Value::Object(value)) = serde_json::from_slice::<Value>(bytes) else {
-        return PersistedClientState::default();
-    };
-    let version = value.get("version").and_then(Value::as_u64);
-    if version.is_some_and(|version| version > CLIENT_STATE_VERSION) {
-        return PersistedClientState {
-            restore_enabled: false,
-            unsupported_future_envelope: true,
-            writes_enabled: false,
-            ..PersistedClientState::default()
-        };
-    }
-    if version != Some(CLIENT_STATE_VERSION) {
-        return PersistedClientState::default();
-    }
-
-    let snapshot = value.get("snapshot").cloned().filter(|snapshot| {
-        serialized_value_size(snapshot)
-            .map(|size| size <= MAX_CLIENT_SNAPSHOT_BYTES)
-            .unwrap_or(false)
-    });
-    let restore_enabled = value
-        .get("restoreEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    PersistedClientState {
-        version: CLIENT_STATE_VERSION,
-        restore_enabled,
-        snapshot,
-        window: value.get("window").and_then(window::normalize_window_state),
-        unsupported_future_envelope: false,
-        writes_enabled: restore_enabled,
-    }
+    envelope::parse(bytes)
 }
 
 fn legacy_candidate(
@@ -568,7 +879,11 @@ fn legacy_candidate(
     let Value::Object(value) = serde_json::from_slice::<Value>(&bytes).ok()? else {
         return None;
     };
-    if value.get("version").and_then(Value::as_u64) != Some(CLIENT_STATE_VERSION) {
+    if value
+        .get("version")
+        .and_then(envelope::exact_nonnegative_safe_integer)
+        != Some(envelope::LEGACY_MONOLITHIC_VERSION)
+    {
         return None;
     }
     let saved_at = value
@@ -578,7 +893,10 @@ fn legacy_candidate(
         .and_then(Value::as_i64)
         .unwrap_or(-1);
     let mut parsed = parse_client_state(&bytes);
-    parsed.window = None;
+    if parsed.unsupported_future_envelope {
+        return None;
+    }
+    parsed.active_mut().window = None;
     Some((parsed, value.contains_key("snapshot"), saved_at, host))
 }
 
@@ -593,8 +911,12 @@ fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Pat
         fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|value| value.get("version").and_then(Value::as_u64))
-            .is_some_and(|version| version > CLIENT_STATE_VERSION)
+            .and_then(|value| {
+                value
+                    .get("version")
+                    .and_then(envelope::exact_nonnegative_safe_integer)
+            })
+            .is_some_and(|version| version > envelope::LEGACY_MONOLITHIC_VERSION)
     })
 }
 
@@ -614,8 +936,9 @@ fn migrate_legacy_state(
     .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
         left.0
+            .active()
             .restore_enabled
-            .cmp(&right.0.restore_enabled)
+            .cmp(&right.0.active().restore_enabled)
             .then_with(|| left.1.cmp(&right.1))
             .then_with(|| right.2.cmp(&left.2))
             .then_with(|| right.3.cmp(left.3))
@@ -623,7 +946,21 @@ fn migrate_legacy_state(
     let Some((state, _, _, _)) = candidates.first() else {
         return Ok(());
     };
-    let bytes = serde_json::to_vec(state).map_err(|err| err.to_string())?;
+    let record = state.active();
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyState<'a> {
+        version: u64,
+        restore_enabled: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        snapshot: Option<&'a Value>,
+    }
+    let bytes = serde_json::to_vec(&LegacyState {
+        version: envelope::LEGACY_MONOLITHIC_VERSION,
+        restore_enabled: record.restore_enabled,
+        snapshot: record.snapshot.as_ref(),
+    })
+    .map_err(|err| err.to_string())?;
     if let Some(parent) = state_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
@@ -645,6 +982,18 @@ fn copy_legacy_shared_state(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(format!("failed to read legacy shared client state: {err}")),
     };
+    let version = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(envelope::exact_nonnegative_safe_integer)
+        });
+    if version != Some(envelope::LEGACY_MONOLITHIC_VERSION)
+        || parse_client_state(&bytes).unsupported_future_envelope
+    {
+        return Ok(());
+    }
     let parent = state_path
         .parent()
         .ok_or_else(|| format!("state path has no parent: {}", state_path.display()))?;
@@ -660,7 +1009,7 @@ fn copy_legacy_shared_state(
         return Err("Client state ownership changed before atomic replacement".to_string());
     }
     match temporary.persist_noclobber(state_path) {
-        Ok(_) => Ok(()),
+        Ok(_) => partitions::sync_directory(parent),
         Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(err) => Err(format!(
             "failed to publish copied legacy shared client state: {}",
@@ -695,6 +1044,7 @@ fn write_atomically(
     temporary
         .persist(path)
         .map_err(|err| format!("failed to replace state file: {}", err.error))?;
+    partitions::sync_directory(parent)?;
     Ok(())
 }
 
@@ -704,12 +1054,11 @@ pub fn release(app: &AppHandle) {
     }
 }
 
-pub fn flush_and_release_without_window_capture(app: &AppHandle) {
+pub fn flush_without_window_capture(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
         if let Err(err) = state.flush() {
             eprintln!("[client-state] failed to flush state: {err}");
         }
-        state.release_locks();
     }
 }
 

@@ -1,4 +1,4 @@
-import type { ModelRef, SessionPromptInput } from "@opencode-ai/client"
+import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
@@ -10,6 +10,7 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
 
@@ -23,6 +24,43 @@ const VOICE_MODE_INSTRUCTION = [
   "After the `spoken` block, continue with your normal detailed response.",
 ].join("\n\n")
 const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void> }>()
+const technicalPartUpdates = new Map<string, Promise<void>>()
+const sessionAdmissions = new Map<string, Promise<unknown>>()
+
+function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+  const key = `${instanceId}:${sessionId}`
+  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+    try {
+      const result = await action()
+      admission.complete()
+      return result
+    } catch (error) {
+      admission.rollback()
+      throw error
+    }
+  })
+  const settled = run.finally(() => {
+    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
+  })
+  sessionAdmissions.set(key, settled)
+  return settled
+}
+
+function serializeTechnicalPartUpdate(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  update: () => Promise<void>,
+): Promise<void> {
+  const key = `${instanceId}:${sessionId}:${messageId}`
+  const current = (technicalPartUpdates.get(key) ?? Promise.resolve()).catch(() => undefined).then(update)
+  const settled = current.finally(() => {
+    if (technicalPartUpdates.get(key) === settled) technicalPartUpdates.delete(key)
+  })
+  technicalPartUpdates.set(key, settled)
+  return settled
+}
 
 async function syncVoiceModeInstruction(client: ReturnType<typeof getRootClient>, instanceId: string, sessionId: string): Promise<void> {
   const key = `${instanceId}:${sessionId}`
@@ -133,13 +171,12 @@ async function sendMessage(
   sessionId: string,
   prompt: string,
   attachments: Attachment[] = [],
-): Promise<void> {
+  options: { delivery?: SessionInboxDelivery; restoredPayload?: SessionInboxUserPayload } = {},
+): Promise<string> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
-  const client = getRootClient(instanceId)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
@@ -151,7 +188,10 @@ async function sendMessage(
   const textPartId = createId("prt")
 
   const preparedPrompt = preparePromptDisplayText(prompt, attachments)
-
+  const restoredDisplayText = options.restoredPayload?.metadata?.displayText
+  if (typeof restoredDisplayText === "string" && options.restoredPayload?.text.startsWith(restoredDisplayText)) {
+    preparedPrompt.promptToSend += options.restoredPayload.text.slice(restoredDisplayText.length)
+  }
   const optimisticParts: any[] = [
     {
       id: textPartId,
@@ -161,15 +201,32 @@ async function sendMessage(
     },
   ]
 
-  const files: Array<{ uri: string; name?: string }> = []
+  const files: Array<NonNullable<SessionPromptInput["files"]>[number]> = []
   const agents: Array<NonNullable<SessionPromptInput["agents"]>[number]> = []
+  const remapMention = (mention: { text: string } | undefined) => {
+    if (!mention) return undefined
+    const start = prompt.indexOf(mention.text)
+    return start < 0 ? undefined : { text: mention.text, start, end: start + mention.text.length }
+  }
+  const restoredFiles = [...(options.restoredPayload?.files ?? [])]
 
   if (attachments.length > 0) {
     for (const att of attachments) {
       const source = att.source
       if (source.type === "file") {
         const partId = createId("prt")
-        files.push({ uri: att.url, name: att.filename })
+        const restoredIndex = restoredFiles.findIndex((file) => {
+          const uri = file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`
+          return uri === att.url
+        })
+        const restored = restoredIndex < 0 ? undefined : restoredFiles.splice(restoredIndex, 1)[0]
+        const mention = remapMention(restored?.mention)
+        files.push({
+          uri: att.url,
+          name: att.filename,
+          ...(restored?.description ? { description: restored.description } : {}),
+          ...(mention ? { mention } : {}),
+        })
         optimisticParts.push({
           id: partId,
           type: "file" as const,
@@ -180,7 +237,10 @@ async function sendMessage(
         })
       } else if (source.type === "agent") {
         const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
-        agents.push({ name: source.name, ...(mention ? { mention } : {}) })
+          ?? remapMention(options.restoredPayload?.agents?.find((agent) => agent.name === source.name)?.mention)
+        if (!agents.some((agent) => agent.name === source.name)) {
+          agents.push({ name: source.name, ...(mention ? { mention } : {}) })
+        }
       } else if (source.type === "text") {
         const display: string | undefined = att.display
         const value: unknown = source.value
@@ -210,20 +270,21 @@ async function sendMessage(
 
   clearConversationPlaybackForSession(instanceId, sessionId)
 
-  store.upsertMessage({
-    id: messageId,
-    sessionId,
-    role: "user",
-    status: "sending",
-    parts: optimisticParts,
-    createdAt,
-    updatedAt: createdAt,
-    isEphemeral: true,
-    clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
-  })
-
-  // Preserve the optimistic bubble only while the prompt request is unresolved.
-  store.markSendPending(messageId)
+  const projectOptimistically = options.delivery !== "queue"
+  if (projectOptimistically) {
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "sending",
+      parts: optimisticParts,
+      createdAt,
+      updatedAt: createdAt,
+      isEphemeral: true,
+      clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
+    })
+    store.markSendPending(messageId)
+  }
 
   withSession(instanceId, sessionId, () => {
     /* trigger reactivity for legacy session data */
@@ -239,6 +300,15 @@ async function sendMessage(
     text: preparedPrompt.promptToSend,
     ...(files.length > 0 ? { files } : {}),
     ...(agents.length > 0 ? { agents } : {}),
+    ...(options.restoredPayload?.skills ? {
+      skills: options.restoredPayload.skills.flatMap((skill) => {
+        const mention = remapMention(skill.mention)
+        return skill.mention && !mention ? [] : [{ id: skill.id, ...(mention ? { mention } : {}) }]
+      }),
+    } : {}),
+    ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
+    ...(options.delivery ? { delivery: options.delivery } : {}),
+    ...(options.delivery === "queue" ? { resume: false } : {}),
   }
 
   log.info("sendMessage", {
@@ -247,28 +317,34 @@ async function sendMessage(
     requestBody,
   })
 
+  let confirmedId = messageId
   try {
     log.info("session.prompt", { instanceId, sessionId, requestBody })
-    const admission = beginSessionGenerationAdmission(instanceId, sessionId)
-    try {
+    await admitSessionAction(instanceId, sessionId, async () => {
+      const currentInstance = instances().get(instanceId)
+      const currentSession = sessions().get(instanceId)?.get(sessionId)
+      if (!currentInstance?.client) throw new Error("Instance not ready")
+      if (!currentSession) throw new Error("Session not found")
+      const client = getRootClient(instanceId)
       await syncVoiceModeInstruction(client, instanceId, sessionId)
-      if (session.model.providerId && session.model.modelId) {
-        await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, session.model) })
+      if (options.delivery !== "queue") {
+        if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
+        if (currentSession.model.providerId && currentSession.model.modelId) {
+          await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
+        }
       }
       const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
-      const confirmedId = result?.id || messageId
-      if (confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
-      admission.complete()
-      store.acceptSend(confirmedId)
-    } catch (error) {
-      admission.rollback()
-      throw error
-    }
+      confirmedId = result?.id || messageId
+      if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
+      if (projectOptimistically) store.acceptSend(confirmedId)
+    })
   } catch (error) {
-    store.failSend(messageId)
+    if (projectOptimistically) store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
+
+  return confirmedId
 }
 
 async function executeCustomCommand(
@@ -282,42 +358,18 @@ async function executeCustomCommand(
     throw new Error("Instance not ready")
   }
 
-  const client = getRootClient(instanceId)
-
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
   }
 
-  const body: {
-    command: string
-    arguments: string
-    id: string
-    agent?: string
-    model?: { providerID: string; id: string; variant?: string }
-  } = {
-    command: commandName,
-    arguments: args,
-    id: createId("msg"),
-  }
-
-  if (session.agent) {
-    body.agent = session.agent
-  }
-
-  if (session.model.providerId && session.model.modelId) {
-    body.model = getNativeModel(instanceId, session.model)
-  }
-
-  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
-  try {
+  await admitSessionAction(instanceId, sessionId, async () => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    const client = getRootClient(instanceId)
     await syncVoiceModeInstruction(client, instanceId, sessionId)
-    await client.session.command({ sessionID: sessionId, ...body })
-    admission.complete()
-  } catch (error) {
-    admission.rollback()
-    throw error
-  }
+    await client.session.command({ sessionID: sessionId, command: commandName, text: args, delivery: "steer" })
+  })
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
@@ -326,22 +378,18 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     throw new Error("Instance not ready")
   }
 
-  const client = getRootClient(instanceId)
-
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
   }
 
-  const admission = beginSessionGenerationAdmission(instanceId, sessionId)
-  try {
+  await admitSessionAction(instanceId, sessionId, async () => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    const client = getRootClient(instanceId)
     await syncVoiceModeInstruction(client, instanceId, sessionId)
     await client.session.shell({ sessionID: sessionId, command })
-    admission.complete()
-  } catch (error) {
-    admission.rollback()
-    throw error
-  }
+  })
 }
 
 async function abortSession(instanceId: string, sessionId: string): Promise<void> {
@@ -388,9 +436,11 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   })
 
   try {
-    await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
-    if (shouldApplyModel) {
-      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+    if (!isSessionBusy(instanceId, sessionId)) {
+      await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
+      if (shouldApplyModel) {
+        await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+      }
     }
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
@@ -438,7 +488,9 @@ async function updateSessionModel(
 
   const nativeModel = getNativeModel(instanceId, model)
   try {
-    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    if (!isSessionBusy(instanceId, sessionId)) {
+      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    }
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
       if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false
@@ -487,10 +539,172 @@ async function compactSession(instanceId: string, sessionId: string): Promise<vo
   await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
 
+function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {
+  const { message, info } = normalizeSessionMessage(sessionId, source)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.upsertMessage({
+    id: message.id,
+    sessionId: message.sessionId,
+    role: message.type,
+    status: message.status,
+    createdAt: message.timestamp,
+    updatedAt: message.timestamp,
+    parts: message.parts,
+  })
+  store.setMessageInfo(info.id, info)
+}
+
+async function deleteSelectedMessageTechnicalParts(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  partIds: string[],
+): Promise<void> {
+  const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+  const targets = Array.from(new Set(partIds)).map((partId) => ({
+    partId,
+    part: record?.parts[partId]?.data,
+  }))
+  if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
+    || targets.length === 0
+    || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
+    throw new Error("Message part is not deletable")
+  }
+
+  return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    const client = getRootClient(instanceId)
+    const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+    if (message.type !== "assistant" || !message.time.completed) {
+      throw new Error("Message content changed before deletion")
+    }
+    const currentRecord = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+    const indexes = new Set(targets.map((selected) => {
+      const part = selected.part!
+      const currentIndex = currentRecord?.partIds.indexOf(selected.partId) ?? -1
+      if (currentIndex >= 0) return currentIndex
+      const time = part.time as { created?: number; completed?: number } | undefined
+      return message.content.findIndex((candidate) => {
+        if (candidate.type !== part.type) return false
+        if (candidate.type === "tool" && part.type === "tool") return candidate.id === part.id
+        if (candidate.type !== "reasoning" || part.type !== "reasoning") return false
+        return candidate.text === part.text
+          && candidate.time?.created === time?.created
+          && candidate.time?.completed === time?.completed
+      })
+    }))
+    if (indexes.has(-1)) {
+      throw new Error("Message content changed before deletion")
+    }
+
+    const updated = await client.session.messageUpdate({
+      sessionID: sessionId,
+      messageID: messageId,
+      content: message.content.filter((_, index) => !indexes.has(index)),
+    })
+    applyUpdatedMessage(instanceId, sessionId, updated)
+  })
+}
+
+async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+  await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, [partId])
+}
+
+async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string, partIds?: string[]): Promise<void> {
+  if (partIds) {
+    await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+    return
+  }
+  await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    const client = getRootClient(instanceId)
+    const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+    if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
+    const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
+    if (content.length === message.content.length) return
+    const updated = await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
+    applyUpdatedMessage(instanceId, sessionId, updated)
+  })
+}
+
+async function deleteTechnicalPartGroup(
+  instanceId: string,
+  sessionId: string,
+  parts: Array<{ messageId: string; partId: string }>,
+): Promise<void> {
+  const byMessage = new Map<string, string[]>()
+  for (const part of parts) {
+    const partIds = byMessage.get(part.messageId) ?? []
+    partIds.push(part.partId)
+    byMessage.set(part.messageId, partIds)
+  }
+  for (const [messageId, partIds] of byMessage) {
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+  }
+}
+
+export interface SessionTechnicalPartDeletionPlan {
+  instanceId: string
+  sessionId: string
+  toolCount: number
+  reasoningCount: number
+  messageIds: string[]
+}
+
+async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string): Promise<SessionTechnicalPartDeletionPlan> {
+  const client = getRootClient(instanceId)
+  const messageIds: string[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | undefined
+  let toolCount = 0
+  let reasoningCount = 0
+
+  for (;;) {
+    const response = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: "asc" }) })
+    for (const message of response.data) {
+      if (message.type !== "assistant" || !message.time.completed) continue
+      const tools = message.content.filter((part) => part.type === "tool").length
+      const reasoning = message.content.filter((part) => part.type === "reasoning").length
+      if (tools + reasoning === 0) continue
+      toolCount += tools
+      reasoningCount += reasoning
+      messageIds.push(message.id)
+    }
+
+    const next = response.cursor?.next ?? undefined
+    if (!next) break
+    if (seenCursors.has(next)) throw new Error("Repeated message cursor")
+    seenCursors.add(next)
+    cursor = next
+  }
+
+  return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
+}
+
+async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<number> {
+  let failed = 0
+  for (const messageId of plan.messageIds) {
+    try {
+      await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
+    } catch {
+      failed += 1
+    }
+  }
+  return failed
+}
+
+async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {
+  await getRootClient(instanceId).session.background({ sessionID: sessionId })
+}
+
 export {
   abortSession,
+  backgroundSession,
   executeCustomCommand,
   compactSession,
+  deleteMessagePart,
+  deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
   renameSession,
   runShellCommand,
   sendMessage,

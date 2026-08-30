@@ -55,7 +55,7 @@ export interface WorkspaceCloneResponse {
 }
 
 export type WorkspaceCreateResponse = WorkspaceDescriptor & {
-  /** True when an active workspace with the same canonical path was returned. */
+  /** True when this request did not own creation of the returned workspace. */
   reused?: true
 }
 export type WorkspaceListResponse = WorkspaceDescriptor[]

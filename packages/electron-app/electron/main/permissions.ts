@@ -1,11 +1,11 @@
-import { session, systemPreferences } from "electron"
+import { session, systemPreferences, type Session } from "electron"
 import { isAllowedRendererOrigin } from "./renderer-origin"
 
 export { isAllowedRendererOrigin } from "./renderer-origin"
 
 const isMac = process.platform === "darwin"
 
-export function configureMediaPermissionHandlers(getAllowedOrigins: () => string[]) {
+export function configureMediaPermissionHandlers(getAllowedOrigins: () => string[], targetSession: Session = session.defaultSession) {
   const isAudioMediaRequest = (permission: string, details?: unknown) => {
     if (permission !== "media") {
       return false
@@ -15,7 +15,7 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
     return mediaTypes.length === 0 || mediaTypes.includes("audio")
   }
 
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+  targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
     if (!isAudioMediaRequest(permission, details)) {
       return false
     }
@@ -23,7 +23,7 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
     return isAllowedRendererOrigin(requestingOrigin, getAllowedOrigins())
   })
 
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+  targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (!isAudioMediaRequest(permission, details)) {
       callback(false)
       return

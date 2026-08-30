@@ -12,7 +12,7 @@ import {
 const ROOT = "/repo"
 const WORKTREE = "/repo/.codenomad/worktrees/feature"
 
-function session(id: string, parentID?: string, directory = ROOT): SessionInfo {
+function session(id: string, parentID?: string, directory = ROOT, workspaceID?: string): SessionInfo {
   return {
     id,
     parentID,
@@ -20,7 +20,7 @@ function session(id: string, parentID?: string, directory = ROOT): SessionInfo {
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 1, updated: 1 },
-    location: { directory },
+    location: { directory, workspaceID },
   }
 }
 
@@ -28,6 +28,7 @@ function clientHarness(initial: SessionInfo[], options: {
   active?: string[] | (() => string[])
   failMove?: (sessionId: string, call: number) => boolean
   visibilityDelayGets?: number
+  workspaceID?: string
 } = {}) {
   const sessions = new Map(initial.map((value) => [value.id, structuredClone(value)]))
   const moveCalls: string[] = []
@@ -37,6 +38,7 @@ function clientHarness(initial: SessionInfo[], options: {
     location: {
       get: async ({ location }: { location?: { directory?: string } }) => ({
         directory: location?.directory ?? ROOT,
+        workspaceID: options.workspaceID,
         project: { id: "project", directory: ROOT, canonical: ROOT },
       }),
     },
@@ -66,26 +68,44 @@ function clientHarness(initial: SessionInfo[], options: {
 
 describe("project session families", () => {
   it("loads the complete paginated project inventory", async () => {
-    const calls: Array<{ project?: string; cursor?: string }> = []
+    const calls: Array<{ project?: string; workspace?: string; cursor?: string; limit?: number; order?: string }> = []
     const client = {
       session: {
         list: async (input: { project?: string; cursor?: string }) => {
           calls.push(input)
           return input.cursor
-            ? { data: [session("child", "root")], cursor: {} }
-            : { data: [session("root")], cursor: { next: "next" } }
+            ? { data: [session("child", "root", ROOT, "workspace")], cursor: { next: null } }
+            : { data: [session("root", undefined, ROOT, "workspace")], cursor: { next: "next" } }
         },
       },
     } as unknown as OpenCodeClient
 
-    assert.deepEqual((await listCompleteProjectSessions(client, "project")).map(({ id }) => id), ["root", "child"])
-    assert.ok(calls.every(({ project }) => project === "project"))
-    assert.equal(calls[1]?.cursor, "next")
+    assert.deepEqual((await listCompleteProjectSessions(client, "project", "workspace")).map(({ id }) => id), ["root", "child"])
+    assert.deepEqual(calls[0], { project: "project", workspace: "workspace", limit: 500, order: "asc" })
+    assert.deepEqual(calls[1], { cursor: "next" })
   })
 
   it("rejects malformed native cursors", async () => {
     const client = { session: { list: async () => ({ data: [session("root")], cursor: { next: 42 } }) } } as unknown as OpenCodeClient
     await assert.rejects(() => listCompleteProjectSessions(client, "project"), /invalid session inventory cursor/)
+  })
+
+  it("runs a family move inside the supplied worktree mutation guard", async () => {
+    const harness = clientHarness([session("root"), session("child", "root")])
+    const guarded: string[][] = []
+
+    await moveProjectSessionFamily({
+      client: harness.client,
+      projectLocation: { directory: ROOT },
+      sessionId: "root",
+      targetDirectory: WORKTREE,
+      runMutation: async (directories, operation) => {
+        guarded.push(directories)
+        return operation()
+      },
+    })
+
+    assert.deepEqual(guarded, [[ROOT, ROOT, WORKTREE]])
   })
 
   it("resolves complete families and rejects incomplete ancestry", () => {
@@ -101,7 +121,7 @@ describe("project session families", () => {
     const harness = clientHarness([session("root"), session("child", "root")])
     const moved = await moveProjectSessionFamily({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       sessionId: "child",
       targetDirectory: WORKTREE,
     })
@@ -111,7 +131,7 @@ describe("project session families", () => {
 
   it("waits for delayed move visibility", async () => {
     const harness = clientHarness([session("root")], { visibilityDelayGets: 2 })
-    await moveProjectSessionFamily({ client: harness.client, projectDirectory: ROOT, sessionId: "root", targetDirectory: WORKTREE })
+    await moveProjectSessionFamily({ client: harness.client, projectLocation: { directory: ROOT }, sessionId: "root", targetDirectory: WORKTREE })
     assert.equal(harness.sessions.get("root")?.location.directory, WORKTREE)
   })
 
@@ -121,7 +141,7 @@ describe("project session families", () => {
     })
     await assert.rejects(() => moveProjectSessionFamily({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       sessionId: "root",
       targetDirectory: WORKTREE,
     }), /move failed/)
@@ -133,13 +153,31 @@ describe("project session families", () => {
     const harness = clientHarness([session("blocked", undefined, WORKTREE)], { active: ["blocked"] })
     await assert.rejects(() => removeProjectWorktree({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE,
       rootDirectory: ROOT,
       remove: async () => assert.fail("Git removal must not run"),
       isTargetRegistered: async () => true,
     }), (error: unknown) => error instanceof ProjectSessionError && error.statusCode === 409)
     assert.deepEqual(harness.moveCalls, [])
+  })
+
+  it("re-inventories an initially empty worktree before removing it", async () => {
+    const harness = clientHarness([])
+    let lists = 0
+    ;(harness.client.session.list as any) = async () => ({
+      data: ++lists < 4 ? [] : [session("intruder", undefined, WORKTREE)],
+      cursor: {},
+    })
+
+    await assert.rejects(() => removeProjectWorktree({
+      client: harness.client,
+      projectLocation: { directory: ROOT },
+      targetDirectory: WORKTREE,
+      rootDirectory: ROOT,
+      remove: async () => assert.fail("Git removal must not run"),
+      isTargetRegistered: async () => true,
+    }), /Sessions remain attached/)
   })
 
   it("rolls back when a family member becomes active during evacuation", async () => {
@@ -149,7 +187,7 @@ describe("project session families", () => {
     })
     await assert.rejects(() => removeProjectWorktree({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE,
       rootDirectory: ROOT,
       remove: async () => assert.fail("Git removal must not run"),
@@ -166,7 +204,7 @@ describe("project session families", () => {
     ;(harness.client.session.list as any) = async () => ({ data: structuredClone(stale), cursor: {} })
     await assert.rejects(() => moveProjectSessionFamily({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       sessionId: "root",
       targetDirectory: WORKTREE,
     }), /move failed/)
@@ -178,7 +216,7 @@ describe("project session families", () => {
     let removed = false
     await removeProjectWorktree({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: "/home/dev/foo",
       rootDirectory: ROOT,
       remove: async () => { removed = true },
@@ -193,7 +231,7 @@ describe("project session families", () => {
     let removed = false
     await removeProjectWorktree({
       client: harness.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE,
       rootDirectory: ROOT,
       remove: async () => { removed = true },
@@ -203,11 +241,46 @@ describe("project session families", () => {
     assert.ok([...harness.sessions.values()].every(({ location }) => location.directory === ROOT))
   })
 
+  it("guards every family source worktree during evacuation", async () => {
+    const sibling = "/repo/.codenomad/worktrees/sibling"
+    const harness = clientHarness([session("root", undefined, sibling), session("child", "root", WORKTREE)])
+    let guarded: string[] = []
+    await removeProjectWorktree({
+      client: harness.client,
+      projectLocation: { directory: ROOT },
+      targetDirectory: WORKTREE,
+      rootDirectory: ROOT,
+      remove: async () => undefined,
+      isTargetRegistered: async () => true,
+      runMutation: async (directories, operation) => {
+        guarded = directories
+        return operation()
+      },
+    })
+    assert.ok(guarded.includes(sibling))
+    assert.ok(guarded.includes(WORKTREE))
+    assert.ok(guarded.includes(ROOT))
+  })
+
+  it("blocks physical deletion when another workspace still owns a target session", async () => {
+    const harness = clientHarness([
+      session("foreign", undefined, WORKTREE, "foreign-workspace"),
+    ], { workspaceID: "owned-workspace" })
+    await assert.rejects(() => removeProjectWorktree({
+      client: harness.client,
+      projectLocation: { directory: ROOT, workspaceID: "owned-workspace" },
+      targetDirectory: WORKTREE,
+      rootDirectory: ROOT,
+      remove: async () => assert.fail("Git removal must not run"),
+      isTargetRegistered: async () => true,
+    }), /another workspace/)
+  })
+
   it("rolls back only while the original worktree identity remains", async () => {
     const original = clientHarness([session("original", undefined, WORKTREE)])
     await assert.rejects(() => removeProjectWorktree({
       client: original.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE,
       rootDirectory: ROOT,
       remove: async () => { throw new ProjectSessionError("dirty worktree", 409) },
@@ -219,7 +292,7 @@ describe("project session families", () => {
     let identityChecks = 0
     await assert.rejects(() => removeProjectWorktree({
       client: replacement.client,
-      projectDirectory: ROOT,
+      projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE,
       rootDirectory: ROOT,
       remove: async () => { throw new ProjectSessionError("worktree changed", 409) },

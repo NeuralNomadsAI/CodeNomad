@@ -112,10 +112,6 @@
   cursor: not-allowed;
 }
 
-.action-overflow-item[data-destructive="true"] {
-  color: var(--status-error);
-}
-
 .action-overflow-item-icon {
   display: inline-flex;
   align-items: center;

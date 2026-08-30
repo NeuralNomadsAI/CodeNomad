@@ -25,7 +25,6 @@ type PhraseKey = (typeof phraseKeys)[number]
 
 interface CliStatus {
   state?: string
-  url?: string | null
   error?: string | null
 }
 
@@ -34,11 +33,6 @@ function pickPhraseKey(previous?: PhraseKey) {
   const source = filtered.length > 0 ? filtered : phraseKeys
   const index = Math.floor(Math.random() * source.length)
   return source[index]
-}
-
-function navigateTo(url?: string | null) {
-  if (!url) return
-  window.location.replace(url)
 }
 
 function annotateDocument() {
@@ -63,12 +57,6 @@ function LoadingApp() {
 
     async function bootstrapTauri() {
       try {
-        const readyUnlisten = await listen("cli:ready", (event) => {
-          const payload = (event?.payload as CliStatus) || {}
-          setError(null)
-          setStatusKey(null)
-          navigateTo(payload.url)
-        })
         const errorUnlisten = await listen("cli:error", (event) => {
           const payload = (event?.payload as CliStatus) || {}
           if (payload.error) {
@@ -88,12 +76,10 @@ function LoadingApp() {
             setStatusKey(null)
           }
         })
-        unsubscribers.push(readyUnlisten, errorUnlisten, statusUnlisten)
+        unsubscribers.push(errorUnlisten, statusUnlisten)
 
         const result = await invoke<CliStatus>("cli_get_status")
-        if (result?.state === "ready" && result.url) {
-          navigateTo(result.url)
-        } else if (result?.state === "error" && result.error) {
+        if (result?.state === "error" && result.error) {
           setError(result.error)
           setStatusKey("loadingScreen.status.issue")
         }

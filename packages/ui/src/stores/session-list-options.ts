@@ -11,7 +11,7 @@ type ProjectSessionListInput = {
 }
 
 export type ProjectSessionListOptions = ProjectSessionListInput & {
-  limit: typeof PROJECT_SESSION_LIST_LIMIT
+  limit?: typeof PROJECT_SESSION_LIST_LIMIT
 }
 
 export function normalizeSessionDirectory(directory: string | null | undefined): string {
@@ -20,31 +20,22 @@ export function normalizeSessionDirectory(directory: string | null | undefined):
 
   const slashNormalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "")
   const comparable = slashNormalized || "/"
+  const wsl = comparable.match(/^\/\/(wsl(?:\.localhost|\$)?)[/]([^/]+)(.*)$/i)
+  if (wsl) return `//${wsl[1]!.toLowerCase()}/${wsl[2]!.toLowerCase()}${wsl[3]}`
   const isWindowsPath = /^[A-Za-z]:\//.test(comparable) || comparable.startsWith("//") || trimmed.includes("\\")
 
   return isWindowsPath ? comparable.toLowerCase() : comparable
 }
 
 export function buildProjectSessionListOptions(options: ProjectSessionListInput): ProjectSessionListOptions {
+  if (options.cursor) return { cursor: options.cursor }
   return {
     ...(options.directory ? { directory: options.directory } : {}),
     ...(options.search ? { search: options.search } : {}),
-    ...(options.cursor ? { cursor: options.cursor } : {}),
     ...(options.project ? { project: options.project } : {}),
     ...(options.subpath ? { subpath: options.subpath } : {}),
     ...(options.parentID !== undefined ? { parentID: options.parentID } : {}),
     ...(options.order ? { order: options.order } : {}),
     limit: PROJECT_SESSION_LIST_LIMIT,
   }
-}
-
-export function getUniqueSessionDirectories(
-  directories: Array<string | null | undefined>,
-): string[] {
-  const unique = new Map<string, string>()
-  for (const directory of directories) {
-    const normalized = normalizeSessionDirectory(directory)
-    if (normalized && !unique.has(normalized)) unique.set(normalized, directory!.trim())
-  }
-  return Array.from(unique.values())
 }

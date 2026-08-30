@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-client-state-clear"
+description = "Enables the client_state_clear command without any pre-configured scope."
+commands.allow = ["client_state_clear"]
+
+[[permission]]
+identifier = "deny-client-state-clear"
+description = "Denies the client_state_clear command without any pre-configured scope."
+commands.deny = ["client_state_clear"]

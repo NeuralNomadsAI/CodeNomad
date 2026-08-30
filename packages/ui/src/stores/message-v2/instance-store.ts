@@ -29,6 +29,7 @@ import type {
   SessionUsageState,
   UsageEntry,
 } from "./types"
+import type { MessageWindowState } from "./message-window"
 
 const storeLog = getLogger("session")
 
@@ -209,8 +210,9 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean }) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
+  reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
   acceptSend: (messageId: string) => void
   confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
@@ -244,6 +246,8 @@ export interface InstanceMessageStore {
   setScrollSnapshot: (sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) => void
   restoreScrollSnapshot: (sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
+  setMessageWindow: (sessionId: string, window: MessageWindowState) => void
+  getMessageWindow: (sessionId: string) => MessageWindowState | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
   getLastAssistantMessageId: (sessionId: string) => string | undefined
@@ -485,7 +489,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // client) and cross-attach its metadata. Sends the server has not yet
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
-  function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
+  function hydrateMessages(
+    sessionId: string,
+    inputs: MessageUpsertInput[],
+    infos?: Iterable<MessageInfo>,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean },
+  ) {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
     ensureSessionEntry(sessionId)
@@ -527,7 +536,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
     }
 
-    const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
+    const preservedIds = options?.preserveOmitted ? omittedIds : []
+    const incomingIds = [...preservedIds, ...serverIds, ...pendingOptimisticIds]
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -561,7 +571,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     const infoList = infos ? Array.from(infos) : undefined
-    const usageState = infoList ? rebuildUsageStateFromInfos(infoList) : state.usage[sessionId]
+    const usageInfos = options?.preserveOmitted && infoList
+      ? new Map([
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId)
+            .map((info) => [info.id as string, info] as const),
+          ...infoList.map((info) => [info.id as string, info] as const),
+        ]).values()
+      : infoList
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -576,7 +594,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     // The snapshot is authoritative: remove every omitted record except a
     // request that is still awaiting same-ID persistence confirmation.
-    if (omittedIds.length > 0) {
+    if (!options?.preserveOmitted && omittedIds.length > 0) {
       omittedIds.forEach((id) => {
         messageInfoCache.delete(id)
         forgetPendingSend(id)
@@ -589,12 +607,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
     }
 
-    // A send that reappears under its own id is confirmed — it is no longer in
-    // flight, so retire its pending marker.
-    serverIds.forEach((id) => {
-      pendingSendIds.delete(id)
-      if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
-    })
+    // Inbox admission can render before the message endpoint projects the
+    // accepted prompt. Only authoritative projection confirms the send.
+    if (options?.confirmPending !== false) {
+      serverIds.forEach((id) => {
+        pendingSendIds.delete(id)
+        if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
+      })
+    }
 
     if (infoList) {
       for (const info of infoList) {
@@ -620,7 +640,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
-      if (omittedIds.length > 0) {
+      if (!options?.preserveOmitted && omittedIds.length > 0) {
         setState(
           "messages",
           produce((draft) => {
@@ -670,12 +690,46 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       recomputeLastAssistantMessageId(sessionId, incomingIds)
 
       clearLatestTodoSnapshot(sessionId)
-      Object.values(normalizedRecords).forEach((record) => {
-        maybeUpdateLatestTodoFromRecord(record)
+      incomingIds.forEach((messageId) => {
+        maybeUpdateLatestTodoFromRecord(nextMessages[messageId])
       })
 
       bumpSessionRevision(sessionId)
     })
+  }
+
+  function reconcileAuthoritativeMessageIds(
+    sessionId: string,
+    authoritativeIds: ReadonlySet<string>,
+    baselineRevisions: ReadonlyMap<string, number>,
+  ) {
+    const retainedIds = (state.sessions[sessionId]?.messageIds ?? [])
+      .filter((id) => !baselineRevisions.has(id)
+        || authoritativeIds.has(id)
+        || state.messages[id]?.revision !== baselineRevisions.get(id))
+    if (retainedIds.length === 0) {
+      reconcileEmptyAuthoritativeSnapshot(sessionId)
+      return
+    }
+    hydrateMessages(
+      sessionId,
+      retainedIds.flatMap((id) => {
+        const record = state.messages[id]
+        if (!record) return []
+        return [{
+          id: record.id,
+          sessionId: record.sessionId,
+          role: record.role,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          isEphemeral: record.isEphemeral,
+          parts: record.partIds.flatMap((partId) => record.parts[partId]?.data ?? []),
+          bumpRevision: false,
+        }]
+      }),
+      retainedIds.flatMap((id) => messageInfoCache.get(id) ?? []),
+    )
   }
 
   // Register an optimistic user send while promptAsync is unresolved.
@@ -1101,35 +1155,23 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
       })
 
-      setState("messages", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messages", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("messageInfoVersion", (prev) => {
-        if (!(messageId in prev)) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messageInfoVersion", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       messageInfoCache.delete(messageId)
 
-      setState("pendingParts", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("pendingParts", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("permissions", "byMessage", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("permissions", "byMessage", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       sessionIds.forEach((sessionId) => {
         withUsageState(sessionId, (draft) => removeUsageEntry(draft, messageId))
@@ -1465,6 +1507,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
+  function setMessageWindow(sessionId: string, window: MessageWindowState) {
+    ensureSessionEntry(sessionId)
+    setState("sessions", sessionId, "messageWindow", window)
+  }
+
+  function getMessageWindow(sessionId: string) {
+    return state.sessions[sessionId]?.messageWindow
+  }
+
   function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
@@ -1580,6 +1631,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      addOrUpdateSession,
       hydrateMessages,
       reconcileEmptyAuthoritativeSnapshot,
+      reconcileAuthoritativeMessageIds,
       markSendPending,
       acceptSend,
       confirmServerMessage,
@@ -1607,6 +1659,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setScrollSnapshot,
       restoreScrollSnapshot,
       getScrollSnapshot,
+      setMessageWindow,
+      getMessageWindow,
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
       getLastAssistantMessageId: getLastAssistantMessageIdValue,

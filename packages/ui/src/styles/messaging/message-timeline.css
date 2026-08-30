@@ -12,7 +12,7 @@
 }
 
 .message-layout--with-timeline {
-  grid-template-columns: minmax(0, 1fr) 64px;
+  grid-template-columns: minmax(0, 1fr) 40px;
 }
 
 .message-layout--with-timeline::after {
@@ -20,18 +20,19 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  inset-inline-end: 64px;
+  inset-inline-end: 40px;
   width: 1px;
   background-color: var(--border-muted);
   pointer-events: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline {
-  grid-template-columns: minmax(0, 1fr) 40px;
+.session-center-column[data-session-header-density="4"] .message-layout--with-timeline {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-layout--with-timeline::after {
-  inset-inline-end: 40px;
+.session-center-column[data-session-header-density="4"] .message-layout--with-timeline::after,
+.session-center-column[data-session-header-density="4"] .message-timeline-sidebar {
+  display: none;
 }
 
 .message-stream-shell {
@@ -48,7 +49,7 @@
  }
  
  .message-timeline-sidebar {
-  width: 64px;
+   width: 40px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -56,10 +57,6 @@
   z-index: 100;
  }
 
-
-.session-center-column[data-session-center-width="narrow"] .message-timeline-sidebar {
-  width: 40px;
-}
 
 .message-timeline {
   --message-timeline-segment-gap: 0.35rem;
@@ -73,10 +70,6 @@
   border-radius: 8px;
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow);
-}
-
-.message-timeline--selection-active {
-  padding-bottom: 4rem;
 }
 
 .message-timeline::-webkit-scrollbar {
@@ -103,7 +96,8 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-primary);
-  transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  opacity: 0.65;
+  transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -120,30 +114,6 @@
 .message-timeline-item-spacer {
   flex: none;
   width: 100%;
-}
-
-.message-timeline-segment[data-delete-hover="true"]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--status-error-bg);
-  border-radius: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Ensure delete hover is visible even on the active segment styling. */
-.message-timeline-segment[data-delete-hover="true"],
-.message-timeline-segment[data-delete-hover="true"]:hover,
-.message-timeline-segment[data-delete-hover="true"]:focus-visible,
-.message-timeline-segment-active[data-delete-hover="true"],
-.message-timeline-segment-active[data-delete-hover="true"]:hover,
-.message-timeline-segment-active[data-delete-hover="true"]:focus-visible {
-  /* Let the ::before overlay provide the highlight (matches stream behavior). */
-  background-color: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  transform: none !important;
 }
 
 .message-timeline-label {
@@ -165,10 +135,8 @@
 
 .message-timeline-segment:hover,
 .message-timeline-segment:focus-visible {
-  background-color: var(--surface-hover);
-  color: var(--accent-primary);
+  opacity: 1;
   outline: none;
-  transform: translateY(-1px);
 }
 
 .message-timeline-segment-active,
@@ -229,8 +197,8 @@
 }
 
 .message-timeline-compaction-manual {
-  border-color: var(--message-user-border);
-  background-color: var(--message-user-bg);
+  border-color: var(--session-status-compacting-fg);
+  background-color: var(--surface-secondary);
 }
 
 .message-timeline-segment-active {
@@ -283,38 +251,6 @@
   font-size: 0.85rem;
 }
 
-/* --- Selection & Histogram Ribs --- */
-
-.message-timeline-segment-selected {
-  border-color: var(--accent-primary) !important;
-  background-color: color-mix(in oklab, var(--accent-primary) 25%, var(--surface-base)) !important;
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 50%, transparent) inset !important;
-  color: var(--accent-primary) !important;
-}
-
-/* When a whole message is selected for deletion (via stream checkbox),
-   reflect that on all timeline segments for that message. */
-.message-timeline-segment-delete-selected {
-  border-color: color-mix(in oklab, var(--status-error) 55%, transparent) !important;
-  background-color: color-mix(in oklab, var(--status-error) 18%, var(--surface-base)) !important;
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-error) 35%, transparent) inset !important;
-  color: var(--status-error) !important;
-}
-
-.message-timeline-segment-delete-selected:hover,
-.message-timeline-segment-delete-selected:focus-visible {
-  background-color: color-mix(in oklab, var(--status-error) 24%, var(--surface-base)) !important;
-  color: var(--status-error) !important;
-  transform: none;
-}
-
-.message-timeline-segment-selected:hover,
-.message-timeline-segment-selected:focus-visible {
-  background-color: color-mix(in oklab, var(--accent-primary) 35%, var(--surface-base)) !important;
-  color: var(--accent-primary) !important;
-  transform: none;
-}
-
 /* --- Group indicators: tools belong to the same message as their assistant --- */
 
 /* Tool segments that are part of a group get a left accent border. */
@@ -335,109 +271,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.message-timeline-xray-overlay {
-  position: absolute;
-  inset: 0;
-  /* Extend the overlay box into the stream so ribs are not relying on
-     overflow-visible behavior (which is brittle around scroll containers). */
-  --xray-overhang: calc(var(--max-rib-width, 50vw) + 84px);
-  inset-inline-start: calc(-1 * var(--xray-overhang));
-  width: calc(100% + var(--xray-overhang));
-  overflow: hidden;
-  padding: 0.25rem;
-  pointer-events: none;
-  /* Above the scroll container background; still non-interactive. */
-  z-index: 2;
-  --xray-scroll-y: 0px;
-}
-
-.message-timeline-xray-overlay-inner {
-  position: absolute;
-  inset: 0;
-  transform: translateY(var(--xray-scroll-y));
-  will-change: transform;
-}
-
-.message-timeline-xray-rib {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  transform: translate(-100%, -50%);
-}
-
-.message-timeline-xray-token-label {
-  position: absolute;
-  inset-inline-end: 100%;
-  top: 50%;
-  transform: translateY(-50%);
-  margin-inline-end: 4px;
-  height: 1.5rem;
-  display: flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  color: var(--text-primary);
-  background: var(--surface-base);
-  padding: 1px 5px;
-  border: 1px solid var(--border-base);
-  border-radius: 999px;
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
-}
-
-.message-timeline-relative-bar {
-  height: 5px;
-  width: calc(var(--segment-weight) * var(--max-rib-width, 50vw));
-  background-color: color-mix(
-    in srgb,
-    var(--status-success) calc(100% - var(--segment-weight) * 100%),
-    var(--status-error) calc(var(--segment-weight) * 100%)
-  );
-  border-start-start-radius: 3px;
-  border-end-start-radius: 3px;
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
-  transition: width 0.3s ease, background-color 0.3s ease;
-  box-shadow: -2px 0 4px rgba(0, 0, 0, 0.25);
-}
-[dir="rtl"] .message-timeline-relative-bar {
-  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.25);
-}
-
-.message-timeline-absolute-bar {
-  height: 3px;
-  width: calc(var(--segment-weight) * var(--max-rib-width, 50vw));
-  background-color: var(--text-muted);
-  border-start-start-radius: 2px;
-  border-end-start-radius: 2px;
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
-  transition: width 0.3s ease;
-  opacity: 0.5;
-  position: relative;
-}
-
-.message-timeline-absolute-bar-overflow {
-  opacity: 0.8;
-}
-
-.message-timeline-absolute-bar-overflow::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: -1px;
-  top: -3px;
-  bottom: -3px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--status-error);
-  box-shadow: 0 0 6px 2px var(--status-error);
 }
 
 .message-timeline-segment-search-match {

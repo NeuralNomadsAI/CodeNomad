@@ -1,21 +1,51 @@
 {
   "$schema": "https://schema.tauri.app/capabilities.json",
   "identifier": "main-window-native-dialogs",
-  "description": "Grant the main window access to required core features and native dialog commands.",
+  "description": "Grant local windows access to required core features and native dialog commands.",
   "remote": {
-    "urls": ["http://127.0.0.1:*", "http://localhost:*", "http://tauri.localhost/*", "https://tauri.localhost/*"]
+    "urls": ["http://127.0.0.1:*", "http://localhost:1420", "http://tauri.localhost/*", "https://tauri.localhost/*"]
   },
-  "windows": ["main"],
+  "windows": ["local-*"],
   "permissions": [
     "core:default",
     "core:menu:default",
     "dialog:allow-open",
-    "opener:allow-default-urls",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" }
+      ]
+    },
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",
     "notification:allow-show",
-    "core:webview:allow-set-webview-zoom"
+    "core:webview:allow-set-webview-zoom",
+    "allow-cli-get-status",
+    "allow-cli-restart",
+    "allow-wake-lock-start",
+    "allow-wake-lock-stop",
+    "allow-needs-local-certificate-install",
+    "allow-open-remote-window",
+    "allow-client-state-claim-access",
+    "allow-client-state-load",
+    "allow-client-state-save",
+    "allow-client-state-commit-partitions",
+    "allow-client-state-load-partition",
+    "allow-client-state-set-restore-enabled",
+    "allow-client-state-clear",
+    "allow-client-state-renderer-flushed",
+    "allow-client-state-navigation-flushed",
+    "allow-desktop-launch-ready",
+    "allow-desktop-launch-next-folder",
+    "allow-desktop-launch-acknowledge-folder",
+    "allow-install-stable-update",
+    "allow-open-workspace-target",
+    "allow-set-workspace-menu-enabled",
+    "allow-developer-run-get",
+    "allow-developer-run-start",
+    "allow-developer-run-stop"
   ]
 }

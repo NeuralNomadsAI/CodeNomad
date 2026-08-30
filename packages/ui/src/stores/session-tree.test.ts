@@ -14,6 +14,7 @@ import {
   projectSessionFamilies,
   sortSessionIdsDeepestFirst,
 } from "./session-tree"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 function session(id: string, parentId: string | null, updated: number): Session {
   return { id, parentId, time: { created: updated, updated } } as Session
@@ -24,6 +25,14 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("preserves case in the Linux portion of WSL UNC paths", () => {
+    assert.equal(
+      normalizeSessionDirectory("\\\\WSL.localhost\\Ubuntu\\Repo\\Feature"),
+      "//wsl.localhost/ubuntu/Repo/Feature",
+    )
+    assert.equal(normalizeSessionDirectory("\\\\wsl$\\Ubuntu\\Repo\\Feature"), "//wsl$/ubuntu/Repo/Feature")
+  })
+
   it("preserves nesting and sorts siblings by descendant activity", () => {
     const sessions = sessionMap([
       ["root", null, 100],

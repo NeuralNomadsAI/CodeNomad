@@ -6,6 +6,13 @@ export type NativeClientStateLoadResult = {
   isPrimary: boolean
   restoreEnabled: boolean
   snapshot: unknown | null
+  partitionProtocolVersion?: 1
+}
+export type NativeClientStatePartitionCommit = {
+  protocolVersion: 1
+  snapshot: unknown
+  partitions: Record<string, string>
+  partitionKeys: string[]
 }
 const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
 const log = getLogger("actions")
@@ -34,7 +41,15 @@ async function claimNativeClientStateAccess(): Promise<boolean> {
 export async function loadNativeClientState(): Promise<NativeClientStateLoadResult> {
   if (isElectronHost() || isTauriHost()) {
     if (!await claimNativeClientStateAccess()) return SECONDARY_CLIENT_STATE
-    return await dispatchNative((api) => api?.loadClientState?.(accessToken), "client_state_load") ?? SECONDARY_CLIENT_STATE
+    const loaded = await dispatchNative((api) => api?.loadClientState?.(accessToken), "client_state_load") ?? SECONDARY_CLIENT_STATE
+    if (!isElectronHost()) return loaded
+    const api = electronApi()
+    return {
+      ...loaded,
+      partitionProtocolVersion: loaded.partitionProtocolVersion === 1
+        && typeof api?.commitClientStatePartitions === "function"
+        && typeof api.loadClientStatePartition === "function" ? 1 : undefined,
+    }
   }
   try {
     for (const key of LEGACY_WEB_KEYS) window.localStorage.removeItem(key)
@@ -47,6 +62,12 @@ async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => 
 }
 export const saveNativeClientState = (snapshot: unknown): Promise<boolean> =>
   mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot })
+export const commitNativeClientStatePartitions = (payload: NativeClientStatePartitionCommit): Promise<boolean> =>
+  mutateNativeClientState((api) => api.commitClientStatePartitions?.(accessToken, payload), "client_state_commit_partitions", { payload })
+export const loadNativeClientStatePartition = async (key: string): Promise<string | null> => {
+  if (!nativeAccessClaimed) return null
+  return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
+}
 export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> =>
   mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled })
 export const clearNativeClientState = (): Promise<boolean> =>

@@ -13,7 +13,7 @@ import {
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
-  activeAppTabId, appTabOrderRevision, appTabSelectionRevision, getInstanceAppTabId,
+  activeAppTabId, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
@@ -94,6 +94,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
     const tab = snapshot.tabs[tabIndex]
     if (tab?.kind === "workspace") seedRestoredWorkspaceScrollSnapshots(existingWorkspaceId!, tab)
     capture.recordRestoredTab(tabIndex, getInstanceAppTabId(existingWorkspaceId!))
+    attachInstanceTab(existingWorkspaceId!, { source: "restore" })
   })
   const claimedIds = new Set(existing.map(({ existingWorkspaceId }) => existingWorkspaceId!))
   context.applyOrder()
@@ -114,7 +115,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
       const instanceId = await runAbortable(async (operationSignal) => {
         const existingId = match.existingWorkspaceId
         const create = () => createInstance(tab.folder, tab.projectName, {
-          activate: false, signal: operationSignal,
+          signal: operationSignal,
           waitForCreateCommit: waitForCreateCommit ? () => waitForCreateCommit : undefined,
           shouldCreateCommit: canCommitCreation,
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceScrollSnapshots(id, tab),
@@ -126,6 +127,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         const id = existingId ?? creation?.instanceId ?? null
         if (!id) return null
         claimedIds.add(id)
+        attachInstanceTab(id, { source: "restore" })
         const created = creation?.reused === false
         if (created) createdId = id
         try {
