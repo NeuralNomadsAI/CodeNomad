@@ -1,7 +1,7 @@
 ---
 name: codenomad-architecture-guide
 description: |
-  Architecture and native OpenCode V2 navigation guide for CodeNomad. Use for cross-package changes, OpenCode client calls, server routes, events, workspaces, Git, Yolo, UI, or desktop integration. Permission is required before loading.
+  Architecture and native OpenCode V2 navigation guide for CodeNomad. Use for cross-package changes, OpenCode client calls, server routes, events, workspaces, Git, Yolo, UI, or desktop integration.
 ---
 
 # CodeNomad Architecture Guide
