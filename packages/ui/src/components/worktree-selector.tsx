@@ -34,14 +34,6 @@ type DeleteErrorDetails = {
   nextStep: string
 }
 
-function preventSelectPress(event: PointerEvent | MouseEvent) {
-  // Prevent Select.Item from treating this as a selection.
-  // We intentionally prevent default to stop Kobalte's internal press handling.
-  event.preventDefault()
-  event.stopImmediatePropagation?.()
-  event.stopPropagation()
-}
-
 function normalizePath(input: string): string {
   return (input ?? "").replace(/\\/g, "/").replace(/\/+$/, "")
 }
@@ -169,6 +161,10 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     if (match) return match
     // Fallback to root if mapped slug is missing.
     return worktreeOptions().find((opt) => opt.kind === "worktree" && opt.slug === "root")
+  })
+  const selectedWorktree = createMemo(() => {
+    const option = selectedOption()
+    return option?.kind === "worktree" ? option : undefined
   })
 
   const openDeleteDialog = (opt: WorktreeOption & { kind: "worktree" }) => {
@@ -342,25 +338,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   <Select.ItemLabel class="selector-option-label flex-1 min-w-0 truncate">
                     {opt.slug === "root" ? "Workspace" : opt.slug}
                   </Select.ItemLabel>
-                  <Show when={opt.slug !== "root"}>
-                    <button
-                      type="button"
-                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                      aria-label="Delete worktree"
-                      title="Delete worktree"
-                      onPointerDown={(event) => {
-                        preventSelectPress(event)
-                        setIsOpen(false)
-                        openDeleteDialog(opt)
-                      }}
-                      onPointerUp={preventSelectPress}
-                      onMouseDown={preventSelectPress}
-                      onMouseUp={preventSelectPress}
-                      onClick={preventSelectPress}
-                    >
-                      <Trash2 class="w-3 h-3" />
-                    </button>
-                  </Show>
                 </div>
                 <div class="flex items-center gap-2 min-w-0">
                   <span
@@ -369,49 +346,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
-                  <Show when={canOpenWorkspacePaths()}>
-                    <button
-                      type="button"
-                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                      aria-label={t("instanceShell.worktree.openInFileManager.action")}
-                      title={t("instanceShell.worktree.openInFileManager.action")}
-                      onPointerDown={(event) => {
-                        preventSelectPress(event)
-                        void handleOpenInFileManager(opt.slug)
-                        setIsOpen(false)
-                      }}
-                      onPointerUp={preventSelectPress}
-                      onMouseDown={preventSelectPress}
-                      onMouseUp={preventSelectPress}
-                      onClick={(event) => {
-                        preventSelectPress(event)
-                        if (event.detail !== 0) return
-                        void handleOpenInFileManager(opt.slug)
-                        setIsOpen(false)
-                      }}
-                    >
-                      <FolderOpen class="w-3 h-3" />
-                    </button>
-                  </Show>
-                  <button
-                    type="button"
-                    class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                    aria-label="Copy path"
-                    title="Copy path"
-                    onPointerDown={(event) => {
-                      preventSelectPress(event)
-                      void (async () => {
-                        await handleCopyPath(opt.directory)
-                        setIsOpen(false)
-                      })()
-                    }}
-                    onPointerUp={preventSelectPress}
-                    onMouseDown={preventSelectPress}
-                    onMouseUp={preventSelectPress}
-                    onClick={preventSelectPress}
-                  >
-                    <Copy class="w-3 h-3" />
-                  </button>
                 </div>
               </div>
             </Select.Item>
@@ -451,6 +385,44 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           </Select.Content>
         </Select.Portal>
       </Select>
+
+      <Show when={selectedWorktree()} keyed>
+        {(worktree) => (
+          <div class="flex justify-end gap-1 mt-1">
+            <button
+              type="button"
+              class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+              aria-label="Copy path"
+              title="Copy path"
+              onClick={() => void handleCopyPath(worktree.directory)}
+            >
+              <Copy class="w-3 h-3" />
+            </button>
+            <Show when={canOpenWorkspacePaths()}>
+              <button
+                type="button"
+                class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                aria-label={t("instanceShell.worktree.openInFileManager.action")}
+                title={t("instanceShell.worktree.openInFileManager.action")}
+                onClick={() => void handleOpenInFileManager(worktree.slug)}
+              >
+                <FolderOpen class="w-3 h-3" />
+              </button>
+            </Show>
+            <Show when={worktree.slug !== "root"}>
+              <button
+                type="button"
+                class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                aria-label="Delete worktree"
+                title="Delete worktree"
+                onClick={() => openDeleteDialog(worktree)}
+              >
+                <Trash2 class="w-3 h-3" />
+              </button>
+            </Show>
+          </div>
+        )}
+      </Show>
 
       <Dialog open={createOpen()} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <Dialog.Portal>
