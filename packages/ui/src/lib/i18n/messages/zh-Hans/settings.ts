@@ -489,4 +489,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "复制到剪贴板",
   "settings.info.diagnostics.download": "下载 .txt",
   "settings.info.diagnostics.copied": "诊断信息已复制到剪贴板。",
+
+  "instanceServiceStatus.plugins.manage": "管理",
+
+  "settings.plugins.title": "插件管理器",
+  "settings.plugins.subtitle": "为当前工作区添加或移除 OpenCode 插件。",
+  "settings.plugins.refresh": "刷新",
+  "settings.plugins.loading": "正在加载插件...",
+  "settings.plugins.addPlaceholder": "npm:插件名 或 file:///路径/plugin.ts",
+  "settings.plugins.restartNote": "插件更改需要重启工作区才能生效。",
+  "settings.plugins.configured.title": "已配置的插件",
+  "settings.plugins.empty.noPlugins": "未配置额外插件。",
+  "settings.plugins.empty.noInstance": "请先启动 OpenCode 工作区再管理插件。",
+  "settings.plugins.status.enabled": "已启用",
+  "settings.plugins.status.disabled": "已禁用",
+  "settings.plugins.actions.add": "添加",
+  "settings.plugins.actions.remove": "移除",
+  "settings.plugins.errors.loadFailed": "加载插件配置失败。",
+  "settings.plugins.errors.addFailed": "添加插件失败。",
+  "settings.plugins.errors.removeFailed": "移除插件失败。",
+  "settings.plugins.errors.invalidSpec": "必须以 npm:、file://、https://、/ 或 . 开头",
+  "settings.plugins.remove.confirm": "移除此插件？",
+  "settings.plugins.remove.confirmYes": "移除",
+  "settings.plugins.remove.confirmNo": "取消",
+
 } as const

@@ -489,4 +489,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copiar al portapapeles",
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.copied": "Información de diagnóstico copiada al portapapeles.",
+
+  "instanceServiceStatus.plugins.manage": "Gestionar",
+
+  "settings.plugins.title": "Gestor de Plugins",
+  "settings.plugins.subtitle": "Agrega o elimina plugins de OpenCode para el espacio de trabajo activo.",
+  "settings.plugins.refresh": "Actualizar",
+  "settings.plugins.loading": "Cargando plugins...",
+  "settings.plugins.addPlaceholder": "npm:nombre-del-plugin o file:///ruta/al/plugin.ts",
+  "settings.plugins.restartNote": "Los cambios de plugins requieren reiniciar el espacio de trabajo para surtir efecto.",
+  "settings.plugins.configured.title": "Plugins Configurados",
+  "settings.plugins.empty.noPlugins": "No hay plugins adicionales configurados.",
+  "settings.plugins.empty.noInstance": "Inicia un espacio de trabajo de OpenCode antes de gestionar plugins.",
+  "settings.plugins.status.enabled": "Activado",
+  "settings.plugins.status.disabled": "Desactivado",
+  "settings.plugins.actions.add": "Agregar",
+  "settings.plugins.actions.remove": "Eliminar",
+  "settings.plugins.errors.loadFailed": "Error al cargar la configuración de plugins.",
+  "settings.plugins.errors.addFailed": "Error al agregar el plugin.",
+  "settings.plugins.errors.removeFailed": "Error al eliminar el plugin.",
+  "settings.plugins.errors.invalidSpec": "Debe comenzar con npm:, file://, https://, /, o .",
+  "settings.plugins.remove.confirm": "¿Eliminar este plugin?",
+  "settings.plugins.remove.confirmYes": "Eliminar",
+  "settings.plugins.remove.confirmNo": "Cancelar",
+
 } as const

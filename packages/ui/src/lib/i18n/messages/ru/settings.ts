@@ -489,4 +489,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Скопировать в буфер обмена",
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.copied": "Диагностическая информация скопирована в буфер обмена.",
+
+  "instanceServiceStatus.plugins.manage": "Управление",
+
+  "settings.plugins.title": "Менеджер плагинов",
+  "settings.plugins.subtitle": "Добавление или удаление плагинов OpenCode для активного рабочего пространства.",
+  "settings.plugins.refresh": "Обновить",
+  "settings.plugins.loading": "Загрузка плагинов...",
+  "settings.plugins.addPlaceholder": "npm:имя-плагина или file:///путь/к/plugin.ts",
+  "settings.plugins.restartNote": "Изменения плагинов вступают в силу после перезапуска рабочего пространства.",
+  "settings.plugins.configured.title": "Настроенные плагины",
+  "settings.plugins.empty.noPlugins": "Дополнительные плагины не настроены.",
+  "settings.plugins.empty.noInstance": "Запустите рабочее пространство OpenCode перед управлением плагинами.",
+  "settings.plugins.status.enabled": "Включено",
+  "settings.plugins.status.disabled": "Отключено",
+  "settings.plugins.actions.add": "Добавить",
+  "settings.plugins.actions.remove": "Удалить",
+  "settings.plugins.errors.loadFailed": "Не удалось загрузить конфигурацию плагинов.",
+  "settings.plugins.errors.addFailed": "Не удалось добавить плагин.",
+  "settings.plugins.errors.removeFailed": "Не удалось удалить плагин.",
+  "settings.plugins.errors.invalidSpec": "Должен начинаться с npm:, file://, https://, /, или .",
+  "settings.plugins.remove.confirm": "Удалить этот плагин?",
+  "settings.plugins.remove.confirmYes": "Удалить",
+  "settings.plugins.remove.confirmNo": "Отмена",
+
 } as const

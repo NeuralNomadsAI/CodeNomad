@@ -488,4 +488,28 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्",
   "settings.info.diagnostics.download": ".txt डाउनलोड गर्नुहोस्",
   "settings.info.diagnostics.copied": "निदान जानकारी क्लिपबोर्डमा प्रतिलिपि गरियो।",
+
+  "instanceServiceStatus.plugins.manage": "व्यवस्थापन",
+
+  "settings.plugins.title": "प्लगइन प्रबन्धक",
+  "settings.plugins.subtitle": "सक्रिय कार्यक्षेत्रको लागि OpenCode प्लगइनहरू थप्नुहोस् वा हटाउनुहोस्।",
+  "settings.plugins.refresh": "रिफ्रेस",
+  "settings.plugins.loading": "प्लगइनहरू लोड गर्दै...",
+  "settings.plugins.addPlaceholder": "npm:प्लगइन-नाम वा file:///पथ/plugin.ts",
+  "settings.plugins.restartNote": "प्लगइन परिवर्तनहरू कार्यान्वयन हुन कार्यक्षेत्र पुनः सुरु गर्न आवश्यक छ।",
+  "settings.plugins.configured.title": "कन्फिगर गरिएका प्लगइनहरू",
+  "settings.plugins.empty.noPlugins": "कुनै अतिरिक्त प्लगइन कन्फिगर गरिएको छैन।",
+  "settings.plugins.empty.noInstance": "प्लगइनहरू व्यवस्थापन गर्नु अघि OpenCode कार्यक्षेत्र सुरु गर्नुहोस्।",
+  "settings.plugins.status.enabled": "सक्रिय",
+  "settings.plugins.status.disabled": "निस्क्रिय",
+  "settings.plugins.actions.add": "थप्नुहोस्",
+  "settings.plugins.actions.remove": "हटाउनुहोस्",
+  "settings.plugins.errors.loadFailed": "प्लगइन कन्फिगरेसन लोड गर्न असफल।",
+  "settings.plugins.errors.addFailed": "प्लगइन थप्न असफल।",
+  "settings.plugins.errors.removeFailed": "प्लगइन हटाउन असफल।",
+  "settings.plugins.errors.invalidSpec": "npm:, file://, https://, /, वा . बाट सुरु हुनुपर्छ",
+  "settings.plugins.remove.confirm": "यो प्लगइन हटाउने?",
+  "settings.plugins.remove.confirmYes": "हटाउनुहोस्",
+  "settings.plugins.remove.confirmNo": "रद्द गर्नुहोस्",
+
 } as const
