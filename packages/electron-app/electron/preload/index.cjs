@@ -47,6 +47,7 @@ const localElectronAPI = {
     ipcRenderer.on("menu:action", handler)
     return () => ipcRenderer.removeListener("menu:action", handler)
   },
+  showTitlebarMenu: (menu, x, y) => ipcRenderer.invoke("menu:popup", menu, x, y),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)

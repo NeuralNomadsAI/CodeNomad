@@ -111,6 +111,9 @@ test("Developer Mode is exposed to local windows only", () => {
 
   assert.equal(typeof expose([]).getDeveloperMode, "function")
   assert.equal(typeof expose([]).setDeveloperMode, "function")
+  assert.equal(typeof expose([]).showTitlebarMenu, "function")
   assert.equal(expose(["--codenomad-window-context=remote"]).getDeveloperMode, undefined)
+  assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
+  assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
 })

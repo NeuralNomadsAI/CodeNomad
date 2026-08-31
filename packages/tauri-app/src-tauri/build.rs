@@ -47,6 +47,7 @@ fn main() {
             "preferences_accept_request",
             "preferences_resolve_transition",
             "window_control",
+            "popup_titlebar_menu",
             "open_remote_window",
             "client_state_claim_access",
             "client_state_load",

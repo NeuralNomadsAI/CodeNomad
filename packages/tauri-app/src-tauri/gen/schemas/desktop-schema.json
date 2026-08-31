@@ -471,6 +471,12 @@
           "markdownDescription": "Enables the open_workspace_target command without any pre-configured scope."
         },
         {
+          "description": "Enables the popup_titlebar_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-popup-titlebar-menu",
+          "markdownDescription": "Enables the popup_titlebar_menu command without any pre-configured scope."
+        },
+        {
           "description": "Enables the preferences_accept_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-preferences-accept-request",
@@ -643,6 +649,12 @@
           "type": "string",
           "const": "deny-open-workspace-target",
           "markdownDescription": "Denies the open_workspace_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the popup_titlebar_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-popup-titlebar-menu",
+          "markdownDescription": "Denies the popup_titlebar_menu command without any pre-configured scope."
         },
         {
           "description": "Denies the preferences_accept_request command without any pre-configured scope.",

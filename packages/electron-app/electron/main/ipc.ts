@@ -4,7 +4,7 @@ import { requestMicrophoneAccess } from "./permissions"
 import type { DeveloperMode } from "./developer-mode"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
-import { setWorkspaceMenuEnabled } from "./menu"
+import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
 
@@ -98,6 +98,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     if (typeof folder !== "string" || typeof opened !== "boolean") throw new Error("Invalid folder acknowledgement")
     dependencies.acknowledgeFolder(id, folder, opened)
     return { ok: true }
+  })
+  ipcMain.handle("menu:popup", async (event, menu: unknown, x: unknown, y: unknown) => {
+    const { window } = local(event)
+    if ((menu !== "file" && menu !== "edit" && menu !== "view" && menu !== "window" && menu !== "help")
+      || typeof x !== "number" || typeof y !== "number") throw new Error("Invalid titlebar menu request")
+    popupTitlebarMenu(window, menu as TitlebarMenu, x, y)
   })
   ipcMain.handle("developer-mode:get", async (event) => {
     local(event)

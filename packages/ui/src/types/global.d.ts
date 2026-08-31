@@ -58,6 +58,7 @@ declare global {
     acknowledgePendingFolder?: (folder: string, opened: boolean) => Promise<{ ok: true }>
     onPendingFolders?: (callback: () => void) => () => void
     onMenuAction?: (callback: (action: string) => void) => () => void
+    showTitlebarMenu?: (menu: "file" | "edit" | "view" | "window" | "help", x: number, y: number) => Promise<unknown>
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>

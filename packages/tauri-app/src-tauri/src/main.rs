@@ -371,6 +371,45 @@ fn window_control(
     .map_err(|error| error.to_string())
 }
 
+fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
+    match menu {
+        "file" => Some("menu-file"),
+        "edit" => Some("menu-edit"),
+        "view" => Some("menu-view"),
+        "window" => Some("menu-window"),
+        "help" => Some("menu-help"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn popup_titlebar_menu(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    menu: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
+    if !x.is_finite() || !y.is_finite() {
+        return Err("Invalid titlebar menu position".into());
+    }
+    let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
+    let app_menu = window
+        .app_handle()
+        .menu()
+        .ok_or_else(|| "Application menu is unavailable".to_string())?;
+    let item = app_menu
+        .get(id)
+        .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+    let submenu = item
+        .as_submenu()
+        .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+    window
+        .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+        .map_err(|error| error.to_string())
+}
+
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
     if let Ok(mut claims) = app.state::<AppState>().remote_proxy_cleanup_claims.lock() {
         claims.remove(session_id);
@@ -1537,6 +1576,7 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             window_control,
+            popup_titlebar_menu,
             open_remote_window,
             client_state::client_state_claim_access,
             client_state::client_state_load,
@@ -1635,7 +1675,7 @@ fn main() {
                     }
                 }
 
-                "get_updates" => {
+                "get_updates" | "help_get_updates" => {
                     #[cfg(windows)]
                     {
                         let app_handle = app_handle.clone();
@@ -1875,7 +1915,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let file_menu = if is_mac {
-        SubmenuBuilder::new(app, "File")
+        SubmenuBuilder::with_id(app, "menu-file", "File")
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1883,7 +1923,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .close_window()
             .build()?
     } else {
-        SubmenuBuilder::new(app, "File")
+        SubmenuBuilder::with_id(app, "menu-file", "File")
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1954,7 +1994,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     // Edit menu with predefined items for standard functionality
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
+    let edit_menu = SubmenuBuilder::with_id(app, "menu-edit", "Edit")
         .undo()
         .redo()
         .separator()
@@ -1967,7 +2007,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     submenus.push(edit_menu);
 
     // View menu
-    let view_menu = SubmenuBuilder::new(app, "View")
+    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View")
         .item(&reload_item)
         .item(&force_reload_item)
         .item(&toggle_devtools_item)
@@ -1982,7 +2022,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     // Window menu
     let window_menu = if is_linux {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -1993,7 +2033,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .item(&close_window_item)
             .build()?
     } else if is_mac {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -2002,7 +2042,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .maximize()
             .build()?
     } else {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -2015,14 +2055,35 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
     submenus.push(window_menu);
 
-    if !is_mac {
-        let help_menu = SubmenuBuilder::new(app, "Help")
+    let help_menu = if is_mac {
+        let help_updates_item = MenuItem::with_id(
+            app,
+            "help_get_updates",
+            "Get Updates...",
+            true,
+            None::<&str>,
+        )?;
+        let help_about_item = PredefinedMenuItem::about(
+            app,
+            Some("About CodeNomad"),
+            Some(build_about_metadata(
+                &app.package_info().version.to_string(),
+                false,
+            )),
+        )?;
+        SubmenuBuilder::with_id(app, "menu-help", "Help")
+            .item(&help_updates_item)
+            .separator()
+            .item(&help_about_item)
+            .build()?
+    } else {
+        SubmenuBuilder::with_id(app, "menu-help", "Help")
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
-            .build()?;
-        submenus.push(help_menu);
-    }
+            .build()?
+    };
+    submenus.push(help_menu);
 
     // Build the main menu with all submenus
     let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus
@@ -2071,12 +2132,20 @@ mod menu_tests {
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
         is_allowed_local_origin, require_http_url, rollback_remote_window_metadata,
         run_update_with_fallback, should_allow_registered_origin, should_open_external_url,
-        should_recreate_remote_window, RemoteProfileIdentity, RemoteWindowMetadata,
-        RemoteWindowOperationLocks, WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        should_recreate_remote_window, titlebar_menu_id, RemoteProfileIdentity,
+        RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState, RELEASES_URL,
+        REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
+
+    #[test]
+    fn titlebar_menu_ids_are_restricted_to_application_submenus() {
+        assert_eq!(titlebar_menu_id("file"), Some("menu-file"));
+        assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
+        assert_eq!(titlebar_menu_id("preferences"), None);
+    }
 
     #[test]
     fn failed_update_uses_release_fallback() {

@@ -10,6 +10,7 @@
     "core:default",
     "core:menu:default",
     "allow-window-control",
+    "allow-popup-titlebar-menu",
     "dialog:allow-open",
     {
       "identifier": "opener:allow-open-url",

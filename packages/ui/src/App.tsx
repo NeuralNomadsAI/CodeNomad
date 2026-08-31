@@ -731,7 +731,7 @@ const App: Component = () => {
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
         <Show when={runtimeEnv.windowContext === "local" && runtimeEnv.host !== "web"}>
-          <NativeTitlebar title={t("window.title.main")} />
+          <NativeTitlebar title={t("window.title.main")} menus />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
