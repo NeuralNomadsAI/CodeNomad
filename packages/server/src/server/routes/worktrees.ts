@@ -248,7 +248,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           rootDirectory,
           matchesTarget: async (directory) => servicePathContains(targetServiceRoot, directory),
           validateBeforeRemove: async (projectID) => {
-            await assertNoOtherProjectSessions(client, projectID, targetServiceRoot)
+            await assertNoWorktreeBlockers(client, projectID, targetServiceRoot, targetDirectory)
           },
           runMutation: async (directories, operation) => {
             const identities = await Promise.all(directories.map(async (directory) => (
@@ -261,9 +261,6 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             return deps.worktreeDeletionFence.run(targetIdentity, identities as string[], operation)
           },
           remove: async () => {
-            if (!await isTargetRegistered()) {
-              throw new ProjectSessionError("Worktree changed before deletion", 409)
-            }
             try {
               await removeWorktree({
                 workspaceFolder: workspace.path,
@@ -327,17 +324,50 @@ function servicePathContains(root: string, candidate: string): boolean {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${servicePath.sep}`) && !servicePath.isAbsolute(relative))
 }
 
-async function assertNoOtherProjectSessions(
+async function assertNoWorktreeBlockers(
   client: Awaited<ReturnType<WorkspaceManager["getSharedServiceClient"]>>,
   currentProjectID: string,
   targetRoot: string,
+  targetDirectory: string,
 ): Promise<void> {
-  for (const project of await client.project.list()) {
-    if (project.id === currentProjectID) continue
-    const blocker = (await listCompleteProjectSessions(client, project.id))
-      .find((session) => servicePathContains(targetRoot, session.location.directory))
-    if (blocker) {
-      throw new ProjectSessionError(`Session from another project blocks deletion: ${blocker.id}`, 409)
+  const [nativeLocations, projects] = await Promise.all([
+    client.debug.location.list(),
+    client.project.list(),
+  ])
+  const locations = new Map<string, { directory: string; workspace?: string }>()
+  const candidates: Array<{ directory: string; workspace?: string }> = [{ directory: targetDirectory }, ...nativeLocations
+    .map(({ directory, workspaceID }) => ({ directory, workspace: workspaceID }))]
+  for (const location of candidates) {
+    locations.set(`${location.directory}\0${location.workspace ?? ""}`, location)
+  }
+  const resources = await Promise.all([...locations.values()].map(async (location) => Promise.all([
+    client.shell.list({ location }),
+    client.pty.list({ location }),
+  ])))
+  const shell = resources.flatMap(([shells]) => shells.data)
+    .find((entry) => entry.status === "running" && servicePathContains(targetRoot, entry.cwd))
+  if (shell) throw new ProjectSessionError(`Running Shell blocks deletion: ${shell.id}`, 409)
+  const pty = resources.flatMap(([, ptys]) => ptys.data)
+    .find((entry) => entry.status === "running" && servicePathContains(targetRoot, entry.cwd))
+  if (pty) throw new ProjectSessionError(`Running PTY blocks deletion: ${pty.id}`, 409)
+
+  const sessions = []
+  for (const projectID of new Set([currentProjectID, ...projects.map(({ id }) => id)])) {
+    const projectSessions = await listCompleteProjectSessions(client, projectID)
+    if (projectID !== currentProjectID) {
+      const blocker = projectSessions.find((session) => servicePathContains(targetRoot, session.location.directory))
+      if (blocker) {
+        throw new ProjectSessionError(`Session from another project blocks deletion: ${blocker.id}`, 409)
+      }
+    }
+    sessions.push(...projectSessions)
+  }
+  for (let index = 0; index < sessions.length; index += 16) {
+    const persistentPtys = await Promise.all(sessions.slice(index, index + 16)
+      .map((session) => client.experimental.persistentPty.list({ sessionID: session.id })))
+    for (const persistentPty of persistentPtys) {
+      const persistent = persistentPty.find((entry) => entry.status === "running" && servicePathContains(targetRoot, entry.cwd))
+      if (persistent) throw new ProjectSessionError(`Running persistent PTY blocks deletion: ${persistent.id}`, 409)
     }
   }
 }

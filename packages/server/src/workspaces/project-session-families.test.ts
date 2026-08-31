@@ -43,7 +43,12 @@ function clientHarness(initial: SessionInfo[], options: {
       }),
     },
     session: {
-      list: async () => ({ data: Array.from(sessions.values()).map((value) => structuredClone(value)), cursor: {} }),
+      list: async (input?: { workspace?: string }) => ({
+        data: Array.from(sessions.values())
+          .filter((value) => !input?.workspace || value.location.workspaceID === input.workspace)
+          .map((value) => structuredClone(value)),
+        cursor: {},
+      }),
       active: async () => Object.fromEntries((typeof options.active === "function" ? options.active() : options.active ?? []).map((id) => [id, { type: "running" as const }])),
       get: async ({ sessionID }: { sessionID: string }) => {
         const update = pending.get(sessionID)
@@ -69,20 +74,26 @@ function clientHarness(initial: SessionInfo[], options: {
 describe("project session families", () => {
   it("loads the complete paginated project inventory", async () => {
     const calls: Array<{ project?: string; workspace?: string; cursor?: string; limit?: number; order?: string }> = []
+    const pages = [
+      session("root", undefined, ROOT, "workspace"),
+      session("child-1", "root", ROOT, "workspace"),
+      session("child-2", "root", ROOT, "workspace"),
+      session("child-3", "root", ROOT, "workspace"),
+      session("child-4", "root", ROOT, "workspace"),
+    ]
     const client = {
       session: {
         list: async (input: { project?: string; cursor?: string }) => {
           calls.push(input)
-          return input.cursor
-            ? { data: [session("child", "root", ROOT, "workspace")], cursor: { next: null } }
-            : { data: [session("root", undefined, ROOT, "workspace")], cursor: { next: "next" } }
+          const index = input.cursor ? Number(input.cursor.slice("page-".length)) - 1 : 0
+          return { data: [pages[index]!], cursor: { next: index < pages.length - 1 ? `page-${index + 2}` : null } }
         },
       },
     } as unknown as OpenCodeClient
 
-    assert.deepEqual((await listCompleteProjectSessions(client, "project", "workspace")).map(({ id }) => id), ["root", "child"])
+    assert.deepEqual((await listCompleteProjectSessions(client, "project", "workspace")).map(({ id }) => id), pages.map(({ id }) => id))
     assert.deepEqual(calls[0], { project: "project", workspace: "workspace", limit: 500, order: "asc" })
-    assert.deepEqual(calls[1], { cursor: "next" })
+    assert.deepEqual(calls.slice(1), ["page-2", "page-3", "page-4", "page-5"].map((cursor) => ({ cursor })))
   })
 
   it("rejects malformed native cursors", async () => {
@@ -129,6 +140,21 @@ describe("project session families", () => {
     assert.ok([...harness.sessions.values()].every(({ location }) => location.directory === WORKTREE))
   })
 
+  it("rejects a family split across native workspaces", async () => {
+    const harness = clientHarness([
+      session("root", undefined, ROOT, "owned-workspace"),
+      session("child", "root", ROOT, "foreign-workspace"),
+    ], { workspaceID: "owned-workspace" })
+
+    await assert.rejects(() => moveProjectSessionFamily({
+      client: harness.client,
+      projectLocation: { directory: ROOT, workspaceID: "owned-workspace" },
+      sessionId: "root",
+      targetDirectory: WORKTREE,
+    }), /another workspace/)
+    assert.deepEqual(harness.moveCalls, [])
+  })
+
   it("waits for delayed move visibility", async () => {
     const harness = clientHarness([session("root")], { visibilityDelayGets: 2 })
     await moveProjectSessionFamily({ client: harness.client, projectLocation: { directory: ROOT }, sessionId: "root", targetDirectory: WORKTREE })
@@ -166,7 +192,7 @@ describe("project session families", () => {
     const harness = clientHarness([])
     let lists = 0
     ;(harness.client.session.list as any) = async () => ({
-      data: ++lists < 4 ? [] : [session("intruder", undefined, WORKTREE)],
+      data: ++lists < 3 ? [] : [session("intruder", undefined, WORKTREE)],
       cursor: {},
     })
 
@@ -178,6 +204,24 @@ describe("project session families", () => {
       remove: async () => assert.fail("Git removal must not run"),
       isTargetRegistered: async () => true,
     }), /Sessions remain attached/)
+  })
+
+  it("rechecks deletion blockers after evacuation", async () => {
+    const harness = clientHarness([session("root", undefined, WORKTREE)])
+    let checks = 0
+    await assert.rejects(() => removeProjectWorktree({
+      client: harness.client,
+      projectLocation: { directory: ROOT },
+      targetDirectory: WORKTREE,
+      rootDirectory: ROOT,
+      remove: async () => assert.fail("Git removal must not run"),
+      isTargetRegistered: async () => true,
+      validateBeforeRemove: async () => {
+        if (++checks === 2) throw new ProjectSessionError("running resource", 409)
+      },
+    }), /running resource/)
+    assert.equal(checks, 2)
+    assert.equal(harness.sessions.get("root")?.location.directory, WORKTREE)
   })
 
   it("rolls back when a family member becomes active during evacuation", async () => {
@@ -276,6 +320,27 @@ describe("project session families", () => {
     }), /another workspace/)
   })
 
+  it("ignores unrelated sessions from another workspace when fencing deletion", async () => {
+    const harness = clientHarness([
+      session("owned", undefined, WORKTREE, "owned-workspace"),
+      session("foreign", undefined, "/other/project", "foreign-workspace"),
+    ], { workspaceID: "owned-workspace" })
+    let guarded: string[] = []
+    await removeProjectWorktree({
+      client: harness.client,
+      projectLocation: { directory: ROOT, workspaceID: "owned-workspace" },
+      targetDirectory: WORKTREE,
+      rootDirectory: ROOT,
+      remove: async () => undefined,
+      isTargetRegistered: async () => true,
+      runMutation: async (directories, operation) => {
+        guarded = directories
+        return operation()
+      },
+    })
+    assert.equal(guarded.includes("/other/project"), false)
+  })
+
   it("rolls back only while the original worktree identity remains", async () => {
     const original = clientHarness([session("original", undefined, WORKTREE)])
     await assert.rejects(() => removeProjectWorktree({
@@ -297,7 +362,7 @@ describe("project session families", () => {
       rootDirectory: ROOT,
       remove: async () => { throw new ProjectSessionError("worktree changed", 409) },
       isTargetRegistered: async () => ++identityChecks === 1,
-    }), /worktree changed/)
+    }), /Worktree changed/)
     assert.deepEqual(replacement.moveCalls, ["replacement"])
     assert.equal(replacement.sessions.get("replacement")?.location.directory, ROOT)
   })

@@ -1064,10 +1064,22 @@ export class WorkspaceManager {
 }
 
 function pathContains(parent: string, child: string): boolean {
+  const left = parseWorktreeIdentity(parent)
+  const right = parseWorktreeIdentity(child)
+  if (left || right) {
+    if (!left || !right || left.distro !== right.distro) return false
+    const relative = path.posix.relative(left.linuxPath, right.linuxPath)
+    return relative === "" || (relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative))
+  }
   const relative = path.relative(parent, child)
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
 function pathsOverlap(left: string, right: string): boolean {
   return pathContains(left, right) || pathContains(right, left)
+}
+
+function parseWorktreeIdentity(identity: string): { distro: string; linuxPath: string } | undefined {
+  const match = /^wsl:([^:]+):(\/.*)$/.exec(identity)
+  return match ? { distro: match[1]!, linuxPath: match[2]! } : undefined
 }

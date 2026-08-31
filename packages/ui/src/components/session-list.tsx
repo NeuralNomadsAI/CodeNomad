@@ -23,6 +23,7 @@ import {
   setActiveSessionFromList,
   toggleSessionExpanded,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   getSessionHasMore,
   getSessionListError,
@@ -135,13 +136,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
     if (normalizedQuery() || failedSortExhaustion === key
       || !getSessionHasMore(props.instanceId) || isFetchingSessions()) return
-    void loadMoreSessions(props.instanceId).catch((error) => {
+    void loadAllSessions(props.instanceId).catch((error) => {
       failedSortExhaustion = key
       log.error("Failed to load all sessions for sorting:", error)
     })
   })
 
   const handleRetrySessions = () => {
+    failedSortExhaustion = undefined
     void fetchSessions(props.instanceId, { reset: true }).catch((error) => {
       log.error("Failed to retry session list:", error)
     })
@@ -155,6 +157,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       (entries) => {
         const entry = entries[0]
         if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
+          failedSortExhaustion = undefined
           void loadMoreSessions(props.instanceId).catch((error) => {
             log.error("Failed to load more sessions:", error)
           })

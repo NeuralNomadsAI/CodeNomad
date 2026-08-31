@@ -160,6 +160,18 @@ describe("workspace manager shared service lifecycle", () => {
     )
   })
 
+  it("keeps WSL worktree reservation paths case-sensitive", { skip: process.platform !== "win32" }, async () => {
+    const { manager } = createHarness(new ControlledSharedService(), { platform: "win32" })
+    const releaseUpper = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo")
+    const releaseLower = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\foo")
+    await assert.rejects(
+      () => manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo\\nested"),
+      /already in progress/,
+    )
+    releaseLower()
+    releaseUpper()
+  })
+
   it("pins a bounded host CLI lifecycle with binary, platform, and startup environment identity", async () => {
     const service = new ControlledSharedService()
     let factoryCall: unknown[] | undefined

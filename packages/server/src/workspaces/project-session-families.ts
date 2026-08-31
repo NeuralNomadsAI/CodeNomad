@@ -118,10 +118,11 @@ export async function moveProjectSessionFamily(params: {
     if (params.validateTarget && !await params.validateTarget()) {
       throw new ProjectSessionError("Worktree changed before the session move", 409)
     }
-    const inventory = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
+    const inventory = await listCompleteProjectSessions(context.client, context.project.id)
     const families = resolveSessionFamilies(inventory)
     const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
     if (!family) throw new ProjectSessionError("Session not found in project", 404)
+    assertWorkspaceFamily(family[1], context.workspaceID)
     const target = await resolveProjectLocation(context, params.targetDirectory)
     const move = async () => {
       await assertInactive(context.client, family[1])
@@ -151,31 +152,23 @@ export async function removeProjectWorktree(params: {
   await withProject(params.client, params.projectLocation, async (context) => {
     const matchesTarget = params.matchesTarget
       ?? (async (directory: string) => directoryContains(params.targetDirectory, directory))
-    const initial = await listCompleteProjectSessions(context.client, context.project.id)
+    const initial = await matchingFamilies(
+      await listCompleteProjectSessions(context.client, context.project.id),
+      matchesTarget,
+    )
+    for (const family of initial) assertWorkspaceFamily(family, context.workspaceID)
     const destination = await resolveProjectLocation(context, params.rootDirectory)
     const remove = async () => {
       if (!await params.isTargetRegistered()) {
         throw new ProjectSessionError("Worktree changed before deletion", 409)
       }
-      const allSessions = await listCompleteProjectSessions(context.client, context.project.id)
-      const foreign = context.workspaceID
-        ? (await Promise.all(allSessions.map(async (session) => (
-            session.location.workspaceID !== context.workspaceID && await matchesTarget(session.location.directory)
-              ? session.id
-              : undefined
-          )))).filter((id): id is string => Boolean(id))
-        : []
-      if (foreign.length) {
-        throw new ProjectSessionError(`Sessions from another workspace block deletion: ${foreign.join(", ")}`, 409)
-      }
-      const inventory = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
-      const families: SessionInfo[][] = []
-      for (const family of resolveSessionFamilies(inventory).values()) {
-        if ((await Promise.all(family.map(({ location }) => matchesTarget(location.directory)))).some(Boolean)) {
-          families.push(family)
-        }
-      }
+      const families = await matchingFamilies(
+        await listCompleteProjectSessions(context.client, context.project.id),
+        matchesTarget,
+      )
+      for (const family of families) assertWorkspaceFamily(family, context.workspaceID)
       await assertInactive(context.client, families.flat())
+      await params.validateBeforeRemove?.(context.project.id)
       const original = new Map(families.flat().map((session) => [session.id, session.location]))
       const moved: string[] = []
       let root: LocationRef | undefined
@@ -192,6 +185,9 @@ export async function removeProjectWorktree(params: {
         }
         await assertInactive(context.client, families.flat())
         await params.validateBeforeRemove?.(context.project.id)
+        if (!await params.isTargetRegistered()) {
+          throw new ProjectSessionError("Worktree changed before deletion", 409)
+        }
         await params.remove()
       } catch (error) {
         const changed = root ? await refreshChangedSessionIds(context, moved, root) : []
@@ -212,9 +208,30 @@ export async function removeProjectWorktree(params: {
       }
     }
     return params.runMutation
-      ? params.runMutation([...initial.map(({ location }) => location.directory), params.targetDirectory, destination.directory], remove)
+      ? params.runMutation([...initial.flatMap((family) => family.map(({ location }) => location.directory)), params.targetDirectory, destination.directory], remove)
       : remove()
   })
+}
+
+async function matchingFamilies(
+  sessions: SessionInfo[],
+  matchesTarget: (directory: string) => Promise<boolean>,
+): Promise<SessionInfo[][]> {
+  const matches: SessionInfo[][] = []
+  for (const family of resolveSessionFamilies(sessions).values()) {
+    if ((await Promise.all(family.map(({ location }) => matchesTarget(location.directory)))).some(Boolean)) {
+      matches.push(family)
+    }
+  }
+  return matches
+}
+
+function assertWorkspaceFamily(family: SessionInfo[], workspaceID: string | undefined): void {
+  if (!workspaceID) return
+  const foreign = family.filter((session) => session.location.workspaceID !== workspaceID).map(({ id }) => id)
+  if (foreign.length) {
+    throw new ProjectSessionError(`Sessions from another workspace block this operation: ${foreign.join(", ")}`, 409)
+  }
 }
 
 async function withProject<T>(

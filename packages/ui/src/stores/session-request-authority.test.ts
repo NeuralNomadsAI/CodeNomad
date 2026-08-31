@@ -6,7 +6,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision } from "./opencode-data.ts"
@@ -1143,6 +1143,60 @@ describe("session request authority", () => {
     try {
       await fetchSessions(instanceId)
       await assert.rejects(loadMoreSessions(instanceId), /Repeated session cursor/)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads every root page for global sorting", async () => {
+    const instanceId = "global-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const cursors: string[] = []
+    ;(client.session as any).list = async (input: any) => {
+      if (!input.cursor) return { data: [apiSession("root-1")], cursor: { next: "page-2" } }
+      cursors.push(input.cursor)
+      const page = Number(input.cursor.slice("page-".length))
+      return { data: [apiSession(`root-${page}`)], cursor: page < 5 ? { next: `page-${page + 1}` } : {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await Promise.all([loadAllSessions(instanceId), loadAllSessions(instanceId)])
+      assert.deepEqual(cursors, ["page-2", "page-3", "page-4", "page-5"])
+      assert.deepEqual(getSessionListIds(instanceId), ["root-1", "root-2", "root-3", "root-4", "root-5"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("starts a fresh sort exhaustion when the session list is superseded", async () => {
+    const instanceId = "superseded-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const stalePage = deferred<any>()
+    const stalePageStarted = deferred<void>()
+    let refreshed = false
+    ;(client.session as any).list = async (input: any) => {
+      if (input.cursor === "stale-page") {
+        stalePageStarted.resolve()
+        return stalePage.promise
+      }
+      if (input.cursor === "fresh-page") return { data: [apiSession("fresh-2")], cursor: {} }
+      return refreshed
+        ? { data: [apiSession("fresh-1")], cursor: { next: "fresh-page" } }
+        : { data: [apiSession("stale-1")], cursor: { next: "stale-page" } }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      const staleExhaustion = loadAllSessions(instanceId)
+      await stalePageStarted.promise
+      refreshed = true
+      await fetchSessions(instanceId)
+      await loadAllSessions(instanceId)
+      stalePage.resolve({ data: [apiSession("stale-2")], cursor: {} })
+      await staleExhaustion
+      assert.equal(getSessionListIds(instanceId).includes("fresh-2"), true)
+      assert.equal(getSessionListIds(instanceId).includes("stale-2"), false)
     } finally {
       cleanup()
     }

@@ -50,6 +50,7 @@ import {
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
+  getSessionHasMore,
   getSessionNextCursor,
   getSessionListIds,
 } from "./session-state"
@@ -95,6 +96,7 @@ const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
+const sessionExhaustionRequests = new Map<string, Promise<void>>()
 const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
 const messagePageRequests = new Map<string, Promise<void>>()
 const messageHistoryAuthorities = new Map<string, object>()
@@ -169,6 +171,8 @@ async function refreshSessionCatalog(instanceId: string): Promise<void> {
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
+  sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
   sessionListRequestIds.set(instanceId, requestId)
   return requestId
 }
@@ -180,6 +184,7 @@ function isLatestSessionListRequest(instanceId: string, requestId: number): bool
 function clearSessionListRequestState(instanceId: string): void {
   sessionListRequestIds.delete(instanceId)
   sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
   sessionPageTraversals.delete(instanceId)
   setSessionListError(instanceId, null)
   setLoading((prev) => {
@@ -504,9 +509,13 @@ async function fetchSessions(instanceId: string, options?: {
       inventoryComplete = hasProjectInventory
     } catch (error) {
       if (options?.signal?.aborted) throw error
+      if (options?.strictStatus) throw error
       log.warn("Failed to enrich the session list with project descendants", { instanceId, error })
     }
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
     const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
     const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
     const sessionMap = new Map<string, Session>()
@@ -535,7 +544,10 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
 
     if (inventoryComplete || (!hasProjectInventory && response.complete)) {
       const authoritativeSessions = inventoryComplete ? inventory : rootApiSessions
@@ -637,6 +649,33 @@ async function loadMoreSessions(instanceId: string): Promise<void> {
     if (sessionPageRequests.get(instanceId) === request) sessionPageRequests.delete(instanceId)
   })
   sessionPageRequests.set(instanceId, request)
+  return request
+}
+
+async function loadAllSessions(instanceId: string): Promise<void> {
+  const pending = sessionExhaustionRequests.get(instanceId)
+  if (pending) return pending
+  const listRequestId = sessionListRequestIds.get(instanceId)
+  const request = (async () => {
+    setSessionListError(instanceId, null)
+    try {
+      while (getSessionHasMore(instanceId)) {
+        const cursor = getSessionNextCursor(instanceId)
+        await loadMoreSessions(instanceId)
+        if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+        if (getSessionHasMore(instanceId) && getSessionNextCursor(instanceId) === cursor) {
+          throw new Error("Session pagination was interrupted")
+        }
+      }
+    } catch (error) {
+      if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+      setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
+      throw error
+    }
+  })().finally(() => {
+    if (sessionExhaustionRequests.get(instanceId) === request) sessionExhaustionRequests.delete(instanceId)
+  })
+  sessionExhaustionRequests.set(instanceId, request)
   return request
 }
 
@@ -1572,6 +1611,7 @@ export {
   fetchSessions,
   hydrateRestoredSessionChain,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,

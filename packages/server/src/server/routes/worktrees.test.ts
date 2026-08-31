@@ -40,6 +40,10 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     let lists = 0
     const client = {
       project: { list: async () => [{ id: "project" }] },
+      debug: { location: { list: async () => [] } },
+      shell: { list: async () => ({ data: [] }) },
+      pty: { list: async () => ({ data: [] }) },
+      experimental: { persistentPty: { list: async () => [] } },
       location: {
         get: async ({ location }: { location?: { directory?: string } }) => ({
           directory: location?.directory ?? workspacePath,
@@ -120,8 +124,23 @@ it("fails a direct delete call closed when session evacuation fails", async () =
 
       const workspace = { id: "workspace", path: temp, status: "ready" } as WorkspaceDescriptor
       const nativeSession = { id: "unloaded", projectID: "project", location: { directory: target }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
+      let blocker: "shell" | "pty" | "persistent" | undefined = "shell"
       const client = {
         project: { list: async () => [{ id: "project" }] },
+        debug: { location: { list: async () => [{ directory: path.join(temp, "unrelated"), workspaceID: "root-location" }] } },
+        shell: { list: async ({ location }: { location?: { workspace?: string } }) => ({
+          data: blocker === "shell" && location?.workspace === "root-location"
+            ? [{ id: "sh_blocker", status: "running", cwd: target }]
+            : [],
+        }) },
+        pty: { list: async ({ location }: { location?: { workspace?: string } }) => ({
+          data: blocker === "pty" && location?.workspace === "root-location"
+            ? [{ id: "pty_blocker", status: "running", cwd: target }]
+            : [],
+        }) },
+        experimental: { persistentPty: { list: async () => (
+          blocker === "persistent" ? [{ id: "pty_persistent", status: "running", cwd: target }] : []
+        ) } },
         location: {
           get: async ({ location }: { location?: { directory?: string } }) => ({
             directory: location?.directory ?? temp,
@@ -146,6 +165,14 @@ it("fails a direct delete call closed when session evacuation fails", async () =
         getWorktreeIdentityForPath: async () => "workspace:doomed",
       } as unknown as WorkspaceManager
       registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
+
+      for (const [kind, message] of [["shell", "Running Shell"], ["pty", "Running PTY"], ["persistent", "Running persistent PTY"]] as const) {
+        blocker = kind
+        const blocked = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
+        assert.equal(blocked.statusCode, 409)
+        assert.match(blocked.json().error, new RegExp(message))
+      }
+      blocker = undefined
 
       const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
 
