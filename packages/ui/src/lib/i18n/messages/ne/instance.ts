@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "नयाँ उदाहरण",
   "instanceTabs.remote.title": "रिमोट जडान",
   "instanceTabs.remote.ariaLabel": "रिमोट जडान",
+  "instanceTabs.developerMode.enableTitle": "विकासकर्ता मोड सक्षम गर्नुहोस्",
+  "instanceTabs.developerMode.disableTitle": "विकासकर्ता मोड असक्षम गर्नुहोस्",
+  "instanceTabs.developerMode.restartTitle": "{action}; परिवर्तन लागू गर्न CodeNomad पुनः सुरु गर्नुहोस्",
+  "instanceTabs.developerMode.enabledToast": "विकासकर्ता मोड सक्षम गरियो। परिवर्तन लागू गर्न CodeNomad पुनः सुरु गर्नुहोस्।",
+  "instanceTabs.developerMode.disabledToast": "विकासकर्ता मोड असक्षम गरियो। परिवर्तन लागू गर्न CodeNomad पुनः सुरु गर्नुहोस्।",
+  "instanceTabs.developerMode.error": "विकासकर्ता मोडमा पहुँच गर्न सकिएन।",
 
   "instanceInfo.title": "उदाहरण जानकारी (Instance Information)",
   "instanceInfo.labels.folder": "फोल्डर",

@@ -33,8 +33,8 @@ export function setWorkspaceMenuEnabled(window: BrowserWindow, enabled: boolean)
   updateWorkspaceMenuState()
 }
 
-export function clearWorkspaceMenuWindow(window: BrowserWindow) {
-  workspaceEnabled.delete(window.webContents.id)
+export function clearWorkspaceMenuWindow(webContentsId: number) {
+  workspaceEnabled.delete(webContentsId)
   updateWorkspaceMenuState()
 }
 

@@ -65,19 +65,8 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
-  getDeveloperRun: () => ipcRenderer.invoke("developer-run:get"),
-  startDeveloperRun: (input) => ipcRenderer.invoke("developer-run:start", input),
-  stopDeveloperRun: () => ipcRenderer.invoke("developer-run:stop"),
-  onDeveloperRunStatus: (callback) => {
-    const handler = (_event, status) => callback(status)
-    ipcRenderer.on("developer-run:status", handler)
-    return () => ipcRenderer.removeListener("developer-run:status", handler)
-  },
-  onDeveloperRunLog: (callback) => {
-    const handler = (_event, log) => callback(log)
-    ipcRenderer.on("developer-run:log", handler)
-    return () => ipcRenderer.removeListener("developer-run:log", handler)
-  },
+  getDeveloperMode: () => ipcRenderer.invoke("developer-mode:get"),
+  setDeveloperMode: (enabled) => ipcRenderer.invoke("developer-mode:set", Boolean(enabled)),
 }
 
 const remoteElectronAPI = {

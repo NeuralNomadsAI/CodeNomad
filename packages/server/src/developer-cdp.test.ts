@@ -47,6 +47,8 @@ class FakeSocket {
 
 class FakeChrome {
   target = page("one")
+  targets: Array<ReturnType<typeof page>> | undefined
+  context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1" }
   sockets: FakeSocket[] = []
   commands: Command[] = []
   deferred = new Map<string, { socket: FakeSocket; command: Command }>()
@@ -57,7 +59,7 @@ class FakeChrome {
 
   fetch = async (input: string | URL | Request): Promise<Response> => {
     assert.equal(String(input), "http://127.0.0.1:9222/json/list")
-    return new Response(JSON.stringify([this.target]))
+    return new Response(JSON.stringify(this.targets ?? [this.target]))
   }
 
   connect = (_url: string): FakeSocket => {
@@ -79,8 +81,9 @@ class FakeChrome {
     if (method === "Accessibility.getFullAXTree") return {
       nodes: this.axNodes,
     }
+    if (method === "Runtime.evaluate") return { result: { value: this.context } }
     if (method === "Page.captureScreenshot") return { data: this.screenshotData }
-    if (method === "DOM.getBoxModel") return { model: { content: [0, 0, 20, 0, 20, 10, 0, 10] } }
+    if (method === "DOM.resolveNode") return { object: { objectId: "node-1" } }
     return {}
   }
 
@@ -94,14 +97,20 @@ class FakeChrome {
   }
 }
 
-const identity = { endpoint: "http://127.0.0.1:9222", runId: "run-1", targetId: "one" }
+const identity = {
+  endpoint: "http://127.0.0.1:9222",
+  runId: "run-1",
+  windowId: "window-1",
+  sessionId: "session-1",
+  instanceId: "workspace-1",
+}
 
 describe("DeveloperCdp", () => {
   it("matches out-of-order protocol responses and drains runtime diagnostics on inspect", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     await client.inspect(identity)
-    const socket = chrome.sockets[0]
+    const socket = chrome.sockets.at(-1)!
     for (let index = 0; index < 1_001; index++) {
       socket.emit("Runtime.consoleAPICalled", { type: "warning", args: [{ value: `message-${index}` }] })
     }
@@ -112,17 +121,17 @@ describe("DeveloperCdp", () => {
     chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
     chrome.deferred.set("Page.captureScreenshot", undefined as never)
     const inspectionPromise = client.inspect(identity)
-    const screenshotPromise = client.screenshot(identity.runId)
-    while ([...chrome.deferred.values()].some((value) => !value)) {
-      await new Promise<void>((resolve) => setImmediate(resolve))
-    }
-
-    const screenshotCommand = chrome.deferred.get("Page.captureScreenshot")!
+    while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>((resolve) => setImmediate(resolve))
+    const screenshotPromise = client.screenshot(identity)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(chrome.deferred.get("Page.captureScreenshot"), undefined)
     const inspectCommand = chrome.deferred.get("Accessibility.getFullAXTree")!
-    screenshotCommand.socket.respond(screenshotCommand.command, { data: Buffer.from("shot").toString("base64") })
     inspectCommand.socket.respond(inspectCommand.command, chrome.result("Accessibility.getFullAXTree"))
-
-    const [inspection, screenshot] = await Promise.all([inspectionPromise, screenshotPromise])
+    const inspection = await inspectionPromise
+    while (!chrome.deferred.get("Page.captureScreenshot")) await new Promise<void>((resolve) => setImmediate(resolve))
+    const screenshotCommand = chrome.deferred.get("Page.captureScreenshot")!
+    screenshotCommand.socket.respond(screenshotCommand.command, { data: Buffer.from("shot").toString("base64") })
+    const screenshot = await screenshotPromise
     assert.equal(inspection.nodes[0].name, "Save")
     assert.equal(inspection.diagnostics.length, 1_000)
     assert.deepEqual(inspection.diagnostics[0], { level: "warning", text: "message-2" })
@@ -140,15 +149,15 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const first = await client.inspect(identity)
     const oldRef = first.nodes[0].ref!
-    const oldSocket = chrome.sockets[0]
+    const oldSocket = chrome.sockets.at(-1)!
 
     chrome.target = page("two")
-    const second = await client.inspect({ ...identity, targetId: "two" })
+    const second = await client.inspect(identity)
 
     assert.equal(second.target.id, "two")
     assert.equal(oldSocket.closed, true)
-    assert.equal(chrome.sockets.length, 2)
-    await assert.rejects(client.act({ runId: identity.runId, kind: "click", ref: oldRef }), /stale accessibility ref/)
+    assert.equal(chrome.sockets.length, 4)
+    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale accessibility ref/)
   })
 
   it("refreshes target metadata without reconnecting", async () => {
@@ -161,7 +170,18 @@ describe("DeveloperCdp", () => {
 
     assert.equal(inspection.target.title, "Renamed")
     assert.equal(inspection.target.url, "http://app.test/current")
-    assert.equal(chrome.sockets.length, 1)
+    assert.equal(chrome.sockets.length, 2)
+  })
+
+  it("activates clicks through the resolved accessibility node", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+
+    await client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+
+    assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
+    assert.equal(chrome.commands.find((command) => command.method === "Runtime.callFunctionOn")?.params?.objectId, "node-1")
   })
 
   it("retries a failed WebSocket connection", async () => {
@@ -184,19 +204,19 @@ describe("DeveloperCdp", () => {
       },
     })
 
-    await assert.rejects(client.inspect(identity), /connection failed/)
+    await assert.rejects(client.inspect(identity), /No CodeNomad page matches/)
     assert.equal((await client.inspect(identity)).target.id, "one")
-    assert.equal(attempts, 2)
+    assert.equal(attempts, 3)
   })
 
   it("invalidates accessibility refs on frame navigation", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const inspection = await client.inspect(identity)
-    chrome.sockets[0].emit("Page.frameNavigated", { frame: { id: "main" } })
+    chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
 
     await assert.rejects(
-      client.act({ runId: identity.runId, kind: "type", ref: inspection.nodes[0].ref!, text: "hello" }),
+      client.act({ ...identity, kind: "type", ref: inspection.nodes[0].ref!, text: "hello" }),
       /stale accessibility ref/,
     )
   })
@@ -205,13 +225,26 @@ describe("DeveloperCdp", () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const inspection = await client.inspect(identity)
-    chrome.sockets[0].close()
+    chrome.sockets.at(-1)!.close()
 
     await assert.rejects(
-      client.act({ runId: identity.runId, kind: "click", ref: inspection.nodes[0].ref! }),
+      client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! }),
       /stale accessibility ref/,
     )
-    assert.equal(chrome.sockets.length, 2)
+    assert.equal(chrome.sockets.length, 3)
+  })
+
+  it("rejects actions after the visible OpenCode session changes", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+    chrome.context = { ...chrome.context, sessionId: "session-2" }
+
+    await assert.rejects(
+      client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! }),
+      /active session changed/,
+    )
+    assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
   })
 
   it("invalidates refs and pending commands when an open socket errors", async () => {
@@ -219,17 +252,17 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const inspection = await client.inspect(identity)
     const oldRef = inspection.nodes[0].ref!
-    const socket = chrome.sockets[0]
+    const socket = chrome.sockets.at(-1)!
     socket.onerror?.({})
 
-    await assert.rejects(client.act({ runId: identity.runId, kind: "click", ref: oldRef }), /stale accessibility ref/)
+    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale accessibility ref/)
     assert.equal(socket.closed, true)
   })
 
   it("rejects non-loopback WebSocket targets", async () => {
     const chrome = new FakeChrome()
     chrome.target = { ...chrome.target, webSocketDebuggerUrl: "ws://example.com/page" }
-    await assert.rejects(chrome.client().inspect(identity), /target one is unavailable/)
+    await assert.rejects(chrome.client().inspect(identity), /No CodeNomad page matches/)
     assert.equal(chrome.sockets.length, 0)
   })
 
@@ -237,12 +270,28 @@ describe("DeveloperCdp", () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const inspection = await client.inspect(identity)
-    chrome.deferred.set("DOM.getBoxModel", undefined as never)
-    const action = client.act({ runId: identity.runId, kind: "click", ref: inspection.nodes[0].ref! })
-    while (!chrome.deferred.get("DOM.getBoxModel")) await new Promise<void>((resolve) => setImmediate(resolve))
-    const deferred = chrome.deferred.get("DOM.getBoxModel")!
+    chrome.deferred.set("DOM.resolveNode", undefined as never)
+    const action = client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+    while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
+    const deferred = chrome.deferred.get("DOM.resolveNode")!
     deferred.socket.emit("Page.frameNavigated", { frame: { id: "main" } })
-    deferred.socket.respond(deferred.command, chrome.result("DOM.getBoxModel"))
+    deferred.socket.respond(deferred.command, chrome.result("DOM.resolveNode"))
+
+    await assert.rejects(action, /Page changed during action/)
+    assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
+  })
+
+  it("rejects captures and input when the visible instance changes mid-command", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+
+    chrome.deferred.set("DOM.resolveNode", undefined as never)
+    const action = client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+    while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
+    chrome.context = { ...chrome.context, instanceId: "workspace-2" }
+    const deferred = chrome.deferred.get("DOM.resolveNode")!
+    deferred.socket.respond(deferred.command, chrome.result("DOM.resolveNode"))
 
     await assert.rejects(action, /Page changed during action/)
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
@@ -254,7 +303,7 @@ describe("DeveloperCdp", () => {
     const client = chrome.client({ maxScreenshotBytes: 4 })
     await client.inspect(identity)
 
-    await assert.rejects(client.screenshot(identity.runId), /exceeds 4 byte limit/)
+    await assert.rejects(client.screenshot(identity), /exceeds 4 byte limit/)
   })
 
   it("bounds accessibility snapshots", async () => {
@@ -273,6 +322,6 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     await client.inspect(identity)
     client.close()
-    assert.equal(chrome.sockets[0].closed, true)
+    assert.equal(chrome.sockets.at(-1)!.closed, true)
   })
 })

@@ -12,7 +12,11 @@ function harness(persisted = true) {
     getURL: () => "http://127.0.0.1:3000/app",
     on: (event: string, listener: (...args: unknown[]) => void) => listeners.set(event, listener),
   }
-  const window = { isDestroyed: () => false, webContents }
+  let destroyed = false
+  const window = { isDestroyed: () => destroyed, get webContents() {
+    if (destroyed) throw new Error("Object has been destroyed")
+    return webContents
+  } }
   let current: typeof window | null = window
   const calls: string[] = []
   const windowId = "11111111-1111-4111-8111-111111111111"
@@ -35,7 +39,7 @@ function harness(persisted = true) {
     () => ["http://127.0.0.1:3000"],
   )
   bind(window as never)
-  return { calls, frame, handlers, listeners, setCurrent: (value: typeof window | null) => { current = value }, webContents, window, windowId }
+  return { calls, destroyWindow: () => { destroyed = true }, frame, handlers, listeners, setCurrent: (value: typeof window | null) => { current = value }, webContents, window, windowId }
 }
 
 test("ephemeral local renderers receive secondary state without claiming a missing V3 record", async () => {
@@ -105,6 +109,7 @@ test("only a registered local window can reset its renderer authority", () => {
   assert.equal(h.calls[1], h.calls[0])
   h.setCurrent(null)
   h.listeners.get("did-navigate")!({}, "http://127.0.0.1:3000/late")
+  h.destroyWindow()
   h.listeners.get("destroyed")!()
   assert.equal(h.calls.length, 2)
 })

@@ -4,11 +4,12 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
-test("fences developer automation by owned session and forwards CDP actions", async () => {
+test("fences Developer Mode by the visible owned session and forwards CDP actions", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: Array<{ method: string; params: unknown }> = []
   let state = "ready"
   let runId = "run-1"
+  let visibleSession = "session-1"
   let inspectedIdentity: unknown
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true },
@@ -21,15 +22,30 @@ test("fences developer automation by owned session and forwards CDP actions", as
           return { state: "starting", runId }
         }
         return {
-          status: { state, runId, cdpUrl: "http://127.0.0.1:9222", targetId: "page-1" },
-          logs: [{ stream: "system", message: "ready" }],
+          status: {
+            state,
+            runId,
+            nativeIdentity: "electron:test",
+            cdpUrl: "http://127.0.0.1:9222",
+            windowId: "window-1",
+          },
+          logs: [],
         }
       },
     },
     developerCdp: {
+      context: async (identity: { sessionId: string }) => {
+        if (identity.sessionId !== visibleSession) throw new Error("active session mismatch")
+        return { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession }
+      },
       inspect: async (identity: unknown) => {
         inspectedIdentity = identity
-        return { target: { id: "page-1", title: "CodeNomad", url: "http://app.test/" }, nodes: [], diagnostics: [] }
+        return {
+          target: { id: "page-1", title: "CodeNomad", url: "http://app.test/" },
+          context: { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession },
+          nodes: [],
+          diagnostics: [],
+        }
       },
       close: () => undefined,
     },
@@ -50,22 +66,28 @@ test("fences developer automation by owned session and forwards CDP actions", as
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-1" })).statusCode, 200)
   const inspect = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(inspect.statusCode, 200)
-  assert.deepEqual(inspectedIdentity, { endpoint: "http://127.0.0.1:9222", runId: "run-1", targetId: "page-1" })
-  assert.deepEqual(inspect.json().result.logs, [{ stream: "system", message: "ready" }])
+  assert.deepEqual(inspectedIdentity, {
+    endpoint: "http://127.0.0.1:9222",
+    runId: "run-1",
+    windowId: "window-1",
+    sessionId: "session-1",
+    instanceId: "workspace-1",
+  })
+  assert.equal(inspect.json().result.context.sessionId, "session-1")
 
-  state = "error"
   const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
   assert.equal(restart.statusCode, 200)
   assert.deepEqual(nativeCalls.slice(-2), [
     { method: "developer.status", params: {} },
     { method: "developer.restart", params: {} },
   ])
-  assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 409)
+  assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
   state = "ready"
   runId = "run-3"
+  visibleSession = "session-2"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
 
   const unauthorized = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, payload: { mode: "developer-probe", sessionID: "session-1" } })

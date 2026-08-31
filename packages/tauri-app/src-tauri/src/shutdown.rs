@@ -42,6 +42,7 @@ struct ShutdownState {
     shutdown_started: bool,
     cleanup_started: bool,
     exit_allowed: bool,
+    restart_requested: bool,
     #[cfg(windows)]
     windows_session_end_generation: Option<u64>,
     #[cfg(windows)]
@@ -163,6 +164,7 @@ impl ShutdownCoordinator {
         let cancellations = state.global_requests.drain().collect();
         state.cleanup_started = false;
         state.shutdown_started = false;
+        state.restart_requested = false;
         state.global_pending.clear();
         state.committed_local_closes.clear();
         #[cfg(windows)]
@@ -186,6 +188,7 @@ impl ShutdownCoordinator {
             return PendingShutdownTimeoutAction::Cleanup;
         }
         state.shutdown_started = false;
+        state.restart_requested = false;
         state.global_pending.clear();
         PendingShutdownTimeoutAction::Cancel(state.global_requests.drain().collect())
     }
@@ -223,6 +226,19 @@ impl ShutdownCoordinator {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .exit_allowed = true;
+    }
+
+    fn request_restart(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .restart_requested = true;
+    }
+
+    fn complete_cleanup(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.exit_allowed = true;
+        state.restart_requested
     }
 
     fn with_navigation_authority<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
@@ -535,16 +551,7 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         client_state::capture_and_flush_all_windows(&app);
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                state
-                    .developer_run_manager
-                    .stop()
-                    .map(|_| ())
-                    .map_err(|error| error.to_string())
-            })
-            .and_then(|_| {
-                retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                    state.manager.stop().map_err(|error| error.to_string())
-                })
+                state.manager.stop().map_err(|error| error.to_string())
             })
         } else {
             Ok(())
@@ -556,9 +563,18 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             return;
         }
         client_state::release(&app);
-        app.state::<ShutdownCoordinator>().allow_exit();
-        app.exit(0);
+        let restart = app.state::<ShutdownCoordinator>().complete_cleanup();
+        if restart {
+            app.request_restart();
+        } else {
+            app.exit(0);
+        }
     });
+}
+
+pub(crate) fn request_restart(app: AppHandle) {
+    app.state::<ShutdownCoordinator>().request_restart();
+    request(app);
 }
 
 fn retry_bounded<E>(
@@ -714,19 +730,12 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
             cleanup_app
                 .try_state::<AppState>()
                 .map(|state| {
-                    state
-                        .developer_run_manager
-                        .stop()
-                        .map(|_| ())
-                        .map_err(|error| error.to_string())
-                        .and_then(|_| {
-                            retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                                state
-                                    .manager
-                                    .stop_until(session_deadline)
-                                    .map_err(|error| error.to_string())
-                            })
-                        })
+                    retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                        state
+                            .manager
+                            .stop_until(session_deadline)
+                            .map_err(|error| error.to_string())
+                    })
                 })
                 .unwrap_or(Ok(()))
         };

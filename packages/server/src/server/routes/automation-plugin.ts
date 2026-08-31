@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
+import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import type { NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -18,8 +19,9 @@ interface DeveloperNativeStatus {
   status: {
     state: string
     runId?: string
+    nativeIdentity?: string
     cdpUrl?: string
-    targetId?: string
+    windowId?: string
   }
   logs?: unknown[]
 }
@@ -38,7 +40,6 @@ export function isAutomationPluginRequest(
 }
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
-  let developerOwner: { runId: string; sessionID: string } | undefined
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
@@ -65,21 +66,31 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
     }
     const status = native.status
-    const available = status?.state !== "stopped" && typeof status.runId === "string"
+    const available = status?.state === "ready" && typeof status.runId === "string"
+      && typeof status.nativeIdentity === "string" && typeof status.cdpUrl === "string" && typeof status.windowId === "string"
     if (!available) {
-      if (developerOwner) deps.developerCdp.close(developerOwner.runId)
-      developerOwner = undefined
-    } else if (developerOwner?.runId !== status.runId) {
-      if (developerOwner) deps.developerCdp.close(developerOwner.runId)
-      developerOwner = { runId: status.runId!, sessionID: body.sessionID }
+      if (typeof status?.runId === "string") deps.developerCdp.close(status.runId)
+      return reply.code(404).send({ error: "Developer Mode has no active CodeNomad session" })
     }
-    if (developerOwner && developerOwner.sessionID !== body.sessionID) {
-      return reply.code(409).send({ error: "Developer Automation is owned by another session" })
+
+    const selection: DeveloperCdpSelection = {
+      endpoint: status.cdpUrl!,
+      runId: status.runId!,
+      windowId: status.windowId!,
+      sessionId: body.sessionID,
     }
+    let context
+    try {
+      context = await deps.developerCdp.context(selection)
+    } catch (error) {
+      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+    }
+    if (!await deps.workspaceManager.ownsLocation(context.instanceId, location)) {
+      return reply.code(404).send({ error: "The visible CodeNomad workspace does not own this OpenCode session" })
+    }
+    const identity: DeveloperCdpIdentity = { ...selection, instanceId: context.instanceId }
     if (body.mode === "developer-probe") {
-      return available
-        ? reply.send({ result: { available: true } })
-        : reply.code(404).send({ error: "Developer Automation is not running" })
+      return reply.send({ result: { available: true, nativeIdentity: status.nativeIdentity, runId: status.runId } })
     }
 
     let command
@@ -90,27 +101,20 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     try {
       if (command.action === "restart") {
-        const previousRunId = status.runId
         const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", {})
-        if (previousRunId) deps.developerCdp.close(previousRunId)
-        if (typeof result.runId === "string") developerOwner = { runId: result.runId, sessionID: body.sessionID }
+        deps.developerCdp.close(status.runId)
         return reply.send({ result })
       }
-      if (!available || status.state !== "ready" || typeof status.runId !== "string"
-        || typeof status.cdpUrl !== "string" || typeof status.targetId !== "string") {
-        return reply.code(409).send({ error: "Developer Automation is not ready" })
-      }
       if (command.action === "inspect") {
-        const inspection = await deps.developerCdp.inspect({ endpoint: status.cdpUrl, runId: status.runId, targetId: status.targetId })
-        return reply.send({ result: { ...inspection, logs: native.logs?.slice(-200) ?? [] } })
+        return reply.send({ result: await deps.developerCdp.inspect(identity) })
       }
       if (command.action === "screenshot") {
-        const image = await deps.developerCdp.screenshot(status.runId)
+        const image = await deps.developerCdp.screenshot(identity)
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
       await deps.developerCdp.act(command.action === "type"
-        ? { runId: status.runId, kind: "type", ref: command.ref, text: command.text }
-        : { runId: status.runId, kind: "click", ref: command.ref })
+        ? { ...identity, kind: "type", ref: command.ref, text: command.text }
+        : { ...identity, kind: "click", ref: command.ref })
       return reply.send({ result: { ok: true } })
     } catch (error) {
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })

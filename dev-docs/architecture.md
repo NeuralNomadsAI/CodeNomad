@@ -11,7 +11,7 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow CodeNomad-owned Developer Automation adapter is documented in [DEVELOPER_AUTOMATION.md](DEVELOPER_AUTOMATION.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
+There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow project-local Developer Mode adapter is documented in [DEVELOPER_MODE.md](DEVELOPER_MODE.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
 
 ## Shared Service And Locations
 
@@ -71,9 +71,9 @@ Current native events include session lifecycle/output events (`session.created`
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
-| Developer Automation launch and CDP feedback | CodeNomad desktop hosts and authenticated automation adapter |
+| Developer Mode and CDP feedback | Current CodeNomad desktop host and authenticated project-local adapter |
 
-Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; Developer Automation is the only reviewed adapter exception.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; the project-local Developer Mode adapter is the only reviewed exception.
 
 ## Persistence
 

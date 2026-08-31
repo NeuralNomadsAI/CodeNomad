@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "新建实例",
   "instanceTabs.remote.title": "远程连接",
   "instanceTabs.remote.ariaLabel": "远程连接",
+  "instanceTabs.developerMode.enableTitle": "启用开发者模式",
+  "instanceTabs.developerMode.disableTitle": "禁用开发者模式",
+  "instanceTabs.developerMode.restartTitle": "{action}；重启 CodeNomad 后生效",
+  "instanceTabs.developerMode.enabledToast": "开发者模式已启用。请重启 CodeNomad 以应用更改。",
+  "instanceTabs.developerMode.disabledToast": "开发者模式已禁用。请重启 CodeNomad 以应用更改。",
+  "instanceTabs.developerMode.error": "无法访问开发者模式。",
 
   "instanceInfo.title": "实例信息",
   "instanceInfo.labels.folder": "文件夹",
