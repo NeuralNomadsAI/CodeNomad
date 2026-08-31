@@ -257,7 +257,7 @@ async function fetchV2Sessions(
   signal?: AbortSignal,
 ): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
-  const project = options.project ?? getInstanceMetadata(instanceId)?.project?.id
+  const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
   const scopedProject = project === "global" ? undefined : project
   const directory = options.directory ?? instances().get(instanceId)?.folder
   const listOptions: V2SessionListOptions = options.cursor
@@ -495,7 +495,7 @@ async function fetchSessions(instanceId: string, options?: {
     let inventoryComplete = false
     try {
       inventory = await fetchCompleteProjectSessionInventory(instanceId, options?.signal, isCurrent)
-      inventoryComplete = hasProjectInventory
+      inventoryComplete = hasProjectInventory && response.complete
     } catch (error) {
       if (options?.signal?.aborted) throw error
       log.warn("Failed to enrich the session list with project descendants", { instanceId, error })
@@ -532,7 +532,7 @@ async function fetchSessions(instanceId: string, options?: {
     if (!isCurrent()) return
 
     if (inventoryComplete || (!hasProjectInventory && response.complete)) {
-      const authoritativeSessions = inventoryComplete ? inventory : rootApiSessions
+      const authoritativeSessions = inventoryComplete ? apiSessions : rootApiSessions
       const fetchedRootIds = new Set(authoritativeSessions.filter((session) => !session.parentID).map((session) => session.id))
       const concurrentRootIds = new Set(Array.from(sessions().get(instanceId)?.values() ?? [])
         .filter((session) => !existingSessions.has(session.id) && session.parentId === null)
