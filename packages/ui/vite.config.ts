@@ -129,6 +129,7 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    sourcemap: true,
     rollupOptions: {
       input: {
         main: resolve(__dirname, "./src/renderer/index.html"),

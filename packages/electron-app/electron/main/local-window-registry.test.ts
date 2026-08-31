@@ -40,3 +40,19 @@ test("registry resolves independent webContents, tracks MRU, queues folders, and
   registry.remove(id1)
   assert.equal(registry.resolve(first.webContents as never), undefined)
 })
+
+test("registry removes a closed window without reading its destroyed WebContents", () => {
+  const registry = new LocalWindowRegistry(() => {})
+  const window = fakeWindow(1)
+  const webContents = window.webContents
+  let destroyed = false
+  Object.defineProperty(window, "webContents", { get: () => {
+    if (destroyed) throw new Error("Object has been destroyed")
+    return webContents
+  } })
+  registry.add({ id: id1, persisted: true, window: window as never, navigation: {} as never, tracker: null, loading: true, backendUrl: null, pendingFolders: [] })
+
+  destroyed = true
+  assert.equal(registry.remove(id1)?.id, id1)
+  assert.equal(registry.resolve(webContents as never), undefined)
+})

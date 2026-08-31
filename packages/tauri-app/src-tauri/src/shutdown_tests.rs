@@ -56,6 +56,22 @@ fn final_shutdown_and_cleanup_start_once() {
 }
 
 #[test]
+fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
+    let coordinator = ShutdownCoordinator::default();
+    coordinator.request_restart();
+    coordinator.begin_shutdown(std::iter::empty()).unwrap();
+    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.complete_cleanup());
+
+    let coordinator = ShutdownCoordinator::default();
+    coordinator.request_restart();
+    coordinator.begin_shutdown(std::iter::empty()).unwrap();
+    assert!(coordinator.begin_cleanup(false));
+    coordinator.cleanup_failed();
+    assert!(!coordinator.complete_cleanup());
+}
+
+#[test]
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");
@@ -192,7 +208,8 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
         .begin_shutdown(["local-a".to_string(), "local-b".to_string()])
         .unwrap();
 
-    let PendingShutdownTimeoutAction::Cancel(mut cancellations) = coordinator.expire_pending_shutdown()
+    let PendingShutdownTimeoutAction::Cancel(mut cancellations) =
+        coordinator.expire_pending_shutdown()
     else {
         panic!("ordinary shutdown timeout should cancel");
     };

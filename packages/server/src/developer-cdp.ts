@@ -6,11 +6,34 @@ const DIAGNOSTIC_LIMIT = 1_000
 const SNAPSHOT_NODE_LIMIT = 750
 const SNAPSHOT_TEXT_LIMIT = 64 * 1024
 const DIAGNOSTIC_TEXT_LIMIT = 512
+const DISCOVERY_TEXT_LIMIT = 256 * 1024
+const DISCOVERY_TARGET_LIMIT = 64
+const DISCOVERY_PROBE_CONCURRENCY = 4
+const CONTEXT_EXPRESSION = `(() => {
+  const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
+  const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
+  return {
+    windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
+    instanceId: root?.getAttribute('data-instance-id') ?? null,
+    sessionId: pane?.getAttribute('data-session-id') ?? null,
+  };
+})()`
 
-export interface DeveloperCdpIdentity {
+export interface DeveloperCdpSelection {
   endpoint: string
   runId: string
-  targetId: string
+  windowId: string
+  sessionId: string
+}
+
+export interface DeveloperCdpIdentity extends DeveloperCdpSelection {
+  instanceId: string
+}
+
+export interface DeveloperCdpContext {
+  windowId: string
+  instanceId: string
+  sessionId: string
 }
 
 export interface DeveloperCdpNode {
@@ -29,13 +52,14 @@ export interface DeveloperCdpDiagnostic {
 
 export interface DeveloperCdpInspection {
   target: { id: string; title: string; url: string }
+  context: DeveloperCdpContext
   nodes: DeveloperCdpNode[]
   diagnostics: DeveloperCdpDiagnostic[]
 }
 
 export type DeveloperCdpAction =
-  | { runId: string; kind: "click"; ref: string }
-  | { runId: string; kind: "type"; ref: string; text: string }
+  | (DeveloperCdpIdentity & { kind: "click"; ref: string })
+  | (DeveloperCdpIdentity & { kind: "type"; ref: string; text: string })
 
 export interface DeveloperCdpScreenshot {
   mediaType: "image/png"
@@ -83,7 +107,10 @@ interface PendingCommand {
 
 interface RunState {
   endpoint: string
-  preferredTargetId: string
+  windowId: string
+  sessionId: string
+  instanceId?: string
+  context?: DeveloperCdpContext
   target?: CdpTarget
   socket?: CdpSocket
   open?: Promise<void>
@@ -108,6 +135,7 @@ interface AxNode {
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly runs = new Map<string, RunState>()
+  private readonly operations = new Map<string, Promise<void>>()
   private nextRefId = 0
 
   constructor(dependencies: Partial<DeveloperCdpDependencies> = {}) {
@@ -121,75 +149,85 @@ export class DeveloperCdp {
   }
 
   async inspect(identity: DeveloperCdpIdentity): Promise<DeveloperCdpInspection> {
-    const state = await this.ensure(identity)
-    const epoch = state.navigationEpoch
-    const result = await this.command(state, "Accessibility.getFullAXTree")
-    if (epoch !== state.navigationEpoch) throw new Error("Page navigated during inspection; inspect again")
+    return this.exclusive(identity.runId, async () => {
+      const state = await this.ensure(identity)
+      const epoch = state.navigationEpoch
+      const result = await this.command(state, "Accessibility.getFullAXTree")
+      await this.assertContextCurrent(state, epoch, "Page changed during inspection; inspect again")
 
-    state.refs.clear()
-    const nodes = Array.isArray(result.nodes) ? result.nodes as AxNode[] : []
-    const snapshot: DeveloperCdpNode[] = []
-    let textSize = 0
-    for (const node of nodes) {
-      if (node.ignored || !Number.isInteger(node.backendDOMNodeId)) continue
-      const role = valueOf(node.role)
-      const name = valueOf(node.name)
-      if (!role || (!name && ["generic", "none", "StaticText", "InlineTextBox"].includes(role))) continue
-      const description = valueOf(node.description)
-      const value = valueOf(node.value)
-      const states = (node.properties ?? [])
-        .filter((property) => ["checked", "disabled", "expanded", "focused", "selected"].includes(property.name ?? ""))
-        .map((property) => `${property.name}=${String(property.value?.value)}`)
-      const size = role.length + name.length + description.length + value.length + states.join(" ").length
-      if (snapshot.length >= SNAPSHOT_NODE_LIMIT || textSize + size > SNAPSHOT_TEXT_LIMIT) break
-      textSize += size
-      const ref = `ax${++this.nextRefId}`
-      state.refs.set(ref, {
-        backendNodeId: node.backendDOMNodeId!,
-        targetId: state.target!.id,
-        epoch,
-      })
-      snapshot.push({
-        ref,
-        role,
-        name,
-        ...(description ? { description } : {}),
-        ...(value ? { value } : {}),
-        ...(states.length ? { states } : {}),
-      })
-    }
-    return {
-      target: { id: state.target!.id, title: state.target!.title, url: state.target!.url },
-      nodes: snapshot,
-      diagnostics: state.diagnostics.splice(0),
-    }
+      state.refs.clear()
+      const nodes = Array.isArray(result.nodes) ? result.nodes as AxNode[] : []
+      const snapshot: DeveloperCdpNode[] = []
+      let textSize = 0
+      for (const node of nodes) {
+        if (node.ignored || !Number.isInteger(node.backendDOMNodeId)) continue
+        const role = valueOf(node.role)
+        const name = valueOf(node.name)
+        if (!role || (!name && ["generic", "none", "StaticText", "InlineTextBox"].includes(role))) continue
+        const description = valueOf(node.description)
+        const value = valueOf(node.value)
+        const states = (node.properties ?? [])
+          .filter((property) => ["checked", "disabled", "expanded", "focused", "selected"].includes(property.name ?? ""))
+          .map((property) => `${property.name}=${String(property.value?.value)}`)
+        const size = role.length + name.length + description.length + value.length + states.join(" ").length
+        if (snapshot.length >= SNAPSHOT_NODE_LIMIT || textSize + size > SNAPSHOT_TEXT_LIMIT) break
+        textSize += size
+        const ref = `ax${++this.nextRefId}`
+        state.refs.set(ref, {
+          backendNodeId: node.backendDOMNodeId!,
+          targetId: state.target!.id,
+          epoch,
+        })
+        snapshot.push({
+          ref,
+          role,
+          name,
+          ...(description ? { description } : {}),
+          ...(value ? { value } : {}),
+          ...(states.length ? { states } : {}),
+        })
+      }
+      return {
+        target: { id: state.target!.id, title: state.target!.title, url: state.target!.url },
+        context: state.context!,
+        nodes: snapshot,
+        diagnostics: state.diagnostics.splice(0),
+      }
+    })
   }
 
   async act(action: DeveloperCdpAction): Promise<void> {
-    const state = await this.ensureRun(action.runId)
-    const node = this.resolveRef(state, action.ref)
-    if (action.kind === "click") {
-      await this.click(state, node.backendNodeId, node.epoch)
-      return
-    }
-    await this.command(state, "DOM.focus", { backendNodeId: node.backendNodeId })
-    this.assertActionCurrent(state, node.epoch)
-    await this.command(state, "Input.insertText", { text: action.text })
+    return this.exclusive(action.runId, async () => {
+      const state = await this.ensure(action)
+      const node = this.resolveRef(state, action.ref)
+      if (action.kind === "click") {
+        await this.click(state, node.backendNodeId, node.epoch)
+        return
+      }
+      await this.command(state, "DOM.focus", { backendNodeId: node.backendNodeId })
+      await this.assertContextCurrent(state, node.epoch, "Page changed during action; inspect again")
+      await this.command(state, "Input.insertText", { text: action.text })
+      await this.assertContextCurrent(state, node.epoch, "Page changed during action; inspect again")
+    })
   }
 
-  async screenshot(runId: string): Promise<DeveloperCdpScreenshot> {
-    const state = await this.ensureRun(runId)
-    const result = await this.command(state, "Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-      captureBeyondViewport: false,
+  async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
+    return this.exclusive(identity.runId, async () => {
+      const state = await this.ensure(identity)
+      const epoch = state.navigationEpoch
+      const result = await this.command(state, "Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      })
+      await this.assertContextCurrent(state, epoch, "Page changed during screenshot; capture again")
+      if (typeof result.data !== "string") throw new Error("Chrome returned an invalid screenshot")
+      const bytes = Buffer.from(result.data, "base64").byteLength
+      if (bytes > this.dependencies.maxScreenshotBytes) {
+        throw new Error(`Screenshot exceeds ${this.dependencies.maxScreenshotBytes} byte limit`)
+      }
+      return { mediaType: "image/png", data: result.data, bytes }
     })
-    if (typeof result.data !== "string") throw new Error("Chrome returned an invalid screenshot")
-    const bytes = Buffer.from(result.data, "base64").byteLength
-    if (bytes > this.dependencies.maxScreenshotBytes) {
-      throw new Error(`Screenshot exceeds ${this.dependencies.maxScreenshotBytes} byte limit`)
-    }
-    return { mediaType: "image/png", data: result.data, bytes }
   }
 
   close(runId?: string): void {
@@ -200,7 +238,11 @@ export class DeveloperCdp {
     }
   }
 
-  private async ensure(identity: DeveloperCdpIdentity): Promise<RunState> {
+  async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
+    return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
+  }
+
+  private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
     const endpoint = discoveryUrl(identity.endpoint)
     for (const [runId, previous] of this.runs) {
@@ -209,24 +251,21 @@ export class DeveloperCdp {
       this.runs.delete(runId)
     }
     let state = this.runs.get(identity.runId)
-    if (!state || state.endpoint !== endpoint || state.preferredTargetId !== identity.targetId) {
+    if (!state || state.endpoint !== endpoint || state.windowId !== identity.windowId || state.sessionId !== identity.sessionId
+      || ("instanceId" in identity && state.instanceId !== identity.instanceId)) {
       if (state) this.disconnect(state, new Error("CDP endpoint changed"))
-      state = this.newState(endpoint, identity.targetId)
+      state = this.newState(endpoint, identity.windowId, identity.sessionId, "instanceId" in identity ? identity.instanceId : undefined)
       this.runs.set(identity.runId, state)
     }
     return this.ensureTarget(state)
   }
 
-  private async ensureRun(runId: string): Promise<RunState> {
-    const state = this.runs.get(runId)
-    if (!state) throw new Error(`Run ${runId} has not been inspected`)
-    return this.ensureTarget(state)
-  }
-
-  private newState(endpoint: string, preferredTargetId: string): RunState {
+  private newState(endpoint: string, windowId: string, sessionId: string, instanceId?: string): RunState {
     return {
       endpoint,
-      preferredTargetId,
+      windowId,
+      sessionId,
+      instanceId,
       nextCommandId: 0,
       navigationEpoch: 0,
       pending: new Map(),
@@ -240,25 +279,77 @@ export class DeveloperCdp {
       signal: AbortSignal.timeout(this.dependencies.timeoutMs),
     })
     if (!response.ok) throw new Error(`Chrome target discovery failed (HTTP ${response.status})`)
-    const candidates = await response.json() as unknown
+    const contentLength = Number(response.headers.get("content-length"))
+    if (Number.isFinite(contentLength) && contentLength > DISCOVERY_TEXT_LIMIT) {
+      throw new Error("Chrome target discovery response is too large")
+    }
+    const text = await response.text()
+    if (Buffer.byteLength(text) > DISCOVERY_TEXT_LIMIT) throw new Error("Chrome target discovery response is too large")
+    let candidates: unknown
+    try { candidates = JSON.parse(text) } catch { throw new Error("Chrome target discovery returned invalid JSON") }
     if (!Array.isArray(candidates)) throw new Error("Chrome target discovery returned invalid JSON")
-    const targets = candidates.filter(isTarget)
-    const target = targets.find((item) => item.id === state.preferredTargetId && item.type === "page")
-    if (!target) throw new Error(`Chrome target ${state.preferredTargetId} is unavailable`)
+    const targets = candidates.slice(0, DISCOVERY_TARGET_LIMIT).filter(isTarget).filter((target) => target.type === "page")
+    let target = state.target && targets.find((candidate) => candidate.id === state.target!.id)
+    if (!target) {
+      this.disconnect(state, new Error("Chrome target was replaced"))
+      target = await this.discoverTarget(state, targets)
+    }
 
     const replaced = state.target?.id !== target.id || state.target.webSocketDebuggerUrl !== target.webSocketDebuggerUrl
-    if (replaced) {
-      this.disconnect(state, new Error("Chrome target was replaced"))
-    }
+    if (replaced) this.disconnect(state, new Error("Chrome target was replaced"))
     state.target = target
-    if (replaced) {
-      await this.connect(state, target)
-    } else if (!state.socket) {
-      await this.connect(state, target)
-    } else {
-      await state.open
+    if (!state.socket) await this.connect(state, target)
+    else await state.open
+    const context = await this.readContext(state)
+    if (!this.matchesContext(state, context)) {
+      this.invalidateRefs(state)
+      state.instanceId = undefined
+      this.disconnect(state, new Error("CodeNomad window or active session changed; inspect again"))
+      throw new Error("CodeNomad window or active session changed; inspect again")
     }
+    state.context = context
     return state
+  }
+
+  private async discoverTarget(state: RunState, targets: CdpTarget[]): Promise<CdpTarget> {
+    const matches: CdpTarget[] = []
+    for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
+      const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
+        const probe = this.newState(state.endpoint, state.windowId, state.sessionId, state.instanceId)
+        probe.target = target
+        try {
+          await this.connect(probe, target)
+          return this.matchesContext(state, await this.readContext(probe)) ? target : undefined
+        } catch {
+          // Targets can disappear while Chromium's target list is being inspected.
+          return undefined
+        } finally {
+          this.disconnect(probe, new Error("CDP target probe completed"))
+        }
+      }))
+      matches.push(...batch.filter((target): target is CdpTarget => Boolean(target)))
+    }
+    if (matches.length === 0) throw new Error("No CodeNomad page matches the selected window and OpenCode session")
+    if (matches.length > 1) throw new Error("Multiple CodeNomad pages match the selected window and OpenCode session")
+    return matches[0]
+  }
+
+  private async readContext(state: RunState): Promise<DeveloperCdpContext> {
+    const response = await this.command(state, "Runtime.evaluate", {
+      expression: CONTEXT_EXPRESSION,
+      returnByValue: true,
+    })
+    const value = (response.result as { value?: unknown } | undefined)?.value as Partial<DeveloperCdpContext> | undefined
+    if (!value || typeof value.windowId !== "string" || typeof value.instanceId !== "string" || typeof value.sessionId !== "string"
+      || value.windowId.length > 256 || value.instanceId.length > 256 || value.sessionId.length > 256) {
+      throw new Error("CodeNomad page has no active session context")
+    }
+    return { windowId: value.windowId, instanceId: value.instanceId, sessionId: value.sessionId }
+  }
+
+  private matchesContext(state: RunState, context: DeveloperCdpContext): boolean {
+    return context.windowId === state.windowId && context.sessionId === state.sessionId
+      && (state.instanceId === undefined || context.instanceId === state.instanceId)
   }
 
   private async connect(state: RunState, target: CdpTarget): Promise<void> {
@@ -347,26 +438,42 @@ export class DeveloperCdp {
 
   private async click(state: RunState, backendNodeId: number, epoch: number): Promise<void> {
     await this.command(state, "DOM.scrollIntoViewIfNeeded", { backendNodeId })
-    this.assertActionCurrent(state, epoch)
-    const result = await this.command(state, "DOM.getBoxModel", { backendNodeId })
-    this.assertActionCurrent(state, epoch)
-    const content = (result.model as { content?: unknown } | undefined)?.content
-    if (!Array.isArray(content) || content.length < 8 || content.some((value) => typeof value !== "number")) {
-      throw new Error("Chrome could not determine the element bounds")
-    }
-    const x = (content[0] + content[2] + content[4] + content[6]) / 4
-    const y = (content[1] + content[3] + content[5] + content[7]) / 4
-    await this.command(state, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
-    this.assertActionCurrent(state, epoch)
-    await this.command(state, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 })
-    this.assertActionCurrent(state, epoch)
-    await this.command(state, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 })
+    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
+    const result = await this.command(state, "DOM.resolveNode", { backendNodeId })
+    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
+    const objectId = (result.object as { objectId?: unknown } | undefined)?.objectId
+    if (typeof objectId !== "string") throw new Error("Chrome could not resolve the element")
+    await this.command(state, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: "function () { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement; if (!(element instanceof HTMLElement)) throw new Error('Element is unavailable'); element.click(); }",
+    })
+    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
   }
 
-  private assertActionCurrent(state: RunState, epoch: number): void {
+  private async assertContextCurrent(state: RunState, epoch: number, message: string): Promise<void> {
     if (state.navigationEpoch !== epoch || !state.socket) {
-      throw new Error("Page changed during action; inspect again")
+      throw new Error(message)
     }
+    const context = await this.readContext(state)
+    if (!this.matchesContext(state, context)) {
+      this.invalidateRefs(state)
+      state.context = context
+      throw new Error(message)
+    }
+    if (state.navigationEpoch !== epoch || !state.socket) {
+      throw new Error(message)
+    }
+    state.context = context
+  }
+
+  private exclusive<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.operations.get(runId) ?? Promise.resolve()
+    const queued = previous.catch(() => undefined).then(operation)
+    const tail = queued.then(() => undefined, () => undefined)
+    this.operations.set(runId, tail)
+    return queued.finally(() => {
+      if (this.operations.get(runId) === tail) this.operations.delete(runId)
+    })
   }
 
   private invalidateRefs(state: RunState): void {

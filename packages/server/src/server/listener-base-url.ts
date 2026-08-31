@@ -30,7 +30,7 @@ export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
 
 export function resolveAutomationBridgeUrl(listener: StartedListenerBaseUrlInput): string {
   if (listener.protocol !== "http" || !acceptsLoopback(listener.bindHost)) {
-    throw new Error("Developer Automation requires a loopback HTTP listener")
+    throw new Error("Developer Mode requires a loopback HTTP listener")
   }
   return `http://127.0.0.1:${listener.port}`
 }

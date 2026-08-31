@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "New instance",
   "instanceTabs.remote.title": "Remote connect",
   "instanceTabs.remote.ariaLabel": "Remote connect",
+  "instanceTabs.developerMode.enableTitle": "Enable developer mode",
+  "instanceTabs.developerMode.disableTitle": "Disable developer mode",
+  "instanceTabs.developerMode.restartTitle": "{action}; restart CodeNomad to apply",
+  "instanceTabs.developerMode.enabledToast": "Developer mode enabled. Restart CodeNomad to apply.",
+  "instanceTabs.developerMode.disabledToast": "Developer mode disabled. Restart CodeNomad to apply.",
+  "instanceTabs.developerMode.error": "Could not access developer mode.",
 
   "instanceInfo.title": "Instance Information",
   "instanceInfo.labels.folder": "Folder",

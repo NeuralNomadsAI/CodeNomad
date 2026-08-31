@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "Новый экземпляр",
   "instanceTabs.remote.title": "Удаленное подключение",
   "instanceTabs.remote.ariaLabel": "Удаленное подключение",
+  "instanceTabs.developerMode.enableTitle": "Включить режим разработчика",
+  "instanceTabs.developerMode.disableTitle": "Отключить режим разработчика",
+  "instanceTabs.developerMode.restartTitle": "{action}; перезапустите CodeNomad, чтобы применить изменение",
+  "instanceTabs.developerMode.enabledToast": "Режим разработчика включен. Перезапустите CodeNomad, чтобы применить изменение.",
+  "instanceTabs.developerMode.disabledToast": "Режим разработчика отключен. Перезапустите CodeNomad, чтобы применить изменение.",
+  "instanceTabs.developerMode.error": "Не удалось получить доступ к режиму разработчика.",
 
   "instanceInfo.title": "Информация об экземпляре",
   "instanceInfo.labels.folder": "Папка",

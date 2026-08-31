@@ -44,8 +44,7 @@
     "allow-install-stable-update",
     "allow-open-workspace-target",
     "allow-set-workspace-menu-enabled",
-    "allow-developer-run-get",
-    "allow-developer-run-start",
-    "allow-developer-run-stop"
+    "allow-developer-mode-get",
+    "allow-developer-mode-set"
   ]
 }

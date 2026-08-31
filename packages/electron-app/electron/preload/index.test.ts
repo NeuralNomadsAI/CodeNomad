@@ -27,8 +27,6 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
   for (const [subscribe, channel] of [
     ["onCliStatus", "cli:status"],
     ["onCliError", "cli:error"],
-    ["onDeveloperRunStatus", "developer-run:status"],
-    ["onDeveloperRunLog", "developer-run:log"],
   ] as const) {
     const calls: string[] = []
     const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
@@ -37,4 +35,24 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
     for (const listener of listeners.get(channel) ?? []) listener({}, "event")
     assert.deepEqual(calls, ["second:event"])
   }
+})
+
+test("Developer Mode is exposed to local windows only", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  const expose = (argv: string[]) => {
+    let api: Record<string, Function> | undefined
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke() {}, on() {}, removeListener() {} },
+        webUtils: {},
+      }),
+      process: { argv },
+    })
+    return api!
+  }
+
+  assert.equal(typeof expose([]).getDeveloperMode, "function")
+  assert.equal(typeof expose([]).setDeveloperMode, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).getDeveloperMode, undefined)
 })

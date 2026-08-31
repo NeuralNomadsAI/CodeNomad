@@ -318,6 +318,17 @@ pub(crate) fn create_local_window(
         WebviewWindowBuilder::new(app, &record.label, WebviewUrl::App("loading.html".into()))
             .data_directory(data_directory)
             .initialization_script(script);
+    #[cfg(windows)]
+    let developer_browser_arguments = app
+        .state::<crate::AppState>()
+        .developer_browser_arguments
+        .clone();
+    #[cfg(windows)]
+    let builder = if let Some(arguments) = developer_browser_arguments.as_deref() {
+        builder.additional_browser_args(arguments)
+    } else {
+        builder
+    };
     #[cfg(target_os = "macos")]
     let builder = if app.state::<crate::AppState>().scoped_profile {
         builder.data_store_identifier(crate::profile_identifier("local"))
