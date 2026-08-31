@@ -1,5 +1,6 @@
 .prompt-input-container {
   @apply flex flex-col;
+  padding-bottom: 1px;
   border-top: 1px solid var(--border-base);
   background-color: var(--surface-base);
 }

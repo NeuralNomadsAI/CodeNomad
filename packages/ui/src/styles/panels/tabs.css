@@ -204,6 +204,17 @@
   ring-offset-color: var(--surface-base);
 }
 
+.tab-notification-badge {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  color: var(--accent-primary);
+  font-size: 0.5625rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  pointer-events: none;
+}
+
 .tab-pill {
   @apply inline-flex items-center gap-1 px-3 py-2 rounded-t-md max-w-[220px] text-sm;
   background-color: var(--tab-inactive-bg);
