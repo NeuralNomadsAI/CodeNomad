@@ -218,6 +218,35 @@ test("normal quit reports a failed CLI shutdown without allowing exit", async ()
   assert.ok(calls.indexOf("show:one") > calls.indexOf("hide:one"))
 })
 
+test("failed restart does not relaunch during a later ordinary quit", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls)
+  let attempts = 0
+  const app = {
+    on: (name: string, handler: Function) => events.set(name, handler),
+    quit: () => events.get("before-quit")?.({ preventDefault: () => calls.push("prevent") }),
+    relaunch: () => calls.push("relaunch"),
+    exit: () => calls.push("exit"),
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: app as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => {} } as never,
+    cliManager: { shutdown: async () => { attempts += 1; if (attempts === 1) throw new Error("CLI failed") } } as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.registerAppEvents()
+
+  lifecycle.requestRelaunch()
+  await tick(); await tick()
+  app.quit()
+  await tick(); await tick()
+
+  assert.equal(calls.includes("relaunch"), false)
+  assert.equal(calls.filter((call) => call === "exit").length, 1)
+})
+
 test("normal quit restores windows when renderer persistence fails", async () => {
   const calls: string[] = []
   const events = new Map<string, Function>()

@@ -92,6 +92,7 @@ export class MultiwindowLifecycle {
       const visibleWindows = this.dependencies.getAllWindows().filter((window) => !window.isDestroyed() && window.isVisible())
       for (const window of visibleWindows) window.hide()
       void this.startShutdown().then(() => this.exit(), (error) => {
+        this.relaunchRequested = false
         for (const window of visibleWindows) if (!window.isDestroyed()) window.show()
         console.warn("[client-state] shutdown remains pending", error)
       })
