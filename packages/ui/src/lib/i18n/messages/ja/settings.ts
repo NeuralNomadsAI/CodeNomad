@@ -186,6 +186,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "保存する前に色のコントラストを上げてください。",
   "settings.appearance.colorScheme.custom.reset": "リセット",
   "settings.appearance.colorScheme.custom.save": "保存",
+  "settings.appearance.colorScheme.custom.saveError": "カラーパレットを保存できませんでした。",
   "settings.appearance.startup.title": "起動",
   "settings.appearance.startup.subtitle": "CodeNomad の起動時にこのデバイスで復元する内容を選択します。",
   "settings.appearance.startup.restore.title": "前回の状態を復元",

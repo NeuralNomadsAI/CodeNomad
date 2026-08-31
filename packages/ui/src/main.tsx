@@ -38,9 +38,12 @@ async function bootstrap() {
 
   if (typeof document !== "undefined") {
     try {
-      const uiConfig = await storage.loadConfigOwner("ui")
-      const theme = (uiConfig as any)?.theme
-      const colorScheme = (uiConfig as any)?.colorScheme
+      const [uiConfig, uiState] = await Promise.all([
+        storage.loadConfigOwner("ui"),
+        storage.loadStateOwner("ui"),
+      ])
+      const theme = (uiState as any)?.theme ?? (uiConfig as any)?.theme
+      const colorScheme = (uiState as any)?.colorScheme ?? (uiConfig as any)?.colorScheme
       const locale = typeof (uiConfig as any)?.settings?.locale === "string" ? (uiConfig as any).settings.locale : undefined
 
       applyColorScheme(normalizeColorScheme(colorScheme, theme), {

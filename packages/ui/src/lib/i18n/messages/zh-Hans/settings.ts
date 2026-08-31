@@ -186,6 +186,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "请先提高颜色对比度再保存。",
   "settings.appearance.colorScheme.custom.reset": "重置",
   "settings.appearance.colorScheme.custom.save": "保存",
+  "settings.appearance.colorScheme.custom.saveError": "无法保存调色板。",
   "settings.appearance.startup.title": "启动",
   "settings.appearance.startup.subtitle": "选择 CodeNomad 启动时在此设备上恢复的内容。",
   "settings.appearance.startup.restore.title": "恢复上次状态",

@@ -1464,8 +1464,8 @@ function StepCard(props: StepCardProps) {
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
               <span class="message-step-meta-inline">
                 {[
-                  agentIdentifier() ? t("messageBlock.step.agentLabel", { agent: agentIdentifier() }) : "",
-                  modelIdentifier() ? t("messageBlock.step.modelLabel", { model: modelIdentifier() }) : "",
+                  agentIdentifier(),
+                  modelIdentifier(),
                 ].filter(Boolean).join(" • ")}
               </span>
             </Show>

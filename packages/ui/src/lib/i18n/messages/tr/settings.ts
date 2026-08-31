@@ -176,6 +176,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "Kaydetmeden önce renk kontrastını artırın.",
   "settings.appearance.colorScheme.custom.reset": "Sıfırla",
   "settings.appearance.colorScheme.custom.save": "Kaydet",
+  "settings.appearance.colorScheme.custom.saveError": "Renk paleti kaydedilemedi.",
   "settings.appearance.startup.title": "Başlangıç",
   "settings.appearance.startup.subtitle": "CodeNomad başladığında bu cihazın neleri geri yükleyeceğini seçin.",
   "settings.appearance.startup.restore.title": "Önceki durumu geri yükle",

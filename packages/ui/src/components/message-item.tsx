@@ -397,8 +397,8 @@ export default function MessageItem(props: MessageItemProps) {
     const segments: string[] = []
     const agent = agentIdentifier()
     const model = modelIdentifier()
-    if (agent) segments.push(t("messageItem.agentMeta.agentLabel", { agent }))
-    if (model) segments.push(t("messageItem.agentMeta.modelLabel", { model }))
+    if (agent) segments.push(agent)
+    if (model) segments.push(model)
     return segments.join(" • ")
   }
 

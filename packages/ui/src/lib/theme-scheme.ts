@@ -85,6 +85,23 @@ export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
   ...DEFAULT_SEMANTIC_COLORS,
 }
 
+export const LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
+  surfaceBase: "#FFFFFF",
+  surfaceSecondary: "#F5F5F5",
+  surfaceMuted: "#ECEFF3",
+  borderBase: "#D1D5DB",
+  textPrimary: "#111827",
+  textMuted: "#4B5563",
+  accentPrimary: "#005FCC",
+  statusSuccess: "#237A43",
+  statusWarning: "#9A6700",
+  statusError: "#C62828",
+  userAccent: "#0066CC",
+  agentAccent: "#A44B00",
+  compactionAccent: "#7E22CE",
+  yoloAccent: "#005FCC",
+}
+
 export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "system",

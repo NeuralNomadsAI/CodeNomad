@@ -12,8 +12,15 @@ import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import {
   normalizeColorScheme,
+  validateColorSchemeColors,
+  type ColorSchemeColors,
   type NormalizedColorScheme,
 } from "../lib/theme-scheme"
+import {
+  createColorSchemePresetId,
+  normalizeColorSchemePresets,
+  type UserColorSchemePresets,
+} from "../lib/color-scheme-presets"
 import {
   normalizeModelVisibilityPreference,
   normalizeModelVisibilityPreferences,
@@ -156,6 +163,11 @@ interface ServerConfigBucket {
 }
 
 interface UiStateBucket {
+  theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
+  colorSchemePresets?: unknown
+  activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
@@ -566,15 +578,23 @@ const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
-const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
-const colorSchemePreference = createMemo(() => normalizeColorScheme(uiConfigBucket().colorScheme, themePreference()))
+const themePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
+const colorSchemePreference = createMemo(() => normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, themePreference()))
 const customColorSchemePreference = createMemo(() => {
-  const bucket = uiConfigBucket()
-  const custom = bucket.customColorScheme ?? (colorSchemePreference().id === "custom" ? bucket.colorScheme : undefined)
+  const state = uiStateBucket()
+  const config = uiConfigBucket()
+  const custom = state.customColorScheme
+    ?? config.customColorScheme
+    ?? (colorSchemePreference().id === "custom" ? state.colorScheme ?? config.colorScheme : undefined)
   const value = typeof custom === "object" && custom !== null && !Array.isArray(custom)
     ? { ...(custom as Record<string, unknown>), id: "custom" }
     : { id: "custom" }
   return normalizeColorScheme(value)
+})
+const colorSchemePresets = createMemo<UserColorSchemePresets>(() => normalizeColorSchemePresets(uiStateBucket().colorSchemePresets))
+const activeColorSchemePresetId = createMemo(() => {
+  const id = uiStateBucket().activeColorSchemePresetId
+  return typeof id === "string" && colorSchemePresets()[id] ? id : undefined
 })
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
 const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
@@ -716,13 +736,44 @@ function setColorSchemePreference(preference: NormalizedColorScheme): Promise<vo
     theme: legacyTheme,
     colorScheme: normalized,
     ...(normalized.id === "custom" ? { customColorScheme: normalized } : {}),
+    activeColorSchemePresetId: null,
   }
-  const write = colorSchemeWriteQueue.then(() => patchConfigOwner("ui", patch))
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", patch))
   colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
   return write.then(() => undefined).catch((error) => {
     log.error("Failed to set color scheme", error)
     throw error
   })
+}
+
+function selectColorSchemePreset(id: string): Promise<void> {
+  const preset = colorSchemePresets()[id]
+  if (!preset) return Promise.resolve()
+  const scheme = normalizeColorScheme({ id: "custom", appearance: preset.appearance, colors: preset.colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: preset.appearance,
+    colorScheme: scheme,
+    customColorScheme: scheme,
+    activeColorSchemePresetId: id,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<string> {
+  const trimmedName = name.trim().slice(0, 80)
+  if (!trimmedName || !validateColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
+  const id = createColorSchemePresetId()
+  const scheme = normalizeColorScheme({ id: "custom", appearance, colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: appearance,
+    colorScheme: scheme,
+    customColorScheme: scheme,
+    colorSchemePresets: { [id]: { name: trimmedName, appearance, colors: { ...colors } } },
+    activeColorSchemePresetId: id,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => id)
 }
 
  async function setListeningMode(mode: ListeningMode): Promise<void> {
@@ -1041,7 +1092,11 @@ interface ConfigContextValue {
   setThemePreference: typeof setThemePreference
   colorSchemePreference: typeof colorSchemePreference
   customColorSchemePreference: typeof customColorSchemePreference
+  colorSchemePresets: typeof colorSchemePresets
+  activeColorSchemePresetId: typeof activeColorSchemePresetId
   setColorSchemePreference: typeof setColorSchemePreference
+  selectColorSchemePreset: typeof selectColorSchemePreset
+  saveColorSchemePreset: typeof saveColorSchemePreset
 
   // server-owned stable config
   serverSettings: typeof serverSettings
@@ -1108,7 +1163,11 @@ const configContextValue: ConfigContextValue = {
   setThemePreference,
   colorSchemePreference,
   customColorSchemePreference,
+  colorSchemePresets,
+  activeColorSchemePresetId,
   setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemePreset,
   serverSettings,
   setListeningMode,
   updateEnvironmentVariables,
@@ -1203,7 +1262,11 @@ export {
   setThemePreference,
   colorSchemePreference,
   customColorSchemePreference,
+  colorSchemePresets,
+  activeColorSchemePresetId,
   setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemePreset,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,

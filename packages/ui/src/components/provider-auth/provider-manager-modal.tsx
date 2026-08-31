@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
-import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, ShieldCheck, X } from "lucide-solid"
+import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, X } from "lucide-solid"
 import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode-ai/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
@@ -639,27 +639,34 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     return t("settings.providers.method.api")
   }
 
+  function configuredProviderSummary(provider: ListedProvider) {
+    const modelCount = provider.modelCount === 1
+      ? t("settings.providers.models.one", { count: provider.modelCount })
+      : t("settings.providers.models.other", { count: provider.modelCount })
+    return [...new Set([
+      provider.name && provider.name !== provider.id ? provider.id : "",
+      methodSummary(provider.id),
+      describeProviderSource(provider),
+      modelCount,
+    ].filter(Boolean))].join(" • ")
+  }
+
   const content = () => (
     <>
-          <div class="providers-manager-header">
-            <div class="settings-card-heading-with-icon">
-              <PlugZap class="settings-card-heading-icon" />
-              <div>
-                <Show
-                  when={!props.embedded}
-                  fallback={<h2 class="providers-manager-title">{t("settings.providers.title")}</h2>}
-                >
+          <Show when={!props.embedded}>
+            <div class="providers-manager-header">
+              <div class="settings-card-heading-with-icon">
+                <PlugZap class="settings-card-heading-icon" />
+                <div>
                   <Dialog.Title class="providers-manager-title">{t("settings.providers.title")}</Dialog.Title>
-                </Show>
-                <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
+                  <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
+                </div>
               </div>
-            </div>
-            <Show when={!props.embedded}>
               <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
                 <X class="w-4 h-4" />
               </button>
-            </Show>
-          </div>
+            </div>
+          </Show>
 
           <div class="providers-manager-body">
             <Show when={!client()}>
@@ -832,22 +839,22 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                     <div class="providers-grid">
                       <For each={configuredProviders()}>{(provider) => (
-                        <article class="providers-card">
-                          <div class="providers-card-main"><div class="providers-card-mark"><ShieldCheck class="providers-card-mark-icon" /></div><div class="providers-card-copy"><div class="providers-card-title-row"><h4 class="providers-card-title">{provider.name || provider.id}</h4></div><p class="providers-card-meta">{provider.id}</p><p class="providers-card-methods">{methodSummary(provider.id)}</p><p class="providers-card-source">{describeProviderSource(provider)}</p></div></div>
-                          <div class="providers-card-footer">
-                            <span class="providers-model-count">{provider.modelCount === 1 ? t("settings.providers.models.one", { count: provider.modelCount }) : t("settings.providers.models.other", { count: provider.modelCount })}</span>
-                            <div class="provider-model-card-actions">
-                              <button
-                                ref={(element) => manageModelButtons.set(provider.id, element)}
-                                type="button"
-                                class="selector-button selector-button-secondary"
-                                onClick={() => {
-                                  managedProviderTriggerId = provider.id
-                                  setManagedProviderId(provider.id)
-                                }}
-                              >{t("settings.providers.actions.manageModels")}</button>
-                              <Show when={getDisconnectMode(provider) === "credential-remove"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
-                            </div>
+                        <article class="providers-card settings-toggle-row settings-toggle-row-compact">
+                          <div class="providers-card-copy">
+                            <h4 class="providers-card-title">{provider.name || provider.id}</h4>
+                            <p class="providers-card-meta" dir="auto">{configuredProviderSummary(provider)}</p>
+                          </div>
+                          <div class="provider-model-card-actions">
+                            <button
+                              ref={(element) => manageModelButtons.set(provider.id, element)}
+                              type="button"
+                              class="selector-button selector-button-secondary"
+                              onClick={() => {
+                                managedProviderTriggerId = provider.id
+                                setManagedProviderId(provider.id)
+                              }}
+                            >{t("settings.providers.actions.manageModels")}</button>
+                            <Show when={getDisconnectMode(provider) === "credential-remove"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
                           </div>
                         </article>
                       )}</For>

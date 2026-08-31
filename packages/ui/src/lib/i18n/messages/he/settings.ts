@@ -186,6 +186,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "יש להגדיל את ניגודיות הצבעים לפני השמירה.",
   "settings.appearance.colorScheme.custom.reset": "איפוס",
   "settings.appearance.colorScheme.custom.save": "שמירה",
+  "settings.appearance.colorScheme.custom.saveError": "לא ניתן לשמור את לוח הצבעים.",
   "settings.appearance.startup.title": "הפעלה",
   "settings.appearance.startup.subtitle": "בחר מה ישוחזר במכשיר זה בעת הפעלת CodeNomad.",
   "settings.appearance.startup.restore.title": "שחזור המצב הקודם",

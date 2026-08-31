@@ -186,6 +186,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "Aumenta el contraste antes de guardar.",
   "settings.appearance.colorScheme.custom.reset": "Restablecer",
   "settings.appearance.colorScheme.custom.save": "Guardar",
+  "settings.appearance.colorScheme.custom.saveError": "No se pudo guardar la paleta.",
   "settings.appearance.startup.title": "Inicio",
   "settings.appearance.startup.subtitle": "Elige qué restaura este dispositivo al iniciar CodeNomad.",
   "settings.appearance.startup.restore.title": "Restaurar el estado anterior",

@@ -186,6 +186,7 @@ export const settingsMessages = {
   "settings.appearance.colorScheme.custom.warning.contrast": "सुरक्षित गर्नुअघि रङको कन्ट्रास्ट बढाउनुहोस्।",
   "settings.appearance.colorScheme.custom.reset": "रिसेट गर्नुहोस्",
   "settings.appearance.colorScheme.custom.save": "सुरक्षित गर्नुहोस्",
+  "settings.appearance.colorScheme.custom.saveError": "रङ प्यालेट सुरक्षित गर्न सकिएन।",
   "settings.appearance.startup.title": "सुरुआत",
   "settings.appearance.startup.subtitle": "CodeNomad सुरु हुँदा यस यन्त्रमा के पुनर्स्थापना गर्ने छान्नुहोस्।",
   "settings.appearance.startup.restore.title": "अघिल्लो अवस्था पुनर्स्थापना गर्नुहोस्",
