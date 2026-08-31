@@ -71,7 +71,7 @@ export class MultiwindowLifecycle {
 
   attachRemote(window: BrowserWindow): void {
     window.on("close", (event) => {
-      if (this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window && !candidate.isDestroyed())) return
+      if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window && !candidate.isDestroyed())) return
       event.preventDefault()
       if (!this.shutdown) this.dependencies.app.quit()
     })

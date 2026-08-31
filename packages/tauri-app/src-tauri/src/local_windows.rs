@@ -330,7 +330,7 @@ pub(crate) fn create_local_window(
         .min_inner_size(800.0, 600.0)
         .resizable(true)
         .fullscreen(false)
-        .decorations(true)
+        .decorations(false)
         .background_color(tauri::window::Color(26, 26, 26, 255))
         .zoom_hotkeys_enabled(true)
         .visible(false)
@@ -342,6 +342,8 @@ pub(crate) fn create_local_window(
             return Err(error.to_string());
         }
     };
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.hide_menu();
     if let Err(error) = client_state::setup_local_window(app, &window, &id, persisted) {
         app.state::<LocalWindows>().remove_runtime(&record.label);
         if let Some(state) = app.try_state::<ClientState>() {
@@ -462,6 +464,9 @@ pub(crate) fn emit_all(app: &AppHandle, event: &str, payload: impl serde::Serial
         if let Some(window) = app.get_webview_window(&record.label) {
             let _ = window.emit(event, payload.clone());
         }
+    }
+    if let Some(window) = app.get_webview_window(crate::preferences_window::LABEL) {
+        let _ = window.emit(event, payload);
     }
 }
 

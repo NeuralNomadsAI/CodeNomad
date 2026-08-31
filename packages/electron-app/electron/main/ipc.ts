@@ -7,6 +7,7 @@ import { setWorkspaceMenuEnabled } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import type { DeveloperRunManager, DeveloperRunTarget } from "./developer-run-manager"
 import path from "node:path"
+import { validateMainFrame } from "./ipc-security"
 
 interface LocalSender {
   id: string
@@ -15,6 +16,7 @@ interface LocalSender {
 
 interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
+  resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
   openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }): Promise<void>
   newWindow(): Promise<unknown>
@@ -34,17 +36,6 @@ interface DialogOpenRequest {
 interface DialogOpenResult {
   canceled: boolean
   paths: string[]
-}
-
-function validateMainFrame(event: IpcMainInvokeEvent, window: BrowserWindow, allowedOrigins: string[]): void {
-  if (window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
-    throw new Error("Native IPC requires a registered main frame")
-  }
-  const current = new URL(window.webContents.getURL())
-  const sender = new URL(event.senderFrame.url)
-  if (current.origin !== sender.origin || !allowedOrigins.includes(sender.origin)) {
-    throw new Error("Native IPC requires an allowed renderer origin")
-  }
 }
 
 async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: CliProcessManager, instanceId: string, worktreeSlug: string): Promise<string> {
@@ -76,6 +67,13 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     validateMainFrame(event, record.window, dependencies.getAllowedOrigins(record.window))
     return record
   }
+  const settings = (event: IpcMainInvokeEvent): BrowserWindow => {
+    const record = dependencies.resolveLocal(event.sender)
+    const window = record?.window ?? dependencies.resolvePreferences?.(event.sender)
+    if (!window) throw new Error("Native settings operation requires a local application window")
+    validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
+    return window
+  }
   const anyTrusted = (event: IpcMainInvokeEvent): BrowserWindow => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) throw new Error("Native operation requires a window")
@@ -92,8 +90,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return false
   }
 
-  ipcMain.handle("cli:getStatus", async (event) => { local(event); return cliManager.getStatus() })
-  ipcMain.handle("cli:restart", async (event) => { local(event); return cliManager.restart({ dev: process.env.NODE_ENV === "development" }) })
+  ipcMain.handle("cli:getStatus", async (event) => { settings(event); return cliManager.getStatus() })
+  ipcMain.handle("cli:restart", async (event) => { settings(event); return cliManager.restart({ dev: process.env.NODE_ENV === "development" }) })
   ipcMain.handle("window:new", async (event) => { local(event); await dependencies.newWindow(); return { ok: true } })
   ipcMain.handle("window:nextFolder", async (event) => dependencies.nextFolder(local(event).id))
   ipcMain.handle("window:ackFolder", async (event, folder: unknown, opened: unknown) => {
@@ -103,11 +101,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
   ipcMain.handle("developer-run:get", async (event) => {
-    local(event)
+    settings(event)
     return { status: dependencies.developerRunManager.status(), logs: dependencies.developerRunManager.logs() }
   })
   ipcMain.handle("developer-run:start", async (event, payload: { target?: unknown; executable?: unknown }) => {
-    local(event)
+    settings(event)
     const target = payload?.target
     const executable = payload?.executable
     if ((target !== "electron" && target !== "tauri") || typeof executable !== "string" || executable.length > 32_768
@@ -117,12 +115,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return dependencies.developerRunManager.start({ target: target as DeveloperRunTarget, executable })
   })
   ipcMain.handle("developer-run:stop", async (event) => {
-    local(event)
+    settings(event)
     await dependencies.developerRunManager.stop()
   })
 
   ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {
-    const { window } = local(event)
+    const window = settings(event)
     if (!request || (request.mode !== "directory" && request.mode !== "file")) throw new Error("Invalid dialog request")
     const properties: OpenDialogOptions["properties"] = request.mode === "directory" ? ["openDirectory", "createDirectory"] : ["openFile"]
     if (request.mode === "file" && request.multiple) properties.push("multiSelections")
@@ -186,7 +184,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { granted: await requestMicrophoneAccess() }
   })
   ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) => {
-    local(event)
+    settings(event)
     if (!payload || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.name !== "string" || typeof payload.baseUrl !== "string"
       || (payload.entryUrl !== undefined && typeof payload.entryUrl !== "string")
       || (payload.proxySessionId !== undefined && typeof payload.proxySessionId !== "string")

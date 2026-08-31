@@ -9,6 +9,7 @@
   "permissions": [
     "core:default",
     "core:menu:default",
+    "allow-window-control",
     "dialog:allow-open",
     {
       "identifier": "opener:allow-open-url",
@@ -28,6 +29,7 @@
     "allow-wake-lock-start",
     "allow-wake-lock-stop",
     "allow-needs-local-certificate-install",
+    "allow-open-preferences-window",
     "allow-open-remote-window",
     "allow-client-state-claim-access",
     "allow-client-state-load",

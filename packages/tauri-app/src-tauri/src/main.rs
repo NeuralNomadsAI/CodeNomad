@@ -12,6 +12,7 @@ mod linux_tls;
 mod local_windows;
 mod managed_node;
 mod native_request;
+mod preferences_window;
 mod shutdown;
 mod windows_update;
 mod workspace_open;
@@ -204,6 +205,24 @@ pub(crate) fn require_local_app_window(
     }
 }
 
+pub(crate) fn require_preferences_or_local_app_window(
+    window: &tauri::WebviewWindow,
+    state: &AppState,
+) -> Result<Url, String> {
+    if window.label() != preferences_window::LABEL {
+        return require_local_app_window(window, state);
+    }
+    let current = window.url().map_err(|error| error.to_string())?;
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref())
+        || preferences_window::is_trusted_renderer_origin(window, &current)
+    {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted preferences renderer origin".into())
+    }
+}
+
 fn developer_run_status(status: &developer_run::DeveloperRunStatus) -> serde_json::Value {
     json!({
         "state": status.state,
@@ -336,7 +355,7 @@ fn developer_run_get(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     Ok(developer_run_snapshot(&state.developer_run_manager))
 }
 
@@ -346,7 +365,7 @@ async fn developer_run_start(
     state: tauri::State<'_, AppState>,
     input: DeveloperRunStartInput,
 ) -> Result<serde_json::Value, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     if input.executable.len() > 32_768 {
         return Err("Developer executable path is too long".into());
     }
@@ -363,13 +382,42 @@ async fn developer_run_stop(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     let manager = state.developer_run_manager.clone();
     tauri::async_runtime::spawn_blocking(move || manager.stop())
         .await
         .map_err(|error| error.to_string())?
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn window_control(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    action: String,
+) -> Result<(), String> {
+    require_preferences_or_local_app_window(&window, &state)?;
+    match action.as_str() {
+        "minimize" => window.minimize(),
+        "maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize()
+            } else {
+                window.maximize()
+            }
+        }
+        "drag" => window.start_dragging(),
+        "close" => {
+            if window.label() == preferences_window::LABEL {
+                preferences_window::approve_close(&app);
+            }
+            window.close()
+        }
+        _ => return Err("Invalid window control action".to_string()),
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
@@ -480,7 +528,7 @@ fn cli_get_status(
     window: tauri::WebviewWindow,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     Ok(state.manager.status())
 }
 
@@ -490,7 +538,7 @@ fn cli_restart(
     app: AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     shutdown::with_navigation_authority(&app, || {
         let dev_mode = is_dev_mode();
         state
@@ -564,7 +612,8 @@ fn should_allow_window_origin<R: Runtime>(
     url: &Url,
 ) -> bool {
     let state = app_handle.state::<AppState>();
-    if identity::local_window_id(window_label).is_ok() {
+    if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
+    {
         let status = state.manager.status();
         return is_allowed_local_origin(url, status.url.as_deref());
     }
@@ -1052,7 +1101,7 @@ fn needs_local_certificate_install(
     window: tauri::WebviewWindow,
     state: tauri::State<AppState>,
 ) -> Result<bool, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
@@ -1076,7 +1125,7 @@ async fn open_remote_window(
     state: tauri::State<'_, AppState>,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -1219,11 +1268,7 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
         let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
         let _ = window.set_fullscreen(next_fullscreen);
         if cfg!(not(target_os = "macos")) {
-            if next_fullscreen {
-                let _ = window.hide_menu();
-            } else {
-                let _ = window.show_menu();
-            }
+            let _ = window.hide_menu();
         }
     }
 }
@@ -1379,6 +1424,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
             developer_run_manager: developer_run::DeveloperRunManager::new(),
@@ -1424,6 +1470,11 @@ fn main() {
             ) {
                 apply_remote_window_title(&webview.app_handle(), webview.label());
             }
+            if webview.label() == preferences_window::LABEL
+                && payload.event() == PageLoadEvent::Finished
+            {
+                preferences_window::emit_section(&webview.app_handle());
+            }
         })
         .setup(move |app| {
             set_windows_app_user_model_id(&setup_scope.identifier);
@@ -1459,6 +1510,12 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             needs_local_certificate_install,
+            preferences_window::open_preferences_window,
+            preferences_window::preferences_window_ready,
+            preferences_window::preferences_get_request,
+            preferences_window::preferences_accept_request,
+            preferences_window::preferences_resolve_transition,
+            window_control,
             open_remote_window,
             client_state::client_state_claim_access,
             client_state::client_state_load,
@@ -1640,6 +1697,12 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
+                if label == preferences_window::LABEL
+                    && preferences_window::intercept_close(&app_handle)
+                {
+                    api.prevent_close();
+                    return;
+                }
                 if shutdown::exit_allowed(&app_handle) {
                     return;
                 }

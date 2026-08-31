@@ -192,7 +192,8 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
         .begin_shutdown(["local-a".to_string(), "local-b".to_string()])
         .unwrap();
 
-    let PendingShutdownTimeoutAction::Cancel(mut cancellations) = coordinator.expire_pending_shutdown()
+    let PendingShutdownTimeoutAction::Cancel(mut cancellations) =
+        coordinator.expire_pending_shutdown()
     else {
         panic!("ordinary shutdown timeout should cancel");
     };

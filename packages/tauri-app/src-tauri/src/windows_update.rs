@@ -8,7 +8,7 @@ pub async fn install_stable_update(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), String> {
-    crate::require_local_app_window(&window, &state)?;
+    crate::require_preferences_or_local_app_window(&window, &state)?;
     install_stable_update_impl().await
 }
 
