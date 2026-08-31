@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -14,6 +14,7 @@ const MAX_REGISTRATION_BYTES = 4 * 1024
 const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
 const REGISTRATION_NAME = /^(\d+)-\d+-[A-Za-z0-9_-]+\.json$/
+const WINDOWS_INTEROP = Symbol("windowsInterop")
 let cachedWslWindowsLocalAppData: string | null | undefined
 
 export type DeveloperAction =
@@ -57,10 +58,12 @@ interface BridgeResponse {
 }
 
 interface ProbedBridge {
-  registration: AutomationBridgeRegistration
+  registration: DiscoveredBridgeRegistration
   nativeIdentity: string
   runId: string
 }
+
+type DiscoveredBridgeRegistration = AutomationBridgeRegistration & { [WINDOWS_INTEROP]?: true }
 
 export function automationBridgeDirectory(): string {
   return automationBridgeDirectories()[0]
@@ -175,9 +178,10 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   }
 }
 
-async function registrations(): Promise<AutomationBridgeRegistration[]> {
-  const found: AutomationBridgeRegistration[] = []
-  for (const directory of automationBridgeDirectories()) {
+async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
+  const found: DiscoveredBridgeRegistration[] = []
+  const directories = automationBridgeDirectories()
+  for (const [directoryIndex, directory] of directories.entries()) {
     let entries: Array<{ name: string; startedAt: number }> = []
     try {
       const stream = await opendir(directory)
@@ -208,7 +212,11 @@ async function registrations(): Promise<AutomationBridgeRegistration[]> {
           || typeof value.pid !== "number" || typeof value.startedAt !== "number") continue
         const url = new URL(value.url)
         if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== AUTOMATION_BRIDGE_PATH) continue
-        found.push(value as AutomationBridgeRegistration)
+        const registration = value as DiscoveredBridgeRegistration
+        if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) {
+          registration[WINDOWS_INTEROP] = true
+        }
+        found.push(registration)
       } catch {
         // Stale or partially-written registrations are ignored.
       }
@@ -218,10 +226,11 @@ async function registrations(): Promise<AutomationBridgeRegistration[]> {
 }
 
 async function callBridge(
-  registration: AutomationBridgeRegistration,
+  registration: DiscoveredBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs = PROBE_TIMEOUT_MS,
 ): Promise<{ status: number; body: BridgeResponse }> {
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
@@ -253,6 +262,69 @@ async function callBridge(
   }
 }
 
+function callWindowsBridge(
+  registration: AutomationBridgeRegistration,
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<{ status: number; body: BridgeResponse }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("curl.exe", [
+      "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
+      "--request", "POST",
+      "--header", "content-type: application/json",
+      "--header", `x-codenomad-automation-token: ${registration.token}`,
+      "--data-binary", "@-",
+      "--write-out", "\n%{http_code}",
+      registration.url,
+    ], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let stdoutBytes = 0
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return false
+      settled = true
+      clearTimeout(timer)
+      if (error) reject(error)
+      return true
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      finish(new Error("Developer Mode bridge request timed out"))
+    }, timeoutMs)
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes += chunk.length
+      if (stdoutBytes > MAX_BRIDGE_RESPONSE_BYTES + 16) {
+        child.kill()
+        finish(new Error("Developer Mode bridge response is too large"))
+        return
+      }
+      stdout.push(chunk)
+    })
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.reduce((total, value) => total + value.length, 0) < MAX_REGISTRATION_BYTES) stderr.push(chunk)
+    })
+    child.on("error", (error) => finish(error))
+    child.on("close", (code) => {
+      if (!finish()) return
+      const output = Buffer.concat(stdout, stdoutBytes).toString("utf8")
+      const separator = output.lastIndexOf("\n")
+      const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
+      if (code !== 0 || !Number.isInteger(status)) {
+        reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || "Windows Developer Mode bridge request failed"))
+        return
+      }
+      try {
+        resolve({ status, body: JSON.parse(output.slice(0, separator)) as BridgeResponse })
+      } catch {
+        reject(new Error("Developer Mode bridge returned an invalid response"))
+      }
+    })
+    child.stdin.on("error", (error) => finish(error))
+    child.stdin.end(JSON.stringify(body))
+  })
+}
+
 function formatBridgeResult(resultValue: unknown) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (result?.image) {
@@ -267,7 +339,7 @@ function formatBridgeResult(resultValue: unknown) {
   return { content: JSON.stringify(result ?? null, null, 2) }
 }
 
-async function probeBridge(registration: AutomationBridgeRegistration, sessionID: string): Promise<ProbedBridge | undefined> {
+async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID: string): Promise<ProbedBridge | undefined> {
   try {
     const response = await callBridge(registration, { mode: "developer-probe", sessionID })
     const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown } | undefined
@@ -279,7 +351,7 @@ async function probeBridge(registration: AutomationBridgeRegistration, sessionID
   }
 }
 
-async function probeBridges(active: AutomationBridgeRegistration[], sessionID: string): Promise<ProbedBridge[]> {
+async function probeBridges(active: DiscoveredBridgeRegistration[], sessionID: string): Promise<ProbedBridge[]> {
   const found: ProbedBridge[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY)
