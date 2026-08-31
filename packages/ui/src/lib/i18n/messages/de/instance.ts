@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "Neue Instanz",
   "instanceTabs.remote.title": "Remote-Verbindung",
   "instanceTabs.remote.ariaLabel": "Remote-Verbindung",
+  "instanceTabs.developerMode.enableTitle": "Entwicklermodus aktivieren",
+  "instanceTabs.developerMode.disableTitle": "Entwicklermodus deaktivieren",
+  "instanceTabs.developerMode.restartTitle": "{action}; CodeNomad neu starten, um die Änderung anzuwenden",
+  "instanceTabs.developerMode.enabledToast": "Entwicklermodus aktiviert. Starten Sie CodeNomad neu, um die Änderung anzuwenden.",
+  "instanceTabs.developerMode.disabledToast": "Entwicklermodus deaktiviert. Starten Sie CodeNomad neu, um die Änderung anzuwenden.",
+  "instanceTabs.developerMode.error": "Auf den Entwicklermodus konnte nicht zugegriffen werden.",
 
   "instanceInfo.title": "Instanz-Informationen",
   "instanceInfo.labels.folder": "Ordner",

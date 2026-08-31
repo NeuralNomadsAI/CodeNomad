@@ -4,7 +4,7 @@
 mod cert_manager;
 mod cli_manager;
 mod client_state;
-mod developer_run;
+mod developer_mode;
 mod identity;
 mod launch;
 #[cfg(target_os = "linux")]
@@ -61,7 +61,7 @@ const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
 
 pub struct AppState {
     pub manager: CliProcessManager,
-    pub(crate) developer_run_manager: developer_run::DeveloperRunManager,
+    pub(crate) developer_mode: developer_mode::DeveloperMode,
     pub wake_lock: Mutex<WakeLockState>,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
     remote_navigation_generation: AtomicU64,
@@ -72,6 +72,7 @@ pub struct AppState {
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
     pub webview_data_directory: std::path::PathBuf,
+    pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
 }
 
@@ -223,26 +224,6 @@ pub(crate) fn require_preferences_or_local_app_window(
     }
 }
 
-fn developer_run_status(status: &developer_run::DeveloperRunStatus) -> serde_json::Value {
-    json!({
-        "state": status.state,
-        "runId": status.run_id,
-        "target": status.target,
-        "executable": status.executable_path,
-        "profilePath": status.profile_path,
-        "pid": status.pid,
-        "cdpUrl": status.port.map(|port| format!("http://127.0.0.1:{port}")),
-        "targetUrl": status.page_url,
-        "targetId": status.target_id,
-        "targetTitle": status.target_title,
-        "error": status.error,
-    })
-}
-
-fn developer_run_snapshot(manager: &developer_run::DeveloperRunManager) -> serde_json::Value {
-    json!({ "status": developer_run_status(&manager.status()), "logs": manager.logs() })
-}
-
 pub(crate) fn handle_native_request(
     app: &AppHandle,
     method: &str,
@@ -251,12 +232,8 @@ pub(crate) fn handle_native_request(
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
-        "developer.status" => Ok(developer_run_snapshot(&state.developer_run_manager)),
-        "developer.restart" => state
-            .developer_run_manager
-            .restart()
-            .map(|status| developer_run_status(&status))
-            .map_err(|error| error.to_string()),
+        "developer.status" => Ok(state.developer_mode.native_snapshot(app)),
+        "developer.restart" => state.developer_mode.request_restart(app),
         _ => Err(format!("Unsupported native developer request: {method}")),
     }
 }
@@ -343,51 +320,25 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeveloperRunStartInput {
-    target: developer_run::DeveloperRunTarget,
-    executable: String,
+#[tauri::command]
+fn developer_mode_get(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<developer_mode::DeveloperModeState, String> {
+    require_local_app_window(&window, &state)?;
+    Ok(state.developer_mode.state())
 }
 
 #[tauri::command]
-fn developer_run_get(
+fn developer_mode_set(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
-) -> Result<serde_json::Value, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
-    Ok(developer_run_snapshot(&state.developer_run_manager))
-}
-
-#[tauri::command]
-async fn developer_run_start(
-    window: tauri::WebviewWindow,
-    state: tauri::State<'_, AppState>,
-    input: DeveloperRunStartInput,
-) -> Result<serde_json::Value, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
-    if input.executable.len() > 32_768 {
-        return Err("Developer executable path is too long".into());
-    }
-    let manager = state.developer_run_manager.clone();
-    tauri::async_runtime::spawn_blocking(move || manager.start(input.target, input.executable))
-        .await
-        .map_err(|error| error.to_string())?
-        .map(|status| developer_run_status(&status))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn developer_run_stop(
-    window: tauri::WebviewWindow,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    require_preferences_or_local_app_window(&window, &state)?;
-    let manager = state.developer_run_manager.clone();
-    tauri::async_runtime::spawn_blocking(move || manager.stop())
-        .await
-        .map_err(|error| error.to_string())?
-        .map(|_| ())
+    enabled: bool,
+) -> Result<developer_mode::DeveloperModeState, String> {
+    require_local_app_window(&window, &state)?;
+    state
+        .developer_mode
+        .set_enabled(enabled)
         .map_err(|error| error.to_string())
 }
 
@@ -1338,11 +1289,70 @@ fn set_windows_app_user_model_id(identifier: &str) {
 fn set_windows_app_user_model_id(_identifier: &str) {}
 
 #[cfg(windows)]
-fn isolate_windows_webview_profile(scope: &identity::IdentityScope) {
-    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_some() {
-        return;
+fn configure_developer_webview(
+    scope: &identity::IdentityScope,
+    active: bool,
+) -> std::io::Result<(
+    Option<std::path::PathBuf>,
+    std::path::PathBuf,
+    Option<String>,
+)> {
+    let developer_profile = scope.webview_data_directory.join("developer-mode");
+    let arguments = developer_mode::webview2_arguments(
+        std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+            .ok()
+            .as_deref(),
+        None,
+    );
+    if arguments.is_empty() {
+        std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+    } else {
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", arguments);
     }
-    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &scope.webview_data_directory);
+
+    std::env::remove_var("WEBVIEW2_USER_DATA_FOLDER");
+    let profile = if active {
+        developer_profile
+    } else {
+        scope.webview_data_directory.clone()
+    };
+    let devtools_active_port = active.then(|| {
+        profile
+            .join("local")
+            .join("EBWebView")
+            .join("DevToolsActivePort")
+    });
+    let developer_browser_arguments =
+        active.then(|| developer_mode::webview2_arguments(None, Some(0)));
+    Ok((devtools_active_port, profile, developer_browser_arguments))
+}
+
+#[cfg(not(windows))]
+fn configure_developer_webview(
+    scope: &identity::IdentityScope,
+    _active: bool,
+) -> std::io::Result<(
+    Option<std::path::PathBuf>,
+    std::path::PathBuf,
+    Option<String>,
+)> {
+    Ok((None, scope.webview_data_directory.clone(), None))
+}
+
+fn configure_developer_environment(active: bool) {
+    if active {
+        std::env::set_var("RUST_BACKTRACE", "1");
+        std::env::set_var(
+            "NODE_OPTIONS",
+            developer_mode::append_node_option(
+                std::env::var("NODE_OPTIONS").ok().as_deref(),
+                "--enable-source-maps",
+            ),
+        );
+        std::env::set_var("CODENOMAD_DEVELOPER_MODE", "1");
+    } else {
+        std::env::remove_var("CODENOMAD_DEVELOPER_MODE");
+    }
 }
 
 fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
@@ -1375,8 +1385,18 @@ fn main() {
         &home,
         &local_data,
     );
-    #[cfg(windows)]
-    isolate_windows_webview_profile(&scope);
+    let developer_marker_path = developer_mode::marker_path(&home);
+    let developer_mode_active = developer_mode::read_enabled(&developer_marker_path);
+    configure_developer_environment(developer_mode_active);
+    let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
+        configure_developer_webview(&scope, developer_mode_active)
+            .expect("configure Developer Mode browser profile");
+    let developer_mode = developer_mode::DeveloperMode::new(
+        developer_mode_active,
+        format!("tauri:{}", scope.identifier),
+        devtools_active_port,
+        developer_marker_path,
+    );
 
     let launch_queue = Arc::new(launch::LaunchQueue::default());
     launch_queue.enqueue(launch::parse_launch_intent(
@@ -1427,7 +1447,7 @@ fn main() {
         .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
-            developer_run_manager: developer_run::DeveloperRunManager::new(),
+            developer_mode,
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
@@ -1437,7 +1457,8 @@ fn main() {
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
-            webview_data_directory: setup_scope.webview_data_directory.clone(),
+            webview_data_directory,
+            developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
         })
         .on_page_load(|webview, payload| {
@@ -1532,9 +1553,8 @@ fn main() {
             windows_update::install_stable_update,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
-            developer_run_get,
-            developer_run_start,
-            developer_run_stop
+            developer_mode_get,
+            developer_mode_set
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {

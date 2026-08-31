@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-developer-mode-get"
+description = "Enables the developer_mode_get command without any pre-configured scope."
+commands.allow = ["developer_mode_get"]
+
+[[permission]]
+identifier = "deny-developer-mode-get"
+description = "Denies the developer_mode_get command without any pre-configured scope."
+commands.deny = ["developer_mode_get"]

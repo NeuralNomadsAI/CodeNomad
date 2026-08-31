@@ -40,6 +40,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       outDir: "dist/main",
+      sourcemap: true,
       lib: {
         entry: resolve(__dirname, "electron/main/main.ts"),
       },
@@ -52,6 +53,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       outDir: "dist/preload",
+      sourcemap: true,
       lib: {
         entry: resolve(__dirname, "electron/preload/index.cjs"),
         formats: ["cjs"],
@@ -82,7 +84,7 @@ export default defineConfig({
     build: {
       minify: true,
       cssMinify: true,
-      sourcemap: false,
+      sourcemap: true,
       outDir: resolve(__dirname, "dist/renderer"),
       rollupOptions: {
         input: {

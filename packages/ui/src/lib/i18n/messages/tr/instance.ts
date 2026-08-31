@@ -3,6 +3,13 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "Yeni instance",
   "instanceTabs.remote.title": "Uzak bağlantı",
   "instanceTabs.remote.ariaLabel": "Uzak bağlantı",
+  "instanceTabs.developerMode.enableTitle": "Geliştirici modunu etkinleştir",
+  "instanceTabs.developerMode.disableTitle": "Geliştirici modunu devre dışı bırak",
+  "instanceTabs.developerMode.restartTitle": "{action}; değişikliği uygulamak için CodeNomad'i yeniden başlatın",
+  "instanceTabs.developerMode.enabledToast": "Geliştirici modu etkinleştirildi. Değişikliği uygulamak için CodeNomad'i yeniden başlatın.",
+  "instanceTabs.developerMode.disabledToast": "Geliştirici modu devre dışı bırakıldı. Değişikliği uygulamak için CodeNomad'i yeniden başlatın.",
+  "instanceTabs.developerMode.error": "Geliştirici moduna erişilemedi.",
+
   "instanceInfo.title": "Instance Bilgileri",
   "instanceInfo.labels.folder": "Klasör",
   "instanceInfo.labels.project": "Proje",

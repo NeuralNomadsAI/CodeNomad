@@ -11,12 +11,18 @@ import {
 import InstanceTab from "./instance-tab"
 import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
-import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
+import { Plus, MonitorUp, Bell, BellOff, Bug, Settings } from "lucide-solid"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { useI18n } from "../lib/i18n"
+import {
+  getDeveloperMode,
+  setDeveloperMode,
+  supportsDeveloperMode,
+  type DeveloperModeState,
+} from "../lib/native/developer-mode"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { getUnreadToastCountSignal } from "../lib/notifications"
+import { getUnreadToastCountSignal, showToastNotification } from "../lib/notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
@@ -112,6 +118,24 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
+  const developerModeSupported = supportsDeveloperMode()
+  const [developerMode, setDeveloperModeState] = createSignal<DeveloperModeState>()
+  const [developerModeBusy, setDeveloperModeBusy] = createSignal(developerModeSupported)
+
+  const showDeveloperModeError = () => {
+    showToastNotification({ message: t("instanceTabs.developerMode.error"), variant: "error" })
+  }
+
+  onMount(() => {
+    if (!developerModeSupported) return
+    const refresh = () => void getDeveloperMode()
+      .then((state) => setDeveloperModeState(state))
+      .catch(showDeveloperModeError)
+      .finally(() => setDeveloperModeBusy(false))
+    refresh()
+    window.addEventListener("focus", refresh)
+    onCleanup(() => window.removeEventListener("focus", refresh))
+  })
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -171,6 +195,37 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       ? t("settings.notifications.status.enabled")
       : t("settings.notifications.status.disabled")
   })
+
+  const developerModeTitle = () => {
+    const state = developerMode()
+    const action = t(
+      state?.enabled ? "instanceTabs.developerMode.disableTitle" : "instanceTabs.developerMode.enableTitle",
+    )
+    return state && state.enabled !== state.active
+      ? t("instanceTabs.developerMode.restartTitle", { action })
+      : action
+  }
+
+  const toggleDeveloperMode = async () => {
+    const current = developerMode()
+    if (!current || developerModeBusy()) return
+
+    setDeveloperModeBusy(true)
+    try {
+      const next = await setDeveloperMode(!current.enabled)
+      setDeveloperModeState(next)
+      showToastNotification({
+        message: t(
+          next.enabled ? "instanceTabs.developerMode.enabledToast" : "instanceTabs.developerMode.disabledToast",
+        ),
+        variant: "success",
+      })
+    } catch {
+      showDeveloperModeError()
+    } finally {
+      setDeveloperModeBusy(false)
+    }
+  }
 
   const handleDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
     if (!droppable) return
@@ -256,6 +311,21 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             >
               <Settings class="w-4 h-4" />
             </button>
+
+            <Show when={developerModeSupported}>
+              <button
+                type="button"
+                class="new-tab-button disabled:cursor-not-allowed disabled:opacity-50"
+                style={developerMode()?.enabled ? { color: "var(--accent-primary)" } : undefined}
+                disabled={developerModeBusy() || !developerMode()}
+                aria-pressed={developerMode()?.enabled ?? false}
+                title={developerModeTitle()}
+                aria-label={developerModeTitle()}
+                onClick={() => void toggleDeveloperMode()}
+              >
+                <Bug class="w-4 h-4" aria-hidden="true" />
+              </button>
+            </Show>
 
             <div ref={notificationPopoverRef} class="relative">
               <button

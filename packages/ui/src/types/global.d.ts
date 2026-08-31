@@ -61,6 +61,8 @@ declare global {
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
+    getDeveloperMode?: () => Promise<{ enabled: boolean; active: boolean }>
+    setDeveloperMode?: (enabled: boolean) => Promise<{ enabled: boolean; active: boolean }>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>

@@ -115,7 +115,9 @@ export class LocalWindowRegistry {
     const record = this.get(id)
     if (!record) return undefined
     this.records.delete(record.id)
-    this.webContentsIds.delete(record.window.webContents.id)
+    for (const [webContentsId, windowId] of this.webContentsIds) {
+      if (windowId === record.id) this.webContentsIds.delete(webContentsId)
+    }
     this.mru = this.mru.filter((candidate) => candidate !== record.id)
     return record
   }

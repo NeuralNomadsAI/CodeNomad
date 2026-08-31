@@ -2,10 +2,11 @@ import "./process-output"
 import { app, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
 import http from "node:http"
 import https from "node:https"
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { DeveloperRunManager, handleNativeDeveloperRunRequest } from "./developer-run-manager"
+import { appendNodeOption, DeveloperMode, readDeveloperModeEnabled } from "./developer-mode"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -28,18 +29,29 @@ import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, install
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 
-function configureStoragePaths() {
+function resolveStoragePaths(developerModeActive: boolean) {
   const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
   if (!app.isPackaged) app.setName("CodeNomad")
   const scope = resolveStorageScope({
     appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
     cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
+  const browserDataPath = developerModeActive ? join(scope.userDataPath, "developer-mode-browser-v2") : scope.userDataPath
+  const sessionDataPath = developerModeActive ? join(browserDataPath, "session-data") : scope.sessionDataPath
   mkdirSync(scope.userDataPath, { recursive: true })
-  mkdirSync(scope.sessionDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
-  app.setPath("sessionData", scope.sessionDataPath)
-  return scope
+  return { scope, browserDataPath, sessionDataPath }
+}
+
+function configureBrowserStorage(browserDataPath: string, sessionDataPath: string, developerModeActive: boolean) {
+  mkdirSync(browserDataPath, { recursive: true })
+  mkdirSync(sessionDataPath, { recursive: true })
+  app.setPath("userData", browserDataPath)
+  app.setPath("sessionData", sessionDataPath)
+  if (developerModeActive) {
+    rmSync(join(browserDataPath, "DevToolsActivePort"), { force: true })
+    app.commandLine.appendSwitch("user-data-dir", browserDataPath)
+  }
 }
 
 function cleanupPackagedChromiumStorage() {
@@ -57,18 +69,44 @@ function argvForLaunch(argv: string[]): string[] {
   return argv.slice(app.isPackaged ? 1 : 2)
 }
 
-const storageScope = configureStoragePaths()
+const developerModeActive = readDeveloperModeEnabled()
+if (developerModeActive) {
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
+  app.commandLine.appendSwitch("remote-debugging-port", "0")
+  app.commandLine.appendSwitch("enable-logging")
+  process.env.CODENOMAD_DEVELOPER_MODE = "1"
+  process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
+  process.setSourceMapsEnabled?.(true)
+} else {
+  app.commandLine.removeSwitch("remote-debugging-address")
+  app.commandLine.removeSwitch("remote-debugging-port")
+  delete process.env.CODENOMAD_DEVELOPER_MODE
+}
+const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths(developerModeActive)
 const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
-startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => runPrimary(initialIntent))
+startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
+  configureBrowserStorage(browserDataPath, sessionDataPath, developerModeActive)
+  runPrimary(initialIntent)
+})
 
 function runPrimary(firstIntent: LaunchIntent) {
   cleanupPackagedChromiumStorage()
-  const clientState = new ClientStateManager(app.getPath("userData"), undefined, storageScope.clientStateElectionDirectory
+  const clientState = new ClientStateManager(storageScope.userDataPath, undefined, storageScope.clientStateElectionDirectory
     ? { crossHostElectionDirectory: storageScope.clientStateElectionDirectory }
     : undefined)
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
-  const developerRunManager = new DeveloperRunManager()
-  const cli = new CliProcessManager((method) => handleNativeDeveloperRunRequest(developerRunManager, method))
+  let lifecycle: MultiwindowLifecycle
+  const developerMode = new DeveloperMode({
+    active: developerModeActive,
+    devtoolsDataPath: sessionDataPath,
+    nativeIdentity: `electron:${createHash("sha256").update(`${storageScope.channel}\0${storageScope.configIdentity}`).digest("hex").slice(0, 16)}`,
+    targetWindowId: () => {
+      const focused = BrowserWindow.getFocusedWindow()
+      return focused ? registry.resolve(focused.webContents)?.id : registry.mruRecord()?.id
+    },
+    requestRelaunch: () => lifecycle.requestRelaunch(),
+  })
+  const cli = new CliProcessManager((method) => developerMode.handleNativeRequest(method))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
@@ -91,13 +129,12 @@ function runPrimary(firstIntent: LaunchIntent) {
     for (const origin of resolveConfiguredRendererOrigins(backendUrl, app.isPackaged, [process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL])) origins.add(origin)
     return [...origins]
   }
-  const lifecycle = new MultiwindowLifecycle({
+  lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
-    stopDeveloperRun: () => developerRunManager.stop(),
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -174,6 +211,8 @@ function runPrimary(firstIntent: LaunchIntent) {
       },
     })
     if (!isMac) window.setMenuBarVisibility(false)
+    const nativeWindowId = window.id
+    const webContentsId = window.webContents.id
     const navigation = new ClientStateNavigationController(window, {
       clientStateManager: persisted ? clientState : { isPrimary: false },
       isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedOrigins(window)),
@@ -194,9 +233,9 @@ function runPrimary(firstIntent: LaunchIntent) {
     window.on("focus", () => registry.markFocused(windowId))
     window.on("closed", () => {
       registry.remove(windowId)
-      clearWorkspaceMenuWindow(window)
-      remoteOrigins.delete(window.id)
-      insecureOrigins.delete(window.webContents.id)
+      clearWorkspaceMenuWindow(webContentsId)
+      remoteOrigins.delete(nativeWindowId)
+      insecureOrigins.delete(webContentsId)
     })
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     if (process.env.NODE_ENV === "development") window.webContents.openDevTools({ mode: "detach" })
@@ -232,7 +271,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
-    developerRunManager,
+    developerMode,
   })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),
@@ -292,14 +331,6 @@ function runPrimary(firstIntent: LaunchIntent) {
     registry.fanout("cli:error", payload)
     preferencesWindows.current()?.webContents.send("cli:error", payload)
   })
-  developerRunManager.on("status", (status) => {
-    registry.fanout("developer-run:status", status)
-    preferencesWindows.current()?.webContents.send("developer-run:status", status)
-  })
-  developerRunManager.on("log", (entry) => {
-    registry.fanout("developer-run:log", entry)
-    preferencesWindows.current()?.webContents.send("developer-run:log", entry)
-  })
 
   app.whenReady().then(async () => {
     try { app.setAppUserModelId("ai.neuralnomads.codenomad.client") } catch {}
@@ -351,6 +382,8 @@ function runPrimary(firstIntent: LaunchIntent) {
         width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
         webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
       })
+      const nativeWindowId = window.id
+      const webContentsId = window.webContents.id
       const allowedOrigins = new Set([base.origin, target.origin])
       remoteWindows.register(payload.id, window, payload.proxySessionId)
       if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
@@ -360,7 +393,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
       lifecycle.attachRemote(window)
-      window.on("closed", () => { remoteOrigins.delete(window.id); insecureOrigins.delete(window.webContents.id) })
+      window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
         console.warn("[electron] failed to load remote window; showing loading screen", error)
         const loading = loadingTarget()
@@ -380,6 +413,8 @@ function runPrimary(firstIntent: LaunchIntent) {
         additionalArguments: ["--codenomad-window-context=preferences"],
       },
     })
+    const nativeWindowId = window.id
+    const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
     preferencesWindows.register(window, request)
     preferencesNavigation = new ClientStateNavigationController(window, {
@@ -392,8 +427,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     lifecycle.attachRemote(window)
     window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle("Preferences") })
     window.on("closed", () => {
-      remoteOrigins.delete(window.id)
-      insecureOrigins.delete(window.webContents.id)
+      remoteOrigins.delete(nativeWindowId)
+      insecureOrigins.delete(webContentsId)
       preferencesNavigation = null
       preferencesTransition = undefined
     })

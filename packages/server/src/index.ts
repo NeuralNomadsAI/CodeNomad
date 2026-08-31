@@ -35,7 +35,7 @@ import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 import { NativeParent } from "./native-parent"
-import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, installAutomationPlugin, publishAutomationBridge } from "./opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge, removeLegacyAutomationPlugin } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
 
@@ -378,6 +378,13 @@ async function main() {
     logger: workspaceLogger,
   })
   const nativeParent = new NativeParent()
+  if (nativeParent.available) {
+    try {
+      await removeLegacyAutomationPlugin()
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to remove the legacy global Developer Mode plugin")
+    }
+  }
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
@@ -582,17 +589,16 @@ async function main() {
   serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
-  if (nativeParent.available) {
+  if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
     try {
-      await installAutomationPlugin()
-      if (!httpStart) throw new Error("Developer Automation HTTP listener did not start")
+      if (!httpStart) throw new Error("Developer Mode HTTP listener did not start")
       const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
       removeAutomationBridge = await publishAutomationBridge({
         ...automationBridge,
         url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
       })
     } catch (error) {
-      logger.warn({ err: error }, "Failed to install the OpenCode automation plugin")
+      logger.warn({ err: error }, "Failed to publish the Developer Mode bridge")
     }
   }
 

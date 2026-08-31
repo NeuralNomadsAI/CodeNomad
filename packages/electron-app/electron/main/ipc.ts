@@ -1,12 +1,11 @@
 import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron"
 import fs from "node:fs"
 import { requestMicrophoneAccess } from "./permissions"
+import type { DeveloperMode } from "./developer-mode"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { setWorkspaceMenuEnabled } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
-import type { DeveloperRunManager, DeveloperRunTarget } from "./developer-run-manager"
-import path from "node:path"
 import { validateMainFrame } from "./ipc-security"
 
 interface LocalSender {
@@ -22,7 +21,7 @@ interface CliIPCDependencies {
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
-  developerRunManager: DeveloperRunManager
+  developerMode: DeveloperMode
 }
 
 interface DialogOpenRequest {
@@ -100,23 +99,14 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     dependencies.acknowledgeFolder(id, folder, opened)
     return { ok: true }
   })
-  ipcMain.handle("developer-run:get", async (event) => {
-    settings(event)
-    return { status: dependencies.developerRunManager.status(), logs: dependencies.developerRunManager.logs() }
+  ipcMain.handle("developer-mode:get", async (event) => {
+    local(event)
+    return dependencies.developerMode.state()
   })
-  ipcMain.handle("developer-run:start", async (event, payload: { target?: unknown; executable?: unknown }) => {
-    settings(event)
-    const target = payload?.target
-    const executable = payload?.executable
-    if ((target !== "electron" && target !== "tauri") || typeof executable !== "string" || executable.length > 32_768
-      || !path.isAbsolute(executable) || !fs.statSync(executable, { throwIfNoEntry: false })?.isFile()) {
-      throw new Error("Developer Automation requires a valid Electron or Tauri executable")
-    }
-    return dependencies.developerRunManager.start({ target: target as DeveloperRunTarget, executable })
-  })
-  ipcMain.handle("developer-run:stop", async (event) => {
-    settings(event)
-    await dependencies.developerRunManager.stop()
+  ipcMain.handle("developer-mode:set", async (event, enabled: unknown) => {
+    local(event)
+    if (typeof enabled !== "boolean") throw new Error("Developer Mode requires a boolean value")
+    return dependencies.developerMode.setEnabled(enabled)
   })
 
   ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {

@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "Nueva instancia",
   "instanceTabs.remote.title": "Conexión remota",
   "instanceTabs.remote.ariaLabel": "Conexión remota",
+  "instanceTabs.developerMode.enableTitle": "Activar el modo de desarrollador",
+  "instanceTabs.developerMode.disableTitle": "Desactivar el modo de desarrollador",
+  "instanceTabs.developerMode.restartTitle": "{action}; reinicia CodeNomad para aplicar el cambio",
+  "instanceTabs.developerMode.enabledToast": "Modo de desarrollador activado. Reinicia CodeNomad para aplicar el cambio.",
+  "instanceTabs.developerMode.disabledToast": "Modo de desarrollador desactivado. Reinicia CodeNomad para aplicar el cambio.",
+  "instanceTabs.developerMode.error": "No se pudo acceder al modo de desarrollador.",
 
   "instanceInfo.title": "Información de la instancia",
   "instanceInfo.labels.folder": "Carpeta",

@@ -25,7 +25,6 @@ interface Dependencies {
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
   navigationLifecycle?: SerializedLifecycle
-  stopDeveloperRun?(): Promise<void>
 }
 
 export class MultiwindowLifecycle {
@@ -35,6 +34,7 @@ export class MultiwindowLifecycle {
   private sessionEndPreparationPending = false
   private release: Promise<void> | null = null
   private exitAllowed = false
+  private relaunchRequested = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
 
   constructor(private readonly dependencies: Dependencies) {}
@@ -99,12 +99,17 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
+  requestRelaunch(): void {
+    if (this.exitAllowed) return
+    this.relaunchRequested = true
+    this.dependencies.app.quit()
+  }
+
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
     const cleanup = async () => {
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
-      await this.dependencies.stopDeveloperRun?.()
       await this.dependencies.cliManager.shutdown()
       try {
         await this.releasePrimary()
@@ -176,6 +181,7 @@ export class MultiwindowLifecycle {
   private exit(): void {
     if (this.exitAllowed) return
     this.exitAllowed = true
+    if (this.relaunchRequested) this.dependencies.app.relaunch()
     this.dependencies.app.exit(0)
   }
 }

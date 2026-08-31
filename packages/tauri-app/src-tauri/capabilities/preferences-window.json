@@ -31,9 +31,6 @@
     "allow-cli-get-status",
     "allow-cli-restart",
     "allow-needs-local-certificate-install",
-    "allow-open-remote-window",
-    "allow-developer-run-get",
-    "allow-developer-run-start",
-    "allow-developer-run-stop"
+    "allow-open-remote-window"
   ]
 }

@@ -3,6 +3,12 @@ export const instanceMessages = {
   "instanceTabs.new.ariaLabel": "מופע חדש",
   "instanceTabs.remote.title": "חיבור מרוחק",
   "instanceTabs.remote.ariaLabel": "חיבור מרוחק",
+  "instanceTabs.developerMode.enableTitle": "הפעל מצב מפתח",
+  "instanceTabs.developerMode.disableTitle": "השבת מצב מפתח",
+  "instanceTabs.developerMode.restartTitle": "{action}; יש להפעיל מחדש את CodeNomad כדי להחיל את השינוי",
+  "instanceTabs.developerMode.enabledToast": "מצב מפתח הופעל. יש להפעיל מחדש את CodeNomad כדי להחיל את השינוי.",
+  "instanceTabs.developerMode.disabledToast": "מצב מפתח הושבת. יש להפעיל מחדש את CodeNomad כדי להחיל את השינוי.",
+  "instanceTabs.developerMode.error": "לא ניתן לגשת למצב מפתח.",
 
   "instanceInfo.title": "מידע על המופע",
   "instanceInfo.labels.folder": "תיקייה",

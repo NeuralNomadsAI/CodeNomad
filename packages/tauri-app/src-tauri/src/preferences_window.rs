@@ -525,6 +525,7 @@ mod tests {
             "open-workspace-target",
             "set-workspace-menu-enabled",
             "wake-lock",
+            "developer-",
         ] {
             assert!(!permissions.iter().any(|permission| permission
                 .as_str()
