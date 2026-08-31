@@ -116,13 +116,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <Show when={usage() !== undefined} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
-        <Show when={usage()} fallback={<div class="text-xs text-tertiary">{t("providerUsage.unavailable")}</div>}>
+      <Show when={usage() !== undefined} fallback={<div class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
+        <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
               when={data().supported && data().configured && data().ok && entries().length > 0}
               fallback={
-                <div class="text-xs text-tertiary">
+                <div class="right-panel-empty-text">
                   {t(
                     !data().supported
                       ? "providerUsage.unsupported"
@@ -172,7 +172,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
-      <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && entries().length > 0}>
+        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+      </Show>
     </div>
   )
 }

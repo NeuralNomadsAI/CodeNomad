@@ -1,4 +1,6 @@
 @import "./components/buttons.css";
+@import "./components/window.css";
+@import "./components/native-titlebar.css";
 @import "./components/badges.css";
 @import "./components/folder-home.css";
 @import "./components/folder-drop.css";

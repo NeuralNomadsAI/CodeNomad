@@ -28,7 +28,7 @@
   color: var(--text-secondary);
   border: 0;
   padding: 0.1rem 0.35rem;
-  border-radius: 0.375rem;
+  border-radius: 0;
   font-size: 0.75rem;
   font-weight: var(--font-weight-semibold);
   line-height: 1;
@@ -36,7 +36,7 @@
   align-items: center;
   justify-content: center;
   height: 1.5rem;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .tool-call-header-button:hover:not(:disabled) {
@@ -75,7 +75,7 @@
   background-color: var(--surface-secondary);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 13px;
 }
 
@@ -96,6 +96,57 @@
   border: none;
   border-radius: 0;
   margin: 0;
+}
+
+.tool-call-output-shell {
+  position: relative;
+  min-width: 0;
+  padding-inline-start: 26px;
+  overflow: visible;
+}
+
+.tool-call-body.tool-call-output-shell,
+.tool-call-io-section:has(> .tool-call-output-shell) {
+  overflow: visible;
+}
+
+.tool-call-output-rail {
+  position: absolute;
+  inset-inline-start: 1px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  z-index: 1;
+}
+
+.tool-call-output-rail .tool-call-header-icon-button {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.tool-call-output-rail .tool-call-header-icon-button:hover {
+  background: transparent;
+}
+
+.tool-call-output-rail .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"]),
+.tool-call-output-rail .icon-toggle:is([aria-pressed="true"], [aria-expanded="true"]):hover {
+  background: transparent !important;
+}
+
+.tool-call-output-rail .tool-call-header-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tool-call-details {
+  min-width: 0;
 }
 
 .tool-call-header {
@@ -137,18 +188,25 @@
   @apply inline-flex items-center justify-center;
   background-color: transparent;
   border: none;
-  color: var(--text-secondary);
-  width: 1.6rem;
-  height: 1.6rem;
+  color: var(--icon-button-color);
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   padding: 0;
-  border-radius: 0.25rem;
+  border-radius: 0;
   cursor: pointer;
+  opacity: var(--icon-button-idle-opacity);
   flex: 0 0 auto;
 }
 
 .tool-call-header-icon-button:hover {
   background-color: transparent;
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+.tool-call-header-icon-button svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .tool-call-header-icon-button:disabled {
@@ -159,6 +217,19 @@
 
 .tool-call-header-icon-button:disabled:hover {
   color: var(--text-muted);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tool-call-header-copy,
+  .message-technical-group-header > .tool-call-header-icon-button {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  :is(.tool-call-header, .message-technical-group-header):is(:hover, :focus-within) > :is(.tool-call-header-copy, .tool-call-header-icon-button) {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .tool-call-header > .action-overflow-trigger {
@@ -201,8 +272,8 @@
   @apply inline-flex items-center justify-center;
   color: var(--text-secondary);
   flex: 0 0 auto;
-  font-size: 11px;
   width: 0.9rem;
+  height: 0.9rem;
 }
 
 .tool-call-summary {
@@ -227,15 +298,6 @@
   line-height: var(--message-part-header-title-line-height);
   color: var(--message-part-header-title);
   min-width: 0;
-}
-
-.session-center-column[data-session-center-width="narrow"] .tool-call-summary-title {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  white-space: normal;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ToolState uses status="completed"; keep "success" as a legacy alias. */
@@ -360,7 +422,7 @@
   justify-content: center;
   flex: 0 0 auto;
   width: 0.9rem;
-  font-size: 11px;
+  height: 0.9rem;
   color: var(--text-secondary);
 }
 
@@ -400,14 +462,6 @@
 .tool-call-io-wrap,
 .tool-call-io-header > .tool-call-header-icon-button:last-child {
   margin-inline-end: var(--space-sm);
-}
-
-.tool-call-io-wrap.active {
-  color: var(--text-primary);
-}
-
-.tool-call-header-wrap.active {
-  color: var(--text-primary);
 }
 
 .tool-call-io-body {
@@ -502,8 +556,7 @@
   color: var(--text-secondary);
 }
 
-.tool-call-diff-toolbar .file-viewer-toolbar-icon-button:hover,
-.tool-call-diff-toolbar .file-viewer-toolbar-icon-button.active {
+.tool-call-diff-toolbar .file-viewer-toolbar-icon-button:hover {
   background-color: transparent;
   color: var(--text-primary);
   box-shadow: none;

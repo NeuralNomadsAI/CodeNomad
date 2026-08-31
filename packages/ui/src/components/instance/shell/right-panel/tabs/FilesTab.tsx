@@ -439,16 +439,6 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             </button>
             <button
               type="button"
-              class={`file-viewer-toolbar-icon-button${props.wordWrapMode() === "on" ? " active" : ""}`}
-              title={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
-              aria-label={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
-              disabled={showingMarkdownPreview()}
-              onClick={() => props.onWordWrapModeChange(props.wordWrapMode() === "on" ? "off" : "on")}
-            >
-              <WrapText class="h-4 w-4" />
-            </button>
-            <button
-              type="button"
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
               aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
@@ -473,6 +463,19 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         }
         list={{ panel: () => <FileList />, overlay: () => <FileList /> }}
         viewer={renderViewer()}
+        viewerActions={
+          <button
+            type="button"
+            class="file-viewer-toolbar-icon-button icon-toggle"
+            title={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+            aria-label={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+            data-active={props.wordWrapMode() === "on" ? "true" : undefined}
+            disabled={showingMarkdownPreview()}
+            onClick={() => props.onWordWrapModeChange(props.wordWrapMode() === "on" ? "off" : "on")}
+          >
+            <WrapText class="h-4 w-4" />
+          </button>
+        }
         listOpen={props.listOpen()}
         onToggleList={props.onToggleList}
         splitWidth={props.splitWidth()}

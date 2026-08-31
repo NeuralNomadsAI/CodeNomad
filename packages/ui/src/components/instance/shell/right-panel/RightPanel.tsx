@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Accessor, type Component } from "solid-js"
 import type { ToolState } from "../../../../types/tool-state"
 import {
   DragDropProvider,
@@ -97,6 +97,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  let customizationTriggerRef: HTMLButtonElement | undefined
+  let customizationPopoverRef: HTMLDivElement | undefined
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
@@ -106,6 +108,29 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+  })
+
+  createEffect(() => {
+    if (!rightPanelCustomizationOpen()) return
+    queueMicrotask(() => customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus())
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!customizationTriggerRef?.contains(target) && !customizationPopoverRef?.contains(target)) {
+        setRightPanelCustomizationOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      setRightPanelCustomizationOpen(false)
+      queueMicrotask(() => customizationTriggerRef?.focus())
+    }
+    document.addEventListener("pointerdown", closeOutside)
+    document.addEventListener("keydown", closeOnEscape)
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOutside)
+      document.removeEventListener("keydown", closeOnEscape)
+    })
   })
 
   const handleAccordionChange = (values: string[]) => {
@@ -228,9 +253,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   return (
     <div class="relative flex flex-col h-full" ref={props.setContentEl}>
-      <div class="right-panel-tab-bar">
+      <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
-          <div class="tab-strip-shortcuts text-primary">
+          <div class="panel-header-actions tab-strip-shortcuts">
             <IconButton
               size="small"
               color="inherit"
@@ -241,6 +266,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
             </IconButton>
             <IconButton
+              ref={customizationTriggerRef}
+              class="icon-toggle"
               size="small"
               color="inherit"
               aria-label={props.t("instanceShell.rightPanel.customize.toggle")}
@@ -276,15 +303,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                   </DragDropSensors>
                 </DragDropProvider>
               </div>
-
-              <div class="tab-strip-spacer" />
             </div>
           </div>
         </div>
       </div>
 
       <Show when={rightPanelCustomizationOpen()}>
-        <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
+        <div ref={customizationPopoverRef} class="right-panel-customization-popover" role="group" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
           <div class="right-panel-customization-grid">
             <For each={orderedRightPanelTabs()}>
               {(tab) => {

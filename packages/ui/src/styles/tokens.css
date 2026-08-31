@@ -7,6 +7,12 @@
   --surface-muted: #f8fafc;
   --surface-code: #f1f5f9;
   --surface-hover: #e0e0e0;
+  --surface-chrome: color-mix(in oklab, var(--surface-secondary) 58%, var(--surface-base));
+  --surface-subtle: color-mix(in oklab, var(--surface-secondary) 36%, var(--surface-base));
+  --surface-control: color-mix(in oklab, var(--surface-secondary) 72%, var(--surface-base));
+  --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 7%, var(--surface-chrome));
+  --selection-neutral-bg: color-mix(in oklab, var(--text-primary) 7%, transparent);
+  --selection-neutral-strong-bg: color-mix(in oklab, var(--text-primary) 10%, transparent);
   --markdown-table-row-odd: transparent;
   --markdown-table-row-even: #f1f5f9;
   
@@ -15,11 +21,13 @@
   --border-secondary: #e0e0e0;
   --border-muted: #e0e0e0;
   --border-strong: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
+  --border-divider: color-mix(in oklab, var(--border-base) 82%, var(--text-primary));
   
   /* Text tokens */
   --text-primary: #111827;
   --text-secondary: #334155;
   --text-muted: #475569;
+  --text-tertiary: var(--text-muted);
   --text-inverted: #ffffff;
   --text-on-accent: #ffffff;
   
@@ -63,6 +71,7 @@
   --session-status-idle-bg: rgba(22, 163, 74, 0.16);
   --session-status-permission-fg: #b91c1c;
   --session-status-permission-bg: rgba(239, 68, 68, 0.16);
+  --session-yolo-accent: var(--accent-primary);
   --list-item-highlight-bg: rgba(0, 102, 255, 0.1);
   --list-item-highlight-bg-solid: #e5f0ff;
   --list-item-highlight-border: rgba(0, 102, 255, 0.25);
@@ -85,7 +94,7 @@
   --env-vars-text: #0066ff;
   --folder-overlay-bg: rgba(0, 0, 0, 0.35);
   --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-  --folder-card-radius: 16px;
+  --folder-card-radius: 0;
   --dropdown-highlight-bg: rgba(0, 102, 255, 0.1);
   --dropdown-highlight-text: var(--text-primary);
   --selection-highlight-bg: rgba(0, 102, 255, 0.12);
@@ -124,20 +133,20 @@
   --kbd-text: var(--text-primary);
   --button-primary-bg: var(--accent-primary);
   --button-primary-hover-bg: var(--accent-hover);
-  --button-primary-text: var(--text-inverted);
+  --button-primary-text: var(--text-on-accent);
   --tab-active-bg: var(--accent-primary);
   --tab-active-hover-bg: var(--accent-hover);
   --tab-active-text: var(--text-inverted);
   --tab-inactive-bg: var(--surface-muted);
   --tab-inactive-hover-bg: var(--surface-hover);
   --tab-inactive-text: var(--text-secondary);
+  --tab-rail-bg: var(--surface-chrome);
+  --tab-border: var(--border-divider);
   --new-tab-bg: var(--surface-secondary);
   --new-tab-hover-bg: var(--surface-hover);
   --new-tab-text: var(--text-muted);
-  --session-tab-active-bg: var(--surface-base);
-  --session-tab-active-text: var(--text-primary);
-  --session-tab-inactive-text: var(--text-muted);
-  --session-tab-hover-bg: var(--surface-hover);
+  --scrollbar-thumb: color-mix(in oklab, var(--text-muted) 18%, transparent);
+  --scrollbar-thumb-hover: color-mix(in oklab, var(--text-muted) 42%, transparent);
 
   /* Layout & spacing tokens */
   --space-2xs: 2px;
@@ -146,15 +155,26 @@
   --space-md: 12px;
   --space-lg: 16px;
   --space-xl: 24px;
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-full: 9999px;
-  --button-padding-y: 0.75rem;
-  --button-padding-x: 1.25rem;
+  --chrome-height: 36px;
+  --panel-header-height: 60px;
+  --control-height-sm: 24px;
+  --control-height: 28px;
+  --selector-height: 36px;
+  --scrollbar-size: 8px;
+  --icon-button-size: 26px;
+  --icon-size: 14px;
+  --icon-button-color: var(--text-muted);
+  --icon-button-hover-color: var(--text-primary);
+  --icon-button-idle-opacity: 0.72;
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-full: 0;
+  --button-padding-y: 0.5rem;
+  --button-padding-x: 0.75rem;
   --button-radius: 0.5rem;
   --chip-radius: 0.375rem;
   --pill-radius: 9999px;
@@ -172,7 +192,7 @@
   /* Font sizes */
   --font-size-xs: 11px;
   --font-size-sm: 12px;
-  --font-size-base: 14px;
+  --font-size-base: 13px;
   --font-size-lg: 16px;
   --font-size-xl: 18px;
   --font-size-2xl: 20px;
@@ -238,6 +258,7 @@
     --session-status-idle-bg: rgba(74, 222, 128, 0.22);
     --session-status-permission-fg: #f87171;
     --session-status-permission-bg: rgba(248, 113, 113, 0.22);
+    --session-yolo-accent: var(--accent-primary);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);
@@ -261,9 +282,11 @@
   --env-vars-text: #0080ff;
   --folder-overlay-bg: rgba(0, 0, 0, 0.45);
   --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  --folder-card-radius: 16px;
+  --folder-card-radius: 0;
   --dropdown-highlight-bg: rgba(0, 128, 255, 0.2);
   --dropdown-highlight-text: var(--text-primary);
+  --selection-highlight-bg: rgba(0, 128, 255, 0.18);
+  --selection-highlight-strong-bg: rgba(0, 128, 255, 0.28);
   --kbd-bg: var(--surface-secondary);
   --kbd-border: var(--border-base);
   --kbd-text: var(--text-primary);
@@ -272,27 +295,9 @@
   --popover-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   --code-block-header-bg: var(--surface-secondary);
   --border-critical: var(--status-error);
-  --timeline-segment-active-bg: #0f5b44;
-  --timeline-segment-active-text: #ffffff;
-  --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  --button-danger-text: var(--text-inverted);
-  --button-primary-bg: #3f3f46;
-  --button-primary-hover-bg: #52525b;
-  --button-primary-text: #f5f6f8;
-  --tab-active-bg: #3f3f46;
-  --tab-active-hover-bg: #52525b;
-  --tab-active-text: #f5f6f8;
-  --tab-inactive-bg: #2a2a31;
-  --tab-inactive-hover-bg: #3f3f46;
-  --tab-inactive-text: #d4d4d8;
-  --new-tab-bg: #3f3f46;
-  --new-tab-hover-bg: #52525b;
-  --new-tab-text: #f5f6f8;
-  --session-tab-active-bg: var(--surface-muted);
-  --session-tab-active-text: var(--text-primary);
-  --session-tab-inactive-text: var(--text-muted);
-  --session-tab-hover-bg: #3f3f46;
-
+    --timeline-segment-active-bg: #0f5b44;
+    --timeline-segment-active-text: #ffffff;
+    --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
     --button-primary-bg: #3f3f46;
     --button-primary-hover-bg: #52525b;
     --button-primary-text: #f5f6f8;
@@ -302,57 +307,6 @@
     --tab-inactive-bg: #2f2f36;
     --tab-inactive-hover-bg: #3d3d45;
     --tab-inactive-text: #d4d4d8;
-    --new-tab-bg: #3f3f46;
-    --new-tab-hover-bg: #52525b;
-    --new-tab-text: #f5f6f8;
-    --session-tab-active-bg: var(--surface-muted);
-    --session-tab-active-text: var(--text-primary);
-    --session-tab-inactive-text: var(--text-muted);
-    --session-tab-hover-bg: #3f3f46;
-
-    /* Layout & spacing tokens */
-    --space-2xs: 2px;
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 12px;
-    --space-lg: 16px;
-    --space-xl: 24px;
-    --radius-xs: 3px;
-    --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 8px;
-    --radius-xl: 12px;
-    --radius-2xl: 16px;
-    --radius-full: 9999px;
-    --button-padding-y: 0.75rem;
-    --button-padding-x: 1.25rem;
-    --button-radius: 0.5rem;
-    --chip-radius: 0.375rem;
-    --pill-radius: 9999px;
-    
-    /* Typography tokens (same as light theme) */
-    --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-
-    /* Font weights */
-    --font-weight-regular: 400;
-    --font-weight-medium: 500;
-    --font-weight-semibold: 600;
-    --font-weight-bold: 700;
-
-    /* Font sizes */
-    --font-size-xs: 11px;
-    --font-size-sm: 12px;
-    --font-size-base: 14px;
-    --font-size-lg: 16px;
-    --font-size-xl: 18px;
-    --font-size-2xl: 20px;
-    
-    /* Line heights */
-    --line-height-tight: 1.25;
-    --line-height-normal: 1.5;
-    --line-height-relaxed: 1.6;
-
   }
 }
 
@@ -410,6 +364,7 @@
   --session-status-idle-bg: rgba(74, 222, 128, 0.22);
   --session-status-permission-fg: #f87171;
   --session-status-permission-bg: rgba(248, 113, 113, 0.22);
+  --session-yolo-accent: var(--accent-primary);
   --list-item-highlight-bg: rgba(0, 128, 255, 0.2);
   --list-item-highlight-bg-solid: #15324e;
   --list-item-highlight-border: rgba(0, 128, 255, 0.4);
@@ -432,7 +387,7 @@
   --env-vars-text: #0080ff;
   --folder-overlay-bg: rgba(0, 0, 0, 0.45);
   --folder-card-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  --folder-card-radius: 16px;
+  --folder-card-radius: 0;
   --dropdown-highlight-bg: rgba(0, 128, 255, 0.2);
   --dropdown-highlight-text: var(--text-primary);
   --selection-highlight-bg: rgba(0, 128, 255, 0.18);
@@ -447,6 +402,15 @@
   --timeline-segment-active-bg: #0f5b44;
   --timeline-segment-active-text: #ffffff;
   --timeline-segment-active-ring: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  --button-primary-bg: #3f3f46;
+  --button-primary-hover-bg: #52525b;
+  --button-primary-text: #f5f6f8;
+  --tab-active-bg: #3f3f46;
+  --tab-active-hover-bg: #52525b;
+  --tab-active-text: #f5f6f8;
+  --tab-inactive-bg: #2f2f36;
+  --tab-inactive-hover-bg: #3d3d45;
+  --tab-inactive-text: #d4d4d8;
   --button-danger-text: var(--text-inverted);
   --message-error-bg: rgba(244, 67, 54, 0.12);
   --message-error-bg-strong: rgba(244, 67, 54, 0.2);
@@ -456,65 +420,4 @@
   --log-level-warn: var(--status-warning);
   --log-level-debug: var(--text-secondary);
   --log-level-default: var(--text-primary);
-  --focus-ring-color: var(--accent-primary);
-  --focus-ring-offset: var(--surface-base);
-  --kbd-bg: var(--surface-secondary);
-  --kbd-border: var(--border-base);
-  --kbd-text: var(--text-primary);
-  --button-primary-bg: #3f3f46;
-  --button-primary-hover-bg: #52525b;
-  --button-primary-text: #f5f6f8;
-  --tab-active-bg: #3f3f46;
-  --tab-active-hover-bg: #52525b;
-  --tab-active-text: #f5f6f8;
-  --tab-inactive-bg: #2a2a31;
-  --tab-inactive-hover-bg: #3f3f46;
-  --tab-inactive-text: #d4d4d8;
-  --new-tab-bg: #3f3f46;
-  --new-tab-hover-bg: #52525b;
-  --new-tab-text: #f5f6f8;
-
-  /* Layout & spacing tokens */
-  --space-2xs: 2px;
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 12px;
-  --space-lg: 16px;
-  --space-xl: 24px;
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-full: 9999px;
-  --button-padding-y: 0.75rem;
-  --button-padding-x: 1.25rem;
-  --button-radius: 0.5rem;
-  --chip-radius: 0.375rem;
-  --pill-radius: 9999px;
-  
-  /* Typography tokens (same as light theme) */
-  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-
-  /* Font weights */
-  --font-weight-regular: 400;
-  --font-weight-medium: 500;
-  --font-weight-semibold: 600;
-  --font-weight-bold: 700;
-
-  /* Font sizes */
-  --font-size-xs: 11px;
-  --font-size-sm: 12px;
-  --font-size-base: 14px;
-  --font-size-lg: 16px;
-  --font-size-xl: 18px;
-  --font-size-2xl: 20px;
-  
-  /* Line heights */
-  --line-height-tight: 1.25;
-  --line-height-normal: 1.5;
-  --line-height-relaxed: 1.6;
-
 }

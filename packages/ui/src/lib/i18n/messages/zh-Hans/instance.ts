@@ -176,6 +176,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "未选择文件。",
   "instanceShell.filesShell.listEmpty": "此文件夹中没有文件。",
   "instanceShell.filesShell.hideFiles": "隐藏文件",
+  "instanceShell.filesShell.resizeFiles": "调整文件列表大小",
   "instanceShell.filesShell.showFiles": "显示文件",
   "instanceShell.filesShell.search.placeholder": "筛选此文件夹中的文件",
   "instanceShell.filesShell.search.ariaLabel": "筛选此文件夹中的文件",

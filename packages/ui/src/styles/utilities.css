@@ -1,5 +1,3 @@
-@import "./tokens.css";
-
 /* Reusable component utilities using tokens */
 
 /* Base token utility helpers */
@@ -12,6 +10,10 @@
 }
 
 .text-muted {
+  color: var(--text-muted);
+}
+
+.text-tertiary {
   color: var(--text-muted);
 }
 
@@ -68,8 +70,10 @@
     button.button-danger,
     .button-tertiary,
     button.button-tertiary) {
-  @apply inline-flex items-center justify-center gap-2 font-medium transition-colors rounded-md;
+  @apply inline-flex items-center justify-center gap-2 font-medium transition-colors;
+  min-height: var(--control-height);
   border: 1px solid transparent;
+  border-radius: 0;
 }
 
 :is(.button-primary,
@@ -81,7 +85,8 @@
     .button-tertiary,
     button.button-tertiary):focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 1px;
 }
 
 :is(.button-primary,
@@ -102,19 +107,99 @@
   border-radius: var(--chip-radius);
 }
 
+.metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 24px;
+  padding-inline: var(--space-sm);
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.metric-chip > * {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.metric-chip-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]),
+.icon-toggle:is([aria-pressed="true"], [aria-expanded="true"], [data-active="true"]):hover {
+  background-color: var(--surface-hover) !important;
+  color: var(--text-primary) !important;
+  opacity: 1;
+}
+
+.panel-header {
+  --icon-size: 16px;
+}
+
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.panel-header-actions > button {
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  padding: 5px;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  opacity: var(--icon-button-idle-opacity);
+}
+
+.panel-header-actions > button:hover {
+  background: var(--surface-interactive-hover);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+.panel-header-actions > button svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  font-size: var(--icon-size);
+}
+
+.disclosure-chevron {
+  flex: 0 0 auto;
+  transition: transform 150ms ease;
+}
+
+:is(button, [role="button"])[aria-expanded="true"] .disclosure-chevron,
+details[open] > summary .disclosure-chevron {
+  transform: rotate(90deg);
+}
+
 /* Focus helpers */
 .focus-ring-accent:focus {
   outline: none;
-  border-color: transparent;
-  box-shadow: 0 0 0 2px var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: none;
 }
 
 /* Form controls */
 .form-input {
-  @apply w-full px-3 py-2 text-sm;
+  @apply w-full px-3 text-sm;
+  min-height: var(--control-height);
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   color: var(--text-primary);
 }
 
@@ -124,8 +209,8 @@
 
 .form-input:focus {
   outline: none;
-  border-color: transparent;
-  box-shadow: 0 0 0 2px var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
 /* Shared animations */
@@ -149,7 +234,7 @@
 }
 
 .kbd {
-  @apply inline-flex items-center gap-0.5 font-mono text-xs px-1.5 py-0.5 rounded;
+  @apply inline-flex items-center gap-0.5 font-mono text-xs px-1.5 py-0.5;
   background-color: var(--surface-secondary);
   border: 1px solid var(--border-base);
   color: var(--text-primary);
@@ -188,5 +273,16 @@ html[data-keyboard-hints="hide"] .kbd-hint {
   input:not([type]),
   textarea {
     font-size: 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -176,6 +176,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "לא נבחר קובץ.",
   "instanceShell.filesShell.listEmpty": "אין קבצים בתיקייה הזו.",
   "instanceShell.filesShell.hideFiles": "הסתר קבצים",
+  "instanceShell.filesShell.resizeFiles": "שינוי גודל רשימת הקבצים",
   "instanceShell.filesShell.showFiles": "הצג קבצים",
   "instanceShell.filesShell.search.placeholder": "סנן קבצים בתיקייה הזו",
   "instanceShell.filesShell.search.ariaLabel": "סנן קבצים בתיקייה הזו",

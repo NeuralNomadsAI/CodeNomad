@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import {
   DragDropProvider,
@@ -132,6 +132,28 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
   /** Whether to show toast history panel */
   const [showToastHistory, setShowToastHistory] = createSignal(false)
+  let notificationTriggerRef: HTMLButtonElement | undefined
+  let notificationPopoverRef: HTMLDivElement | undefined
+
+  createEffect(() => {
+    if (!showToastHistory()) return
+    queueMicrotask(() => notificationPopoverRef?.querySelector<HTMLElement>(".toast-history-panel button:not(:disabled)")?.focus())
+    const closeOutside = (event: PointerEvent) => {
+      if (!notificationPopoverRef?.contains(event.target as Node)) setShowToastHistory(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      setShowToastHistory(false)
+      queueMicrotask(() => notificationTriggerRef?.focus())
+    }
+    document.addEventListener("pointerdown", closeOutside)
+    document.addEventListener("keydown", closeOnEscape)
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOutside)
+      document.removeEventListener("keydown", closeOnEscape)
+    })
+  })
 
   const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
   const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
@@ -167,10 +189,10 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   return (
     <>
       <div class="tab-bar tab-bar-instance">
-        <div class="tab-container" role="tablist">
+        <div class="tab-container">
           <div class="tab-scroll">
             <div class="tab-strip">
-              <div class="tab-strip-tabs">
+              <div class="tab-strip-tabs" role="tablist">
                 <Show
                   when={dragReorderEnabled()}
                   fallback={
@@ -204,81 +226,85 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   </DragDropProvider>
                 </Show>
               </div>
-              <div class="tab-strip-spacer" />
-              <Show when={props.tabs.length > 1}>
-                <div class="tab-shortcuts">
-                  <KeyboardHint
-                    shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(
-                      Boolean,
-                    )}
-                  />
-                </div>
-              </Show>
-
-              <button
-                class="new-tab-button"
-                onClick={props.onNew}
-                title={t("instanceTabs.new.title")}
-                aria-label={t("instanceTabs.new.ariaLabel")}
-              >
-                <Plus class="w-4 h-4" />
-              </button>
-
-              <button
-                class="new-tab-button"
-                onClick={() => openSettings("general")}
-                title={t("settings.open.title")}
-                aria-label={t("settings.open.ariaLabel")}
-              >
-                <Settings class="w-4 h-4" />
-              </button>
-
-              {/* Notification Button */}
-              <div class="relative">
-                <button
-                  class={`new-tab-button ${!notificationsSupported() ? "opacity-50" : ""}`}
-                  onClick={() => setShowToastHistory(true)}
-                  title={notificationTitle()}
-                  aria-label={notificationTitle()}
-                >
-                  <Dynamic component={notificationIcon()} class="w-4 h-4" />
-                </button>
-                {/* Unread badge */}
-                <Show when={unreadCount() > 0}>
-                  <span
-                    class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
-                    aria-label={t("toastHistory.unread", { count: unreadCount() })}
-                  >
-                    {unreadCount() > 9 ? "9+" : unreadCount()}
-                  </span>
-                </Show>
+            </div>
+          </div>
+          <div class="tab-bar-actions">
+            <Show when={props.tabs.length > 1}>
+              <div class="tab-shortcuts">
+                <KeyboardHint
+                  shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(
+                    Boolean,
+                  )}
+                />
               </div>
+            </Show>
 
-              <Show when={canOpenRemoteWindows()}>
-                <button
-                  class="new-tab-button tab-remote-button"
-                  onClick={() => openSettings("remote")}
-                  title={t("instanceTabs.remote.title")}
-                  aria-label={t("instanceTabs.remote.ariaLabel")}
+            <button
+              class="new-tab-button"
+              onClick={props.onNew}
+              title={t("instanceTabs.new.title")}
+              aria-label={t("instanceTabs.new.ariaLabel")}
+            >
+              <Plus class="w-4 h-4" />
+            </button>
+
+            <button
+              class="new-tab-button"
+              onClick={() => openSettings("general")}
+              title={t("settings.open.title")}
+              aria-label={t("settings.open.ariaLabel")}
+            >
+              <Settings class="w-4 h-4" />
+            </button>
+
+            <div ref={notificationPopoverRef} class="relative">
+              <button
+                ref={notificationTriggerRef}
+                type="button"
+                class={`new-tab-button icon-toggle ${!notificationsSupported() ? "opacity-50" : ""}`}
+                onClick={() => setShowToastHistory((open) => !open)}
+                title={notificationTitle()}
+                aria-label={notificationTitle()}
+                aria-expanded={showToastHistory()}
+              >
+                <Dynamic component={notificationIcon()} class="w-4 h-4" />
+              </button>
+              <Show when={unreadCount() > 0}>
+                <span
+                  class="tab-notification-badge"
+                  aria-label={t("toastHistory.unread", { count: unreadCount() })}
                 >
-                  <MonitorUp class="w-4 h-4" />
-                </button>
+                  {unreadCount() > 9 ? "9+" : unreadCount()}
+                </span>
+              </Show>
+              <Show when={showToastHistory()}>
+                <ToastHistoryPanel
+                  onClose={() => {
+                    setShowToastHistory(false)
+                    queueMicrotask(() => notificationTriggerRef?.focus())
+                  }}
+                  onOpenSettings={() => {
+                    setShowToastHistory(false)
+                    openSettings("notifications")
+                  }}
+                />
               </Show>
             </div>
+
+            <Show when={canOpenRemoteWindows()}>
+              <button
+                class="new-tab-button tab-remote-button"
+                onClick={() => openSettings("remote")}
+                title={t("instanceTabs.remote.title")}
+                aria-label={t("instanceTabs.remote.ariaLabel")}
+              >
+                <MonitorUp class="w-4 h-4" />
+              </button>
+            </Show>
           </div>
         </div>
       </div>
 
-      {/* Toast History Panel */}
-      <Show when={showToastHistory()}>
-        <ToastHistoryPanel
-          onClose={() => setShowToastHistory(false)}
-          onOpenSettings={() => {
-            setShowToastHistory(false)
-            openSettings("notifications")
-          }}
-        />
-      </Show>
     </>
   )
 }

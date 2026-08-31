@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "מזער חלון",
+  "window.controls.maximize": "הגדל או שחזר חלון",
+  "window.controls.close": "סגור חלון",
   "app.launchError.title": "לא ניתן להפעיל את OpenCode",
   "app.launchError.description": "OpenCode לא הצליח להפעיל את סביבת העבודה הזו. בדוק את פלט השגיאה למטה או את הגדרות OpenCode.",
   "app.launchError.binaryPathLabel": "נתיב הקובץ הבינארי",

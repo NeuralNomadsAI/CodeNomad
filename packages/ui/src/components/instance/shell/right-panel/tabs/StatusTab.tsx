@@ -13,7 +13,7 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { ChevronDown, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronRight, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { Session } from "../../../../../types/session"
@@ -63,10 +63,9 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
         <Accordion.Header class="right-panel-accordion-header-row">
           <Accordion.Trigger class="right-panel-accordion-trigger">
             <span class="section-left">
-              <GripVertical class="h-3.5 w-3.5 text-tertiary" aria-hidden="true" />
+              <ChevronRight class="right-panel-accordion-chevron disclosure-chevron" />
               <span class="section-label">{props.t(props.section.labelKey)}</span>
             </span>
-            <ChevronDown class={`right-panel-accordion-chevron ${props.expanded ? "right-panel-accordion-chevron-expanded" : ""}`} />
           </Accordion.Trigger>
           <Tooltip openDelay={200} gutter={4} placement="top">
             <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
@@ -76,6 +75,7 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
               <Tooltip.Content class="section-info-tooltip">{props.t(props.section.tooltipKey)}</Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip>
+          <GripVertical class="right-panel-section-grip" aria-hidden="true" />
         </Accordion.Header>
         <Accordion.Content class="right-panel-accordion-content">{props.section.render()}</Accordion.Content>
       </Accordion.Item>
@@ -226,7 +226,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const renderProviderUsage = () => {
     const session = props.activeSession()
     if (!session) {
-      return <div class="text-xs text-tertiary">{props.t("providerUsage.noSession")}</div>
+      return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
     }
     return (
       <div class="border border-base bg-surface-secondary px-3 py-2">

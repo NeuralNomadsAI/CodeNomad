@@ -176,6 +176,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "Файл не выбран.",
   "instanceShell.filesShell.listEmpty": "В этой папке нет файлов.",
   "instanceShell.filesShell.hideFiles": "Скрыть файлы",
+  "instanceShell.filesShell.resizeFiles": "Изменить размер списка файлов",
   "instanceShell.filesShell.showFiles": "Показать файлы",
   "instanceShell.filesShell.search.placeholder": "Фильтровать файлы в этой папке",
   "instanceShell.filesShell.search.ariaLabel": "Фильтровать файлы в этой папке",

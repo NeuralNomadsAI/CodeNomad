@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "सञ्झ्याल सानो पार्नुहोस्",
+  "window.controls.maximize": "सञ्झ्याल ठूलो पार्नुहोस् वा पुनर्स्थापना गर्नुहोस्",
+  "window.controls.close": "सञ्झ्याल बन्द गर्नुहोस्",
   "app.launchError.title": "OpenCode सुरु गर्न असमर्थ",
   "app.launchError.description": "OpenCode ले यो कार्यस्थान सुरु गर्न सकेन। तलको त्रुटि आउटपुट वा OpenCode सेटिङहरू जाँच गर्नुहोस्।",
   "app.launchError.binaryPathLabel": "बाइनरी मार्ग (Binary path)",

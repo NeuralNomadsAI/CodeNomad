@@ -23,6 +23,27 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.tab-bar-instance .tab-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.tab-bar-actions {
+  @apply flex items-center gap-1 flex-shrink-0;
+  position: relative;
+  padding-inline-start: var(--space-sm);
+}
+
+.tab-bar-actions::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(-1 * var(--space-xs));
+  inset-inline-start: 0;
+  width: 1px;
+  background-color: var(--border-base);
+}
+
 .tab-strip {
   @apply flex items-center gap-2 px-1;
   min-width: 100%;
@@ -72,7 +93,7 @@
 }
 
 .tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-2 rounded-t-md max-w-[200px] transition-colors text-sm font-medium;
+  @apply inline-flex items-center gap-2 px-3 py-2 rounded-t-md max-w-[200px] transition-colors text-sm font-normal;
   font-family: var(--font-family-sans);
   outline: none;
 }
@@ -91,12 +112,13 @@
 
 .tab-inactive {
   background-color: var(--tab-inactive-bg);
-  color: var(--tab-inactive-text);
+  color: color-mix(in oklab, var(--tab-inactive-text) 62%, transparent);
   border-bottom: 2px solid var(--tab-active-bg);
 }
 
 .tab-inactive:hover {
   background-color: var(--tab-inactive-hover-bg);
+  color: var(--tab-inactive-text);
 }
 
 .tab-active:hover {

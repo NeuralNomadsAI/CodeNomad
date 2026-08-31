@@ -14,6 +14,10 @@ export interface ColorSchemeColors {
   statusSuccess: string
   statusWarning: string
   statusError: string
+  userAccent: string
+  agentAccent: string
+  compactionAccent: string
+  yoloAccent: string
 }
 
 export interface ColorSchemeDefinition {
@@ -52,7 +56,20 @@ const COLOR_KEYS: readonly (keyof ColorSchemeColors)[] = [
   "statusSuccess",
   "statusWarning",
   "statusError",
+  "userAccent",
+  "agentAccent",
+  "compactionAccent",
+  "yoloAccent",
 ]
+
+const LEGACY_COLOR_KEYS = COLOR_KEYS.slice(0, 10)
+
+const DEFAULT_SEMANTIC_COLORS = {
+  userAccent: "#42A5F5",
+  agentAccent: "#D97706",
+  compactionAccent: "#C084FC",
+  yoloAccent: "#8FA8FF",
+} as const
 
 export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
   surfaceBase: "#17181A",
@@ -65,6 +82,7 @@ export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
   statusSuccess: "#72C497",
   statusWarning: "#D8B36A",
   statusError: "#E28181",
+  ...DEFAULT_SEMANTIC_COLORS,
 }
 
 export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
@@ -99,6 +117,10 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
+      userAccent: "#2196F3",
+      agentAccent: "#D97706",
+      compactionAccent: "#C084FC",
+      yoloAccent: "#0080FF",
     },
   },
   {
@@ -126,6 +148,8 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#72C497",
       statusWarning: "#D8B36A",
       statusError: "#E28181",
+      ...DEFAULT_SEMANTIC_COLORS,
+      yoloAccent: "#67C9BA",
     },
   },
   {
@@ -145,6 +169,8 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#77C49A",
       statusWarning: "#D6B36D",
       statusError: "#DF8580",
+      ...DEFAULT_SEMANTIC_COLORS,
+      yoloAccent: "#A9C47F",
     },
   },
   {
@@ -164,6 +190,8 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#78C59A",
       statusWarning: "#DDB46F",
       statusError: "#E28787",
+      ...DEFAULT_SEMANTIC_COLORS,
+      yoloAccent: "#E5A77D",
     },
   },
   {
@@ -183,6 +211,8 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#78C296",
       statusWarning: "#D8AE62",
       statusError: "#DE817A",
+      ...DEFAULT_SEMANTIC_COLORS,
+      yoloAccent: "#D79A66",
     },
   },
   {
@@ -210,6 +240,12 @@ export function isColorSchemeColors(value: unknown): value is ColorSchemeColors 
   return isRecord(value) && COLOR_KEYS.every((key) => isCanonicalHexColor(value[key]))
 }
 
+function normalizeColors(value: unknown): ColorSchemeColors | undefined {
+  if (isColorSchemeColors(value)) return { ...value }
+  if (!isRecord(value) || !LEGACY_COLOR_KEYS.every((key) => isCanonicalHexColor(value[key]))) return undefined
+  return { ...(value as unknown as Omit<ColorSchemeColors, keyof typeof DEFAULT_SEMANTIC_COLORS>), ...DEFAULT_SEMANTIC_COLORS }
+}
+
 const copyColors = (colors: Readonly<ColorSchemeColors>): ColorSchemeColors => ({ ...colors })
 
 function selectionFor(
@@ -231,7 +267,7 @@ export function normalizeColorScheme(value: unknown, legacyTheme?: unknown): Nor
   if (typeof id === "string" && COLOR_SCHEME_IDS.includes(id as ColorSchemeId)) {
     const schemeId = id as ColorSchemeId
     if (schemeId !== "custom") return selectionFor(schemeId)
-    const colors = isRecord(value) && isColorSchemeColors(value.colors) ? value.colors : DEFAULT_CUSTOM_COLORS
+    const colors = isRecord(value) ? normalizeColors(value.colors) ?? DEFAULT_CUSTOM_COLORS : DEFAULT_CUSTOM_COLORS
     const appearance = isRecord(value) && value.appearance === "light" ? "light" : "dark"
     return selectionFor("custom", colors, appearance)
   }
@@ -262,10 +298,21 @@ export function validateColorSchemeColors(value: unknown): value is ColorSchemeC
   const textPairs: Array<[string, string]> = [
     [value.textPrimary, value.surfaceBase],
     [value.textPrimary, value.surfaceSecondary],
+    [value.textPrimary, value.surfaceMuted],
     [value.textMuted, value.surfaceBase],
     [value.textMuted, value.surfaceSecondary],
+    [value.textMuted, value.surfaceMuted],
   ]
-  const emphasis = [value.accentPrimary, value.statusSuccess, value.statusWarning, value.statusError]
+  const emphasis = [
+    value.accentPrimary,
+    value.statusSuccess,
+    value.statusWarning,
+    value.statusError,
+    value.userAccent,
+    value.agentAccent,
+    value.compactionAccent,
+    value.yoloAccent,
+  ]
   const emphasisSurfaces = [value.surfaceBase, value.surfaceSecondary]
   return (
     textPairs.every(([foreground, background]) => contrastRatio(foreground, background) >= 4.5) &&
@@ -335,6 +382,12 @@ const APPLIED_PROPERTIES = [
   "--status-starting-fg",
   "--status-starting-bg",
   "--status-error-fg",
+  "--message-user-bg",
+  "--message-user-border",
+  "--message-assistant-border",
+  "--session-status-compacting-fg",
+  "--session-status-compacting-bg",
+  "--session-yolo-accent",
 ] as const
 
 function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(typeof APPLIED_PROPERTIES)[number], string> {
@@ -344,7 +397,7 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--surface-primary": colors.surfaceBase,
     "--surface-secondary": colors.surfaceSecondary,
     "--surface-muted": colors.surfaceMuted,
-    "--surface-code": dark ? colors.surfaceBase : colors.surfaceMuted,
+    "--surface-code": colors.surfaceMuted,
     "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, dark ? 0.12 : 0.08),
     "--border-base": colors.borderBase,
     "--border-secondary": mix(colors.borderBase, colors.surfaceSecondary, 0.72),
@@ -388,6 +441,12 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--status-starting-fg": colors.statusWarning,
     "--status-starting-bg": alpha(colors.statusWarning, 0.16),
     "--status-error-fg": colors.statusError,
+    "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.1 : 0.12),
+    "--message-user-border": colors.userAccent,
+    "--message-assistant-border": colors.agentAccent,
+    "--session-status-compacting-fg": colors.compactionAccent,
+    "--session-status-compacting-bg": alpha(colors.compactionAccent, dark ? 0.28 : 0.18),
+    "--session-yolo-accent": colors.yoloAccent,
   }
 }
 

@@ -1,7 +1,7 @@
 /* Button component styles */
 .button-primary,
 button.button-primary {
-  @apply px-6 py-3 text-base rounded-lg;
+  @apply px-3 text-sm;
   background-color: var(--button-primary-bg);
   color: var(--button-primary-text);
   border-color: var(--button-primary-bg);
@@ -20,7 +20,7 @@ button.button-primary:focus-visible {
 
 .button-secondary,
 button.button-secondary {
-  @apply px-6 py-3 text-base rounded-lg;
+  @apply px-3 text-xs;
   background-color: var(--surface-secondary);
   color: var(--text-primary);
   border-color: var(--border-base);
@@ -38,7 +38,7 @@ button.button-secondary:focus-visible {
 
 .button-tertiary,
 button.button-tertiary {
-  @apply px-4 py-2 text-sm rounded-lg;
+  @apply px-3 text-xs;
   background-color: transparent;
   color: var(--text-secondary);
   border-color: var(--border-base);
@@ -57,7 +57,7 @@ button.button-tertiary:focus-visible {
 
 .button-danger,
 button.button-danger {
-  @apply px-6 py-3 text-base rounded-lg;
+  @apply px-3 text-sm;
   background-color: var(--button-danger-bg);
   color: var(--button-danger-text);
   border-color: var(--button-danger-bg);
@@ -77,5 +77,6 @@ button.button-danger:focus-visible {
 /* Smaller sizing variant for destructive actions in tight spaces. */
 .button-danger.button-small,
 button.button-danger.button-small {
-  @apply px-4 py-2 text-sm;
+  min-height: var(--control-height-sm);
+  @apply px-2 text-xs;
 }

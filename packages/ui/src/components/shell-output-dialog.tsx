@@ -81,16 +81,16 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
-            <div class="flex items-start justify-between gap-4 border-b border-base px-6 py-4">
+            <div class="window-header">
               <div class="min-w-0 flex-1">
-                <Dialog.Title class="text-lg font-semibold text-primary">{t("backgroundProcessOutputDialog.title")}</Dialog.Title>
+                <Dialog.Title class="window-title">{t("backgroundProcessOutputDialog.title")}</Dialog.Title>
                 <span class="block truncate text-xs text-secondary" title={props.shell?.command}>{props.shell?.command}</span>
               </div>
               <button type="button" class="button-tertiary shrink-0" onClick={props.onClose}>
                 {t("backgroundProcessOutputDialog.actions.close")}
               </button>
             </div>
-            <div class="flex-1 overflow-auto p-6">
+            <div class="window-body">
               <Show when={loading()}><p class="text-xs text-secondary">{t("backgroundProcessOutputDialog.loading")}</p></Show>
               <Show when={truncated()}><p class="mb-2 text-xs text-secondary">{t("backgroundProcessOutputDialog.truncatedNotice")}</p></Show>
               <Show when={!loading()}>

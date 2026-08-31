@@ -15,22 +15,10 @@
   grid-template-columns: minmax(0, 1fr) 40px;
 }
 
-.message-layout--with-timeline::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  inset-inline-end: 40px;
-  width: 1px;
-  background-color: var(--border-muted);
-  pointer-events: none;
-}
-
 .session-center-column[data-session-header-density="4"] .message-layout--with-timeline {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.session-center-column[data-session-header-density="4"] .message-layout--with-timeline::after,
 .session-center-column[data-session-header-density="4"] .message-timeline-sidebar {
   display: none;
 }
@@ -43,20 +31,21 @@
  }
 
 
- .message-stream-shell .message-stream {
+.message-stream-shell .message-stream {
   flex: 1 1 auto;
   min-height: 0;
- }
- 
- .message-timeline-sidebar {
-   width: 40px;
+}
+
+.message-timeline-sidebar {
+  width: 40px;
   min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 100;
- }
-
+  background-color: var(--surface-secondary);
+  box-shadow: inset 1px 0 var(--border-base);
+}
 
 .message-timeline {
   --message-timeline-segment-gap: 0.35rem;
@@ -64,21 +53,17 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 0.25rem;
+  padding: 0;
   overflow-y: auto;
   overflow-x: visible;
-  border-radius: 8px;
-  background-color: var(--surface-base);
-  box-shadow: var(--panel-shadow);
+  scrollbar-width: none;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
 }
 
 .message-timeline::-webkit-scrollbar {
-  width: 5px;
-}
-
-.message-timeline::-webkit-scrollbar-thumb {
-  background-color: var(--border-muted);
-  border-radius: 9999px;
+  display: none;
 }
 
 .message-timeline-segment {
@@ -96,8 +81,8 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-primary);
-  opacity: 0.65;
-  transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  opacity: 0.5;
+  transition: opacity 0.2s ease, transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -126,30 +111,21 @@
 }
 
 .message-timeline-segment-active {
-  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text));
-  background-color: var(--timeline-segment-active-bg);
-  color: var(--timeline-segment-active-text);
-  font-weight: 700;
-  box-shadow: var(--timeline-segment-active-ring);
+  opacity: 1;
+  border-color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 14%, var(--surface-secondary));
 }
 
 .message-timeline-segment:hover,
-.message-timeline-segment:focus-visible {
+.message-timeline-segment:focus-visible,
+.message-timeline-segment:active {
   opacity: 1;
+  transform: translateY(-1px);
   outline: none;
 }
 
-.message-timeline-segment-active,
-.message-timeline-segment-active:hover,
-.message-timeline-segment-active:focus-visible {
-  background-color: var(--timeline-segment-active-bg);
-  color: var(--timeline-segment-active-text);
-  transform: none;
-  box-shadow: var(--timeline-segment-active-ring);
-}
-
 .message-timeline-segment:focus-visible {
-  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+  box-shadow: inset 0 0 0 2px var(--surface-base), inset 0 0 0 4px var(--accent-primary);
 }
 
 .message-timeline-user {
@@ -181,16 +157,6 @@
   transform: translateY(-1px);
 }
 
-.message-timeline-segment-active.message-timeline-segment-permission,
-.message-timeline-segment-active.message-timeline-segment-permission:hover,
-.message-timeline-segment-active.message-timeline-segment-permission:focus-visible {
-  background-color: var(--session-status-permission-bg) !important;
-  border-color: var(--session-status-permission-fg) !important;
-  color: var(--session-status-permission-fg) !important;
-  transform: none;
-  box-shadow: var(--timeline-segment-active-ring);
-}
-
 .message-timeline-compaction-auto {
   border-color: var(--session-status-compacting-fg);
   background-color: var(--surface-secondary);
@@ -199,14 +165,6 @@
 .message-timeline-compaction-manual {
   border-color: var(--session-status-compacting-fg);
   background-color: var(--surface-secondary);
-}
-
-.message-timeline-segment-active {
-  background-color: var(--timeline-segment-active-bg) !important;
-  border-color: color-mix(in oklab, var(--timeline-segment-active-bg) 92%, var(--timeline-segment-active-text)) !important;
-  color: var(--timeline-segment-active-text) !important;
-  font-weight: 700;
-  box-shadow: var(--timeline-segment-active-ring);
 }
 
 .message-timeline-label {
@@ -249,18 +207,6 @@
 
 .message-preview .message-item-base {
   font-size: 0.85rem;
-}
-
-/* --- Group indicators: tools belong to the same message as their assistant --- */
-
-/* Tool segments that are part of a group get a left accent border. */
-.message-timeline-group-child {
-  border-inline-start: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
-}
-
-/* The assistant "parent" at the bottom of a tool group gets the same border. */
-.message-timeline-group-parent {
-  border-inline-start: 3px solid color-mix(in oklab, var(--accent-primary) 35%, transparent);
 }
 
 /* Spacing is rendered by the measured item wrapper so virtua can account for it. */

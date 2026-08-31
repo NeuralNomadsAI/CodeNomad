@@ -8,8 +8,15 @@
   max-height: min(860px, calc(100dvh - 2rem));
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   overflow: hidden;
   border-radius: 0;
+}
+
+.providers-manager-modal > .providers-manager-header,
+.providers-manager-modal > .providers-manager-body {
+  width: 100%;
+  min-width: 0;
 }
 
 .providers-manager-embedded {
@@ -17,12 +24,39 @@
   transform: none;
   width: 100%;
   max-height: none;
-  border: 1px solid var(--border-base);
-  background: var(--surface-base);
+  border: 0;
+  background: transparent;
 }
 
 .providers-manager-embedded .providers-manager-body {
   overflow: visible;
+  gap: 0;
+  padding: 0;
+}
+
+.providers-manager-embedded .providers-manager-header {
+  padding: 0 0 var(--space-md);
+}
+
+.providers-manager-embedded .providers-connect-bar,
+.providers-manager-embedded .providers-connect-panel,
+.providers-manager-embedded .providers-list-section {
+  border: 0;
+  border-bottom: 1px solid var(--border-divider);
+  background: transparent;
+}
+
+.providers-manager-embedded .providers-connect-bar {
+  padding: var(--space-sm) 0 var(--space-md);
+}
+
+.providers-manager-embedded .providers-connect-panel,
+.providers-manager-embedded .providers-list-section {
+  padding: var(--space-md) 0;
+}
+
+.providers-manager-embedded .providers-list-section:last-child {
+  border-bottom: 0;
 }
 
 .providers-manager-header {

@@ -12,6 +12,7 @@ interface SplitFilePanelProps {
   header: JSX.Element
   list: SplitFilePanelList
   viewer: JSX.Element
+  viewerActions?: JSX.Element
 
   listOpen: boolean
   onToggleList: () => void
@@ -26,6 +27,15 @@ interface SplitFilePanelProps {
 
 const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
   const { t } = useI18n()
+  const viewer = () => (
+    <div class="relative flex flex-1 min-h-0 min-w-0">
+      {props.viewer}
+      <Show when={props.viewerActions}>
+        <div class="absolute bottom-2 left-2 z-40 flex items-center gap-1">{props.viewerActions}</div>
+      </Show>
+    </div>
+  )
+
   return (
     <div class="files-tab-container">
       <div class="files-tab-header">
@@ -41,7 +51,7 @@ const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
       <div class="files-tab-body">
         <Show
           when={!props.isPhoneLayout && props.listOpen}
-          fallback={props.viewer}
+          fallback={viewer()}
         >
           <div class="files-split" style={{ "--files-pane-width": `${props.splitWidth}px` }}>
             <div class="file-list-panel">
@@ -51,11 +61,11 @@ const SplitFilePanel: Component<SplitFilePanelProps> = (props) => {
               class="file-split-handle"
               role="separator"
               aria-orientation="vertical"
-              aria-label="Resize file list"
+              aria-label={t("instanceShell.filesShell.resizeFiles")}
               onMouseDown={props.onResizeMouseDown}
               onTouchStart={props.onResizeTouchStart}
             />
-            {props.viewer}
+            {viewer()}
           </div>
         </Show>
 

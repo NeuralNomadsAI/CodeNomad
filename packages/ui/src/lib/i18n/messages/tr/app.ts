@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "Pencereyi küçült",
+  "window.controls.maximize": "Pencereyi büyüt veya geri yükle",
+  "window.controls.close": "Pencereyi kapat",
   "app.launchError.title": "OpenCode başlatılamadı",
   "app.launchError.description": "OpenCode bu workspace'i başlatamadı. Aşağıdaki hata çıktısını inceleyin veya OpenCode ayarlarınızı kontrol edin.",
   "app.launchError.binaryPathLabel": "Binary yolu",

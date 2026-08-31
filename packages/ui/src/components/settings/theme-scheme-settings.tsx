@@ -24,6 +24,10 @@ const COLOR_FIELDS: ReadonlyArray<{ key: keyof ColorSchemeColors; labelKey: stri
   { key: "statusSuccess", labelKey: "settings.appearance.colorScheme.custom.field.statusSuccess" },
   { key: "statusWarning", labelKey: "settings.appearance.colorScheme.custom.field.statusWarning" },
   { key: "statusError", labelKey: "settings.appearance.colorScheme.custom.field.statusError" },
+  { key: "userAccent", labelKey: "settings.appearance.colorScheme.custom.field.userAccent" },
+  { key: "agentAccent", labelKey: "settings.appearance.colorScheme.custom.field.agentAccent" },
+  { key: "compactionAccent", labelKey: "settings.appearance.colorScheme.custom.field.compactionAccent" },
+  { key: "yoloAccent", labelKey: "settings.appearance.colorScheme.custom.field.yoloAccent" },
 ]
 
 const customSelection = (scheme: NormalizedColorScheme): NormalizedColorScheme =>

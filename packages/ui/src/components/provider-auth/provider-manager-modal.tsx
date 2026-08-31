@@ -19,6 +19,7 @@ import {
 import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { toRequestLocation } from "../../stores/request-locations"
+import { getRootClient } from "../../stores/opencode-client"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
@@ -54,6 +55,7 @@ interface ProviderManagerModalProps {
   instanceId: string
   open?: boolean
   embedded?: boolean
+  location?: LocationRef
   onOpenChange?: (open: boolean) => void
 }
 
@@ -86,16 +88,19 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   let authCatalogLocation: LocationRef | null = null
   let loadedInstanceId: string | null = null
   let loadedClient: OpenCodeClient | null = null
+  let loadedCatalogLocationKey: string | null = null
   let oauthCodeInput: HTMLInputElement | undefined
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
   const client = createMemo<OpenCodeClient | null>(() => {
+    if (props.instanceId && props.location) return getRootClient(props.instanceId)
     const current = instance()
     return current?.status === "ready" ? current.client ?? null : null
   })
+  const currentCatalogLocation = () => props.location ? { ...props.location } : { ...getActiveCatalogLocation(props.instanceId) }
   const requestLocation = (location: LocationRef) => toRequestLocation(location)
   const isActiveCatalogLocation = (location: LocationRef) => {
-    const active = getActiveCatalogLocation(props.instanceId)
+    const active = currentCatalogLocation()
     return active.directory === location.directory && active.workspaceID === location.workspaceID
   }
 
@@ -264,6 +269,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     if (!props.embedded && !props.open) {
       loadedInstanceId = null
       loadedClient = null
+      loadedCatalogLocationKey = null
       resetProviderData()
       return
     }
@@ -272,15 +278,17 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     if (!authClient) {
       loadedInstanceId = null
       loadedClient = null
+      loadedCatalogLocationKey = null
       resetProviderData()
       return
     }
-    if (loadedInstanceId !== instanceId || loadedClient !== authClient) {
-      resetProviderData()
-      loadedInstanceId = instanceId
-      loadedClient = authClient
-    }
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
+    const catalogLocationKey = `${catalogLocation.directory}\0${catalogLocation.workspaceID ?? ""}`
+    if (loadedInstanceId === instanceId && loadedClient === authClient && loadedCatalogLocationKey === catalogLocationKey) return
+    resetProviderData()
+    loadedInstanceId = instanceId
+    loadedClient = authClient
+    loadedCatalogLocationKey = catalogLocationKey
     void loadProviderData(authClient, version, catalogLocation)
   })
 
@@ -380,18 +388,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   async function refreshAfterAuth(authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
+    if (!props.location) await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await loadProviderData(authClient, ++loadVersion, { ...getActiveCatalogLocation(instanceId) }).catch(() => undefined)
+    await loadProviderData(authClient, ++loadVersion, currentCatalogLocation()).catch(() => undefined)
   }
 
   async function refreshProviderData() {
     const authClient = client()
     const instanceId = props.instanceId
     if (!authClient) return
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     setLoading(true)
-    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
+    if (!props.location) await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (client() !== authClient || props.instanceId !== instanceId) return
     await loadProviderData(authClient, ++loadVersion, catalogLocation)
   }
@@ -496,7 +504,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const authClient = client()
     if (!providerId || !authClient || !canSubmit()) return
     const instanceId = props.instanceId
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     const operationVersion = ++authOperationVersion
     authCatalogLocation = catalogLocation
     setStage("authorizing")
@@ -562,7 +570,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const provider = availableProviders().find((item) => item.id === providerId)
     if (!authClient || !provider) return
     const instanceId = props.instanceId
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     disposePendingAuth()
     const operationVersion = ++authOperationVersion
     setActionError(null)

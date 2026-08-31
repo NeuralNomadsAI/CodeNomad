@@ -56,8 +56,8 @@ test("provider refresh updates shared and modal catalogs without disposing activ
   const refresh = source.slice(start, end)
 
   assert.ok(start >= 0 && end > start)
-  assert.match(refresh, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
-  assert.match(refresh, /await fetchProviders\(instanceId, catalogLocation, true\)/)
+  assert.match(refresh, /const catalogLocation = currentCatalogLocation\(\)/)
+  assert.match(refresh, /if \(!props\.location\) await fetchProviders\(instanceId, catalogLocation, true\)/)
   assert.match(refresh, /await loadProviderData\(authClient, \+\+loadVersion, catalogLocation\)/)
   assert.doesNotMatch(refresh, /global\.dispose/)
 })
@@ -72,7 +72,9 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
     new URL("../../../../node_modules/@kobalte/core/src/combobox/combobox-base.tsx", import.meta.url),
     "utf8",
   )
-  assert.match(source, /value=\{comboboxValue\(\)\}/)
+  assert.match(source, /const \[openComboboxValue, setOpenComboboxValue\] = createSignal<FlatModel \| undefined>\(\)/)
+  assert.match(source, /value=\{isOpen\(\) \? openComboboxValue\(\) : comboboxValue\(\)\}/)
+  assert.match(source, /if \(next\) setOpenComboboxValue\(comboboxValue\(\)\)\s*setIsOpen\(next\)/)
   assert.match(source, /optionTextValue="searchText"/)
   assert.match(source, /optionLabel=\{\(option\) => isProviderHeaderOption\(option\)[\s\S]{0,160}modelSelector\.trigger\.primary/)
   assert.match(source, /onInputChange=\{setInputValue\}/)
@@ -121,12 +123,13 @@ test("provider auth keeps its catalog location across deferred operation steps",
   const cancel = source.slice(source.indexOf("function cancelOAuthWait()"), source.indexOf("function methodSummary"))
 
   const loadEffect = source.slice(source.indexOf("createEffect(() => {"), source.indexOf("createEffect(() => {", source.indexOf("createEffect(() => {") + 1))
-  assert.match(loadEffect, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
+  assert.match(loadEffect, /const catalogLocation = currentCatalogLocation\(\)/)
+  assert.match(loadEffect, /loadedCatalogLocationKey === catalogLocationKey\) return/)
   assert.match(loadEffect, /loadProviderData\(authClient, version, catalogLocation\)/)
   assert.match(source, /const isCurrentLoad = \(\) => version === loadVersion[\s\S]{0,160}isActiveCatalogLocation\(catalogLocation\)/)
   assert.equal(oauth.match(/location: requestLocation\(catalogLocation\)/g)?.length, 2)
   assert.equal(command.match(/location: requestLocation\(catalogLocation\)/g)?.length, 2)
-  assert.match(submit, /const catalogLocation = \{ \.\.\.getActiveCatalogLocation\(instanceId\) \}/)
+  assert.match(submit, /const catalogLocation = currentCatalogLocation\(\)/)
   assert.match(submit, /authCatalogLocation = catalogLocation/)
   assert.match(complete, /const catalogLocation = authCatalogLocation/)
   assert.match(complete, /location: requestLocation\(catalogLocation\)/)

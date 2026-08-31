@@ -290,11 +290,6 @@
   width: 16px;
   height: 16px;
   color: var(--text-secondary);
-  transition: transform 0.2s ease;
-}
-
-.remote-address-disclosure-chevron.is-expanded {
-  transform: rotate(180deg);
 }
 
 .remote-address-disclosure-content {

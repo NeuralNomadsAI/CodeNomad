@@ -1,13 +1,18 @@
-import { createMemo, type Component } from "solid-js"
+import { createMemo, lazy, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { getBehaviorSettings, type BehaviorSetting } from "../../lib/settings/behavior-registry"
 import { useConfig } from "../../stores/preferences"
 import { LocaleSelector } from "../locale-selector"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
-import { StartupStateSettingsCard } from "./startup-state-settings-card"
 import { ThemeSchemeSettings } from "./theme-scheme-settings"
 
-export const GeneralSettingsSection: Component = () => {
+const StartupStateSettingsCard = lazy(() => import("./startup-state-settings-card").then((module) => ({ default: module.StartupStateSettingsCard })))
+
+interface GeneralSettingsSectionProps {
+  showStartupState?: boolean
+}
+
+export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (props) => {
   const { t } = useI18n()
   const config = useConfig()
   const { updatePreferences } = config
@@ -46,7 +51,7 @@ export const GeneralSettingsSection: Component = () => {
         <LocaleSelector />
       </div>
 
-      <StartupStateSettingsCard />
+      <Show when={props.showStartupState !== false}><StartupStateSettingsCard /></Show>
 
       <div class="settings-card">
         <div class="settings-stack">

@@ -40,7 +40,7 @@ interface MessageItemProps {
 }
 
 export default function MessageItem(props: MessageItemProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [copied, setCopied] = createSignal(false)
   const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
@@ -141,7 +141,13 @@ export default function MessageItem(props: MessageItemProps) {
 
   const timestamp = () => {
     const date = new Date(createdTimestamp())
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    return date.toLocaleString(locale(), {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
   }
 
   const timestampIso = () => new Date(createdTimestamp()).toISOString()
@@ -380,7 +386,7 @@ export default function MessageItem(props: MessageItemProps) {
 
     const variant = info.variant
     if (typeof variant === "string" && variant.trim().length > 0) {
-      return `${base} (${variant.trim()})`
+      return `${base} • ${variant.trim()}`
     }
 
     return base
@@ -391,12 +397,8 @@ export default function MessageItem(props: MessageItemProps) {
     const segments: string[] = []
     const agent = agentIdentifier()
     const model = modelIdentifier()
-    if (agent) {
-      segments.push(t("messageItem.agentMeta.agentLabel", { agent }))
-    }
-    if (model) {
-      segments.push(t("messageItem.agentMeta.modelLabel", { model }))
-    }
+    if (agent) segments.push(t("messageItem.agentMeta.agentLabel", { agent }))
+    if (model) segments.push(t("messageItem.agentMeta.modelLabel", { model }))
     return segments.join(" • ")
   }
 

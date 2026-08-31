@@ -1,13 +1,14 @@
 import { render } from "solid-js/web"
-import App from "./App"
+import type { Component } from "solid-js"
+import { PreferencesWindow } from "./components/preferences-window"
 import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
-import { initializeClientState } from "./stores/client-state"
 import { applyColorScheme, normalizeColorScheme } from "./lib/theme-scheme"
+import { usesClientState } from "./lib/runtime-env"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -25,7 +26,15 @@ if (typeof document !== "undefined") {
 }
 
 async function bootstrap() {
-  await initializeClientState()
+  let RootComponent: Component = PreferencesWindow
+  if (usesClientState(runtimeEnv)) {
+    const [{ initializeClientState }, appModule] = await Promise.all([
+      import("./stores/client-state"),
+      import("./App"),
+    ])
+    await initializeClientState()
+    RootComponent = appModule.default
+  }
 
   if (typeof document !== "undefined") {
     try {
@@ -53,7 +62,7 @@ async function bootstrap() {
         <InstanceConfigProvider>
           <I18nProvider>
             <ThemeProvider>
-              <App />
+              <RootComponent />
             </ThemeProvider>
           </I18nProvider>
         </InstanceConfigProvider>

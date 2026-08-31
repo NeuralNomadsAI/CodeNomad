@@ -203,46 +203,44 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     markAllToastHistoryAsRead();
   };
 
-  // Stop click propagation from backdrop to panel
-  const handleBackdropClick = (event: MouseEvent) => {
-    if (event.target === event.currentTarget) {
-      props.onClose();
-    }
-  };
-
   const unreadCount = createMemo(() => historyItems().filter((i) => !i.read).length);
 
   return (
-    <div class="toast-history-backdrop" onClick={handleBackdropClick}>
-      <div
-        class="toast-history-panel flex flex-col overflow-hidden rounded-[var(--radius-xl)] border border-base bg-surface-base"
-        style={{
-          "width": "min(420px, calc(100vw - var(--space-lg) * 2))",
-          "max-height": "calc(100vh - var(--space-lg) * 2)",
-        }}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("toastHistory.title")}
-      >
+    <div
+      class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-base"
+      role="dialog"
+      aria-label={t("toastHistory.title")}
+    >
         {/* Header */}
-        <header class="flex items-center justify-between gap-[var(--space-md)] p-[var(--space-md)] border-b border-base bg-surface-secondary">
+        <header class="window-header">
           <div class="flex items-center gap-[var(--space-sm)] min-w-0">
-            <Bell class="w-5 h-5 text-primary flex-shrink-0" aria-hidden="true" />
-            <h2 class="text-[var(--font-size-base)] font-semibold text-primary m-0 truncate">{t("toastHistory.title")}</h2>
+            <Bell class="window-leading-icon" aria-hidden="true" />
+            <h2 class="window-title truncate">{t("toastHistory.title")}</h2>
             <Show when={hasUnread()}>
               <span
-                class="inline-flex items-center justify-center min-w-[1.25rem] h-[1.25rem] px-[0.35rem] rounded-full bg-[var(--color-primary)] text-[var(--color-on-primary)] text-[var(--font-size-xs)] font-semibold flex-shrink-0"
+                class="inline-flex items-center justify-center min-w-4 h-4 px-1 bg-[var(--accent-primary)] text-[var(--text-on-accent)] text-[10px] font-medium flex-shrink-0"
                 aria-label={t("toastHistory.unread", { count: unreadCount() })}
               >
                 {unreadCount()}
               </span>
             </Show>
           </div>
-          <div class="flex items-center gap-[var(--space-xs)] flex-shrink-0">
+          <button
+            type="button"
+            class="toast-history-close-btn window-icon-button cursor-pointer"
+            onClick={props.onClose}
+            aria-label={t("toastHistory.close")}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <Show when={!isEmpty() || props.onOpenSettings}>
+          <div class="window-toolbar justify-end overflow-x-auto">
             <Show when={!isEmpty()}>
               <button
                 type="button"
-                class="toast-history-action-btn inline-flex items-center gap-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-[var(--font-size-xs)] font-medium cursor-pointer"
+                class="toast-history-action-btn window-action cursor-pointer"
                 onClick={handleMarkAllAsRead}
                 title={t("toastHistory.markAllRead")}
               >
@@ -250,43 +248,35 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
               </button>
               <button
                 type="button"
-                class="toast-history-action-btn toast-history-action-btn-danger inline-flex items-center gap-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-[var(--font-size-xs)] font-medium cursor-pointer"
+                class="toast-history-action-btn toast-history-action-btn-danger window-action cursor-pointer"
                 onClick={handleClearAll}
                 title={t("toastHistory.clearAll")}
               >
-                <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                <Trash2 class="w-3 h-3" aria-hidden="true" />
                 {t("toastHistory.clearAll")}
               </button>
             </Show>
             <Show when={props.onOpenSettings}>
               <button
                 type="button"
-                class="toast-history-action-btn inline-flex items-center gap-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-[var(--font-size-xs)] font-medium cursor-pointer"
+                class="toast-history-action-btn window-action cursor-pointer"
                 onClick={props.onOpenSettings}
                 title={t("toastHistory.viewSettings")}
               >
                 {t("toastHistory.viewSettings")}
               </button>
             </Show>
-            <button
-              type="button"
-              class="toast-history-close-btn inline-flex items-center justify-center w-8 h-8 rounded-[var(--radius-sm)] border border-base bg-surface-secondary text-primary cursor-pointer"
-              onClick={props.onClose}
-              aria-label={t("toastHistory.close")}
-            >
-              <X class="w-4 h-4" aria-hidden="true" />
-            </button>
           </div>
-        </header>
+        </Show>
 
         {/* Filter */}
         <Show when={!isEmpty()}>
-          <div class="flex items-center gap-[var(--space-xs)] px-[var(--space-md)] py-[var(--space-sm)] border-b border-base bg-surface-secondary overflow-x-auto" aria-label={t("toastHistory.filter.label")}>
+          <div class="window-toolbar toast-history-filter-toolbar overflow-x-auto" aria-label={t("toastHistory.filter.label")}>
             <For each={FILTER_OPTIONS}>
               {(option) => (
                 <button
                   type="button"
-                  class="toast-history-filter-btn px-3 py-1 rounded-full border border-base bg-transparent text-[var(--text-secondary)] text-[var(--font-size-xs)] font-medium cursor-pointer whitespace-nowrap"
+                  class="toast-history-filter-btn window-action cursor-pointer"
                   classList={{
                     "toast-history-filter-btn-active": activeFilter() === option.value,
                     [`toast-history-filter-btn-${option.value}`]: option.value !== "all",
@@ -302,37 +292,37 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
         </Show>
 
         {/* Content */}
-        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        <div class="window-body toast-history-body overflow-x-hidden">
           <Show
             when={!isEmpty()}
             fallback={
-              <div class="flex flex-col items-center justify-center p-[var(--space-xl)] text-secondary text-center">
-                <Bell class="w-12 h-12 opacity-50 mb-[var(--space-md)]" aria-hidden="true" />
-                <p class="m-0 text-[var(--font-size-sm)]">{t("toastHistory.empty")}</p>
+              <div class="flex flex-col items-center justify-center p-[var(--space-lg)] text-secondary text-center">
+                <Bell class="w-6 h-6 opacity-40 mb-[var(--space-sm)]" aria-hidden="true" />
+                <p class="m-0 text-[var(--font-size-xs)]">{t("toastHistory.empty")}</p>
               </div>
             }
           >
             <Show
               when={!isFilterEmpty()}
               fallback={
-                <div class="flex flex-col items-center justify-center p-[var(--space-xl)] text-secondary text-center">
-                  <Bell class="w-12 h-12 opacity-50 mb-[var(--space-md)]" aria-hidden="true" />
-                  <p class="m-0 text-[var(--font-size-sm)]">{t("toastHistory.empty.filter")}</p>
+                <div class="flex flex-col items-center justify-center p-[var(--space-lg)] text-secondary text-center">
+                  <Bell class="w-6 h-6 opacity-40 mb-[var(--space-sm)]" aria-hidden="true" />
+                  <p class="m-0 text-[var(--font-size-xs)]">{t("toastHistory.empty.filter")}</p>
                 </div>
               }
             >
             <For each={groupedItems()}>
               {(group) => (
-                <div class="p-[var(--space-sm)]">
-                  <div class="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--font-size-xs)] font-semibold text-muted uppercase tracking-wide">{t(group.labelKey)}</div>
-                  <ul role="list" class="flex flex-col gap-[var(--space-xs)] list-none p-0 m-0">
+                <div class="px-[var(--space-sm)] py-[var(--space-xs)]">
+                  <div class="px-[var(--space-xs)] py-[var(--space-xs)] text-[10px] font-medium text-muted uppercase tracking-wide">{t(group.labelKey)}</div>
+                  <ul role="list" class="flex flex-col list-none p-0 m-0">
                      <For each={group.items}>
                        {(item, index) => (
                           <>
                             {/* Toast history item - Semantic list item with proper ARIA semantics */}
                            <li
                              tabIndex={0}
-                             class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-md)] py-[var(--space-sm)] rounded-[var(--radius-lg)] border-none bg-surface-secondary relative w-full text-start font-inherit text-inherit cursor-pointer"
+                              class="toast-history-item flex items-start gap-[var(--space-sm)] px-[var(--space-xs)] py-[var(--space-sm)] border-0 border-b border-base bg-transparent relative w-full text-start font-inherit text-inherit cursor-pointer"
                              classList={{
                                "toast-history-item-unread": !item.read,
                              }}
@@ -345,21 +335,21 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                              }}
                            >
                             <span
-                              class={`w-2 h-2 rounded-full flex-shrink-0 mt-[0.35rem] toast-history-indicator ${VARIANT_INDICATOR_CLASS[item.variant]}`}
+                               class={`w-1.5 h-1.5 flex-shrink-0 mt-[0.3rem] toast-history-indicator ${VARIANT_INDICATOR_CLASS[item.variant]}`}
                               aria-hidden="true"
                             />
                             <div class="flex-1 min-w-0">
-                              <div class="flex items-center gap-2">
-                                <Show when={item.title}>
-                                  <span class="text-sm font-medium text-primary">{item.title}</span>
-                                </Show>
-                                <span class="text-xs text-muted flex-shrink-0">{formatTime(item.createdAt)}</span>
-                              </div>
-                              <p class="text-xs text-secondary m-0 line-clamp-2">{item.message}</p>
+                               <div class="flex items-center gap-[var(--space-sm)]">
+                                 <Show when={item.title}>
+                                   <span class="text-[var(--font-size-xs)] font-medium text-primary">{item.title}</span>
+                                 </Show>
+                                 <span class="text-[10px] text-muted flex-shrink-0">{formatTime(item.createdAt)}</span>
+                               </div>
+                               <p class="text-[11px] text-secondary m-0 line-clamp-2">{item.message}</p>
                               <Show when={item.action}>
                                 <button
                                   type="button"
-                                  class="toast-history-item-action inline-flex items-center gap-1 text-xs mt-1"
+                                   class="toast-history-item-action inline-flex items-center gap-1 text-[10px] mt-1"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (item.action) {
@@ -374,15 +364,15 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                             </div>
                             <button
                               type="button"
-                              class="toast-history-item-delete inline-flex items-center justify-center w-6 h-6 rounded-[var(--radius-sm)] border-none bg-transparent text-muted cursor-pointer flex-shrink-0"
+                               class="toast-history-item-delete inline-flex items-center justify-center w-5 h-5 border-none bg-transparent text-muted cursor-pointer flex-shrink-0"
                               onClick={(e) => handleDelete(e, item.id)}
                               aria-label={t("toastHistory.deleteItem")}
                               title={t("toastHistory.deleteItem")}
                             >
-                              <X class="w-3.5 h-3.5" aria-hidden="true" />
+                               <X class="w-3 h-3" aria-hidden="true" />
                             </button>
                             <Show when={!item.read}>
-                              <span class="toast-history-item-unread-dot absolute top-[var(--space-sm)] right-[var(--space-sm)] w-2 h-2 rounded-full" aria-hidden="true" />
+                               <span class="toast-history-item-unread-dot absolute top-[var(--space-sm)] right-[var(--space-sm)] w-1.5 h-1.5" aria-hidden="true" />
                             </Show>
                            </li>
                          </>
@@ -395,7 +385,6 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
             </Show>
           </Show>
         </div>
-      </div>
     </div>
   );
 };

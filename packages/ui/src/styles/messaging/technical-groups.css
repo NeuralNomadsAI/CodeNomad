@@ -35,8 +35,8 @@
   align-items: center;
   justify-content: center;
   width: 0.9rem;
+  height: 0.9rem;
   color: var(--text-secondary);
-  font-size: 11px;
 }
 
 .message-technical-group-spinner {
@@ -77,12 +77,4 @@
   gap: 1px;
   margin-inline-start: 0.45rem;
   padding-inline-start: 0.75rem;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-technical-group-toggle {
-  flex-wrap: wrap;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-technical-group-title {
-  flex: 1 1 calc(100% - 3rem);
 }

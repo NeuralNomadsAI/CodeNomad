@@ -87,6 +87,10 @@ describe("built-in color schemes", () => {
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
+      userAccent: "#2196F3",
+      agentAccent: "#D97706",
+      compactionAccent: "#C084FC",
+      yoloAccent: "#0080FF",
     })
   })
 })
@@ -141,13 +145,29 @@ describe("applyColorScheme", () => {
     assert.equal(root.properties.get("--attachment-chip-text"), "#67C9BA")
     assert.equal(root.properties.get("--dropdown-highlight-bg"), "rgba(103, 201, 186, 0.2)")
   })
+
+  it("applies customizable semantic roles", () => {
+    const root = target()
+    const colors = { ...DEFAULT_CUSTOM_COLORS, userAccent: "#52B5F5", agentAccent: "#E7A74A", compactionAccent: "#C99AF4", yoloAccent: "#92B8FF" }
+    applyColorScheme(normalizeColorScheme({ id: "custom", colors }), { target: root.value })
+    assert.equal(root.properties.get("--message-user-border"), colors.userAccent)
+    assert.equal(root.properties.get("--message-assistant-border"), colors.agentAccent)
+    assert.equal(root.properties.get("--session-status-compacting-fg"), colors.compactionAccent)
+    assert.equal(root.properties.get("--session-yolo-accent"), colors.yoloAccent)
+  })
 })
 
 describe("custom color validation", () => {
+  it("fills semantic roles when loading a persisted legacy custom scheme", () => {
+    const { userAccent: _user, agentAccent: _agent, compactionAccent: _compaction, yoloAccent: _yolo, ...legacyColors } = DEFAULT_CUSTOM_COLORS
+    assert.deepEqual(normalizeColorScheme({ id: "custom", colors: legacyColors }).colors, DEFAULT_CUSTOM_COLORS)
+  })
+
   it("rejects weak text and emphasis contrast", () => {
     assert.equal(validateColorSchemeColors(DEFAULT_CUSTOM_COLORS), true)
     assert.equal(validateColorSchemeColors({ ...DEFAULT_CUSTOM_COLORS, textMuted: "#555555" }), false)
     assert.equal(validateColorSchemeColors({ ...DEFAULT_CUSTOM_COLORS, accentPrimary: "#303030" }), false)
+    assert.equal(validateColorSchemeColors({ ...DEFAULT_CUSTOM_COLORS, surfaceMuted: DEFAULT_CUSTOM_COLORS.textPrimary }), false)
     assert.equal(validateColorSchemeColors({ ...DEFAULT_CUSTOM_COLORS, statusWarning: "orange" }), false)
     assert.equal(validateColorSchemeColors({
       ...DEFAULT_CUSTOM_COLORS,

@@ -1,6 +1,8 @@
 export {}
 
 import type { LoggerControls } from "../lib/logger"
+import type { LocationRef } from "@opencode-ai/client"
+import type { SettingsSectionId } from "../stores/settings-screen"
 
 declare global {
   interface ElectronDialogFilter {
@@ -76,6 +78,18 @@ declare global {
       proxySessionId?: string
       skipTlsVerify: boolean
     }) => Promise<{ ok: boolean }>
+    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; location?: LocationRef }) => Promise<unknown>
+    getPreferencesRequest?: () => Promise<unknown>
+    getPreferencesSection?: () => Promise<unknown>
+    preferencesReady?: () => Promise<unknown>
+    acceptPreferencesRequest?: (request: unknown) => Promise<unknown>
+    resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
+    onPreferencesSection?: (callback: (request: unknown) => void) => () => void
+    onPreferencesCloseRequested?: (callback: () => void) => () => void
+    onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
+    minimizeWindow?: () => Promise<unknown>
+    toggleMaximizeWindow?: () => Promise<unknown>
+    closeWindow?: () => Promise<unknown>
   }
 
   interface File {
@@ -104,7 +118,7 @@ declare global {
       __CODENOMAD_API_BASE__?: string
       __CODENOMAD_EVENTS_URL__?: string
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
-       __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote"
+       __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        electronAPI?: ElectronAPI

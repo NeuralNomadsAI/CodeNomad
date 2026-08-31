@@ -105,26 +105,50 @@
   flex: 0 0 auto;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .message-item-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .message-item-base:is(:hover, :focus-within) .message-item-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .message-action-group {
   @apply flex items-center gap-0;
 }
 
 .message-action-button {
   @apply inline-flex items-center justify-center bg-transparent border-0 cursor-pointer p-0 transition-all duration-200;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 0.25rem;
-  color: var(--text-secondary);
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  border-radius: 0;
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
   flex: 0 0 auto;
 }
 
 .message-action-button:hover {
   background-color: transparent;
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+.message-action-button svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .message-action-button:active {
   transform: scale(0.95);
+}
+
+.message-action-button:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
 }
 
 .message-item-actions > .action-overflow-trigger {
@@ -219,14 +243,19 @@
 }
 
 .message-step-usage-disclosure {
-  @apply shrink-0 text-[9px];
+  @apply shrink-0;
+  width: 0.75rem;
+  height: 0.75rem;
   color: var(--text-muted);
 }
 
 .message-step-usage-chip {
-  @apply inline-flex items-center rounded-full border border-[var(--border-base)] px-2 py-0.5 text-[10px];
-  color: var(--text-primary);
+  @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
+  min-height: 22px;
+  border-radius: 0;
+  color: var(--icon-button-hover-color);
   font-weight: var(--font-weight-semibold);
+  line-height: 1;
 }
 
 .message-step-usage-chip::before {
@@ -236,6 +265,7 @@
   font-size: 9px;
   color: var(--text-muted);
   font-weight: var(--font-weight-medium);
+  line-height: 1;
   margin-inline-end: 0.35rem;
 }
 
@@ -248,12 +278,14 @@
 
 .message-queued-badge {
   @apply inline-block font-bold px-3 py-1 rounded mb-3 text-xs tracking-wide;
+  border-radius: 0;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
 }
 
 .message-error-block {
   @apply text-sm p-3 rounded border-s-[3px] my-2;
+  border-radius: 0;
   color: var(--status-error);
   background-color: var(--message-error-bg);
   border-color: var(--status-error);
@@ -281,7 +313,7 @@
   padding: 8px;
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
-  border-radius: 10px;
+  border-radius: 0;
   box-shadow: var(--popover-shadow);
   z-index: 1000;
   pointer-events: none;
@@ -291,7 +323,7 @@
   display: block;
   max-width: 320px;
   max-height: 320px;
-  border-radius: 8px;
+  border-radius: 0;
   object-fit: contain;
 }
 
@@ -325,7 +357,7 @@
   overflow-x: auto;
   padding: 8px;
   background-color: var(--surface-code);
-  border-radius: 4px;
+  border-radius: 0;
   direction: ltr;
 }
 
@@ -334,11 +366,12 @@
   font-size: var(--font-size-base);
   padding: 8px;
   background-color: var(--message-error-bg);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .message-reasoning {
   @apply my-2 border rounded;
+  border-radius: 0;
   --reasoning-border-color: var(--border-strong, var(--border-base));
   border-color: var(--reasoning-border-color);
   background-color: var(--surface-secondary);
@@ -450,6 +483,8 @@
 
 .message-step-title-left {
   @apply flex items-center gap-2 text-[var(--text-muted)];
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .message-step-title-left span:last-child {
@@ -472,14 +507,11 @@
 }
 
 .message-step-meta-inline {
-  @apply inline-flex flex-wrap items-center gap-2 text-[11px] font-medium;
+  @apply inline-flex items-center text-[11px] font-medium;
   color: var(--message-assistant-border);
-}
-
-/* Keep reasoning meta as a single unit so it drops to the next line when needed. */
-.message-reasoning-label .message-step-meta-inline {
-  flex-wrap: nowrap;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 
@@ -579,8 +611,20 @@
   justify-content: center;
   color: var(--text-secondary);
   flex: 0 0 auto;
-  font-size: 11px;
   width: 0.9rem;
+  height: 0.9rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .message-reasoning-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .message-reasoning-header:is(:hover, :focus-within) .message-reasoning-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .message-reasoning-title {

@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "最小化窗口",
+  "window.controls.maximize": "最大化或还原窗口",
+  "window.controls.close": "关闭窗口",
   "app.launchError.title": "无法启动 OpenCode",
   "app.launchError.description": "OpenCode 无法启动此工作区。请查看下面的错误输出或检查 OpenCode 设置。",
   "app.launchError.binaryPathLabel": "可执行文件路径",

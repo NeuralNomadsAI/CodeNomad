@@ -2,9 +2,12 @@
 
 /* Right panel tab bar - browser-style tabs */
 .right-panel-tab-bar {
+  flex: 0 0 var(--panel-header-height);
+  min-height: var(--panel-header-height);
   background-color: var(--surface-secondary);
   border-bottom: 1px solid var(--border-base);
   position: relative;
+  padding-inline: 0;
 }
 
 .right-panel-tab-bar::after {
@@ -31,12 +34,13 @@
 /* Shortcuts on the left side - match left drawer icon colors */
 .tab-strip-shortcuts {
   @apply flex items-center gap-1 flex-shrink-0;
-  color: var(--text-primary);
+  align-self: flex-start;
+  color: var(--text-muted);
 }
 
 /* Browser-style tabs - using INSTANCE tab color scheme */
 .right-panel-tab {
-  @apply inline-flex items-center gap-2 px-4 py-2 text-xs font-medium transition-all duration-150 relative;
+  @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-normal transition-all duration-150 relative;
   font-family: var(--font-family-sans);
   cursor: grab;
   outline: none;
@@ -71,14 +75,14 @@
 
 .right-panel-tab-inactive {
   background-color: var(--tab-inactive-bg);
-  color: var(--tab-inactive-text);
+  color: color-mix(in oklab, var(--tab-inactive-text) 62%, transparent);
   border-color: transparent;
   border-bottom: 2px solid var(--tab-active-bg);
 }
 
 .right-panel-tab-inactive:hover {
   background-color: var(--tab-inactive-hover-bg);
-  color: var(--text-secondary);
+  color: var(--tab-inactive-text);
   border-color: var(--border-base);
   border-bottom-color: transparent;
 }
@@ -130,14 +134,18 @@
 }
 
 .files-header-icon-button {
-  @apply inline-flex items-center justify-center shrink-0 w-7 h-7 border border-base transition-colors;
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   background-color: var(--surface-base);
-  color: var(--text-secondary);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
 }
 
 .files-header-icon-button:hover {
   background-color: var(--surface-hover);
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
 }
 
 .files-header-icon-button:disabled {
@@ -218,7 +226,8 @@
 }
 
 .file-list-count {
-  @apply text-[10px] px-1.5 py-0.5 rounded-full;
+  @apply text-[10px] px-1.5 py-0.5;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-muted);
   border: 1px solid var(--border-base);
@@ -243,8 +252,9 @@
 }
 
 .file-list-item-active {
-  background-color: color-mix(in srgb, var(--surface-base) 88%, white);
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
+  border-inline-start: 2px solid var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 10%, transparent);
+  box-shadow: none;
 }
 
 .git-change-list-item-bulk-selected {
@@ -286,7 +296,8 @@
 }
 
 .git-change-commit-input {
-  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs rounded border border-base resize-y;
+  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs border border-base resize-y;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -296,7 +307,8 @@
 }
 
 .git-change-commit-button {
-  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium rounded border border-base transition-colors;
+  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium border border-base transition-colors;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -330,7 +342,7 @@
 
 .git-change-section {
   @apply border-b last:border-b-0;
-  border-color: var(--border-base);
+  border-color: var(--border-divider);
 }
 
 .git-change-section-header {
@@ -366,7 +378,8 @@
 }
 
 .git-change-section-count {
-  @apply text-[10px] px-1.5 py-0.5 rounded-full shrink-0;
+  @apply text-[10px] px-1.5 py-0.5 shrink-0;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-muted);
   border: 1px solid var(--border-base);
@@ -405,7 +418,8 @@
 }
 
 .git-change-row-action {
-  @apply inline-flex items-center justify-center w-5 h-5 rounded border border-base leading-none;
+  @apply inline-flex items-center justify-center w-5 h-5 border border-base leading-none;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-secondary);
@@ -509,7 +523,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: 0;
   background-color: var(--accent-primary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 70%, white 30%);
   color: white;
@@ -565,25 +579,30 @@
 }
 
 .file-viewer-toolbar-button {
-  @apply text-[11px] px-2 py-1 rounded border border-base transition-colors;
+  @apply text-[11px] px-2 py-1 border border-base transition-colors;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-secondary);
 }
 
 .file-viewer-toolbar-icon-button {
-  @apply inline-flex items-center justify-center shrink-0 w-7 h-7 border border-base transition-colors;
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   background-color: var(--surface-base);
-  color: var(--text-secondary);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
 }
 
 .file-viewer-toolbar-icon-button:hover {
   background-color: var(--surface-hover);
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
 }
 
-.file-viewer-toolbar-icon-button.active {
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
+:is(.files-header-icon-button, .file-viewer-toolbar-icon-button) svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .file-viewer-toolbar-button:hover {
@@ -682,7 +701,8 @@
 }
 
 .file-viewer-file-name {
-  @apply text-xs font-mono px-2 py-1.5 rounded border;
+  @apply text-xs font-mono px-2 py-1.5 border;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
@@ -691,7 +711,8 @@
 
 /* Mobile file selector */
 .mobile-file-selector {
-  @apply rounded-lg border flex flex-col gap-3 p-3;
+  @apply border flex flex-col gap-3 p-3;
+  border-radius: 0;
   background-color: var(--surface-secondary);
   border-color: var(--border-base);
 }
@@ -706,7 +727,8 @@
 }
 
 .mobile-file-viewer {
-  @apply rounded-lg border flex flex-col min-h-[220px];
+  @apply border flex flex-col min-h-[220px];
+  border-radius: 0;
   background-color: var(--surface-secondary);
   border-color: var(--border-base);
 }
@@ -730,7 +752,7 @@
 
 .status-process-card:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .status-process-actions {
@@ -743,8 +765,7 @@
 }
 
 .right-panel-accordion-item {
-  @apply border-b last:border-b-0;
-  border-color: var(--border-base);
+  border-bottom: 1px solid var(--border-strong);
   background-color: var(--surface-secondary);
 }
 
@@ -758,11 +779,10 @@
 
 .right-panel-accordion-header-row .section-info-trigger {
   flex: 0 0 auto;
-  margin-inline-end: 0.75rem;
 }
 
 .right-panel-accordion-trigger {
-  @apply w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
+  @apply w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition-colors;
   color: var(--text-secondary);
   background-color: transparent;
 }
@@ -778,12 +798,17 @@
 }
 
 .right-panel-accordion-chevron {
-  @apply h-4 w-4 transition-transform duration-200;
+  @apply h-4 w-4;
   color: var(--text-muted);
 }
 
-.right-panel-accordion-chevron-expanded {
-  transform: rotate(180deg);
+.right-panel-section-grip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-inline-end: 0.75rem;
+  color: var(--text-muted);
+  cursor: grab;
 }
 
 .right-panel-accordion-content {
@@ -865,14 +890,15 @@
 
 .right-panel-customization-hint {
   margin-top: 0.5rem;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   font-size: 0.6875rem;
   line-height: 1rem;
 }
 
 /* Section info tooltip */
 .section-info-trigger {
-  @apply inline-flex items-center justify-center p-0.5 rounded transition-all duration-150;
+  @apply inline-flex items-center justify-center p-0.5 transition-colors;
+  border-radius: 0;
   color: var(--text-muted);
   flex-shrink: 0;
   border: none;
@@ -899,35 +925,21 @@
 }
 
 .section-info-tooltip {
-  @apply max-w-xs px-3 py-2 text-xs rounded-lg border shadow-lg;
+  @apply max-w-xs px-3 py-2 text-xs border shadow-lg;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
-  animation: tooltipShow 150ms ease-out;
-  transform-origin: var(--kb-tooltip-content-transform-origin);
   z-index: 9999;
-}
-
-.section-info-tooltip[data-expanded] {
-  animation: tooltipShow 150ms ease-out;
-}
-
-@keyframes tooltipShow {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 
 /* Empty states */
 .right-panel-empty {
   @apply flex flex-col items-center justify-center text-center gap-2;
   color: var(--text-muted);
+  font-style: italic;
+  font-weight: 400;
+  opacity: 0.55;
 }
 
 .right-panel-empty--left {
@@ -935,20 +947,18 @@
 }
 
 .right-panel-empty-text {
-  @apply text-xs;
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
 }
 
-/* Dark mode adjustments */
-[data-theme="dark"] .right-panel-tab-active {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-[data-theme="dark"] .file-list-item-active {
-  box-shadow: inset 0 0 0 1px var(--accent-primary), 0 0 0 1px var(--surface-secondary);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .right-panel-tab-active {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
+.right-panel-accordion-content .tool-call-todo-empty {
+  padding: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
 }

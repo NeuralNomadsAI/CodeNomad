@@ -86,8 +86,9 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   let latestWrite: Promise<void> | null = null
 
   createEffect(() => {
+    const preference = colorSchemePreference()
     if (latestWrite) return
-    setSelectedColorScheme(colorSchemePreference())
+    setSelectedColorScheme(preference)
   })
 
   const applyResolvedTheme = () => {
@@ -173,13 +174,15 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         fontFamily: "var(--font-family-sans)",
       },
       shape: {
-        borderRadius: 8,
+        borderRadius: 0,
       },
       components: {
         MuiIconButton: {
           styleOverrides: {
             root: {
               color: "inherit",
+              borderRadius: 0,
+              padding: "6px",
               "&.Mui-disabled": {
                 color: "var(--text-muted)",
                 opacity: 0.55,
@@ -209,7 +212,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         MuiToolbar: {
           styleOverrides: {
             root: {
-              minHeight: "56px",
+              minHeight: "40px",
             },
           },
         },

@@ -25,9 +25,6 @@
 
   /* Prevent browser scroll anchoring fighting our virtualization compensation. */
   overflow-anchor: none;
-  
-  /* Scrollbar styling */
-  scrollbar-gutter: stable;
 }
 
 .virtual-follow-list-overlay {

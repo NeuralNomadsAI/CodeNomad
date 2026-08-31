@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "Minimize window",
+  "window.controls.maximize": "Maximize or restore window",
+  "window.controls.close": "Close window",
   "app.launchError.title": "Unable to launch OpenCode",
   "app.launchError.description": "OpenCode could not start this workspace. Review the error output below or check your OpenCode settings.",
   "app.launchError.binaryPathLabel": "Binary path",

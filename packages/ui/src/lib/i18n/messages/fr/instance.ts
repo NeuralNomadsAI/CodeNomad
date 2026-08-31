@@ -195,6 +195,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.enableWordWrap": "Activer le retour à la ligne",
   "instanceShell.filesShell.disableWordWrap": "Désactiver le retour à la ligne",
   "instanceShell.filesShell.hideFiles": "Masquer les fichiers",
+  "instanceShell.filesShell.resizeFiles": "Redimensionner la liste des fichiers",
   "instanceShell.filesShell.showFiles": "Afficher les fichiers",
   "instanceShell.diff.hideUnchanged": "Masquer les zones inchangées",
   "instanceShell.diff.showFull": "Afficher le fichier complet",

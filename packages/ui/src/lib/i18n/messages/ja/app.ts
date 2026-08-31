@@ -1,4 +1,8 @@
 export const appMessages = {
+  "window.title.main": "CodeNomad",
+  "window.controls.minimize": "ウィンドウを最小化",
+  "window.controls.maximize": "ウィンドウを最大化または元に戻す",
+  "window.controls.close": "ウィンドウを閉じる",
   "app.launchError.title": "OpenCode を起動できません",
   "app.launchError.description": "OpenCode はこのワークスペースを起動できませんでした。下のエラー出力または OpenCode 設定を確認してください。",
   "app.launchError.binaryPathLabel": "バイナリのパス",
