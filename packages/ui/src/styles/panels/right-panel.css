@@ -765,7 +765,7 @@
 }
 
 .right-panel-accordion-item {
-  border-bottom: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
 }
 
