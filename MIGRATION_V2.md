@@ -117,19 +117,11 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 - Fence late workspace creation and cleanup so cancelled restore requests cannot leak or delete the wrong logical instance.
 - Build Electron and Tauri server resources reproducibly from the integrity-pinned root workspace lock for the requested OS/CPU target; no independent server lockfile or prebuild dependency repair remains.
 
-### Native Release Debug Launch
+### Developer Mode Validation
 
-For interactive validation of the native V2 application, launch the existing release binary from the `DEV-v2` worktree with an isolated WebView2 profile, CDP inspection, Rust backtraces, and Node source maps. Run this from PowerShell; do not substitute `tauri dev`, because that compiles and runs a different debug environment.
+Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once. The native host owns its isolated browser profile, dynamically assigned loopback CDP endpoint, backtraces, and source maps; do not set manual WebView2 or remote-debugging environment variables and do not substitute `tauri dev` for a release build.
 
-```powershell
-$env:WEBVIEW2_USER_DATA_FOLDER="$env:TEMP\opencode\codenomad-v2-debug"
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9223"
-$env:RUST_BACKTRACE="1"
-$env:NODE_OPTIONS="--enable-source-maps"
-& "D:\CodeNomad-worktrees\opencode-v2-foundation\packages\tauri-app\target\release\codenomad-tauri.exe"
-```
-
-The native WebView is then inspectable through CDP at `http://127.0.0.1:9223`. Stop the running instance before rebuilding this release path, then relaunch it from the independent OpenCode TUI.
+After rebuilding Electron, use `codenomad.act({ action: "restart" })` so the persistent OpenCode adapter can reconnect this session to the new native process generation. For Windows Tauri, stop and relaunch the release executable manually only when the linker cannot replace the running binary. The shared OpenCode daemon remains alive in both cases. See `dev-docs/DEVELOPER_MODE.md` for the complete contract and trust boundaries.
 
 ## Removed Legacy Architecture
 
