@@ -203,7 +203,7 @@ pub(crate) fn is_trusted_renderer_origin(window: &tauri::WebviewWindow, url: &Ur
 }
 
 #[tauri::command]
-pub(crate) fn open_preferences_window(
+pub(crate) async fn open_preferences_window(
     window: tauri::WebviewWindow,
     app: AppHandle,
     app_state: tauri::State<'_, AppState>,
