@@ -1113,9 +1113,11 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("root"), true)
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
-      assert.equal(requests[0].project, "project")
-      assert.equal("directory" in requests[0], false)
+      assert.equal(requests[0].directory, "/work")
+      assert.equal("project" in requests[0], false)
       assert.equal(requests[0].parentID, null)
+      assert.equal(requests[1].project, "project")
+      assert.equal("directory" in requests[1], false)
       assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
       assert.deepEqual(requests[2], { cursor: "inventory-page-2", limit: 200 })
 
@@ -1125,6 +1127,32 @@ describe("session request authority", () => {
       assert.equal(requests.length, 4)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps migrated global roots from the current project directory", async () => {
+    const instanceId = "migrated-global-roots"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.parentID === null) {
+        return { data: [{ ...apiSession("legacy"), projectID: "global" }, apiSession("current")], cursor: {} }
+      }
+      return { data: [apiSession("current")], cursor: {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+
+      assert.equal(requests[0].directory, "/work")
+      assert.equal("project" in requests[0], false)
+      assert.equal(requests[1].project, "project")
+      assert.deepEqual(getSessionListIds(instanceId), ["legacy", "current"])
+      assert.equal(sessions().get(instanceId)?.get("legacy")?.projectID, "global")
     } finally {
       cleanup()
     }
