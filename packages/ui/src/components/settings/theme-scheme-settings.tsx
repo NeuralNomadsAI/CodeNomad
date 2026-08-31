@@ -38,6 +38,7 @@ interface PaletteOption {
   id?: ColorSchemeId
   presetId?: string
   name: string
+  description: string
   appearance: "light" | "dark"
   colors: Readonly<ColorSchemeColors>
 }
@@ -64,6 +65,7 @@ export const ThemeSchemeSettings: Component = () => {
       key: `builtin:${scheme.id}`,
       id: scheme.id,
       name: t(scheme.labelKey),
+      description: t(scheme.descriptionKey),
       appearance: scheme.id === "system"
         ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
         : scheme.appearance === "light" ? "light" : "dark",
@@ -79,6 +81,7 @@ export const ThemeSchemeSettings: Component = () => {
       key: `preset:${id}`,
       presetId: id,
       name: preset.name,
+      description: t("settings.appearance.colorScheme.description.custom"),
       appearance: preset.appearance,
       colors: preset.colors,
     })),
@@ -100,16 +103,20 @@ export const ThemeSchemeSettings: Component = () => {
     setSaveFailed(false)
   })
 
-  const unregisterDirtyGuard = registerSettingsDirtyGuard(async () => !dirty() || showConfirmDialog(
+  const confirmDiscardIfDirty = async () => !dirty() || showConfirmDialog(
     t("settings.configFiles.confirmDiscard.message"),
     {
+      variant: "warning",
       confirmLabel: t("settings.configFiles.confirmDiscard.confirmLabel"),
       cancelLabel: t("settings.configFiles.confirmDiscard.cancelLabel"),
+      dismissible: false,
     },
-  ))
+  )
+  const unregisterDirtyGuard = registerSettingsDirtyGuard(confirmDiscardIfDirty)
   onCleanup(unregisterDirtyGuard)
 
-  const selectOption = (option: PaletteOption) => {
+  const selectOption = async (option: PaletteOption) => {
+    if (editingKey() === option.key || !(await confirmDiscardIfDirty())) return
     setDirty(false)
     setSaveFailed(false)
     setEditingKey(option.key)
@@ -125,7 +132,8 @@ export const ThemeSchemeSettings: Component = () => {
       : normalizeColorScheme(option.id))
   }
 
-  const updateColor = (option: PaletteOption, key: keyof ColorSchemeColors, value: string) => {
+  const updateColor = async (option: PaletteOption, key: keyof ColorSchemeColors, value: string) => {
+    if (editingKey() !== option.key && !(await confirmDiscardIfDirty())) return false
     const colors = editingKey() === option.key ? draftColors() : option.colors
     setEditingKey(option.key)
     setSourceName(option.name)
@@ -133,6 +141,7 @@ export const ThemeSchemeSettings: Component = () => {
     setDraftColors({ ...colors, [key]: value.toUpperCase() })
     setDirty(true)
     setSaveFailed(false)
+    return true
   }
 
   const resetDraft = () => {
@@ -181,7 +190,7 @@ export const ThemeSchemeSettings: Component = () => {
       <div class="theme-scheme-list">
         <For each={options()}>{(option) => (
           <div class="theme-scheme-card" data-selected={(dirty() ? editingKey() : activeKey()) === option.key ? "true" : "false"}>
-            <button type="button" class="theme-scheme-select" onClick={() => selectOption(option)}>
+            <button type="button" class="theme-scheme-select" title={option.description} onClick={() => void selectOption(option)}>
               <span class="theme-scheme-name">{option.name}</span>
               <Check class="theme-scheme-check" aria-hidden="true" />
             </button>
@@ -195,7 +204,12 @@ export const ThemeSchemeSettings: Component = () => {
                     value={color()}
                     title={`${label()} · ${color()}`}
                     aria-label={`${option.name} · ${label()} · ${color()}`}
-                    onInput={(event) => updateColor(option, field.key, event.currentTarget.value)}
+                    onInput={(event) => {
+                      const input = event.currentTarget
+                      void updateColor(option, field.key, input.value).then((updated) => {
+                        if (!updated) input.value = color()
+                      })
+                    }}
                   />
                 )
               }}</For>

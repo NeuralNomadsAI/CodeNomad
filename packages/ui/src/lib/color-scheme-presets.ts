@@ -11,6 +11,7 @@ export interface UserColorSchemePreset {
 }
 
 export type UserColorSchemePresets = Record<string, UserColorSchemePreset>
+export const MAX_COLOR_SCHEME_PRESETS = 50
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -18,7 +19,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export function normalizeColorSchemePresets(value: unknown): UserColorSchemePresets {
   if (!isRecord(value)) return {}
   const presets: UserColorSchemePresets = {}
-  for (const [id, candidate] of Object.entries(value).slice(0, 50)) {
+  for (const [id, candidate] of Object.entries(value).slice(0, MAX_COLOR_SCHEME_PRESETS)) {
     if (!id || id.length > 128 || !isRecord(candidate)) continue
     const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : ""
     const appearance = candidate.appearance === "light" ? "light" : candidate.appearance === "dark" ? "dark" : undefined

@@ -644,7 +644,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       ? t("settings.providers.models.one", { count: provider.modelCount })
       : t("settings.providers.models.other", { count: provider.modelCount })
     return [...new Set([
-      provider.name && provider.name !== provider.id ? provider.id : "",
       methodSummary(provider.id),
       describeProviderSource(provider),
       modelCount,
@@ -842,7 +841,12 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                         <article class="providers-card settings-toggle-row settings-toggle-row-compact">
                           <div class="providers-card-copy">
                             <h4 class="providers-card-title">{provider.name || provider.id}</h4>
-                            <p class="providers-card-meta" dir="auto">{configuredProviderSummary(provider)}</p>
+                            <p class="providers-card-meta">
+                              <Show when={provider.name && provider.name !== provider.id}>
+                                <bdi dir="ltr">{provider.id}</bdi><span aria-hidden="true"> • </span>
+                              </Show>
+                              {configuredProviderSummary(provider)}
+                            </p>
                           </div>
                           <div class="provider-model-card-actions">
                             <button

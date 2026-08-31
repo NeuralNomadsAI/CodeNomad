@@ -110,8 +110,11 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         <div class="-mr-2 shrink-0">
           <Switch
             checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
-            color="success"
             size="small"
+            sx={{
+              "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--session-yolo-accent)" },
+              "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
+            }}
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
             onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
           />

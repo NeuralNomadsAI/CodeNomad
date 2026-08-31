@@ -146,12 +146,12 @@ fn target_url(base_url: &str, section: &str) -> Result<Url, String> {
     Ok(target)
 }
 
-fn focus(window: &tauri::WebviewWindow) {
+fn focus(window: &tauri::WebviewWindow) -> Result<(), String> {
     if window.is_minimized().unwrap_or(false) {
         let _ = window.unminimize();
     }
-    let _ = window.show();
-    let _ = window.set_focus();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
 }
 
 fn navigate_authenticated(
@@ -225,11 +225,10 @@ pub(crate) async fn open_preferences_window(
         if !renderer_ready {
             preferences.set_request(request.clone());
         }
-        existing
-            .emit(SECTION_EVENT, &request)
-            .map_err(|error| error.to_string())?;
-        focus(&existing);
-        return Ok(());
+        if existing.emit(SECTION_EVENT, &request).is_ok() && focus(&existing).is_ok() {
+            return Ok(());
+        }
+        let _ = existing.destroy();
     }
 
     let access = app_state
@@ -242,6 +241,14 @@ pub(crate) async fn open_preferences_window(
     let builder = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("loading.html".into()))
         .data_directory(data_directory)
         .initialization_script(CONTEXT_SCRIPT);
+    #[cfg(windows)]
+    let developer_browser_arguments = app_state.developer_browser_arguments.clone();
+    #[cfg(windows)]
+    let builder = if let Some(arguments) = developer_browser_arguments.as_deref() {
+        builder.additional_browser_args(arguments)
+    } else {
+        builder
+    };
     #[cfg(target_os = "macos")]
     let builder = if app_state.scoped_profile {
         builder.data_store_identifier(crate::profile_identifier("local"))
@@ -272,7 +279,10 @@ pub(crate) async fn open_preferences_window(
         let _ = preferences_window.destroy();
         return Err(error);
     }
-    focus(&preferences_window);
+    if let Err(error) = focus(&preferences_window) {
+        let _ = preferences_window.destroy();
+        return Err(error);
+    }
     Ok(())
 }
 

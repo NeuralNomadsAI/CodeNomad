@@ -18,6 +18,7 @@ import {
 } from "../lib/theme-scheme"
 import {
   createColorSchemePresetId,
+  MAX_COLOR_SCHEME_PRESETS,
   normalizeColorSchemePresets,
   type UserColorSchemePresets,
 } from "../lib/color-scheme-presets"
@@ -763,6 +764,7 @@ function selectColorSchemePreset(id: string): Promise<void> {
 function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<string> {
   const trimmedName = name.trim().slice(0, 80)
   if (!trimmedName || !validateColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
+  if (Object.keys(colorSchemePresets()).length >= MAX_COLOR_SCHEME_PRESETS) return Promise.reject(new Error("Color scheme preset limit reached"))
   const id = createColorSchemePresetId()
   const scheme = normalizeColorScheme({ id: "custom", appearance, colors })
   const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {

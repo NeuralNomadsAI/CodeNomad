@@ -1767,8 +1767,8 @@ function ReasoningCard(props: ReasoningCardProps) {
     const parts: string[] = [thoughtDurationTitle()]
     const agent = agentIdentifier()
     const model = modelIdentifier()
-    if (agent) parts.push(t("messageBlock.step.agentLabel", { agent }))
-    if (model) parts.push(t("messageBlock.step.modelLabel", { model }))
+    if (agent) parts.push(agent)
+    if (model) parts.push(model)
     return parts.join("\n")
   }
 
