@@ -34,7 +34,7 @@ OpenCode remains the owner of its global service, database, sessions, and plugin
 
 An active CodeNomad backend publishes an ephemeral registration containing a per-process 256-bit token. The registration disappears on graceful shutdown. Definitions can remain loaded while CodeNomad is absent, but calls are inert until an authorized bridge reconnects.
 
-Windows registrations are also discoverable by an OpenCode plugin running in WSL through the distro's Windows interop path. Native startup removes only the recognizable generated global shim from older releases; it never overwrites or removes a user-authored plugin.
+Windows registrations are also discoverable by an OpenCode plugin running in WSL. Calls to those registrations use Windows interop so they reach the Windows-only loopback listener under default WSL2 NAT. Native startup removes only the recognizable generated global shim from older releases; it never overwrites or removes a user-authored plugin.
 
 `codenomad.act({ action: "restart" })` asks the current native host to relaunch gracefully. The plugin then runs inside the persistent OpenCode daemon, ignores the old registration, waits for the same native identity with a new process generation, verifies the same visible OpenCode session, and returns a fresh inspection.
 
