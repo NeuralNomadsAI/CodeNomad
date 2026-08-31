@@ -745,7 +745,7 @@
 }
 
 .status-process-card {
-  @apply border px-3 py-3 transition-colors duration-150;
+  @apply border px-2 py-2 transition-colors duration-150;
   border-color: var(--border-base);
   background-color: var(--surface-base);
 }
@@ -756,7 +756,7 @@
 }
 
 .status-process-actions {
-  @apply mt-3 grid grid-cols-2 gap-2;
+  @apply mt-1 grid grid-cols-2 gap-1;
 }
 
 /* Accordion improvements for right panel */

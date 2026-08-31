@@ -168,7 +168,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           when={shellState().items.length > 0}
           fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span></div>}
         >
-          <div class="flex flex-col gap-2">
+          <div class="flex flex-col gap-1">
             <For each={shellState().items}>
               {(shell) => {
                 const running = () => shell.status === "running"
@@ -180,7 +180,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                         <code class="mt-1 block truncate text-xs text-secondary" title={shell.shell}>{shell.shell}</code>
                       </div>
                     </div>
-                    <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-tertiary">
+                    <div class="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-tertiary">
                       <span>{props.t(`instanceShell.backgroundProcesses.status.${shell.status}`)}</span>
                       <Show when={shell.pid !== undefined}>
                         <span>{props.t("instanceShell.backgroundProcesses.pid", { pid: shell.pid })}</span>
