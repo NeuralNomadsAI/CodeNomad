@@ -3,6 +3,9 @@ import { describe, it } from "node:test"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
+  LIGHT_COLOR_SCHEME_COLORS,
+  SYSTEM_DARK_COLOR_SCHEME_COLORS,
+  SYSTEM_LIGHT_COLOR_SCHEME_COLORS,
   applyColorScheme,
   contrastRatio,
   normalizeColorScheme,
@@ -57,6 +60,15 @@ describe("normalizeColorScheme", () => {
     assert.equal(normalizeColorScheme({ id: "custom", appearance: "light", colors: DEFAULT_CUSTOM_COLORS }).appearance, "light")
     assert.equal(normalizeColorScheme({ id: "custom", appearance: "system", colors: DEFAULT_CUSTOM_COLORS }).appearance, "dark")
   })
+
+  it("preserves saved colors on an embedded palette", () => {
+    const colors = { ...LIGHT_COLOR_SCHEME_COLORS, surfaceBase: "#FF00FF" }
+    assert.deepEqual(normalizeColorScheme({ id: "light", appearance: "light", colors }), {
+      id: "light",
+      appearance: "light",
+      colors,
+    })
+  })
 })
 
 describe("built-in color schemes", () => {
@@ -73,6 +85,18 @@ describe("built-in color schemes", () => {
     assert.equal(accents.lichen, "#A9C47F")
     assert.equal(accents.velvet, "#E5A77D")
     assert.equal(accents.ember, "#D79A66")
+  })
+
+  it("keeps the additional Zed-inspired palettes light", () => {
+    for (const id of ["porcelain", "dawn", "parchment"]) {
+      assert.equal(BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === id)?.appearance, "light")
+    }
+  })
+
+  it("keeps System distinct from CodeNomad Classic", () => {
+    const classic = BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === "classic")?.colors
+    assert.notDeepEqual(SYSTEM_DARK_COLOR_SCHEME_COLORS, classic)
+    assert.notDeepEqual(SYSTEM_LIGHT_COLOR_SCHEME_COLORS, LIGHT_COLOR_SCHEME_COLORS)
   })
 
   it("preserves the exact CodeNomad Classic dark palette", () => {
@@ -96,20 +120,20 @@ describe("built-in color schemes", () => {
 })
 
 describe("applyColorScheme", () => {
-  it("clears stale overrides when switching to system or light", () => {
+  it("replaces stale overrides when switching to system or light", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     assert.ok(root.properties.size > 0)
     assert.equal(root.attributes.get("data-theme"), "dark")
 
     applyColorScheme(normalizeColorScheme("system"), { target: root.value, systemDark: true })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), SYSTEM_DARK_COLOR_SCHEME_COLORS.surfaceBase)
     assert.equal(root.attributes.has("data-theme"), false)
     assert.equal(root.value.dataset.colorScheme, "system")
 
     applyColorScheme(normalizeColorScheme("ember"), { target: root.value })
     applyColorScheme(normalizeColorScheme("light"), { target: root.value })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), LIGHT_COLOR_SCHEME_COLORS.surfaceBase)
     assert.equal(root.attributes.get("data-theme"), "light")
   })
 
@@ -154,6 +178,19 @@ describe("applyColorScheme", () => {
     assert.equal(root.properties.get("--message-assistant-border"), colors.agentAccent)
     assert.equal(root.properties.get("--session-status-compacting-fg"), colors.compactionAccent)
     assert.equal(root.properties.get("--session-yolo-accent"), colors.yoloAccent)
+  })
+
+  it("derives tabs and message surfaces from each palette", () => {
+    for (const id of ["fjord", "lichen", "velvet", "ember", "porcelain", "dawn", "parchment"] as const) {
+      const root = target()
+      const scheme = normalizeColorScheme(id)
+      applyColorScheme(scheme, { target: root.value })
+      assert.equal(root.properties.get("--tab-active-bg"), scheme.colors?.surfaceBase, id)
+      assert.equal(root.properties.get("--tab-inactive-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.equal(root.properties.get("--message-user-border"), scheme.colors?.userAccent, id)
+      assert.equal(root.properties.get("--message-assistant-border"), scheme.colors?.agentAccent, id)
+      assert.notEqual(root.properties.get("--message-assistant-bg"), "#212529", id)
+    }
   })
 })
 

@@ -105,7 +105,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     }
 
     return (
-      <div class="flex items-center justify-between gap-2 border border-base bg-surface-secondary px-3 py-2">
+      <div class="flex items-center justify-between gap-2 bg-surface-secondary px-3 py-2">
         <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
         <div class="-mr-2 shrink-0">
           <Switch
@@ -232,7 +232,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
     }
     return (
-      <div class="border border-base bg-surface-secondary px-3 py-2">
+      <div class="bg-surface-secondary px-3 py-2">
         <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
       </div>
     )

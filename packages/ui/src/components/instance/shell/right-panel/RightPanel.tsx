@@ -58,6 +58,7 @@ const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => 
         type="button"
         role="tab"
         id={props.tabId}
+        data-tab-id={props.tab.id}
         class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
         aria-selected={props.active}
         aria-controls={props.panelId}

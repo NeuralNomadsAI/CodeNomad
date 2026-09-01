@@ -423,11 +423,12 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest): Promise<void> {
-    if (preferencesWindows.reuse(request)) {
-      await clientState.setPreferences(request)
+  async function openPreferences(request: PreferencesRequest, toggle = false): Promise<void> {
+    if (toggle && preferencesWindows.current()) {
+      preferencesWindows.current()?.close()
       return
     }
+    if (preferencesWindows.reuse(request)) return
     if (!backendTargetUrl) throw new Error("Local CodeNomad server is unavailable")
     const window = new BrowserWindow({
       width: 1100, height: 760, minWidth: 760, minHeight: 560,

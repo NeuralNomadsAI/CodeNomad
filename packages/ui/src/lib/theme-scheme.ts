@@ -1,4 +1,4 @@
-export const COLOR_SCHEME_IDS = ["system", "light", "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
+export const COLOR_SCHEME_IDS = ["system", "light", "porcelain", "dawn", "parchment", "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
 export type ColorSchemeId = (typeof COLOR_SCHEME_IDS)[number]
 export type ColorSchemeAppearance = "system" | "light" | "dark"
@@ -102,6 +102,40 @@ export const LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
   yoloAccent: "#005FCC",
 }
 
+export const SYSTEM_LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
+  surfaceBase: "#F7F8FA",
+  surfaceSecondary: "#E9EBEF",
+  surfaceMuted: "#DEE2E8",
+  borderBase: "#C7CDD6",
+  textPrimary: "#1F2937",
+  textMuted: "#4B5563",
+  accentPrimary: "#4F6CCB",
+  statusSuccess: "#3F7A50",
+  statusWarning: "#856300",
+  statusError: "#B83D49",
+  userAccent: "#356FA8",
+  agentAccent: "#9A5522",
+  compactionAccent: "#7153A6",
+  yoloAccent: "#4F6CCB",
+}
+
+export const SYSTEM_DARK_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
+  surfaceBase: "#181A1F",
+  surfaceSecondary: "#22252B",
+  surfaceMuted: "#2B3038",
+  borderBase: "#404751",
+  textPrimary: "#E6E9EF",
+  textMuted: "#AEB5C0",
+  accentPrimary: "#6C8EF5",
+  statusSuccess: "#67B98C",
+  statusWarning: "#D3A853",
+  statusError: "#DF767D",
+  userAccent: "#5FA8E8",
+  agentAccent: "#D59755",
+  compactionAccent: "#B58AE4",
+  yoloAccent: "#6C8EF5",
+}
+
 export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
     id: "system",
@@ -116,6 +150,76 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
     descriptionKey: "settings.appearance.colorScheme.description.light",
     appearance: "light",
     editable: false,
+    colors: LIGHT_COLOR_SCHEME_COLORS,
+  },
+  {
+    id: "porcelain",
+    labelKey: "settings.appearance.colorScheme.option.porcelain",
+    descriptionKey: "settings.appearance.colorScheme.description.porcelain",
+    appearance: "light",
+    editable: false,
+    colors: {
+      surfaceBase: "#FAFAFA",
+      surfaceSecondary: "#EBEBEC",
+      surfaceMuted: "#DCDCDD",
+      borderBase: "#C9C9CA",
+      textPrimary: "#242529",
+      textMuted: "#58585A",
+      accentPrimary: "#4F69C6",
+      statusSuccess: "#4F7D45",
+      statusWarning: "#806A14",
+      statusError: "#B7473B",
+      userAccent: "#3F6FAE",
+      agentAccent: "#94551F",
+      compactionAccent: "#7350A2",
+      yoloAccent: "#4F69C6",
+    },
+  },
+  {
+    id: "dawn",
+    labelKey: "settings.appearance.colorScheme.option.dawn",
+    descriptionKey: "settings.appearance.colorScheme.description.dawn",
+    appearance: "light",
+    editable: false,
+    colors: {
+      surfaceBase: "#FCFCFC",
+      surfaceSecondary: "#ECECED",
+      surfaceMuted: "#DCDFE2",
+      borderBase: "#CFD1D2",
+      textPrimary: "#3F4449",
+      textMuted: "#5E6368",
+      accentPrimary: "#287DB5",
+      statusSuccess: "#567D00",
+      statusWarning: "#855B00",
+      statusError: "#B94747",
+      userAccent: "#287DB5",
+      agentAccent: "#95501C",
+      compactionAccent: "#67529A",
+      yoloAccent: "#287DB5",
+    },
+  },
+  {
+    id: "parchment",
+    labelKey: "settings.appearance.colorScheme.option.parchment",
+    descriptionKey: "settings.appearance.colorScheme.description.parchment",
+    appearance: "light",
+    editable: false,
+    colors: {
+      surfaceBase: "#FBF1C7",
+      surfaceSecondary: "#ECDBB5",
+      surfaceMuted: "#DFCDA7",
+      borderBase: "#C8B899",
+      textPrimary: "#282828",
+      textMuted: "#5F5650",
+      accentPrimary: "#0B6678",
+      statusSuccess: "#5E650C",
+      statusWarning: "#8F500F",
+      statusError: "#9D0308",
+      userAccent: "#0B6678",
+      agentAccent: "#91460D",
+      compactionAccent: "#684683",
+      yoloAccent: "#0B6678",
+    },
   },
   {
     id: "classic",
@@ -146,7 +250,12 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
     descriptionKey: "settings.appearance.colorScheme.description.basalt",
     appearance: "dark",
     editable: false,
-    colors: DEFAULT_CUSTOM_COLORS,
+    colors: {
+      ...DEFAULT_CUSTOM_COLORS,
+      userAccent: "#75A7E8",
+      agentAccent: "#E3A765",
+      compactionAccent: "#C493EE",
+    },
   },
   {
     id: "fjord",
@@ -165,7 +274,9 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#72C497",
       statusWarning: "#D8B36A",
       statusError: "#E28181",
-      ...DEFAULT_SEMANTIC_COLORS,
+      userAccent: "#67C9BA",
+      agentAccent: "#D6A25F",
+      compactionAccent: "#A99BE8",
       yoloAccent: "#67C9BA",
     },
   },
@@ -186,7 +297,9 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#77C49A",
       statusWarning: "#D6B36D",
       statusError: "#DF8580",
-      ...DEFAULT_SEMANTIC_COLORS,
+      userAccent: "#A9C47F",
+      agentAccent: "#D39B67",
+      compactionAccent: "#C6A0D8",
       yoloAccent: "#A9C47F",
     },
   },
@@ -207,7 +320,9 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#78C59A",
       statusWarning: "#DDB46F",
       statusError: "#E28787",
-      ...DEFAULT_SEMANTIC_COLORS,
+      userAccent: "#D78BC8",
+      agentAccent: "#E5A77D",
+      compactionAccent: "#B697E8",
       yoloAccent: "#E5A77D",
     },
   },
@@ -228,7 +343,9 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#78C296",
       statusWarning: "#D8AE62",
       statusError: "#DE817A",
-      ...DEFAULT_SEMANTIC_COLORS,
+      userAccent: "#D79A66",
+      agentAccent: "#D6C17A",
+      compactionAccent: "#C391DB",
       yoloAccent: "#D79A66",
     },
   },
@@ -274,7 +391,7 @@ function selectionFor(
   return {
     id,
     appearance,
-    ...(definition.colors ? { colors: copyColors(colors ?? definition.colors) } : {}),
+    ...(colors || definition.colors ? { colors: copyColors(colors ?? definition.colors!) } : {}),
   }
 }
 
@@ -283,7 +400,10 @@ export function normalizeColorScheme(value: unknown, legacyTheme?: unknown): Nor
 
   if (typeof id === "string" && COLOR_SCHEME_IDS.includes(id as ColorSchemeId)) {
     const schemeId = id as ColorSchemeId
-    if (schemeId !== "custom") return selectionFor(schemeId)
+    if (schemeId !== "custom") {
+      const colors = isRecord(value) ? normalizeColors(value.colors) : undefined
+      return selectionFor(schemeId, colors)
+    }
     const colors = isRecord(value) ? normalizeColors(value.colors) ?? DEFAULT_CUSTOM_COLORS : DEFAULT_CUSTOM_COLORS
     const appearance = isRecord(value) && value.appearance === "light" ? "light" : "dark"
     return selectionFor("custom", colors, appearance)
@@ -401,10 +521,24 @@ const APPLIED_PROPERTIES = [
   "--status-error-fg",
   "--message-user-bg",
   "--message-user-border",
+  "--message-assistant-bg",
   "--message-assistant-border",
+  "--message-tool-bg",
+  "--message-tool-border",
   "--session-status-compacting-fg",
   "--session-status-compacting-bg",
   "--session-yolo-accent",
+  "--tab-active-bg",
+  "--tab-active-hover-bg",
+  "--tab-active-text",
+  "--tab-inactive-bg",
+  "--tab-inactive-hover-bg",
+  "--tab-inactive-text",
+  "--tab-rail-bg",
+  "--tab-border",
+  "--new-tab-bg",
+  "--new-tab-hover-bg",
+  "--new-tab-text",
 ] as const
 
 function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(typeof APPLIED_PROPERTIES)[number], string> {
@@ -460,10 +594,24 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--status-error-fg": colors.statusError,
     "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.1 : 0.12),
     "--message-user-border": colors.userAccent,
+    "--message-assistant-bg": mix(colors.surfaceMuted, colors.surfaceBase, dark ? 0.55 : 0.45),
     "--message-assistant-border": colors.agentAccent,
+    "--message-tool-bg": mix(colors.surfaceMuted, colors.surfaceBase, dark ? 0.55 : 0.45),
+    "--message-tool-border": mix(colors.textMuted, colors.borderBase, 0.28),
     "--session-status-compacting-fg": colors.compactionAccent,
     "--session-status-compacting-bg": alpha(colors.compactionAccent, dark ? 0.28 : 0.18),
     "--session-yolo-accent": colors.yoloAccent,
+    "--tab-active-bg": colors.surfaceBase,
+    "--tab-active-hover-bg": mix(colors.textPrimary, colors.surfaceBase, dark ? 0.06 : 0.04),
+    "--tab-active-text": colors.textPrimary,
+    "--tab-inactive-bg": colors.surfaceSecondary,
+    "--tab-inactive-hover-bg": colors.surfaceMuted,
+    "--tab-inactive-text": colors.textMuted,
+    "--tab-rail-bg": colors.surfaceSecondary,
+    "--tab-border": colors.borderBase,
+    "--new-tab-bg": colors.surfaceSecondary,
+    "--new-tab-hover-bg": colors.surfaceMuted,
+    "--new-tab-text": colors.textMuted,
   }
 }
 
@@ -481,8 +629,11 @@ export function applyColorScheme(
   if (scheme.appearance === "system") target.removeAttribute("data-theme")
   else target.setAttribute("data-theme", dark ? "dark" : "light")
 
-  if (scheme.colors && scheme.id !== "classic") {
-    for (const [property, value] of Object.entries(derivedProperties(scheme.colors, dark))) {
+  const colors = scheme.id === "system"
+    ? scheme.colors ?? (dark ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS)
+    : scheme.colors
+  if (colors && scheme.id !== "classic") {
+    for (const [property, value] of Object.entries(derivedProperties(colors, dark))) {
       target.style.setProperty(property, value)
     }
   }

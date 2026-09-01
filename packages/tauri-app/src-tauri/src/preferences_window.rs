@@ -209,6 +209,7 @@ pub(crate) async fn open_preferences_window(
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     request: PreferencesRequest,
+    toggle: Option<bool>,
 ) -> Result<(), String> {
     crate::require_local_app_window(&window, &app_state)?;
     open_preferences(&app, &app_state, &preferences, request)
@@ -226,8 +227,10 @@ fn open_preferences(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if let Some(existing) = app.get_webview_window(LABEL) {
-        app.state::<crate::client_state::ClientState>()
-            .set_preferences(Some(request.clone()))?;
+        if toggle.unwrap_or(false) {
+            existing.close().map_err(|error| error.to_string())?;
+            return Ok(());
+        }
         let renderer_ready = preferences
             .state
             .lock()

@@ -11,14 +11,16 @@ import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import {
+  isColorSchemeColors,
   normalizeColorScheme,
-  validateColorSchemeColors,
   type ColorSchemeColors,
+  type ColorSchemeId,
   type NormalizedColorScheme,
 } from "../lib/theme-scheme"
 import {
   createColorSchemePresetId,
   MAX_COLOR_SCHEME_PRESETS,
+  normalizeColorSchemeOverrides,
   normalizeColorSchemePresets,
   type UserColorSchemePresets,
 } from "../lib/color-scheme-presets"
@@ -168,6 +170,7 @@ interface UiStateBucket {
   theme?: ThemePreference
   colorScheme?: unknown
   customColorScheme?: unknown
+  colorSchemeOverrides?: unknown
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
@@ -583,7 +586,13 @@ const [isLoaded, setIsLoaded] = createSignal(false)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
 const themePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
-const colorSchemePreference = createMemo(() => normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, themePreference()))
+const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
+const colorSchemePreference = createMemo(() => {
+  const scheme = normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, themePreference())
+  if (scheme.id === "custom") return scheme
+  const colors = colorSchemeOverrides()[scheme.id]
+  return colors ? normalizeColorScheme({ ...scheme, colors }) : scheme
+})
 const customColorSchemePreference = createMemo(() => {
   const state = uiStateBucket()
   const config = uiConfigBucket()
@@ -763,28 +772,64 @@ function selectColorSchemePreset(id: string): Promise<void> {
   const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
     theme: preset.appearance,
     colorScheme: scheme,
-    customColorScheme: scheme,
     activeColorSchemePresetId: id,
   }))
   colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
   return write.then(() => undefined)
 }
 
-function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<string> {
+function saveColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<void> {
+  if (!isColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme override"))
+  const scheme = normalizeColorScheme({ id, appearance, colors })
+  const legacyTheme: ThemePreference = scheme.appearance === "system" ? "system" : scheme.appearance
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: legacyTheme,
+    colorScheme: scheme,
+    colorSchemeOverrides: { [id]: { ...colors } },
+    activeColorSchemePresetId: null,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function resetColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">): Promise<void> {
+  const scheme = normalizeColorScheme(id)
+  const legacyTheme: ThemePreference = scheme.appearance === "system" ? "system" : scheme.appearance
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: legacyTheme,
+    colorScheme: scheme,
+    colorSchemeOverrides: { [id]: null },
+    activeColorSchemePresetId: null,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>, presetId?: string): Promise<string> {
   const trimmedName = name.trim().slice(0, 80)
-  if (!trimmedName || !validateColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
-  if (Object.keys(colorSchemePresets()).length >= MAX_COLOR_SCHEME_PRESETS) return Promise.reject(new Error("Color scheme preset limit reached"))
-  const id = createColorSchemePresetId()
+  if (!trimmedName || !isColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
+  if (!presetId && Object.keys(colorSchemePresets()).length >= MAX_COLOR_SCHEME_PRESETS) return Promise.reject(new Error("Color scheme preset limit reached"))
+  if (presetId && !colorSchemePresets()[presetId]) return Promise.reject(new Error("Unknown color scheme preset"))
+  const id = presetId ?? createColorSchemePresetId()
   const scheme = normalizeColorScheme({ id: "custom", appearance, colors })
   const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
     theme: appearance,
     colorScheme: scheme,
-    customColorScheme: scheme,
     colorSchemePresets: { [id]: { name: trimmedName, appearance, colors: { ...colors } } },
     activeColorSchemePresetId: id,
   }))
   colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
   return write.then(() => id)
+}
+
+function deleteColorSchemePreset(id: string): Promise<void> {
+  if (!colorSchemePresets()[id]) return Promise.resolve()
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorSchemePresets: { [id]: null },
+    ...(activeColorSchemePresetId() === id ? { activeColorSchemePresetId: null } : {}),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
 }
 
  async function setListeningMode(mode: ListeningMode): Promise<void> {
@@ -1103,11 +1148,15 @@ interface ConfigContextValue {
   setThemePreference: typeof setThemePreference
   colorSchemePreference: typeof colorSchemePreference
   customColorSchemePreference: typeof customColorSchemePreference
+  colorSchemeOverrides: typeof colorSchemeOverrides
   colorSchemePresets: typeof colorSchemePresets
   activeColorSchemePresetId: typeof activeColorSchemePresetId
   setColorSchemePreference: typeof setColorSchemePreference
   selectColorSchemePreset: typeof selectColorSchemePreset
+  saveColorSchemeOverride: typeof saveColorSchemeOverride
+  resetColorSchemeOverride: typeof resetColorSchemeOverride
   saveColorSchemePreset: typeof saveColorSchemePreset
+  deleteColorSchemePreset: typeof deleteColorSchemePreset
 
   // server-owned stable config
   serverSettings: typeof serverSettings
@@ -1174,11 +1223,15 @@ const configContextValue: ConfigContextValue = {
   setThemePreference,
   colorSchemePreference,
   customColorSchemePreference,
+  colorSchemeOverrides,
   colorSchemePresets,
   activeColorSchemePresetId,
   setColorSchemePreference,
   selectColorSchemePreset,
+  saveColorSchemeOverride,
+  resetColorSchemeOverride,
   saveColorSchemePreset,
+  deleteColorSchemePreset,
   serverSettings,
   setListeningMode,
   updateEnvironmentVariables,
@@ -1273,11 +1326,15 @@ export {
   setThemePreference,
   colorSchemePreference,
   customColorSchemePreference,
+  colorSchemeOverrides,
   colorSchemePresets,
   activeColorSchemePresetId,
   setColorSchemePreference,
   selectColorSchemePreset,
+  saveColorSchemeOverride,
+  resetColorSchemeOverride,
   saveColorSchemePreset,
+  deleteColorSchemePreset,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,

@@ -158,7 +158,7 @@
 }
 
 .tool-call-header:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--message-part-hover);
 }
 
 .tool-call-header-toggle {

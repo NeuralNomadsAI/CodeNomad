@@ -30,7 +30,7 @@ function harness() {
       resolveLocal: (sender) => sender === localContents ? { window: localWindow } : undefined,
       resolvePreferences: (sender) => sender === preferencesContents ? preferencesWindow : undefined,
       getAllowedOrigins: () => ["http://localhost:3000"],
-      openPreferences: async (request) => { calls.push(`open:${request.section}:${request.instanceId ?? ""}`) },
+      openPreferences: async (request, toggle) => { calls.push(`open:${request.section}:${request.instanceId ?? ""}:${Boolean(toggle)}`) },
       getRequest: () => ({ section: "speech" }),
       markReady: () => { calls.push("ready") },
       acceptRequest: (_window, request) => { calls.push(`accept:${request.section}`) },
@@ -48,7 +48,7 @@ test("Preferences IPC separates local open authority and controls registered app
     "preferences:open", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])
 
-  assert.deepEqual(await h.handlers.get("preferences:open")!(h.event(h.localContents), "speech", { instanceId: "workspace-1" }), { ok: true })
+  assert.deepEqual(await h.handlers.get("preferences:open")!(h.event(h.localContents), "speech", { instanceId: "workspace-1" }, true), { ok: true })
   await assert.rejects(h.handlers.get("preferences:open")!(h.event(h.preferencesContents), "speech"), /local window/)
   await assert.rejects(h.handlers.get("preferences:open")!(h.event(h.localContents), "workspace"), /Invalid preferences section/)
 
@@ -60,8 +60,8 @@ test("Preferences IPC separates local open authority and controls registered app
   assert.deepEqual(h.handlers.get("preferences:minimize")!(h.event(h.localContents)), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: false })
-  assert.deepEqual(await h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
-  assert.deepEqual(h.calls, ["open:speech:workspace-1", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
+  assert.deepEqual(h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
+  assert.deepEqual(h.calls, ["open:speech:workspace-1:true", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
 })
 
 test("Preferences IPC rejects unregistered, subframe, and cross-origin senders", () => {

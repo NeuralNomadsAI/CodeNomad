@@ -549,7 +549,7 @@
 }
 
 .message-reasoning-header:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--message-part-hover);
 }
 
 .message-reasoning-toggle {

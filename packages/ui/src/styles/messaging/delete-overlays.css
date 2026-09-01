@@ -16,7 +16,7 @@
   content: "";
   position: absolute;
   inset: -4px;
-  background: var(--status-error-bg);
+  background: color-mix(in srgb, var(--status-error-bg) 50%, transparent);
   border-radius: 0;
   pointer-events: none;
   /* Overlay must sit above the part card background. */
@@ -24,8 +24,12 @@
 }
 .message-technical-group[data-delete-technical-selected="true"] > .message-technical-group-toggle,
 .message-technical-group[data-delete-technical-selected="true"] > .message-technical-group-header {
-  background: var(--status-error-bg);
+  background: color-mix(in srgb, var(--status-error-bg) 50%, transparent);
 }
 .message-reasoning-card[data-delete-part-hover="true"]::before {
   inset: 0;
+}
+
+.delete-hover-scope[data-delete-part-hover="true"] :is(.tool-call-header, .message-reasoning-header, .message-technical-group-toggle) {
+  background-color: transparent;
 }

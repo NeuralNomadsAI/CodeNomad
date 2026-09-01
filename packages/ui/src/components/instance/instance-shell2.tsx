@@ -45,7 +45,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Command as CommandIcon, Eye, Maximize2, MessageSquareText, Search, ShieldAlert } from "lucide-solid"
+import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
@@ -59,7 +59,7 @@ import {
   showSessionChat,
   showSessionPreview,
 } from "../../stores/session-previews"
-import { createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
+import { clearActiveParentSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -472,8 +472,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return preview?.mode === "preview" ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
-  const PreviewToggleIcon = createMemo(() => activeSessionPreview()?.mode === "preview" ? MessageSquareText : Eye)
-
   const yoloModeEnabled = createMemo(() => {
     const session = activeSessionForInstance()
     if (!session) return false
@@ -589,10 +587,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         title={previewToggleLabel()}
         size="small"
       >
-        {(() => {
-          const Icon = PreviewToggleIcon()
-          return <Icon class="w-5 h-5" aria-hidden="true" />
-        })()}
+        <Globe class="w-5 h-5" aria-hidden="true" />
       </IconButton>
     </Show>
   )
@@ -626,7 +621,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       onSelect: handleCommandPaletteClick,
     }]
     if (showingInfoView()) return items
-    const PreviewIcon = PreviewToggleIcon()
     items.push(
       {
         key: "search",
@@ -637,9 +631,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       {
         key: runtimeEnv.platform === "mobile" ? "fullscreen" : "preview",
         label: runtimeEnv.platform === "mobile" ? t("instanceShell.fullscreen.enter") : previewToggleLabel(),
+        checked: runtimeEnv.platform === "mobile" ? undefined : activeSessionPreview()?.mode === "preview",
         icon: runtimeEnv.platform === "mobile"
           ? <Maximize2 class="w-4 h-4" aria-hidden="true" />
-          : <PreviewIcon class="w-4 h-4" aria-hidden="true" />,
+          : <Globe class="w-4 h-4" aria-hidden="true" />,
         onSelect: runtimeEnv.platform === "mobile" ? props.onEnterMobileFullscreen : handlePreviewButtonClick,
       },
     )
@@ -734,7 +729,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
             keyboardShortcuts={keyboardShortcuts}
             drawerState={leftDrawerState}
-            onSelectSession={handleSessionSelect}
+            onSelectSession={handleSidebarSessionSelect}
             onNewSession={props.onNewSession}
             onSidebarAgentChange={props.handleSidebarAgentChange}
             onSidebarModelChange={props.handleSidebarModelChange}
@@ -769,7 +764,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
           keyboardShortcuts={keyboardShortcuts}
           drawerState={leftDrawerState}
-          onSelectSession={handleSessionSelect}
+          onSelectSession={handleSidebarSessionSelect}
           onNewSession={props.onNewSession}
           onSidebarAgentChange={props.handleSidebarAgentChange}
           onSidebarModelChange={props.handleSidebarModelChange}
@@ -1012,7 +1007,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sessionIds = cachedSessionIds()
     if (sessionIds.length > 0) {
       handleSessionSelect(sessionIds[0])
+    } else {
+      clearActiveParentSession(props.instance.id)
     }
+  }
+
+  const handleSidebarSessionSelect = (sessionId: string) => {
+    if (sessionId === "info" && showingInfoView()) handleBackToConversation()
+    else handleSessionSelect(sessionId)
   }
   const sessionLayout = (
     <div
