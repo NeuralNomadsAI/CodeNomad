@@ -52,6 +52,10 @@ export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDe
   return Math.max(0, offset + viewportHeightDelta)
 }
 
+export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boolean {
+  return maxOffset > offset + 1
+}
+
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])

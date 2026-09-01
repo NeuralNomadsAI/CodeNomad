@@ -23,6 +23,7 @@ import {
 } from "./app-session-snapshot-merge.ts"
 import type { RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
 
 const absent = { tabs: [], activeTabIndex: -1 }
 function workspace(state: Partial<RestorableWorkspaceTabState> = {}): RestorableWorkspaceTabState {
@@ -74,6 +75,19 @@ describe("instance runtime authority", () => {
     assert.equal(getSessionDraftPromptsForInstance(id)[sessionId], "Review [pasted #1] and @notes.txt")
     assert.deepEqual(getAttachments(id, sessionId), [pasted, file])
     clearSessionState(id)
+  })
+
+  it("preserves escaped scroll authority during rehydration cleanup", () => {
+    const id = "rehydrate-scroll", sessionId = "active-session"
+    const store = messageStoreBus.getOrCreate(id)
+    const snapshot = { scrollTop: 240, atBottom: false, followModeType: "escaped" as const, updatedAt: 2400 }
+    store.restoreScrollSnapshot(sessionId, "message-stream", snapshot)
+    try {
+      clearReloadableInstanceState(id)
+      assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), snapshot)
+    } finally {
+      messageStoreBus.unregisterInstance(id)
+    }
   })
 
   for (const test of [

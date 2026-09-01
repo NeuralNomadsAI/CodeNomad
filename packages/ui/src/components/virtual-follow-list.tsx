@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -139,7 +139,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingContentRenderedFrame: number | null = null
   let pendingExplicitBottomPinFrame: number | null = null
   let pendingViewportResizeFrame: number | null = null
-  let pendingViewportHeightDelta = 0
   let explicitBottomPinToken: string | number | null = null
   let lastHandledExplicitBottomPinToken: string | number | null = null
   let userCancelledExplicitBottomPinToken: string | number | null = null
@@ -148,6 +147,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let explicitBottomPinFramesRemaining = 0
   let programmaticScrollUntil = 0
   let previousItemKeys = props.items().map((item, index) => props.getKey(item, index))
+  let measurementResetCache: VirtualizerHandle["cache"] | undefined
+  let observedViewportHeight = 0
+  let lastEscapedResizeSnapshot: VirtualFollowScrollSnapshot | undefined
+  let pendingViewportResizeSnapshot: VirtualFollowScrollSnapshot | undefined
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -259,12 +262,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function performScrollToBottom(immediate = true) {
     const handle = virtuaHandle()
     const element = scrollElement()
-    if (props.items().length === 0) return
-    markProgrammaticScroll()
-    if (handle) {
+    if (!element || props.items().length === 0) return
+    const offset = handle?.scrollOffset ?? element.scrollTop
+    const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
+    if (handle && shouldAdvanceBottomPin(offset, maxOffset)) {
+      markProgrammaticScroll()
       handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
-    } else if (element) {
-      scrollToOffset(element.scrollHeight - element.clientHeight, true)
+    } else if (!handle && shouldAdvanceBottomPin(offset, maxOffset)) {
+      scrollToOffset(maxOffset, true)
     }
     pinDomBottomAfterLayout()
   }
@@ -274,7 +279,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || !autoScroll() || externalSuspendAutoPinToBottom() || scrollController.snapshot().restoring) return
     const handle = virtuaHandle()
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-    scrollToOffset(maxOffset, true)
+    const offset = handle?.scrollOffset ?? element.scrollTop
+    if (shouldAdvanceBottomPin(offset, maxOffset)) scrollToOffset(maxOffset, true)
     if (remainingFrames <= 0) return
     requestAnimationFrame(() => pinDomBottomAfterLayout(remainingFrames - 1))
   }
@@ -328,6 +334,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       props.onUserReachedBottom?.()
     }
     syncControllerResult(result)
+    if (!result.state.restoring && result.state.mode.type === "escaped" && element.clientHeight === observedViewportHeight) {
+      lastEscapedResizeSnapshot = captureScrollSnapshot()
+    } else if (result.state.mode.type === "following") {
+      lastEscapedResizeSnapshot = undefined
+    }
   }
 
   function handleScroll() {
@@ -517,6 +528,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       setFollowMode(mode)
       scrollController.restoreMode(mode)
       scrollController.setRestoring(false)
+      lastEscapedResizeSnapshot = mode.type === "escaped" ? captureScrollSnapshot() ?? snapshot : undefined
       opts?.onApplied?.()
     }
 
@@ -799,9 +811,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     () => props.items().map((item, index) => props.getKey(item, index)),
     (nextItemKeys) => {
       const change = classifyVirtualItemKeyChange(previousItemKeys, nextItemKeys)
+      // Seed same-sized keyed replacements so measurement resets never paint an empty frame.
+      measurementResetCache = change.resetMeasurements && previousItemKeys.length === nextItemKeys.length
+        ? virtuaHandle()?.cache
+        : undefined
       previousItemKeys = nextItemKeys
       if (change.resetMeasurements) {
         itemElements.clear()
+        lastEscapedResizeSnapshot = undefined
+        pendingViewportResizeSnapshot = undefined
         setItemKeyMeasurementEpoch((epoch) => epoch + 1)
       }
       if (change.endChanged && autoScroll()) api.notifyContentRendered()
@@ -822,10 +840,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
     itemElements.clear()
+    lastEscapedResizeSnapshot = undefined
+    pendingViewportResizeSnapshot = undefined
   }))
 
   createEffect(on(() => props.measurementResetKey?.(), () => {
     itemElements.clear()
+    lastEscapedResizeSnapshot = undefined
+    pendingViewportResizeSnapshot = undefined
   }, { defer: true }))
 
   createEffect(on(isActive, (active) => {
@@ -842,6 +864,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element || typeof ResizeObserver === "undefined") return
     let previousHeight = element.clientHeight
+    observedViewportHeight = previousHeight
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
@@ -849,17 +872,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         previousHeight = nextHeight
         return
       }
-      pendingViewportHeightDelta += previousHeight - nextHeight
       previousHeight = nextHeight
+      observedViewportHeight = nextHeight
+      if (scrollController.snapshot().restoring) return
+      if (!autoScroll() && !pendingViewportResizeSnapshot) pendingViewportResizeSnapshot = lastEscapedResizeSnapshot
       if (pendingViewportResizeFrame !== null) return
       pendingViewportResizeFrame = requestAnimationFrame(() => {
         pendingViewportResizeFrame = null
-        const heightDelta = pendingViewportHeightDelta
-        pendingViewportHeightDelta = 0
+        const snapshot = pendingViewportResizeSnapshot
+        pendingViewportResizeSnapshot = undefined
         if (autoScroll() && !externalSuspendAutoPinToBottom()) {
           pinDomBottomAfterLayout()
-        } else {
-          scrollToOffset(getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta), false)
+        } else if (snapshot) {
+          restoreScrollSnapshot(snapshot)
         }
         updateScrollStateFromDom()
       })
@@ -869,7 +894,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       observer.disconnect()
       if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
       pendingViewportResizeFrame = null
-      pendingViewportHeightDelta = 0
+      pendingViewportResizeSnapshot = undefined
     })
   })
 
@@ -900,10 +925,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         <Show keyed when={measurementAuthority()}>
           {(_authority) => (
             <Virtualizer
-              ref={setVirtuaHandle}
+              ref={(handle) => {
+                setVirtuaHandle(handle)
+                if (handle) measurementResetCache = undefined
+              }}
               scrollRef={scrollElement()}
               data={props.items()}
               bufferSize={props.overscanPx ?? 400}
+              cache={measurementResetCache}
               onScroll={handleScroll}
             >
               {(item, index) => {

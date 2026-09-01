@@ -1438,7 +1438,7 @@ fn main() {
         configure_developer_webview(&scope, developer_mode_active)
             .expect("configure Developer Mode browser profile");
     let executable = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
         .unwrap_or_default();
     let developer_identity =
         Sha256::digest(format!("{}\0{}", scope.identifier, executable.display()).as_bytes())[..8]

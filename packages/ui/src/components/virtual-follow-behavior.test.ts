@@ -7,10 +7,11 @@ import {
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
   classifyVirtualItemKeyChange,
-  getBottomAnchoredViewportOffset,
   getKeyboardScrollIntent,
+  getBottomAnchoredViewportOffset,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
+  shouldAdvanceBottomPin,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
@@ -199,7 +200,13 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
   })
 
-  it("keeps the viewport bottom anchored when its height changes", () => {
+  it("never moves a bottom pin upward while measurements settle", () => {
+    assert.equal(shouldAdvanceBottomPin(2400, 2200), false)
+    assert.equal(shouldAdvanceBottomPin(2400, 2401), false)
+    assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
+  })
+
+  it("keeps the timeline viewport bottom anchored when its height changes", () => {
     assert.equal(getBottomAnchoredViewportOffset(2400, 200), 2600)
     assert.equal(getBottomAnchoredViewportOffset(2600, -200), 2400)
     assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
