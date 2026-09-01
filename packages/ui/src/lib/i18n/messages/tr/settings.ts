@@ -361,6 +361,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Yeni session oluşturulurken boş session'lar otomatik temizlenir.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Subagent boşta işaretlerini koru",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Subagent boşta işaretleri, 5 saniye sonra gizlenmek yerine görüntülenene kadar görünür kalır.",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "İkinci başlatmada mevcut pencereye odaklan",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "Yeni pencere açmak yerine en son kullanılan CodeNomad penceresini öne getir.",
   "settings.behavior.tauriNativeEventTransport.title": "Yerel Tauri olay taşıyıcısı",
   "settings.behavior.tauriNativeEventTransport.subtitle": "Tauri'deki Rust tabanlı yerel masaüstü olay taşıyıcısını kullanır. Devre dışı bırakırsanız tarayıcı EventSource yoluna geri dönülür.",
   "settings.behavior.promptVoiceInput.title": "Prompt ses girişi",

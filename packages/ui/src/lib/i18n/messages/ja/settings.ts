@@ -381,6 +381,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "新しいセッション作成時に空のセッションを自動的にクリーンアップします。",
   "settings.behavior.keepUnseenSubagentIdle.title": "サブエージェントの idle マーカーを保持",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "サブエージェントの idle マーカーを 5 秒後に隠さず、表示するまで残します。",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "2 回目の起動で既存ウィンドウをフォーカス",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "新しいウィンドウを開かず、最後に使用した CodeNomad ウィンドウを前面に表示します。",
   "settings.behavior.promptVoiceInput.title": "プロンプト音声入力",
   "settings.behavior.promptVoiceInput.subtitle": "音声が設定されている場合、音声文字起こし用のマイク操作を表示します。",
   "settings.behavior.promptSubmit.title": "Enterで送信",

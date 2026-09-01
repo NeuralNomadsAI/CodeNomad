@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto"
-import { statSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, normalize, resolve } from "node:path"
+import { parse as parseYaml } from "yaml"
 
 export interface LaunchIntent {
   newWindow: boolean
@@ -217,4 +218,12 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
     if (resolved) folders.push(resolved)
   }
   return { newWindow, folders: [...new Set(folders)] }
+}
+
+export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: string): LaunchIntent {
+  try {
+    const config = parseYaml(readFileSync(configPath, "utf8")) as any
+    if (config?.ui?.settings?.focusExistingWindowOnSecondLaunch === true) return intent
+  } catch {}
+  return intent.newWindow ? intent : { ...intent, newWindow: true }
 }

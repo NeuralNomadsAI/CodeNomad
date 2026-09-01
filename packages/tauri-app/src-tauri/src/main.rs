@@ -362,7 +362,7 @@ fn window_control(
         "drag" => window.start_dragging(),
         "close" => {
             if window.label() == preferences_window::LABEL {
-                preferences_window::approve_close(&app);
+                preferences_window::approve_close(&app)?;
             }
             window.close()
         }
@@ -1405,6 +1405,13 @@ fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     });
 }
 
+fn is_final_application_window<'a>(
+    closing_label: &str,
+    mut labels: impl Iterator<Item = &'a str>,
+) -> bool {
+    !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1430,9 +1437,17 @@ fn main() {
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope, developer_mode_active)
             .expect("configure Developer Mode browser profile");
+    let executable = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_default();
+    let developer_identity =
+        Sha256::digest(format!("{}\0{}", scope.identifier, executable.display()).as_bytes())[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
     let developer_mode = developer_mode::DeveloperMode::new(
         developer_mode_active,
-        format!("tauri:{}", scope.identifier),
+        format!("tauri:{developer_identity}"),
         devtools_active_port,
         developer_marker_path,
     );
@@ -1443,6 +1458,7 @@ fn main() {
         &cwd,
     ));
     let singleton_queue = Arc::clone(&launch_queue);
+    let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
         let cwd = std::path::PathBuf::from(callback_cwd);
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
@@ -1450,7 +1466,10 @@ fn main() {
         let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
         #[cfg(not(windows))]
         let intent = launch::parse_launch_intent(&arguments, &cwd);
-        singleton_queue.enqueue(intent);
+        singleton_queue.enqueue(launch::prepare_second_launch_intent(
+            intent,
+            &second_launch_config,
+        ));
         schedule_launch_drain(app.clone(), Arc::clone(&singleton_queue));
     });
 
@@ -1757,10 +1776,21 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
-                if label == preferences_window::LABEL
-                    && preferences_window::intercept_close(&app_handle)
-                {
-                    api.prevent_close();
+                if label == preferences_window::LABEL {
+                    if shutdown::exit_allowed(&app_handle) {
+                        return;
+                    }
+                    if preferences_window::intercept_close(&app_handle) {
+                        api.prevent_close();
+                        return;
+                    }
+                    if let Err(error) = app_handle
+                        .state::<client_state::ClientState>()
+                        .set_preferences(None)
+                    {
+                        eprintln!("[client-state] failed to close Preferences: {error}");
+                        api.prevent_close();
+                    }
                     return;
                 }
                 if shutdown::exit_allowed(&app_handle) {
@@ -1777,7 +1807,9 @@ fn main() {
                         None => {}
                     }
                 }
-                let final_window = app_handle.webview_windows().len() == 1;
+                let windows = app_handle.webview_windows();
+                let final_window =
+                    is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
                     api.prevent_close();
                     shutdown::request(app_handle.clone());
@@ -2130,15 +2162,31 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
-        is_allowed_local_origin, require_http_url, rollback_remote_window_metadata,
-        run_update_with_fallback, should_allow_registered_origin, should_open_external_url,
-        should_recreate_remote_window, titlebar_menu_id, RemoteProfileIdentity,
-        RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState, RELEASES_URL,
-        REMOTE_WINDOW_CONTEXT_SCRIPT,
+        is_allowed_local_origin, is_final_application_window, require_http_url,
+        rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
+        should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
+        RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
+        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
+
+    #[test]
+    fn preferences_does_not_keep_the_last_application_window_alive() {
+        assert!(is_final_application_window(
+            "local-a",
+            ["local-a", "preferences"].into_iter(),
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "preferences", "local-b"].into_iter(),
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "preferences", "remote-a"].into_iter(),
+        ));
+    }
 
     #[test]
     fn titlebar_menu_ids_are_restricted_to_application_submenus() {

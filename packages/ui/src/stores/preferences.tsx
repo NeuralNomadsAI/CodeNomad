@@ -120,6 +120,7 @@ export interface UiSettings {
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
 
   // OS notifications
@@ -220,6 +221,7 @@ const defaultUiSettings: UiSettings = {
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
+  focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
 
   osNotificationsEnabled: false,
@@ -333,6 +335,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
@@ -648,7 +651,7 @@ async function patchStateOwner(owner: string, patch: unknown) {
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
-function updateUiSettings(updates: Partial<UiSettings>) {
+function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
   const current = uiConfigBucket()
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
   const patch = {
@@ -656,11 +659,17 @@ function updateUiSettings(updates: Partial<UiSettings>) {
       Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
     ),
   }
-  void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
+  return patchConfigOwner("ui", patch).then(
+    () => true,
+    (error) => {
+      log.error("Failed to patch ui settings", error)
+      return false
+    },
+  )
 }
 
-function updatePreferences(updates: Partial<UiSettings>): void {
-  updateUiSettings(updates)
+function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  return updateUiSettings(updates)
 }
 
 const modelVisibilityWriteQueues = new Map<string, Promise<void>>()

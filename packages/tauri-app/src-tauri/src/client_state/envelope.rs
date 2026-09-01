@@ -1,4 +1,5 @@
 use super::{partitions, window};
+use crate::preferences_window::{validate_request, PreferencesRequest};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -50,6 +51,8 @@ pub(super) struct PersistedClientState {
     pub(super) active_window_id: String,
     pub(super) window_order: Vec<String>,
     pub(super) windows: HashMap<String, WindowRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) preferences: Option<PreferencesRequest>,
     #[serde(skip)]
     pub(super) unsupported_future_envelope: bool,
 }
@@ -67,6 +70,7 @@ impl PersistedClientState {
             active_window_id: window_id.clone(),
             window_order: vec![window_id.clone()],
             windows: HashMap::from([(window_id, WindowRecord::default())]),
+            preferences: None,
             unsupported_future_envelope: false,
         }
     }
@@ -226,7 +230,13 @@ fn parse_record(value: &Value) -> Option<WindowRecord> {
 fn parse_v3(value: &serde_json::Map<String, Value>) -> Option<PersistedClientState> {
     if !has_only_keys(
         value,
-        &["version", "activeWindowId", "windowOrder", "windows"],
+        &[
+            "version",
+            "activeWindowId",
+            "windowOrder",
+            "windows",
+            "preferences",
+        ],
     ) {
         return None;
     }
@@ -258,11 +268,19 @@ fn parse_v3(value: &serde_json::Map<String, Value>) -> Option<PersistedClientSta
     for id in &window_order {
         windows.insert(id.clone(), parse_record(source.get(id)?)?);
     }
+    let preferences = match value.get("preferences") {
+        Some(request) => Some(
+            validate_request(serde_json::from_value::<PreferencesRequest>(request.clone()).ok()?)
+                .ok()?,
+        ),
+        None => None,
+    };
     Some(PersistedClientState {
         version: VERSION,
         active_window_id,
         window_order,
         windows,
+        preferences,
         unsupported_future_envelope: false,
     })
 }

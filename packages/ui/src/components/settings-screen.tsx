@@ -38,6 +38,7 @@ interface SettingsScreenProps {
   standalone?: boolean
   providerContext?: { instanceId?: string; location?: LocationRef }
   onClose?: () => void | Promise<void>
+  onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
 }
 
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
@@ -101,6 +102,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const handleSectionChange = async (sectionId: SettingsSectionId) => {
     if (sectionId === activeSettingsSection()) return
     if (!(await confirmSettingsDiscard())) return
+    await props.onSectionChange?.(sectionId)
     setActiveSettingsSection(sectionId)
   }
 

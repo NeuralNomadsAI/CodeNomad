@@ -98,12 +98,16 @@ test("restart waits for a new native generation and returns a fresh inspection",
     newServer = replacement.server
     const old = await listen(async (body) => {
       if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old" } }
-      removeNew = await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url))
-      return { result: { state: "starting" } }
+      return body.command && (body.command as { action?: unknown }).action === "inspect"
+        ? { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, nodes: [], diagnostics: [] } }
+        : { result: { state: "starting" } }
     })
     oldServer = old.server
     removeOld = await publishAutomationBridge(createAutomationBridgeRegistration(old.url))
 
+    const inspect = definitions.find((definition) => definition.name === "inspect")!
+    await inspect.execute({}, { sessionID: "session-1" })
+    removeNew = await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url))
     const act = definitions.find((definition) => definition.name === "act")!
     const result = await act.execute({ action: "restart" }, { sessionID: "session-1" })
     assert.match(String(result.content), /Restarted/)

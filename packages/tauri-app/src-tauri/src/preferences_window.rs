@@ -29,19 +29,19 @@ const SECTIONS: &[&str] = &[
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PreferencesLocation {
-    directory: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    workspace_id: Option<String>,
+    pub(crate) directory: String,
+    #[serde(rename = "workspaceID", skip_serializing_if = "Option::is_none")]
+    pub(crate) workspace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PreferencesRequest {
-    section: String,
+    pub(crate) section: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    instance_id: Option<String>,
+    pub(crate) instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    location: Option<PreferencesLocation>,
+    pub(crate) location: Option<PreferencesLocation>,
 }
 
 #[derive(Debug)]
@@ -113,7 +113,7 @@ fn validate_section(section: &str) -> Result<(), String> {
         .ok_or_else(|| "Invalid preferences section".to_string())
 }
 
-fn validate_request(request: PreferencesRequest) -> Result<PreferencesRequest, String> {
+pub(crate) fn validate_request(request: PreferencesRequest) -> Result<PreferencesRequest, String> {
     validate_section(&request.section)?;
     if request
         .instance_id
@@ -211,12 +211,23 @@ pub(crate) async fn open_preferences_window(
     request: PreferencesRequest,
 ) -> Result<(), String> {
     crate::require_local_app_window(&window, &app_state)?;
+    open_preferences(&app, &app_state, &preferences, request)
+}
+
+fn open_preferences(
+    app: &AppHandle,
+    app_state: &AppState,
+    preferences: &PreferencesWindow,
+    request: PreferencesRequest,
+) -> Result<(), String> {
     let request = validate_request(request)?;
     let _operation = preferences
         .operation
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if let Some(existing) = app.get_webview_window(LABEL) {
+        app.state::<crate::client_state::ClientState>()
+            .set_preferences(Some(request.clone()))?;
         let renderer_ready = preferences
             .state
             .lock()
@@ -235,10 +246,10 @@ pub(crate) async fn open_preferences_window(
         .manager
         .local_cli_access()
         .ok_or("Local CodeNomad server is unavailable")?;
-    suspend_guard(&app);
+    suspend_guard(app);
     preferences.set_request(request.clone());
     let data_directory = app_state.webview_data_directory.join("local");
-    let builder = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("loading.html".into()))
+    let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("loading.html".into()))
         .data_directory(data_directory)
         .initialization_script(CONTEXT_SCRIPT);
     #[cfg(windows)]
@@ -283,10 +294,30 @@ pub(crate) async fn open_preferences_window(
         let _ = preferences_window.destroy();
         return Err(error);
     }
+    if let Err(error) = app
+        .state::<crate::client_state::ClientState>()
+        .set_preferences(Some(request))
+    {
+        let _ = preferences_window.destroy();
+        return Err(error);
+    }
     Ok(())
 }
 
 pub(crate) fn navigate_backend(app: &AppHandle) {
+    if app.get_webview_window(LABEL).is_none() {
+        if let Some(request) = app
+            .try_state::<crate::client_state::ClientState>()
+            .and_then(|state| state.preferences())
+        {
+            let app_state = app.state::<AppState>();
+            let preferences = app.state::<PreferencesWindow>();
+            if let Err(error) = open_preferences(app, &app_state, &preferences, request) {
+                eprintln!("[tauri] failed to restore preferences window: {error}");
+            }
+        }
+        return;
+    }
     if request_transition(app, PreferencesTransition::Backend) {
         return;
     }
@@ -352,6 +383,7 @@ pub(crate) fn preferences_get_request(
 #[tauri::command]
 pub(crate) fn preferences_accept_request(
     window: tauri::WebviewWindow,
+    app: AppHandle,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     request: PreferencesRequest,
@@ -360,7 +392,10 @@ pub(crate) fn preferences_accept_request(
     if window.label() != LABEL {
         return Err("Preferences request acceptance requires the Preferences window".to_string());
     }
-    preferences.set_request(validate_request(request)?);
+    let request = validate_request(request)?;
+    app.state::<crate::client_state::ClientState>()
+        .set_preferences(Some(request.clone()))?;
+    preferences.set_request(request);
     Ok(())
 }
 
@@ -443,12 +478,15 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
     state.pending_transition = None;
 }
 
-pub(crate) fn approve_close(app: &AppHandle) {
+pub(crate) fn approve_close(app: &AppHandle) -> Result<(), String> {
+    app.state::<crate::client_state::ClientState>()
+        .set_preferences(None)?;
     app.state::<PreferencesWindow>()
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .close_approved = true;
+    Ok(())
 }
 
 pub(crate) fn intercept_close(app: &AppHandle) -> bool {
@@ -498,7 +536,7 @@ mod tests {
             .query_pairs()
             .any(|(key, value)| key == "preferences" && value == "chat"));
         assert!(target_url("file:///tmp/preferences", "chat").is_err());
-        assert!(validate_request(PreferencesRequest {
+        let request = validate_request(PreferencesRequest {
             section: "providers".into(),
             instance_id: Some("workspace-1".into()),
             location: Some(PreferencesLocation {
@@ -506,7 +544,11 @@ mod tests {
                 workspace_id: Some("worktree-1".into()),
             }),
         })
-        .is_ok());
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["location"]["workspaceID"],
+            "worktree-1"
+        );
     }
 
     #[test]

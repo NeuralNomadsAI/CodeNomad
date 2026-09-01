@@ -104,7 +104,7 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 ## Desktop and Restore Restructuring
 
 - Run one native singleton and one CodeNomad backend per channel/config profile. Stable, development, and non-default config identities use isolated singleton, browser-storage, backend, and client-state scopes.
-- Focus the most-recent local window on a second launch unless `--new-window` is supplied.
+- Open another local window on a second launch by default; an Advanced preference restores most-recent-window focus, while `--new-window` always opens another window.
 - Give each Electron or Tauri window a UUID and independent tab/restore record while sharing the backend and global OpenCode data.
 - Persist one record per window in a V3 envelope over a V2 content-addressed partition graph.
 - Split workspace/session documents and chunk attachments so unrelated state does not rewrite one monolithic snapshot.

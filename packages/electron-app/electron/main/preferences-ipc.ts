@@ -13,9 +13,9 @@ interface PreferencesIPCDependencies {
   openPreferences(request: PreferencesRequest): Promise<void>
   getRequest(window: BrowserWindow): PreferencesRequest | undefined
   markReady(window: BrowserWindow): void
-  acceptRequest(window: BrowserWindow, request: PreferencesRequest): void
+  acceptRequest(window: BrowserWindow, request: PreferencesRequest): void | Promise<void>
   resolveTransition(window: BrowserWindow, id: number, approved: boolean): void
-  approveClose(window: BrowserWindow): void
+  approveClose(window: BrowserWindow): void | Promise<void>
 }
 
 export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: PreferencesIPCDependencies): void {
@@ -52,11 +52,11 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
     dependencies.markReady(preferences(event))
     return { ok: true }
   })
-  ipcMain.handle("preferences:acceptRequest", (event, value: unknown) => {
+  ipcMain.handle("preferences:acceptRequest", async (event, value: unknown) => {
     const window = preferences(event)
     if (!value || typeof value !== "object") throw new Error("Invalid Preferences request")
     const request = value as Record<string, unknown>
-    dependencies.acceptRequest(window, requirePreferencesRequest(request.section, request))
+    await dependencies.acceptRequest(window, requirePreferencesRequest(request.section, request))
     return { ok: true }
   })
   ipcMain.handle("preferences:resolveTransition", (event, id: unknown, approved: unknown) => {
@@ -74,9 +74,9 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
     else window.maximize()
     return { maximized: window.isMaximized() }
   })
-  ipcMain.handle("preferences:close", (event) => {
+  ipcMain.handle("preferences:close", async (event) => {
     const window = controlled(event)
-    if (dependencies.resolvePreferences(event.sender)) dependencies.approveClose(window)
+    if (dependencies.resolvePreferences(event.sender)) await dependencies.approveClose(window)
     else window.close()
     return { ok: true }
   })

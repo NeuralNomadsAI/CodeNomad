@@ -381,6 +381,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים.",
   "settings.behavior.keepUnseenSubagentIdle.title": "השאר סמני idle של תתי-סוכנים",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "השאר סמני idle של תתי-סוכנים גלויים עד צפייה במקום להסתיר אותם אחרי 5 שניות.",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "מיקוד חלון קיים בהפעלה שנייה",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "הבא את חלון CodeNomad האחרון לחזית במקום לפתוח חלון חדש.",
   "settings.behavior.promptVoiceInput.title": "קלט קולי לפרומפט",
   "settings.behavior.promptVoiceInput.subtitle": "הצג את כפתור המיקרופון לקלט דיבור-לטקסט כאשר תכונת הקול מוגדרת.",
   "settings.behavior.promptSubmit.title": "Enter לשליחה",

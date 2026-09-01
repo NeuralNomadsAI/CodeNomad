@@ -63,6 +63,8 @@ interface ProbedBridge {
   runId: string
 }
 
+const inspectedTargets = new Map<string, ProbedBridge>()
+
 type DiscoveredBridgeRegistration = AutomationBridgeRegistration & { [WINDOWS_INTEROP]?: true }
 
 export function automationBridgeDirectory(): string {
@@ -362,16 +364,21 @@ async function probeBridges(active: DiscoveredBridgeRegistration[], sessionID: s
 }
 
 async function executeDeveloperTool(sessionID: string, command: DeveloperAction) {
-  const active = await registrations()
-  const targets = await probeBridges(active, sessionID)
-  if (targets.length === 0) throw new Error("Developer Mode is not active for the visible CodeNomad session")
-  if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose Developer Mode for this session")
-  const target = targets[0]
+  let target = inspectedTargets.get(sessionID)
+  if (command.action === "inspect") {
+    const targets = await probeBridges(await registrations(), sessionID)
+    if (targets.length === 0) throw new Error("Developer Mode is not active for the visible CodeNomad session")
+    if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose Developer Mode for this session")
+    target = targets[0]
+  } else if (!target) {
+    throw new Error("Run codenomad.inspect before acting on or restarting CodeNomad")
+  }
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
   if (response.status !== 200) throw new Error(response.body.error || `Developer Mode failed (${response.status})`)
   if (command.action === "restart") {
     return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.registration.token)
   }
+  if (command.action === "inspect") inspectedTargets.set(sessionID, target)
   return formatBridgeResult(response.body.result)
 }
 
@@ -391,7 +398,10 @@ async function waitForRestart(sessionID: string, nativeIdentity: string, previou
           sessionID,
           command: { action: "inspect" },
         }, INSPECTION_TIMEOUT_MS)
-        if (inspection.status === 200) return formatBridgeResult(inspection.body.result)
+        if (inspection.status === 200) {
+          inspectedTargets.set(sessionID, candidate)
+          return formatBridgeResult(inspection.body.result)
+        }
       } catch {
         // The desktop backend and renderer become ready at different points during relaunch.
       }

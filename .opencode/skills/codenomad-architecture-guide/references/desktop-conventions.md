@@ -2,7 +2,7 @@
 
 ## Shared Model
 
-CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update channel plus config profile: each scope has one native singleton process and one CodeNomad backend, with multiple UUID-backed windows. A second launch focuses the MRU window unless `--new-window` requests another window.
+CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update channel plus config profile: each scope has one native singleton process and one CodeNomad backend, with multiple UUID-backed windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window.
 
 OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 

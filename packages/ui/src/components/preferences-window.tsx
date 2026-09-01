@@ -102,6 +102,11 @@ export const PreferencesWindow: Component = () => {
       <SettingsScreen
         standalone
         providerContext={{ instanceId: request().instanceId, location: request().location }}
+        onSectionChange={async (section) => {
+          const next = { ...request(), section }
+          await acceptNativePreferencesRequest(next)
+          setRequest(next)
+        }}
         onClose={() => runNativeWindowAction("close")}
       />
       <AlertDialog />

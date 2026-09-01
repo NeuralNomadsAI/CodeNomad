@@ -23,7 +23,7 @@ import { CliProcessManager } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
@@ -83,6 +83,10 @@ if (developerModeActive) {
   delete process.env.CODENOMAD_DEVELOPER_MODE
 }
 const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths(developerModeActive)
+const developerNativeIdentity = `electron:${createHash("sha256")
+  .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
+  .digest("hex")
+  .slice(0, 16)}`
 const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
 startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
   configureBrowserStorage(browserDataPath, sessionDataPath, developerModeActive)
@@ -99,7 +103,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const developerMode = new DeveloperMode({
     active: developerModeActive,
     devtoolsDataPath: sessionDataPath,
-    nativeIdentity: `electron:${createHash("sha256").update(`${storageScope.channel}\0${storageScope.configIdentity}`).digest("hex").slice(0, 16)}`,
+    nativeIdentity: developerNativeIdentity,
     targetWindowId: () => {
       const focused = BrowserWindow.getFocusedWindow()
       return focused ? registry.resolve(focused.webContents)?.id : registry.mruRecord()?.id
@@ -120,6 +124,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     request.end()
   })
   const preferencesWindows = new PreferencesWindowRegistry()
+  let pendingPreferencesRestore = clientState.preferences
   let preferencesNavigation: ClientStateNavigationController | null = null
   let preferencesTransition: { id: number; key: string; run: () => void } | undefined
   let preferencesTransitionId = 0
@@ -132,6 +137,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
+    isSupportWindow: (window) => preferencesWindows.current() === window,
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
@@ -193,6 +199,14 @@ function runPrimary(firstIntent: LaunchIntent) {
       for (const record of registry.all()) void navigateBackend(record, url)
       const preferences = preferencesWindows.current()
       if (preferences) void navigatePreferences(preferences, url)
+      else if (pendingPreferencesRestore) {
+        const request = pendingPreferencesRestore
+        pendingPreferencesRestore = undefined
+        void openPreferences(request).catch((error) => {
+          pendingPreferencesRestore = request
+          console.warn("[electron] failed to restore Preferences", error)
+        })
+      }
     },
     (error) => console.error("[cli] bootstrap token exchange failed", error),
   )
@@ -280,7 +294,10 @@ function runPrimary(firstIntent: LaunchIntent) {
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
     markReady: (window) => preferencesWindows.markReady(window),
-    acceptRequest: (window, request) => preferencesWindows.acceptRequest(window, request),
+    acceptRequest: async (window, request) => {
+      await clientState.setPreferences(request)
+      preferencesWindows.acceptRequest(window, request)
+    },
     resolveTransition: (window, id, approved) => {
       if (preferencesWindows.current() !== window || preferencesTransition?.id !== id) return
       const transition = preferencesTransition
@@ -290,11 +307,15 @@ function runPrimary(firstIntent: LaunchIntent) {
         transition.run()
       }
     },
-    approveClose: (window) => preferencesWindows.approveClose(window),
+    approveClose: async (window) => {
+      await clientState.setPreferences(undefined)
+      preferencesWindows.approveClose(window)
+    },
   })
   lifecycle.registerAppEvents()
   app.on("second-instance", (_event, argv, workingDirectory) => {
-    void intentQueue.enqueue(parseLaunchIntent(argvForLaunch(argv), workingDirectory || process.cwd())).catch(() => {})
+    const intent = parseLaunchIntent(argvForLaunch(argv), workingDirectory || process.cwd())
+    void intentQueue.enqueue(prepareSecondLaunchIntent(intent, storageScope.configIdentity)).catch(() => {})
   })
   app.on("open-file", (event, path) => {
     event.preventDefault()
@@ -403,7 +424,10 @@ function runPrimary(firstIntent: LaunchIntent) {
   }
 
   async function openPreferences(request: PreferencesRequest): Promise<void> {
-    if (preferencesWindows.reuse(request)) return
+    if (preferencesWindows.reuse(request)) {
+      await clientState.setPreferences(request)
+      return
+    }
     if (!backendTargetUrl) throw new Error("Local CodeNomad server is unavailable")
     const window = new BrowserWindow({
       width: 1100, height: 760, minWidth: 760, minHeight: 560,
@@ -431,9 +455,14 @@ function runPrimary(firstIntent: LaunchIntent) {
       insecureOrigins.delete(webContentsId)
       preferencesNavigation = null
       preferencesTransition = undefined
+      if (!lifecycle.isExitAllowed()) {
+        void clientState.setPreferences(undefined).catch((error) => console.warn("[client-state] failed to close Preferences", error))
+      }
     })
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     await navigatePreferences(window, backendTargetUrl)
+    if (window.isDestroyed() || preferencesWindows.current() !== window) return
+    await clientState.setPreferences(request)
   }
 
   async function navigatePreferences(window: BrowserWindow, url: string): Promise<void> {

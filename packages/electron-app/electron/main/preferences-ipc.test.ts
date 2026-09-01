@@ -54,13 +54,13 @@ test("Preferences IPC separates local open authority and controls registered app
 
   assert.deepEqual(h.handlers.get("preferences:getSection")!(h.event(h.preferencesContents)), { section: "speech" })
   assert.deepEqual(h.handlers.get("preferences:ready")!(h.event(h.preferencesContents)), { ok: true })
-  assert.deepEqual(h.handlers.get("preferences:acceptRequest")!(h.event(h.preferencesContents), { section: "providers" }), { ok: true })
+  assert.deepEqual(await h.handlers.get("preferences:acceptRequest")!(h.event(h.preferencesContents), { section: "providers" }), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:resolveTransition")!(h.event(h.preferencesContents), 3, false), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:minimize")!(h.event(h.preferencesContents)), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:minimize")!(h.event(h.localContents)), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: false })
-  assert.deepEqual(h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
+  assert.deepEqual(await h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
   assert.deepEqual(h.calls, ["open:speech:workspace-1", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
 })
 

@@ -381,6 +381,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "创建新会话时自动清理空会话。",
   "settings.behavior.keepUnseenSubagentIdle.title": "保留子智能体 idle 标记",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "让子智能体 idle 标记保持可见直到查看，而不是 5 秒后隐藏。",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "再次启动时聚焦现有窗口",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "将最近使用的 CodeNomad 窗口置于前台，而不是打开新窗口。",
   "settings.behavior.promptVoiceInput.title": "提示词语音输入",
   "settings.behavior.promptVoiceInput.subtitle": "语音已配置时，显示用于语音转文字提示词输入的麦克风控件。",
   "settings.behavior.promptSubmit.title": "回车发送",

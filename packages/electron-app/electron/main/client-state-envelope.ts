@@ -8,6 +8,7 @@ import {
   validatePartitionKeys,
 } from "./client-state-partitions"
 import { normalizeNativeWindowState, type NativeWindowState } from "./window-state"
+import { requirePreferencesRequest, type PreferencesRequest } from "./preferences-window"
 
 export const CLIENT_STATE_MONOLITHIC_VERSION = 1
 export const CLIENT_STATE_ENVELOPE_VERSION = 3
@@ -27,6 +28,7 @@ export interface PersistedClientState {
   activeWindowId: string
   windowOrder: string[]
   windows: Record<string, ClientWindowStateRecord>
+  preferences?: PreferencesRequest
 }
 
 export interface ParsedClientState {
@@ -109,8 +111,19 @@ function parseRecord(value: unknown): ClientWindowStateRecord | undefined {
   }
 }
 
+function parsePreferences(value: unknown): PreferencesRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  try {
+    const candidate = value as Record<string, unknown>
+    const request = requirePreferencesRequest(candidate.section, candidate)
+    return isDeepStrictEqual(value, request) ? request : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function parseV3(envelope: Record<string, unknown>): PersistedClientState | undefined {
-  if (!hasOnlyKeys(envelope, ["version", "activeWindowId", "windowOrder", "windows"])
+  if (!hasOnlyKeys(envelope, ["version", "activeWindowId", "windowOrder", "windows", "preferences"])
     || !isWindowId(envelope.activeWindowId)
     || !Array.isArray(envelope.windowOrder)
     || envelope.windowOrder.length > MAX_CLIENT_STATE_WINDOWS
@@ -128,11 +141,14 @@ function parseV3(envelope: Record<string, unknown>): PersistedClientState | unde
     if (!record) return undefined
     windows[id] = record
   }
+  const preferences = hasOwn(envelope, "preferences") ? parsePreferences(envelope.preferences) : undefined
+  if (hasOwn(envelope, "preferences") && !preferences) return undefined
   return {
     version: CLIENT_STATE_ENVELOPE_VERSION,
     activeWindowId: envelope.activeWindowId,
     windowOrder: [...windowOrder],
     windows,
+    ...(preferences ? { preferences } : {}),
   }
 }
 

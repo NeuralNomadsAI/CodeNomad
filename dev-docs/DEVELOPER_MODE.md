@@ -36,7 +36,7 @@ An active CodeNomad backend publishes an ephemeral registration containing a per
 
 Windows registrations are also discoverable by an OpenCode plugin running in WSL. Calls to those registrations use Windows interop so they reach the Windows-only loopback listener under default WSL2 NAT. Native startup removes only the recognizable generated global shim from older releases; it never overwrites or removes a user-authored plugin.
 
-`codenomad.act({ action: "restart" })` asks the current native host to relaunch gracefully. The plugin then runs inside the persistent OpenCode daemon, ignores the old registration, waits for the same native identity with a new process generation, verifies the same visible OpenCode session, and returns a fresh inspection.
+`codenomad.act({ action: "restart" })` asks the host pinned by the latest successful inspection to relaunch gracefully. The plugin then runs inside the persistent OpenCode daemon, ignores the old registration, waits for the same host/profile/artifact identity with a new process generation, verifies the same visible OpenCode session, and returns a fresh inspection. It never switches to another worktree build.
 
 ## Target And Trust Boundaries
 
@@ -45,6 +45,7 @@ Windows registrations are also discoverable by an OpenCode plugin running in WSL
 - CDP evaluates a bounded set of page targets and requires exactly the native window UUID, visible `data-instance-id`, and active `data-session-id`.
 - The bridge resolves the OpenCode session through the shared service and verifies that the visible `data-instance-id` owns that session location.
 - Operations for one native run are serialized. Click and type revalidate context immediately before input; inspection and screenshot revalidate after capture. Accessibility refs are invalidated by navigation, target replacement, context change, and restart.
+- Actions and screenshots require a successful inspection and remain pinned to that registration until another inspection or a verified restart replaces it.
 - Registration files, bridge responses, target probes, diagnostics, accessibility snapshots, screenshots, request bodies, and reconnect time are bounded.
 
 ## Main Paths

@@ -382,6 +382,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Statusanzeigen von Unteragenten beibehalten",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Statusanzeigen von Unteragenten sichtbar lassen, bis sie angesehen wurden.",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "Vorhandenes Fenster beim zweiten Start fokussieren",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "Das zuletzt verwendete CodeNomad-Fenster nach vorne bringen, statt ein neues zu öffnen.",
   "settings.behavior.promptVoiceInput.title": "Prompt-Spracheingabe",
   "settings.behavior.promptVoiceInput.subtitle": "Mikrofon-Steuerung für Sprache-zu-Text anzeigen, wenn Sprache konfiguriert ist.",
   "settings.behavior.promptSubmit.title": "Enter zum Absenden",

@@ -382,6 +382,8 @@ export const settingsMessages = {
   "settings.behavior.autoCleanup.subtitle": "Automatically clean up blank sessions when creating new ones.",
   "settings.behavior.keepUnseenSubagentIdle.title": "Keep subagent idle markers",
   "settings.behavior.keepUnseenSubagentIdle.subtitle": "Keep subagent idle markers visible until viewed instead of hiding them after 5 seconds.",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.title": "Focus existing window on second launch",
+  "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle": "Bring the most recently used CodeNomad window forward instead of opening a new one.",
   "settings.behavior.promptVoiceInput.title": "Prompt voice input",
   "settings.behavior.promptVoiceInput.subtitle": "Show the microphone control for speech-to-text prompt input when speech is configured.",
   "settings.behavior.promptSubmit.title": "Enter to submit",

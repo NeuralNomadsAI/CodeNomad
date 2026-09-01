@@ -32,6 +32,26 @@ test("V3 permits a temporarily empty local-window set and activates the next new
   assert.deepEqual(manager.windowIds, [next])
 })
 
+test("Preferences restoration survives final local-window shutdown and clears on explicit close", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const request = {
+    section: "providers" as const,
+    instanceId: "instance-1",
+    location: { directory: "C:\\repo", workspaceID: "workspace-1" },
+  }
+  assert.equal(await manager.setPreferences(request), true)
+  assert.equal(await manager.removeWindow(manager.activeWindowId), true)
+  assert.deepEqual(manager.preferences, request)
+  const persisted = readFileSync(h.statePath, "utf8")
+  assert.deepEqual(JSON.parse(persisted).preferences, request)
+  assert.deepEqual(parseClientState(persisted).state.preferences, request)
+
+  assert.equal(await manager.setPreferences(undefined), true)
+  assert.equal(manager.preferences, undefined)
+  assert.equal(JSON.parse(readFileSync(h.statePath, "utf8")).preferences, undefined)
+})
+
 function harness(t: test.TestContext, initial?: unknown) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-state-"))
   const statePath = join(directory, "client-state.json")
