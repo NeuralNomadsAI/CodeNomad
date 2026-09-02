@@ -21,6 +21,7 @@
   overflow-x: auto;
   touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
+  transform: scaleY(-1);
 }
 
 .tab-bar-instance .tab-scroll {
@@ -30,14 +31,14 @@
   overflow-y: hidden;
   padding-top: 1px;
   margin-bottom: -1px;
-  transform: scaleY(-1);
 }
 
 .tab-bar-instance .tab-container {
-  padding-block: 0;
+  padding-top: calc(var(--space-xs) + var(--scrollbar-size));
+  padding-bottom: 0;
 }
 
-.tab-bar-instance .tab-strip {
+.tab-scroll .tab-strip {
   transform: scaleY(-1);
 }
 
