@@ -81,7 +81,6 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   generationRecovery?: GenerationRecoveryState | null // Local recovery state for work interrupted across restarts
   runtimeStatusKnown?: boolean // Whether idle/working came from an authoritative runtime response
   generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
-  metadata?: Record<string, unknown> // CodeNomad-local runtime state; V2 SessionInfo does not persist this
 }
 
 // Adapter function to convert SDK Session to client Session
