@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { canOpenRemoteWindows, canRestartCli, canUseNativeDialogs, isLocalTauriHost, usesClientState, type RuntimeEnvironment } from "./runtime-env.ts"
+import { canRestartCli, canUseNativeDialogs, isLocalTauriHost, usesClientState, type RuntimeEnvironment } from "./runtime-env.ts"
 
 const environment = (host: RuntimeEnvironment["host"], windowContext: RuntimeEnvironment["windowContext"]) => ({
   host,
@@ -12,7 +12,7 @@ describe("isLocalTauriHost", () => {
     assert.equal(isLocalTauriHost(environment("tauri", "local")), true)
   })
 
-  it("keeps native-only features disabled in remote Tauri windows", () => {
+  it("keeps native-only features disabled in non-local Tauri contexts", () => {
     assert.equal(isLocalTauriHost(environment("tauri", "remote")), false)
   })
 
@@ -43,7 +43,6 @@ describe("Preferences native capabilities", () => {
     })
     try {
       assert.equal(canUseNativeDialogs(), true)
-      assert.equal(canOpenRemoteWindows(), true)
       assert.equal(canRestartCli(), true)
     } finally {
       Object.assign(globalThis, { window: previousWindow })

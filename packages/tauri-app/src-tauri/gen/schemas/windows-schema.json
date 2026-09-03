@@ -447,22 +447,10 @@
           "markdownDescription": "Enables the install_stable_update command without any pre-configured scope."
         },
         {
-          "description": "Enables the needs_local_certificate_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-needs-local-certificate-install",
-          "markdownDescription": "Enables the needs_local_certificate_install command without any pre-configured scope."
-        },
-        {
           "description": "Enables the open_preferences_window command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-preferences-window",
           "markdownDescription": "Enables the open_preferences_window command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the open_remote_window command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-open-remote-window",
-          "markdownDescription": "Enables the open_remote_window command without any pre-configured scope."
         },
         {
           "description": "Enables the open_workspace_target command without any pre-configured scope.",
@@ -627,22 +615,10 @@
           "markdownDescription": "Denies the install_stable_update command without any pre-configured scope."
         },
         {
-          "description": "Denies the needs_local_certificate_install command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-needs-local-certificate-install",
-          "markdownDescription": "Denies the needs_local_certificate_install command without any pre-configured scope."
-        },
-        {
           "description": "Denies the open_preferences_window command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-preferences-window",
           "markdownDescription": "Denies the open_preferences_window command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the open_remote_window command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-open-remote-window",
-          "markdownDescription": "Denies the open_remote_window command without any pre-configured scope."
         },
         {
           "description": "Denies the open_workspace_target command without any pre-configured scope.",

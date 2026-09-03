@@ -119,7 +119,7 @@ Git status is hybrid: native `vcs.status` is augmented with CodeNomad server det
 - Translate host/WSL paths only after ownership validation.
 - Strip CodeNomad cookies, browser authorization, forwarding headers, and incoming `x-opencode-*` headers; inject shared-service authentication server-side.
 - Block upstream cookies and authentication challenges and avoid logging unredacted secret-bearing request bodies.
-- Treat each unguessable preview token as a route-scoped capability. Loopback HTTP native previews use `<token>.preview.localhost` so applications retain normal root paths; HTTPS, LAN, and web clients use the equivalent capability path. SideCar/browser previews remain opaque-origin sandboxes without `allow-same-origin`, and element comments cross a source-checked message bridge.
+- Treat each unguessable preview token as a route-scoped capability. Loopback HTTP native previews use `<token>.preview.localhost` so applications retain normal root paths; HTTPS and web clients use the equivalent capability path. SideCar/browser previews remain opaque-origin sandboxes without `allow-same-origin`, and element comments cross a source-checked message bridge.
 
 ## Desktop and Restore Restructuring
 

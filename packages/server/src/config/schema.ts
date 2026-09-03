@@ -26,7 +26,6 @@ const PreferencesSchema = z
   showUsageMetrics: z.boolean().default(true),
   usageMetricsExpansion: z.enum(["expanded", "collapsed"]).default("collapsed"),
   autoCleanupBlankSessions: z.boolean().default(true),
-  listeningMode: z.enum(["local", "all"]).default("local"),
   logLevel: z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).default("DEBUG"),
 
   // OS notifications

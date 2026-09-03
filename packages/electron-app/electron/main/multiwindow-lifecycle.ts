@@ -22,6 +22,7 @@ interface Dependencies {
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
+  shouldKeepBackendAlive?(): Promise<boolean>
   rendererFlushTimeoutMs?: number
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
@@ -36,6 +37,7 @@ export class MultiwindowLifecycle {
   private release: Promise<void> | null = null
   private exitAllowed = false
   private relaunchRequested = false
+  private keepAliveWithoutWindows = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
 
   constructor(private readonly dependencies: Dependencies) {}
@@ -50,19 +52,25 @@ export class MultiwindowLifecycle {
       const otherLocal = this.dependencies.getLocalWindows().some((candidate) => candidate.id !== record.id && !candidate.window.isDestroyed())
       const otherWindow = this.dependencies.getAllWindows().some((candidate) => candidate !== record.window
         && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))
-      if (!otherLocal && !otherWindow) {
-        this.dependencies.app.quit()
-        return
-      }
       closing = true
-      void this.flushWindow(record).then(async () => {
+      void (async () => {
+        if (!otherLocal && !otherWindow) {
+          const keepAlive = await this.dependencies.shouldKeepBackendAlive?.().catch(() => false) ?? false
+          if (!keepAlive) {
+            closing = false
+            this.dependencies.app.quit()
+            return
+          }
+          this.keepAliveWithoutWindows = true
+        }
+        await this.flushWindow(record)
         if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
           closing = false
           return
         }
         approved = true
         record.window.close()
-      }).catch((error) => {
+      })().catch((error) => {
         closing = false
         console.warn("[client-state] local window close failed", error)
       })
@@ -71,12 +79,28 @@ export class MultiwindowLifecycle {
     this.attachSessionEnd(record.window)
   }
 
-  attachRemote(window: BrowserWindow): void {
+  attachSupportWindow(window: BrowserWindow): void {
+    let approved = false
+    let closing = false
     window.on("close", (event) => {
-      if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
+      if (approved || event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
         && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))) return
       event.preventDefault()
-      if (!this.shutdown) this.dependencies.app.quit()
+      if (closing || this.shutdown) return
+      closing = true
+      void (this.dependencies.shouldKeepBackendAlive?.() ?? Promise.resolve(false)).then((keepAlive) => {
+        if (!keepAlive) {
+          closing = false
+          this.dependencies.app.quit()
+          return
+        }
+        this.keepAliveWithoutWindows = true
+        approved = true
+        window.close()
+      }, () => {
+        closing = false
+        this.dependencies.app.quit()
+      })
     })
     this.attachSessionEnd(window)
   }
@@ -96,6 +120,7 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("before-quit", (event) => {
       if (this.exitAllowed) return
       event.preventDefault()
+      this.keepAliveWithoutWindows = false
       const visibleWindows = this.dependencies.getAllWindows().filter((window) => !window.isDestroyed() && window.isVisible())
       for (const window of visibleWindows) window.hide()
       void this.startShutdown().then(() => this.exit(), (error) => {
@@ -104,7 +129,9 @@ export class MultiwindowLifecycle {
         console.warn("[client-state] shutdown remains pending", error)
       })
     })
-    this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
+    this.dependencies.app.on("window-all-closed", () => {
+      if (!this.keepAliveWithoutWindows) this.dependencies.app.quit()
+    })
   }
 
   requestRelaunch(): void {

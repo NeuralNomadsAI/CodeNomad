@@ -5,7 +5,6 @@ import type { DeveloperMode } from "./developer-mode"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
-import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
 
 interface LocalSender {
@@ -17,7 +16,6 @@ interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }): Promise<void>
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
@@ -178,19 +176,6 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
   ipcMain.handle("media:requestMicrophoneAccess", async (event): Promise<{ granted: boolean }> => {
     anyTrusted(event)
     return { granted: await requestMicrophoneAccess() }
-  })
-  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) => {
-    settings(event)
-    if (!payload || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.name !== "string" || typeof payload.baseUrl !== "string"
-      || (payload.entryUrl !== undefined && typeof payload.entryUrl !== "string")
-      || (payload.proxySessionId !== undefined && typeof payload.proxySessionId !== "string")
-      || typeof payload.skipTlsVerify !== "boolean") {
-      throw new Error("Invalid remote window request")
-    }
-    requireHttpUrl(payload.baseUrl, "baseUrl")
-    if (payload.entryUrl !== undefined) requireHttpUrl(payload.entryUrl, "entryUrl")
-    await dependencies.openRemoteWindow(payload)
-    return { ok: true }
   })
   ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
     anyTrusted(event)

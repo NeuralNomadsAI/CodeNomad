@@ -73,14 +73,6 @@ declare global {
     clearClientState?: (accessToken: string) => Promise<boolean>
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
-    openRemoteWindow?: (payload: {
-      id: string
-      name: string
-      baseUrl: string
-      entryUrl?: string
-      proxySessionId?: string
-      skipTlsVerify: boolean
-    }) => Promise<{ ok: boolean }>
     openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; location?: LocationRef }) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>

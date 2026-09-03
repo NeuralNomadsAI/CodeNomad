@@ -13,7 +13,7 @@ CodeNomad transforms OpenCode from a terminal tool into a **premium desktop work
 ## Features
 
 - **🚀 Multi-Instance Workspace**
-- **🌐 Remote Access**
+- **🌐 Remote Control** through a secure outbound relay, one-time pairing links, and revocable devices
 - **🧠 Session Management**
 - **🎙️ Voice Input & Speech**
 - **🌳 Git Worktrees**
@@ -56,7 +56,7 @@ npx @neuralnomads/codenomad --password <your-password> --launch
 
 > **Self-signed certificate:** On first launch with HTTPS enabled (the default), your browser will show a "Your connection is not private" warning. This is expected — the server generates a local self-signed certificate automatically. Click **Advanced → Proceed to localhost** to continue. For local-only use without the warning, run with `--https=false --http=true`.
 
-See [Server Documentation](packages/server/README.md) for flags, TLS, auth, and remote access.
+See [Server Documentation](packages/server/README.md) for flags, TLS, authentication, and Remote Control.
 
 ### 🧪 Dev Releases
 
@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad-dev --password <your-password> --launch
 
 SideCars let you open local web tools inside CodeNomad as tabs.
 
-Previews use token-scoped URLs inside opaque-origin sandboxes. Loopback HTTP native previews receive a dedicated `.preview.localhost` origin so root routes, POSTs, and live reload behave normally; HTTPS, LAN, and web hosts use the capability path. Element comments use a source-checked message bridge.
+Previews use token-scoped URLs inside opaque-origin sandboxes. Loopback HTTP native previews receive a dedicated `.preview.localhost` origin so root routes, POSTs, and live reload behave normally; HTTPS and web clients use the capability path. Element comments use a source-checked message bridge.
 
 <details>
 <summary><strong>Configuration</strong></summary>

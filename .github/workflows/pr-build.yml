@@ -95,8 +95,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Remote Control relay dependencies
+        run: npm ci --prefix packages/cloudflare
+
       - name: Typecheck desktop clients
         run: npm run typecheck
+
+      - name: Typecheck server and Remote Control relay
+        run: >-
+          npm run typecheck --workspace @neuralnomads/codenomad &&
+          npm run typecheck --prefix packages/cloudflare
+
+      - name: Test Remote Control protocol and relay
+        run: >-
+          npm test --workspace @codenomad/remote-control-protocol &&
+          npm test --prefix packages/cloudflare
 
       - name: Test desktop packaging invariants
         run: node --test scripts/desktop-server-resources.test.cjs

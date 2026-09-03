@@ -15,15 +15,15 @@ import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-regi
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
-import { decideNavigation, requireHttpUrl } from "./navigation-security"
+import { decideNavigation } from "./navigation-security"
 import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager } from "./process-manager"
-import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
+import { navigateTrustedWindow } from "./window-navigation"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, parseLaunchIntent, prepareSecondLaunchIntent, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
@@ -111,18 +111,10 @@ function runPrimary(firstIntent: LaunchIntent) {
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
   const cli = new CliProcessManager((method) => developerMode.handleNativeRequest(method))
-  const remoteOrigins = new Map<number, Set<string>>()
-  const insecureOrigins = new Map<number, Set<string>>()
+  const windowOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
   let backendUrl: string | null = null
   let backendTargetUrl: string | null = null
-  const remoteWindows = new RemoteWindowRegistry((sessionId) => {
-    if (!backendUrl) return
-    const target = new URL(`/api/remote-proxy/sessions/${encodeURIComponent(sessionId)}`, backendUrl)
-    const request = (target.protocol === "https:" ? https : http).request(target, { method: "DELETE" }, (response) => response.resume())
-    request.on("error", (error) => console.warn("[electron] failed to clean up remote proxy session", sessionId, error))
-    request.end()
-  })
   const preferencesWindows = new PreferencesWindowRegistry()
   let pendingPreferencesRestore = clientState.preferences
   let preferencesNavigation: ClientStateNavigationController | null = null
@@ -130,7 +122,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   let preferencesTransitionId = 0
 
   const getAllowedOrigins = (window?: BrowserWindow | null): string[] => {
-    const origins = new Set(remoteOrigins.get(window?.id ?? -1) ?? [])
+    const origins = new Set(windowOrigins.get(window?.id ?? -1) ?? [])
     for (const origin of resolveConfiguredRendererOrigins(backendUrl, app.isPackaged, [process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL])) origins.add(origin)
     return [...origins]
   }
@@ -140,6 +132,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     isSupportWindow: (window) => preferencesWindows.current() === window,
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
+    shouldKeepBackendAlive: () => isRemoteControlEnabled(backendUrl, cli),
     navigationLifecycle,
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
@@ -165,7 +158,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       await (target.url ? window.loadURL(target.url) : window.loadFile(target.file!))
       if (!record.navigation.isCurrent(generation)) return
       record.backendUrl = null
-      remoteOrigins.delete(record.window.id)
+      windowOrigins.delete(record.window.id)
     }).catch((error) => {
       if (!isIgnorableNavigationError(error)) console.error("[cli] failed to load loading screen", error)
     })
@@ -176,18 +169,18 @@ function runPrimary(firstIntent: LaunchIntent) {
     try { origin = new URL(url).origin } catch { return }
     await record.navigation.navigate(async (window, generation) => {
       if (!record.navigation.isCurrent(generation)) return
-      const previous = remoteOrigins.get(record.window.id)
-      remoteOrigins.set(record.window.id, new Set([...(previous ?? []), origin]))
+      const previous = windowOrigins.get(record.window.id)
+      windowOrigins.set(record.window.id, new Set([...(previous ?? []), origin]))
       try { await window.loadURL(url) } catch (error) {
         if (record.navigation.isCurrent(generation)) {
-          if (previous) remoteOrigins.set(record.window.id, previous); else remoteOrigins.delete(record.window.id)
+          if (previous) windowOrigins.set(record.window.id, previous); else windowOrigins.delete(record.window.id)
         }
         throw error
       }
       if (!record.navigation.isCurrent(generation)) return
       record.loading = false
       record.backendUrl = url
-      remoteOrigins.set(record.window.id, new Set([origin]))
+      windowOrigins.set(record.window.id, new Set([origin]))
     }).catch((error) => {
       if (!isIgnorableNavigationError(error)) console.error("[cli] failed to load backend", error)
     })
@@ -248,8 +241,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     window.on("closed", () => {
       registry.remove(windowId)
       clearWorkspaceMenuWindow(webContentsId)
-      remoteOrigins.delete(nativeWindowId)
-      insecureOrigins.delete(webContentsId)
+      windowOrigins.delete(nativeWindowId)
     })
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     if (process.env.NODE_ENV === "development") window.webContents.openDevTools({ mode: "detach" })
@@ -283,7 +275,7 @@ function runPrimary(firstIntent: LaunchIntent) {
 
   setupCliIPC(cli, {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
-    openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
+    newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     developerMode,
   })
@@ -322,12 +314,6 @@ function runPrimary(firstIntent: LaunchIntent) {
     const intent = parseLaunchIntent([path], process.cwd())
     if (intent.folders.length) void intentQueue.enqueue(intent).catch(() => {})
   })
-  app.on("certificate-error", (event, contents, url, error, _certificate, callback) => {
-    if (contents && isRemoteCertificateAllowed(contents.id, url, insecureOrigins)) {
-      event.preventDefault(); console.warn("[cli] allowing insecure remote certificate", url, error); callback(true)
-    } else callback(false)
-  })
-
   cli.on("bootstrapToken", (token) => bootstrap.setToken(token))
   cli.on("ready", (status) => {
     if (!status.url) return
@@ -386,43 +372,6 @@ function runPrimary(firstIntent: LaunchIntent) {
     const candidates = [join(process.resourcesPath, "preload/index.js"), join(mainDirname, "../preload/index.js"), join(mainDirname, "../preload/index.cjs"), join(mainDirname, "../../electron/preload/index.cjs"), join(app.getAppPath(), "electron/preload/index.cjs")]
     return candidates.find(existsSync) ?? candidates[0]
   }
-  async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) {
-    return remoteWindows.serialize(payload.id, async () => {
-      const base = requireHttpUrl(payload.baseUrl, "baseUrl")
-      const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
-      const title = `${payload.name} - ${payload.baseUrl}`
-      const existing = remoteWindows.reuse(payload.id, payload.proxySessionId)
-      if (existing) {
-        const allowedOrigins = new Set([base.origin, target.origin])
-        existing.setTitle(title)
-        await navigateRemoteWindow(existing, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
-        return
-      }
-      const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
-      const window = new BrowserWindow({
-        width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
-        webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
-      })
-      const nativeWindowId = window.id
-      const webContentsId = window.webContents.id
-      const allowedOrigins = new Set([base.origin, target.origin])
-      remoteWindows.register(payload.id, window, payload.proxySessionId)
-      if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
-        .filter((candidate) => candidate.webContents.session === remoteSession)
-        .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
-      window.setTitle(title)
-      window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
-      setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-      lifecycle.attachRemote(window)
-      window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
-      try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
-        console.warn("[electron] failed to load remote window; showing loading screen", error)
-        const loading = loadingTarget()
-        await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
-      }
-    })
-  }
-
   async function openPreferences(request: PreferencesRequest): Promise<void> {
     if (preferencesWindows.reuse(request)) {
       await clientState.setPreferences(request)
@@ -438,7 +387,6 @@ function runPrimary(firstIntent: LaunchIntent) {
       },
     })
     const nativeWindowId = window.id
-    const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
     preferencesWindows.register(window, request)
     preferencesNavigation = new ClientStateNavigationController(window, {
@@ -448,11 +396,10 @@ function runPrimary(firstIntent: LaunchIntent) {
       lifecycle: navigationLifecycle,
     })
     setupNavigationGuards(window, preferencesNavigation, getAllowedOrigins, getLoadingUrl)
-    lifecycle.attachRemote(window)
+    lifecycle.attachSupportWindow(window)
     window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle("Preferences") })
     window.on("closed", () => {
-      remoteOrigins.delete(nativeWindowId)
-      insecureOrigins.delete(webContentsId)
+      windowOrigins.delete(nativeWindowId)
       preferencesNavigation = null
       preferencesTransition = undefined
       if (!lifecycle.isExitAllowed()) {
@@ -480,7 +427,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const target = createPreferencesUrl(url, request.section)
     await navigation.navigate(async (current, generation) => {
       if (!navigation.isCurrent(generation)) return
-      await navigateRemoteWindow(current, target, new Set([target.origin]), remoteOrigins, insecureOrigins, false)
+      await navigateTrustedWindow(current, target, new Set([target.origin]), windowOrigins)
     }).catch(async (error) => {
       if (!isIgnorableNavigationError(error)) console.warn("[electron] failed to load Preferences; showing loading screen", error)
       await loadPreferencesLoadingNow(window)
@@ -510,7 +457,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     await navigation.navigate(async (current, generation) => {
       if (!navigation.isCurrent(generation)) return
       await (target.url ? current.loadURL(target.url) : current.loadFile(target.file!))
-      if (navigation.isCurrent(generation)) remoteOrigins.delete(current.id)
+      if (navigation.isCurrent(generation)) windowOrigins.delete(current.id)
     }).catch((error) => {
       preferencesWindows.cancelNavigation(window)
       if (!isIgnorableNavigationError(error)) console.error("[electron] failed to load Preferences loading screen", error)
@@ -563,6 +510,35 @@ async function exchangeBootstrapToken(baseUrl: string, token: string, cli: CliPr
   if (first.slice(0, separator).trim() !== cli.getAuthCookieName()) return false
   await session.defaultSession.cookies.set({ url: baseUrl, name: cli.getAuthCookieName(), value: decodeURIComponent(first.slice(separator + 1).trim()), httpOnly: true, path: "/", sameSite: "lax" })
   return true
+}
+
+async function isRemoteControlEnabled(baseUrl: string | null, cli: CliProcessManager): Promise<boolean> {
+  if (!baseUrl) return false
+  const cookie = (await session.defaultSession.cookies.get({ url: baseUrl, name: cli.getAuthCookieName() }))[0]
+  if (!cookie) return false
+  const target = new URL("/api/remote-control/status", baseUrl)
+  const transport = target.protocol === "https:" ? https : http
+  return new Promise<boolean>((resolve) => {
+    const request = transport.request(target, {
+      method: "GET",
+      headers: { Cookie: `${cookie.name}=${cookie.value}` },
+      timeout: 2_000,
+    }, (response) => {
+      const chunks: Buffer[] = []
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
+      response.on("end", () => {
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { enabled?: unknown }
+          resolve(response.statusCode === 200 && payload.enabled === true)
+        } catch {
+          resolve(false)
+        }
+      })
+    })
+    request.on("timeout", () => request.destroy())
+    request.on("error", () => resolve(false))
+    request.end()
+  })
 }
 
 if (isMac) app.commandLine.appendSwitch("disable-spell-checking")

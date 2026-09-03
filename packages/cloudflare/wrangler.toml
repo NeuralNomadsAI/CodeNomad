@@ -8,6 +8,25 @@ compatibility_date = "2026-01-22"
 pattern = "ui.codenomad.neuralnomads.ai"
 custom_domain = true
 
+[[routes]]
+pattern = "remote.codenomad.neuralnomads.ai"
+custom_domain = true
+
+[[routes]]
+pattern = "*.remote.codenomad.neuralnomads.ai/*"
+zone_name = "neuralnomads.ai"
+
+[vars]
+REMOTE_BASE_HOST = "remote.codenomad.neuralnomads.ai"
+
+[[durable_objects.bindings]]
+name = "REMOTE_HOSTS"
+class_name = "RemoteControlHost"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RemoteControlHost"]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

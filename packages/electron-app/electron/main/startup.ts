@@ -131,20 +131,6 @@ export function resolveStorageScope(options: {
   }
 }
 
-export function resolveRemoteSessionPartition(profileId: string, proxySessionId?: string): string {
-  const identity = proxySessionId ? `${profileId}\0${proxySessionId}` : profileId
-  const suffix = createHash("sha256").update(identity).digest("hex").slice(0, 24)
-  return `${proxySessionId ? "" : "persist:"}codenomad-remote-${suffix}`
-}
-
-export function isRemoteCertificateAllowed(
-  webContentsId: number,
-  url: string,
-  insecureOrigins: ReadonlyMap<number, ReadonlySet<string>>,
-): boolean {
-  try { return insecureOrigins.get(webContentsId)?.has(new URL(url).origin) ?? false } catch { return false }
-}
-
 export async function allocateLocalWindowIdentity(
   persistedIds: readonly string[],
   isRegistered: (id: string) => boolean,

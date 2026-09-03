@@ -10,7 +10,7 @@ import { loadingScreenMessages } from "./loadingScreen"
 import { logMessages } from "./logs"
 import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
-import { remoteAccessMessages } from "./remoteAccess"
+import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
 import { timeMessages } from "./time"
@@ -28,7 +28,7 @@ export const trMessages = mergeMessageParts(
   logMessages,
   markdownMessages,
   messagingMessages,
-  remoteAccessMessages,
+  remoteControlMessages,
   sessionMessages,
   settingsMessages,
   timeMessages,

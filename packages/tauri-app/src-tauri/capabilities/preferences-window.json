@@ -29,8 +29,6 @@
     "notification:allow-notify",
     "notification:allow-show",
     "allow-cli-get-status",
-    "allow-cli-restart",
-    "allow-needs-local-certificate-install",
-    "allow-open-remote-window"
+    "allow-cli-restart"
   ]
 }

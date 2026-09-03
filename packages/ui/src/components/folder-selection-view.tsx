@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Component, createMemo, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil } from "lucide-solid"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Loader2, GitBranch, Pencil } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import Kbd from "./kbd"
@@ -16,18 +16,12 @@ import { showAlertDialog } from "../stores/alerts"
 import { openSettings, settingsOpen } from "../stores/settings-screen"
 import { openExternalUrl } from "../lib/external-url"
 import { serverApi } from "../lib/api-client"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getExistingInstanceForFolder, updateProjectNameForFolder } from "../stores/instances"
 import { LocaleSelector } from "./locale-selector"
-import { RemoteServerDialog } from "./remote-server-dialog"
-import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 
 const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
-
-type HomeTab = "local" | "servers"
-
 
 interface FolderSelectionViewProps {
   onSelectFolder: (folder: string) => void
@@ -43,7 +37,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     removeRecentFolder,
     renameRecentFolderProject,
   } = useConfig()
-  const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const { t } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
@@ -59,19 +52,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
   const [cloneDialogError, setCloneDialogError] = createSignal<string | null>(null)
   const [isCloningRepository, setIsCloningRepository] = createSignal(false)
-  const [activeTab, setActiveTab] = createSignal<HomeTab>("local")
-  const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
   let homeRootRef: HTMLDivElement | undefined
   let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
 
   const folders = () => recentFolders()
-  const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
-  const canUseRemoteServerWindows = () => canOpenRemoteWindows()
 
   function getActiveListLength() {
-    return activeTab() === "local" ? folders().length : serverList().length
+    return folders().length
   }
 
   function scrollToIndex(index: number) {
@@ -176,29 +165,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (isLoading()) return
     const index = selectedIndex()
 
-    if (activeTab() === "local") {
-      const folder = folders()[index]
-      if (folder) {
-        handleFolderSelect(folder.path)
-      }
-      return
-    }
-
-    const server = serverList()[index]
-    if (server) {
-      void connectSavedServer(server.id)
-    }
+    const folder = folders()[index]
+    if (folder) handleFolderSelect(folder.path)
   }
-
-  createEffect(() => {
-    activeTab()
-    if (!canUseRemoteServerWindows() && activeTab() !== "local") {
-      setActiveTab("local")
-      return
-    }
-    setSelectedIndex(0)
-    setFocusMode("recent")
-  })
 
   createEffect(() => {
     const length = getActiveListLength()
@@ -340,11 +309,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     } finally {
       setIsCloningRepository(false)
     }
-  }
-
-  function openServerDialog() {
-    if (!canUseRemoteServerWindows()) return
-    setIsServerDialogOpen(true)
   }
 
   async function handleBrowse() {
@@ -525,17 +489,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             >
               <Settings class="w-4 h-4" />
             </button>
-            <Show when={canUseRemoteServerWindows()}>
-              <button
-                type="button"
-                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                onClick={() => openSettings("remote")}
-                aria-label={t("instanceTabs.remote.ariaLabel")}
-                title={t("instanceTabs.remote.title")}
-              >
-                <MonitorUp class="w-4 h-4" />
-              </button>
-            </Show>
+            <button
+              type="button"
+              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+              onClick={() => openSettings("remote")}
+              aria-label={t("instanceTabs.remote.ariaLabel")}
+              title={t("instanceTabs.remote.title")}
+            >
+              <MonitorUp class="w-4 h-4" />
+            </button>
             <Show when={props.onClose}>
               <button
                 type="button"
@@ -607,154 +569,20 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               {/* Right column: recent folders */}
               <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
                 <div class="folder-home-list-panel panel flex flex-col flex-1">
-                  <div class="panel-header !gap-0 !p-0">
-                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
-                      <button
-                        type="button"
-                        class="border-r border-base px-4 py-3 text-left transition-colors"
-                        classList={{
-                          "text-primary": activeTab() === "local",
-                          "text-muted hover:text-secondary": activeTab() !== "local",
-                        }}
-                        style={{
-                          "background-color": "var(--surface-secondary)",
-                        }}
-                        onClick={() => setActiveTab("local")}
-                      >
-                        <div
-                          class="panel-title text-base"
-                          style={{
-                            color: activeTab() === "local" ? "var(--text-primary)" : "var(--text-secondary)",
-                          }}
-                        >
-                          {t("folderSelection.recent.title")}
-                        </div>
-                        <p
-                          class="panel-subtitle mt-1"
-                          style={{
-                            color: activeTab() === "local" ? "var(--text-muted)" : "var(--text-secondary)",
-                          }}
-                        >
-                          {t(
-                            folders().length === 1
-                              ? "folderSelection.recent.subtitle.one"
-                              : "folderSelection.recent.subtitle.other",
-                            { count: folders().length },
-                          )}
-                        </p>
-                      </button>
-                      <Show when={canUseRemoteServerWindows()}>
-                        <button
-                          type="button"
-                          class="px-4 py-3 text-left transition-colors"
-                          classList={{
-                            "text-primary": activeTab() === "servers",
-                            "text-muted hover:text-secondary": activeTab() !== "servers",
-                          }}
-                          style={{
-                            "background-color": "var(--surface-secondary)",
-                          }}
-                          onClick={() => setActiveTab("servers")}
-                        >
-                          <div
-                            class="panel-title text-base"
-                            style={{
-                              color: activeTab() === "servers" ? "var(--text-primary)" : "var(--text-secondary)",
-                            }}
-                          >
-                            {t("folderSelection.tabs.servers")}
-                          </div>
-                          <p
-                            class="panel-subtitle mt-1"
-                            style={{
-                              color: activeTab() === "servers" ? "var(--text-muted)" : "var(--text-secondary)",
-                            }}
-                          >
-                            {t("folderSelection.servers.count", { count: remoteServers().length })}
-                          </p>
-                        </button>
-                      </Show>
+                  <div class="panel-header">
+                    <div>
+                      <div class="panel-title text-base">{t("folderSelection.recent.title")}</div>
+                      <p class="panel-subtitle mt-1">
+                        {t(
+                          folders().length === 1
+                            ? "folderSelection.recent.subtitle.one"
+                            : "folderSelection.recent.subtitle.other",
+                          { count: folders().length },
+                        )}
+                      </p>
                     </div>
                   </div>
 
-                  <Show
-                    when={activeTab() === "local"}
-                    fallback={
-                      <Show
-                        when={canUseRemoteServerWindows() && remoteServers().length > 0}
-                        fallback={
-                          <Show when={canUseRemoteServerWindows()}>
-                            <div class="panel-empty-state flex-1">
-                              <div class="panel-empty-state-icon">
-                                <Globe class="w-12 h-12 mx-auto" />
-                              </div>
-                              <p class="panel-empty-state-title">{t("folderSelection.servers.empty.title")}</p>
-                              <p class="panel-empty-state-description">{t("folderSelection.servers.empty.description")}</p>
-                              <button
-                                type="button"
-                                class="button-primary mt-4 w-auto self-center inline-flex items-center justify-center gap-2 px-4"
-                                onClick={openServerDialog}
-                              >
-                                <Globe class="w-4 h-4" />
-                                <span>{t("folderSelection.actions.connectButton")}</span>
-                              </button>
-                            </div>
-                          </Show>
-                        }
-                      >
-                        <div
-                          class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto"
-                          ref={(el) => (recentListRef = el)}
-                        >
-                          <For each={remoteServers()}>
-                            {(server, index) => (
-                              <div
-                                class="panel-list-item"
-                                classList={{
-                                  "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
-                                }}
-                              >
-                                <div class="flex items-center gap-2 w-full px-1">
-                                  <button
-                                    data-list-index={index()}
-                                    class="panel-list-item-content flex-1"
-                                    onClick={() => void connectSavedServer(server.id)}
-                                    onMouseEnter={() => {
-                                      setFocusMode("recent")
-                                      setSelectedIndex(index())
-                                    }}
-                                  >
-                                    <div class="flex items-center justify-between gap-3 w-full">
-                                      <div class="flex-1 min-w-0 text-left">
-                                        <div class="flex items-center gap-2 mb-1">
-                                          <Globe class="w-4 h-4 flex-shrink-0 icon-muted" />
-                                          <span class="text-sm font-medium truncate text-primary">{server.name}</span>
-                                        </div>
-                                        <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
-                                          <span class="font-mono truncate-start flex-1 min-w-0">{server.baseUrl}</span>
-                                        </div>
-                                      </div>
-                                      <Show when={connectingServerId() === server.id} fallback={<Show when={focusMode() === "recent" && selectedIndex() === index()}><kbd class="kbd">↵</kbd></Show>}>
-                                        <Loader2 class="w-4 h-4 animate-spin icon-muted" />
-                                      </Show>
-                                    </div>
-                                  </button>
-                                  <button
-                                    onClick={() => removeRemoteServerProfile(server.id)}
-                                    class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
-                                    title={`${t("folderSelection.servers.remove")}: ${server.name}`}
-                                    aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
-                                  >
-                                    <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    }
-                  >
                     <Show
                       when={folders().length > 0}
                       fallback={
@@ -897,7 +725,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                         </For>
                       </div>
                     </Show>
-                  </Show>
                 </div>
 
               </div>
@@ -954,17 +781,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button>
 
-                  <Show when={canUseRemoteServerWindows()}>
-                    <button
-                      onClick={openServerDialog}
-                      class="button-primary w-full flex items-center justify-center text-sm"
-                    >
-                      <div class="flex items-center gap-2">
-                        <Globe class="w-4 h-4" />
-                        <span>{t("folderSelection.actions.connectButton")}</span>
-                      </div>
-                    </button>
-                  </Show>
                 </div>
 
                 {/* OpenCode settings section */}
@@ -1151,7 +967,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         </Dialog.Portal>
       </Dialog>
 
-      <RemoteServerDialog open={isServerDialogOpen()} onOpenChange={setIsServerDialogOpen} onSubmit={saveServer} />
     </>
   )
 }

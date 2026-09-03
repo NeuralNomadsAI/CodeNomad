@@ -26,6 +26,7 @@ test("integrity-pins the full server production closure in the root lock", () =>
   assert.equal(lock.packages["node_modules/undici"].version, "6.22.0")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
+  assert.ok(closure.has("packages/remote-control-protocol"))
 })
 
 test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {

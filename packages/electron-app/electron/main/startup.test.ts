@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, resolveUpdateChannel, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, parseLaunchIntent, prepareSecondLaunchIntent, resolveStorageScope, resolveUpdateChannel, startPrimaryInstance } from "./startup"
 
 test("update channel honors the environment, forces unpackaged dev, and only infers packaged versions", () => {
   assert.equal(resolveUpdateChannel("Beta", "1.0.0-dev.2", false), "beta")
@@ -27,17 +27,6 @@ test("stable default storage preserves paths while dev and alternate configs are
   assert.match(alternate.userDataPath, /scopes[\\/]stable-[0-9a-f]{16}$/)
   assert.equal(alternate.clientStateElectionDirectory, join(alternate.userDataPath, "client-state", "election"))
   assert.equal(resolveStorageScope({ appVersion: "1.0.0", cliConfig: "other/config.yaml", cwd: base, baseUserDataPath: base, packaged: true }).userDataPath, alternate.userDataPath)
-})
-
-test("remote profiles use isolated persistent partitions and TLS exceptions stay with their webContents", () => {
-  const first = resolveRemoteSessionPartition("profile-a")
-  assert.match(first, /^persist:codenomad-remote-[0-9a-f]{24}$/)
-  assert.equal(resolveRemoteSessionPartition("profile-a"), first)
-  assert.notEqual(resolveRemoteSessionPartition("profile-b"), first)
-  assert.match(resolveRemoteSessionPartition("profile-a", "proxy-1"), /^codenomad-remote-/)
-  const allowlists = new Map([[7, new Set(["https://unsafe.example"])], [8, new Set(["https://other.example"])]] as const)
-  assert.equal(isRemoteCertificateAllowed(7, "https://unsafe.example/path", allowlists), true)
-  assert.equal(isRemoteCertificateAllowed(8, "https://unsafe.example/path", allowlists), false)
 })
 
 test("new local windows reuse retained records and otherwise fall back to ephemeral identities", async () => {

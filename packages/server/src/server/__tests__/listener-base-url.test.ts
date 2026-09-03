@@ -8,27 +8,24 @@ describe("resolvePluginBaseUrl", () => {
     assert.equal(
       resolvePluginBaseUrl({
         httpsStart: { protocol: "https", bindHost: "127.0.0.1", port: 9898 },
-        remoteUrl: "https://localhost:9898",
       }),
       "https://127.0.0.1:9898",
     )
   })
 
-  it("uses the concrete LAN listener when no loopback listener exists", () => {
+  it("uses the concrete HTTPS listener when no HTTP listener exists", () => {
     assert.equal(
       resolvePluginBaseUrl({
         httpsStart: { protocol: "https", bindHost: "192.168.1.25", port: 9898 },
-        remoteUrl: "https://192.168.1.25:9898",
       }),
       "https://192.168.1.25:9898",
     )
   })
 
-  it("prefers loopback for wildcard listeners because 0.0.0.0 accepts loopback", () => {
+  it("resolves wildcard listeners to their loopback URL", () => {
     assert.equal(
       resolvePluginBaseUrl({
         httpsStart: { protocol: "https", bindHost: "0.0.0.0", port: 9898 },
-        remoteUrl: "https://192.168.1.25:9898",
       }),
       "https://127.0.0.1:9898",
     )
@@ -39,7 +36,6 @@ describe("resolvePluginBaseUrl", () => {
       resolvePluginBaseUrl({
         httpStart: { protocol: "http", bindHost: "127.0.0.1", port: 9899 },
         httpsStart: { protocol: "https", bindHost: "192.168.1.25", port: 9898 },
-        remoteUrl: "https://192.168.1.25:9898",
       }),
       "http://127.0.0.1:9899",
     )

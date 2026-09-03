@@ -17,10 +17,10 @@ import type {
   PreviewSession,
   ProviderUsageResponse,
   ServerMeta,
-  RemoteProxySessionCreateRequest,
-  RemoteProxySessionCreateResponse,
-  RemoteServerProbeRequest,
-  RemoteServerProbeResponse,
+  RemoteControlDevice,
+  RemoteControlPairing,
+  RemoteControlStartResponse,
+  RemoteControlStatus,
   YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
@@ -262,20 +262,23 @@ export const serverApi = {
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
   },
-  probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
-    return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
+  fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control/status")
   },
-  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
-    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
+  startRemoteControl(): Promise<RemoteControlStartResponse> {
+    return request<RemoteControlStartResponse>("/api/remote-control/start", { method: "POST" })
   },
-  deleteRemoteProxySession(id: string): Promise<void> {
-    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+  stopRemoteControl(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
+  },
+  createRemoteControlPairing(): Promise<RemoteControlPairing> {
+    return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
+  },
+  fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
+    return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
+  },
+  revokeRemoteControlDevice(id: string): Promise<void> {
+    return request(`/api/remote-control/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")

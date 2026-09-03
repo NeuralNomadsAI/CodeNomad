@@ -1,7 +1,6 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -51,7 +50,6 @@ export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
 export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
 export type ToolInputsVisibilityPreference = VisibilityPreference
-export type ListeningMode = "local" | "all"
 export type ServerLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR"
 export type SpeechProviderPreference = "openai-compatible"
 export type SpeechPlaybackMode = "streaming" | "buffered"
@@ -156,7 +154,6 @@ interface UiConfigBucket {
 }
 
 interface ServerConfigBucket {
-  listeningMode?: ListeningMode
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
   secureEnvVars?: string[]
@@ -172,7 +169,6 @@ interface UiStateBucket {
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
-  remoteServers?: RemoteServerProfile[]
   models?: {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
@@ -183,7 +179,6 @@ interface UiStateBucket {
 interface NormalizedUiState {
   recentFolders: RecentFolder[]
   opencodeBinaries: OpenCodeBinary[]
-  remoteServers: RemoteServerProfile[]
   models: {
     recents: ModelPreference[]
     favorites: ModelPreference[]
@@ -440,29 +435,6 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const label = typeof (b as any).label === "string" ? (b as any).label : undefined
       return { path: p, version, label, lastUsed }
     }),
-    remoteServers: cloneArray<RemoteServerProfile>(source.remoteServers, (server) => {
-      if (!server || typeof server !== "object") return null
-      const id = typeof (server as any).id === "string" ? (server as any).id.trim() : ""
-      const name = typeof (server as any).name === "string" ? (server as any).name.trim() : ""
-      const baseUrl = typeof (server as any).baseUrl === "string" ? (server as any).baseUrl.trim() : ""
-      if (!id || !name || !baseUrl) return null
-      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
-      const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
-      const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
-      return {
-        id,
-        name,
-        baseUrl,
-        skipTlsVerify: Boolean((server as any).skipTlsVerify),
-        createdAt,
-        updatedAt,
-        lastConnectedAt,
-      }
-    }).sort((a, b) => {
-      const left = a.lastConnectedAt ?? a.updatedAt
-      const right = b.lastConnectedAt ?? b.updatedAt
-      return right.localeCompare(left)
-    }),
     models: {
       recents: cloneArray<ModelPreference>((source.models as any)?.recents, (m) => {
         if (!m || typeof m !== "object") return null
@@ -485,9 +457,8 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
-  const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
     source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
       ? source.logLevel
@@ -498,7 +469,7 @@ export function normalizeServerConfig(
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+  return { logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
 }
 
 function normalizeSecureEnvVars(input?: unknown): string[] {
@@ -539,43 +510,6 @@ export function buildBinaryList(binaryPath: string, version: string | undefined,
   return [nextEntry, ...source].slice(0, 10)
 }
 
-interface RemoteServerProfileInput {
-  id?: string
-  name: string
-  baseUrl: string
-  skipTlsVerify: boolean
-}
-
-function buildRemoteServerProfile(input: RemoteServerProfileInput, source: RemoteServerProfile[]): RemoteServerProfile {
-  const existing = input.id ? source.find((entry) => entry.id === input.id) : undefined
-  const now = new Date().toISOString()
-  return {
-    id: existing?.id ?? input.id ?? createRandomId(),
-    name: input.name.trim(),
-    baseUrl: input.baseUrl.trim(),
-    skipTlsVerify: Boolean(input.skipTlsVerify),
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-    lastConnectedAt: existing?.lastConnectedAt,
-  }
-}
-
-function buildRemoteServerList(profile: RemoteServerProfile, source: RemoteServerProfile[]): RemoteServerProfile[] {
-  const remaining = source.filter((entry) => entry.id !== profile.id)
-  return [profile, ...remaining].sort((a, b) => {
-    const left = a.lastConnectedAt ?? a.updatedAt
-    const right = b.lastConnectedAt ?? b.updatedAt
-    return right.localeCompare(left)
-  })
-}
-
-function createRandomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID()
-  }
-  return `remote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
-
 const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
@@ -606,7 +540,6 @@ const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
 const preferences = uiSettings
 const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
-const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
 let loadPromise: Promise<void> | null = null
 
@@ -787,11 +720,6 @@ function saveColorSchemePreset(name: string, appearance: "light" | "dark", color
   return write.then(() => id)
 }
 
- async function setListeningMode(mode: ListeningMode): Promise<void> {
-   if (serverSettings().listeningMode === mode) return
-   await patchConfigOwner("server", { listeningMode: mode })
- }
-
 function updateEnvironmentVariables(envVars: Record<string, string>): void {
   void patchConfigOwner("server", { environmentVariables: envVars }).catch((error) =>
     log.error("Failed to update environment variables", error),
@@ -906,29 +834,6 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
     log.error("Failed to rename recent folder", error)
     throw error
   }
-}
-
-async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
-  const profile = buildRemoteServerProfile(input, remoteServers())
-  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
-  return profile
-}
-
-async function markRemoteServerConnected(id: string): Promise<void> {
-  const current = remoteServers().find((entry) => entry.id === id)
-  if (!current) return
-  const now = new Date().toISOString()
-  const updated: RemoteServerProfile = {
-    ...current,
-    updatedAt: now,
-    lastConnectedAt: now,
-  }
-  await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
-}
-
-function removeRemoteServerProfile(id: string): void {
-  const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
@@ -1111,7 +1016,6 @@ interface ConfigContextValue {
 
   // server-owned stable config
   serverSettings: typeof serverSettings
-  setListeningMode: typeof setListeningMode
   updateEnvironmentVariables: typeof updateEnvironmentVariables
   addEnvironmentVariable: typeof addEnvironmentVariable
   removeEnvironmentVariable: typeof removeEnvironmentVariable
@@ -1124,16 +1028,12 @@ interface ConfigContextValue {
   // ui-owned state
   recentFolders: typeof recentFolders
   opencodeBinaries: typeof opencodeBinaries
-  remoteServers: typeof remoteServers
   uiState: typeof uiState
   addRecentFolder: typeof addRecentFolder
   removeRecentFolder: typeof removeRecentFolder
   renameRecentFolderProject: typeof renameRecentFolderProject
   addOpenCodeBinary: typeof addOpenCodeBinary
   removeOpenCodeBinary: typeof removeOpenCodeBinary
-  saveRemoteServerProfile: typeof saveRemoteServerProfile
-  markRemoteServerConnected: typeof markRemoteServerConnected
-  removeRemoteServerProfile: typeof removeRemoteServerProfile
   recordWorkspaceLaunch: typeof recordWorkspaceLaunch
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
@@ -1180,7 +1080,6 @@ const configContextValue: ConfigContextValue = {
   selectColorSchemePreset,
   saveColorSchemePreset,
   serverSettings,
-  setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,
@@ -1191,16 +1090,12 @@ const configContextValue: ConfigContextValue = {
   updateSpeechSettings,
   recentFolders,
   opencodeBinaries,
-  remoteServers,
   uiState,
   addRecentFolder,
   removeRecentFolder,
   renameRecentFolderProject,
   addOpenCodeBinary,
   removeOpenCodeBinary,
-  saveRemoteServerProfile,
-  markRemoteServerConnected,
-  removeRemoteServerProfile,
   recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,
@@ -1282,7 +1177,6 @@ export {
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,
   providerModelVisibilitySaveFailed,
-  setListeningMode,
   updateEnvironmentVariables,
   addEnvironmentVariable,
   removeEnvironmentVariable,

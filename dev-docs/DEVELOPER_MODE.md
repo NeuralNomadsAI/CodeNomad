@@ -18,7 +18,7 @@ When active, Electron:
 
 When active on Windows, Tauri:
 
-- Uses a persistent local `developer-mode` WebView2 directory below the existing channel/config profile without overriding isolated remote-window profiles.
+- Uses a persistent local `developer-mode` WebView2 directory below the existing channel/config profile.
 - Gives only local WebViews `--remote-debugging-port=0`, then reads and verifies their `EBWebView/DevToolsActivePort` endpoint.
 - Enables Rust backtraces and Node source-map stack traces for the managed backend.
 
@@ -41,7 +41,7 @@ Windows registrations are also discoverable by an OpenCode plugin running in WSL
 ## Target And Trust Boundaries
 
 - The HTTP bridge and CDP endpoint use IPv4 loopback only. The bridge requires its random token. Raw CDP has no authentication, can execute code in authenticated renderer pages, and therefore trusts other processes running as the local user; enable this opt-in mode only on a trusted machine.
-- The native host selects the focused local window, or the most-recent local window when CodeNomad is not focused. A focused remote window is never selected.
+- The native host selects the focused local window, or the most-recent local window when CodeNomad is not focused. Support windows such as Preferences are never selected.
 - CDP evaluates a bounded set of page targets and requires exactly the native window UUID, visible `data-instance-id`, and active `data-session-id`.
 - The bridge resolves the OpenCode session through the shared service and verifies that the visible `data-instance-id` owns that session location.
 - Operations for one native run are serialized. Click and type revalidate context immediately before input; inspection and screenshot revalidate after capture. Accessibility refs are invalidated by navigation, target replacement, context change, and restart.

@@ -127,13 +127,11 @@ export const isLocalTauriHost = (
 export const isDesktopHost = () => isElectronHost() || isTauriHost()
 export const isMobilePlatform = () => detectPlatform() === "mobile"
 export const isLocalWindow = () => detectWindowContext() === "local"
-export const isRemoteWindow = () => detectWindowContext() === "remote"
 export const isPreferencesWindow = () => detectWindowContext() === "preferences"
 export const usesClientState = (
   environment: Pick<RuntimeEnvironment, "windowContext"> = detectRuntimeEnvironment(),
 ) => environment.windowContext !== "preferences"
 export const isNativeApplicationWindow = () => isLocalWindow() || isPreferencesWindow()
 export const canUseNativeDialogs = () => isDesktopHost() && isNativeApplicationWindow()
-export const canOpenRemoteWindows = () => isDesktopHost() && isNativeApplicationWindow()
 export const canRestartCli = () => isDesktopHost() && isNativeApplicationWindow()
 export const canUseDesktopFolderDrop = () => isDesktopHost() && isLocalWindow()

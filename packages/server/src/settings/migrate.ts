@@ -103,10 +103,6 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
     if (isPlainObject(envVars)) {
       serverConfig.environmentVariables = { ...envVars }
     }
-    const listeningMode = preferences.listeningMode
-    if (typeof listeningMode === "string") {
-      serverConfig.listeningMode = listeningMode
-    }
     const logLevel = preferences.logLevel
     if (typeof logLevel === "string") {
       serverConfig.logLevel = logLevel
@@ -138,7 +134,6 @@ function mapLegacyToOwnerDocs(legacyConfig: unknown, legacyState: unknown): { co
     // Remaining preferences are treated as stable UI settings.
     const moved = new Set([
       "environmentVariables",
-      "listeningMode",
       "logLevel",
       "lastUsedBinary",
       "modelRecents",

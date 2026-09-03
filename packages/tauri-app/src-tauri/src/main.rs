@@ -7,8 +7,6 @@ mod client_state;
 mod developer_mode;
 mod identity;
 mod launch;
-#[cfg(target_os = "linux")]
-mod linux_tls;
 mod local_windows;
 mod managed_node;
 mod native_request;
@@ -22,22 +20,19 @@ use keepawake::KeepAwake;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 #[cfg(any(windows, test))]
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::async_runtime::Mutex as AsyncMutex;
 use tauri::menu::{
     AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
 use tauri::webview::{PageLoadEvent, Webview};
-use tauri::{
-    AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
-};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
@@ -54,86 +49,17 @@ use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 
 const ZOOM_STEP: f64 = 0.1;
-const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
-const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
-    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
 pub struct AppState {
     pub manager: CliProcessManager,
     pub(crate) developer_mode: developer_mode::DeveloperMode,
     pub wake_lock: Mutex<WakeLockState>,
-    remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
-    remote_navigation_generation: AtomicU64,
-    remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
-    remote_window_operations: RemoteWindowOperationLocks,
-    remote_proxy_cleanup_claims: Mutex<HashSet<String>>,
-    pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
-    pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RemoteWindowMetadata {
-    origin: String,
-    title: String,
-    allow_linux_tls_certificate: bool,
-    generation: u64,
-    window_generation: u64,
-}
-
-struct StagedRemoteWindowMetadata {
-    generation: u64,
-    window_generation: u64,
-    previous: Option<RemoteWindowMetadata>,
-}
-
-#[derive(Default)]
-struct RemoteWindowOperationLocks {
-    values: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
-}
-
-impl RemoteWindowOperationLocks {
-    fn for_label(&self, label: &str) -> Result<Arc<AsyncMutex<()>>, String> {
-        Ok(self
-            .values
-            .lock()
-            .map_err(|err| err.to_string())?
-            .entry(label.to_string())
-            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-            .clone())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum RemoteProfileIdentity {
-    Direct,
-    Proxy(String),
-}
-
-impl RemoteProfileIdentity {
-    fn new(proxy_session_id: Option<&str>) -> Self {
-        proxy_session_id
-            .map(|value| Self::Proxy(value.to_string()))
-            .unwrap_or(Self::Direct)
-    }
-
-    fn proxy_session_id(&self) -> Option<&str> {
-        match self {
-            Self::Direct => None,
-            Self::Proxy(value) => Some(value),
-        }
-    }
-}
-
-fn should_recreate_remote_window(
-    existing: Option<&RemoteProfileIdentity>,
-    requested: &RemoteProfileIdentity,
-) -> bool {
-    existing != Some(requested)
+    keep_alive_for_remote_control: AtomicBool,
 }
 
 #[derive(Default)]
@@ -275,51 +201,6 @@ fn set_workspace_menu_enabled(
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteWindowPayload {
-    id: String,
-    name: String,
-    base_url: String,
-    entry_url: Option<String>,
-    proxy_session_id: Option<String>,
-    #[allow(dead_code)]
-    skip_tls_verify: bool,
-}
-
-fn require_http_url(value: &str, name: &str) -> Result<Url, String> {
-    let url = Url::parse(value).map_err(|error| error.to_string())?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(format!("{name} must use HTTP or HTTPS"));
-    }
-    Ok(url)
-}
-
-fn claim_unowned_remote_proxy_session(
-    profiles: &HashMap<String, RemoteProfileIdentity>,
-    claims: &mut HashSet<String>,
-    session_id: &str,
-) -> bool {
-    if profiles
-        .values()
-        .any(|profile| profile.proxy_session_id() == Some(session_id))
-    {
-        return false;
-    }
-    claims.insert(session_id.to_string())
-}
-
-fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool {
-    let state = app.state::<AppState>();
-    let Ok(profiles) = state.remote_profiles.lock() else {
-        return false;
-    };
-    let Ok(mut claims) = state.remote_proxy_cleanup_claims.lock() else {
-        return false;
-    };
-    claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
-}
-
 #[tauri::command]
 fn developer_mode_get(
     window: tauri::WebviewWindow,
@@ -408,101 +289,6 @@ async fn popup_titlebar_menu(
     window
         .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
         .map_err(|error| error.to_string())
-}
-
-fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
-    if let Ok(mut claims) = app.state::<AppState>().remote_proxy_cleanup_claims.lock() {
-        claims.remove(session_id);
-    }
-}
-
-async fn cleanup_remote_proxy_session_if_unowned(app: &AppHandle, session_id: &str) {
-    if !claim_remote_proxy_session_cleanup(app, session_id) {
-        return;
-    }
-    if let Err(err) = cleanup_remote_proxy_session(app, session_id).await {
-        release_remote_proxy_session_cleanup(app, session_id);
-        eprintln!(
-            "[tauri] failed to clean up remote proxy session {}: {}",
-            session_id, err
-        );
-    }
-}
-
-fn schedule_remote_proxy_session_cleanup(app: AppHandle, label: String, session_id: String) {
-    tauri::async_runtime::spawn(async move {
-        let Ok(operation) = app
-            .state::<AppState>()
-            .remote_window_operations
-            .for_label(&label)
-        else {
-            return;
-        };
-        let _guard = operation.lock().await;
-        cleanup_remote_proxy_session_if_unowned(&app, &session_id).await;
-    });
-}
-
-fn schedule_remote_window_destroyed_cleanup(
-    app: AppHandle,
-    label: String,
-    profile: RemoteProfileIdentity,
-    window_generation: u64,
-) {
-    tauri::async_runtime::spawn(async move {
-        let Ok(operation) = app
-            .state::<AppState>()
-            .remote_window_operations
-            .for_label(&label)
-        else {
-            return;
-        };
-        let _guard = operation.lock().await;
-        clear_remote_window_metadata(&app, &label, &profile, window_generation);
-        if let Some(session_id) = profile.proxy_session_id() {
-            cleanup_remote_proxy_session_if_unowned(&app, session_id).await;
-        }
-    });
-}
-
-async fn cleanup_remote_proxy_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
-    let status = app.state::<AppState>().manager.status();
-    let Some(base_url) = status.url else {
-        return Err("backend is unavailable".to_string());
-    };
-
-    let mut cleanup_url = Url::parse(&base_url).map_err(|err| err.to_string())?;
-    cleanup_url.set_path(&format!("/api/remote-proxy/sessions/{session_id}"));
-    cleanup_url.set_query(None);
-    cleanup_url.set_fragment(None);
-
-    let client = if cleanup_url.scheme() == "https" {
-        let local_cert = cert_manager::ensure_local_cert()?;
-        let ca_cert = reqwest::Certificate::from_der(&local_cert.ca_cert_der)
-            .map_err(|err| err.to_string())?;
-        reqwest::Client::builder()
-            .add_root_certificate(ca_cert)
-            .timeout(REMOTE_PROXY_CLEANUP_TIMEOUT)
-            .build()
-            .map_err(|err| err.to_string())?
-    } else {
-        reqwest::Client::builder()
-            .timeout(REMOTE_PROXY_CLEANUP_TIMEOUT)
-            .build()
-            .map_err(|err| err.to_string())?
-    };
-
-    let response = client
-        .delete(cleanup_url.as_str())
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(());
-    }
-
-    Err(format!("unexpected status {}", response.status()))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -602,33 +388,80 @@ fn should_allow_window_origin<R: Runtime>(
     url: &Url,
 ) -> bool {
     let state = app_handle.state::<AppState>();
-    if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
+    if identity::local_window_id(window_label).is_err() && window_label != preferences_window::LABEL
     {
-        let status = state.manager.status();
-        return is_allowed_local_origin(url, status.url.as_deref());
-    }
-    let Ok(allowed) = state.remote_navigation.lock() else {
         return false;
-    };
-    should_allow_registered_origin(
-        allowed
-            .get(window_label)
-            .map(|metadata| metadata.origin.as_str()),
-        url,
-    )
-}
-
-fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) -> bool {
-    if let Some(origin) = registered_origin {
-        return (matches!(url.scheme(), "http" | "https")
-            && origin == url.origin().ascii_serialization())
-            || url.as_str() == "about:blank";
     }
-    should_allow_internal(url)
+    let status = state.manager.status();
+    is_allowed_local_origin(url, status.url.as_deref())
 }
 
 fn should_open_external_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
+}
+
+async fn remote_control_enabled(app: &AppHandle) -> bool {
+    let Some(access) = app.state::<AppState>().manager.local_cli_access() else {
+        return false;
+    };
+    let Ok(mut url) = Url::parse(&access.base_url) else {
+        return false;
+    };
+    url.set_path("/api/remote-control/status");
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(2));
+    if url.scheme() == "https" {
+        let Ok(local_cert) = cert_manager::ensure_local_cert() else {
+            return false;
+        };
+        let Ok(ca_cert) = reqwest::Certificate::from_der(&local_cert.ca_cert_der) else {
+            return false;
+        };
+        builder = builder.add_root_certificate(ca_cert);
+    }
+    let Ok(client) = builder.build() else {
+        return false;
+    };
+    let Ok(response) = client
+        .get(url)
+        .header(
+            reqwest::header::COOKIE,
+            format!("{}={}", access.cookie_name, access.session_cookie),
+        )
+        .send()
+        .await
+    else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|value| value.get("enabled").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn request_final_local_window_close(app: AppHandle, label: String) {
+    tauri::async_runtime::spawn(async move {
+        let keep_alive = remote_control_enabled(&app).await;
+        app.state::<AppState>()
+            .keep_alive_for_remote_control
+            .store(keep_alive, Ordering::SeqCst);
+        if keep_alive {
+            shutdown::request_local_window_close(app, label);
+        } else {
+            shutdown::request(app);
+        }
+    });
+}
+
+fn should_shutdown_after_last_window(keep_alive_for_remote_control: bool) -> bool {
+    !keep_alive_for_remote_control
 }
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
@@ -647,498 +480,6 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         }
     }
     false
-}
-
-fn apply_remote_window_title(app_handle: &AppHandle, window_label: &str) {
-    let Some(title) = app_handle
-        .state::<AppState>()
-        .remote_navigation
-        .lock()
-        .ok()
-        .and_then(|values| {
-            values
-                .get(window_label)
-                .map(|metadata| metadata.title.clone())
-        })
-    else {
-        return;
-    };
-
-    if let Some(window) = app_handle.get_webview_window(window_label) {
-        let _ = window.set_title(&title);
-    }
-}
-
-async fn open_remote_window_impl(
-    app: AppHandle,
-    payload: RemoteWindowPayload,
-) -> Result<(), String> {
-    let label = format!("remote-{}", payload.id);
-    let requested_profile = RemoteProfileIdentity::new(payload.proxy_session_id.as_deref());
-    let operation = app
-        .state::<AppState>()
-        .remote_window_operations
-        .for_label(&label)?;
-    let _guard = operation.lock().await;
-    let result = open_remote_window_locked(
-        app.clone(),
-        payload,
-        label.clone(),
-        requested_profile.clone(),
-    );
-    if result.is_err() {
-        if let Some(session_id) = requested_profile.proxy_session_id() {
-            schedule_remote_proxy_session_cleanup(app, label, session_id.to_string());
-        }
-    }
-    result
-}
-
-fn open_remote_window_locked(
-    app: AppHandle,
-    payload: RemoteWindowPayload,
-    label: String,
-    requested_profile: RemoteProfileIdentity,
-) -> Result<(), String> {
-    require_http_url(&payload.base_url, "baseUrl")?;
-    let entry_url = payload
-        .entry_url
-        .as_deref()
-        .unwrap_or(payload.base_url.as_str());
-    let parsed = require_http_url(entry_url, "entryUrl")?;
-    let title = format!("{} - {}", payload.name, payload.base_url);
-
-    let window_url = parsed.clone();
-
-    let allow_linux_tls_certificate = parsed.scheme() == "https"
-        && (payload.proxy_session_id.is_some() || payload.skip_tls_verify);
-
-    let mut previous_profile = None;
-
-    if let Some(existing) = app.get_webview_window(&label) {
-        previous_profile = app
-            .state::<AppState>()
-            .remote_profiles
-            .lock()
-            .map_err(|err| err.to_string())?
-            .get(&label)
-            .cloned();
-        if should_recreate_remote_window(previous_profile.as_ref(), &requested_profile) {
-            app.state::<AppState>()
-                .remote_profiles
-                .lock()
-                .map_err(|err| err.to_string())?
-                .insert(label.clone(), requested_profile.clone());
-            if let Err(error) = existing.destroy() {
-                let state = app.state::<AppState>();
-                let mut profiles = state
-                    .remote_profiles
-                    .lock()
-                    .map_err(|err| err.to_string())?;
-                if let Some(previous) = previous_profile.as_ref() {
-                    profiles.insert(label.clone(), previous.clone());
-                } else {
-                    profiles.remove(&label);
-                }
-                return Err(error.to_string());
-            }
-            if let Ok(mut handlers) = app.state::<AppState>().remote_tls_handlers.lock() {
-                handlers.remove(&label);
-            }
-        } else {
-            let staged = set_remote_window_metadata(
-                &app,
-                &label,
-                &window_url,
-                &title,
-                allow_linux_tls_certificate,
-                false,
-            )?;
-            #[cfg(target_os = "linux")]
-            if let Err(error) = linux_tls::ensure_remote_window_tls_handler(
-                &existing,
-                &app,
-                &label,
-                staged.window_generation,
-            ) {
-                restore_remote_window_metadata(&app, &label, staged);
-                return Err(error);
-            }
-            apply_remote_window_title(&app, &label);
-            if let Err(error) = existing.navigate(window_url.clone()) {
-                if restore_remote_window_metadata(&app, &label, staged) {
-                    apply_remote_window_title(&app, &label);
-                }
-                return Err(error.to_string());
-            }
-            apply_remote_window_title(&app, &label);
-            let _ = existing.show();
-            let _ = existing.unminimize();
-            let _ = existing.set_focus();
-            return Ok(());
-        }
-    } else {
-        app.state::<AppState>()
-            .remote_profiles
-            .lock()
-            .map_err(|err| err.to_string())?
-            .insert(label.clone(), requested_profile.clone());
-    }
-
-    let staged = match set_remote_window_metadata(
-        &app,
-        &label,
-        &window_url,
-        &title,
-        allow_linux_tls_certificate,
-        true,
-    ) {
-        Ok(staged) => staged,
-        Err(error) => {
-            clear_remote_profile(&app, &label, &requested_profile);
-            if let Some(session_id) = previous_profile
-                .as_ref()
-                .and_then(RemoteProfileIdentity::proxy_session_id)
-            {
-                schedule_remote_proxy_session_cleanup(
-                    app.clone(),
-                    label.clone(),
-                    session_id.to_string(),
-                );
-            }
-            return Err(error);
-        }
-    };
-
-    let window_generation = staged.window_generation;
-
-    #[cfg(target_os = "linux")]
-    let initial_url =
-        if linux_tls::should_bootstrap_tls_navigation(&window_url, allow_linux_tls_certificate) {
-            Url::parse("about:blank").expect("about:blank is a valid URL")
-        } else {
-            window_url.clone()
-        };
-
-    #[cfg(not(target_os = "linux"))]
-    let initial_url = window_url.clone();
-
-    let profile_key = match requested_profile.proxy_session_id() {
-        Some(session_id) => format!("{}\0{session_id}", payload.id),
-        None => payload.id.clone(),
-    };
-    let profile_hash = Sha256::digest(profile_key.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let data_directory = app
-        .state::<AppState>()
-        .webview_data_directory
-        .join("remote")
-        .join(profile_hash);
-    let builder = WebviewWindowBuilder::new(
-        &app,
-        label.clone(),
-        WebviewUrl::External(initial_url.clone()),
-    )
-    .data_directory(data_directory)
-    .incognito(requested_profile.proxy_session_id().is_some())
-    .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
-    .title(title)
-    .inner_size(1400.0, 900.0)
-    .min_inner_size(800.0, 600.0);
-    #[cfg(target_os = "macos")]
-    let builder = builder.data_store_identifier(profile_identifier(&profile_key));
-    let window = match builder.build() {
-        Ok(window) => window,
-        Err(error) => {
-            cleanup_failed_remote_window(
-                &app,
-                None,
-                &label,
-                &requested_profile,
-                previous_profile.as_ref(),
-                window_generation,
-            );
-            return Err(error.to_string());
-        }
-    };
-
-    #[cfg(windows)]
-    if let Err(error) = shutdown::schedule_windows_session_end_handler(&window) {
-        cleanup_failed_remote_window(
-            &app,
-            Some(&window),
-            &label,
-            &requested_profile,
-            previous_profile.as_ref(),
-            window_generation,
-        );
-        return Err(error);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let setup =
-            linux_tls::ensure_remote_window_tls_handler(&window, &app, &label, window_generation)
-                .and_then(|()| {
-                    if initial_url == window_url {
-                        Ok(())
-                    } else {
-                        window
-                            .navigate(window_url.clone())
-                            .map_err(|err| err.to_string())
-                    }
-                });
-        if let Err(error) = setup {
-            cleanup_failed_remote_window(
-                &app,
-                Some(&window),
-                &label,
-                &requested_profile,
-                previous_profile.as_ref(),
-                window_generation,
-            );
-            return Err(error);
-        }
-    }
-
-    if let Some(session_id) = previous_profile
-        .as_ref()
-        .filter(|profile| *profile != &requested_profile)
-        .and_then(RemoteProfileIdentity::proxy_session_id)
-    {
-        schedule_remote_proxy_session_cleanup(app.clone(), label.clone(), session_id.to_string());
-    }
-
-    let app_handle = app.clone();
-    let label_for_cleanup = label.clone();
-    let profile_for_cleanup = requested_profile.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Focused(_)) {
-            update_workspace_menu_state(&app_handle);
-        }
-        if let WindowEvent::Destroyed = event {
-            schedule_remote_window_destroyed_cleanup(
-                app_handle.clone(),
-                label_for_cleanup.clone(),
-                profile_for_cleanup.clone(),
-                window_generation,
-            );
-        }
-    });
-
-    Ok(())
-}
-
-fn set_remote_window_metadata(
-    app: &AppHandle,
-    label: &str,
-    url: &Url,
-    title: &str,
-    allow_linux_tls_certificate: bool,
-    new_window: bool,
-) -> Result<StagedRemoteWindowMetadata, String> {
-    let state = app.state::<AppState>();
-    let generation = state
-        .remote_navigation_generation
-        .fetch_add(1, Ordering::SeqCst)
-        + 1;
-    let mut values = state
-        .remote_navigation
-        .lock()
-        .map_err(|err| err.to_string())?;
-    let previous = values.get(label).cloned();
-    let window_generation = if new_window {
-        generation
-    } else {
-        previous
-            .as_ref()
-            .map(|metadata| metadata.window_generation)
-            .unwrap_or(generation)
-    };
-    values.insert(
-        label.to_string(),
-        RemoteWindowMetadata {
-            origin: url.origin().ascii_serialization(),
-            title: title.to_string(),
-            allow_linux_tls_certificate,
-            generation,
-            window_generation,
-        },
-    );
-    Ok(StagedRemoteWindowMetadata {
-        generation,
-        window_generation,
-        previous,
-    })
-}
-
-fn clear_remote_tls_handler(
-    handlers: &mut HashMap<String, u64>,
-    label: &str,
-    window_generation: u64,
-) -> bool {
-    if handlers.get(label).copied() != Some(window_generation) {
-        return false;
-    }
-    handlers.remove(label);
-    true
-}
-
-fn rollback_remote_window_metadata(
-    values: &mut HashMap<String, RemoteWindowMetadata>,
-    label: &str,
-    failed_generation: u64,
-    previous: Option<RemoteWindowMetadata>,
-) -> bool {
-    if values.get(label).map(|metadata| metadata.generation) != Some(failed_generation) {
-        return false;
-    }
-    match previous {
-        Some(previous) => {
-            values.insert(label.to_string(), previous);
-        }
-        None => {
-            values.remove(label);
-        }
-    }
-    true
-}
-
-fn restore_remote_window_metadata(
-    app: &AppHandle,
-    label: &str,
-    staged: StagedRemoteWindowMetadata,
-) -> bool {
-    app.state::<AppState>()
-        .remote_navigation
-        .lock()
-        .ok()
-        .is_some_and(|mut values| {
-            rollback_remote_window_metadata(&mut values, label, staged.generation, staged.previous)
-        })
-}
-
-fn clear_remote_profile(app: &AppHandle, label: &str, profile: &RemoteProfileIdentity) -> bool {
-    let state = app.state::<AppState>();
-    let Ok(mut profiles) = state.remote_profiles.lock() else {
-        return false;
-    };
-    if profiles.get(label) != Some(profile) {
-        return false;
-    }
-    profiles.remove(label);
-    true
-}
-
-fn cleanup_failed_remote_window(
-    app: &AppHandle,
-    window: Option<&tauri::WebviewWindow>,
-    label: &str,
-    profile: &RemoteProfileIdentity,
-    previous_profile: Option<&RemoteProfileIdentity>,
-    window_generation: u64,
-) {
-    if let Some(window) = window {
-        let _ = window.destroy();
-    }
-    if clear_remote_window_metadata(app, label, profile, window_generation) {
-        if let Some(session_id) = previous_profile.and_then(RemoteProfileIdentity::proxy_session_id)
-        {
-            schedule_remote_proxy_session_cleanup(
-                app.clone(),
-                label.to_string(),
-                session_id.to_string(),
-            );
-        }
-    }
-}
-
-fn clear_remote_window_metadata(
-    app: &AppHandle,
-    label: &str,
-    profile: &RemoteProfileIdentity,
-    window_generation: u64,
-) -> bool {
-    let state = app.state::<AppState>();
-    let Ok(mut navigation) = state.remote_navigation.lock() else {
-        return false;
-    };
-    if navigation
-        .get(label)
-        .map(|metadata| metadata.window_generation)
-        != Some(window_generation)
-    {
-        return false;
-    }
-    let Ok(mut profiles) = state.remote_profiles.lock() else {
-        return false;
-    };
-    if profiles.get(label) != Some(profile) {
-        return false;
-    }
-    profiles.remove(label);
-    navigation.remove(label);
-    if let Ok(mut values) = state.remote_tls_handlers.lock() {
-        clear_remote_tls_handler(&mut values, label, window_generation);
-    }
-    true
-}
-
-#[tauri::command]
-fn needs_local_certificate_install(
-    window: tauri::WebviewWindow,
-    state: tauri::State<AppState>,
-) -> Result<bool, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
-    #[cfg(not(target_os = "linux"))]
-    {
-        let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-            format!("Failed to load the local HTTPS certificate for the remote proxy window: {err}")
-        })?;
-        return cert_manager::needs_trust_in_store(&local_cert.ca_cert_der).map_err(|err| {
-            format!("Failed to inspect the local CodeNomad certificate trust state: {err}")
-        });
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Ok(false)
-    }
-}
-
-#[tauri::command]
-async fn open_remote_window(
-    window: tauri::WebviewWindow,
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-    payload: RemoteWindowPayload,
-) -> Result<(), String> {
-    require_preferences_or_local_app_window(&window, &state)?;
-    #[cfg(not(target_os = "linux"))]
-    {
-        let entry_url = payload
-            .entry_url
-            .as_deref()
-            .unwrap_or(payload.base_url.as_str());
-        require_http_url(&payload.base_url, "baseUrl")?;
-        let parsed = require_http_url(entry_url, "entryUrl")?;
-        if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
-            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-                format!(
-                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
-                )
-            })?;
-            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
-                return Err(format!(
-                    "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
-                ));
-            }
-        }
-    }
-
-    open_remote_window_impl(app, payload).await
 }
 
 fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
@@ -1266,13 +607,6 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
 fn set_target_zoom(app: &AppHandle, window: &tauri::WebviewWindow, zoom: f64) {
     if identity::local_window_id(window.label()).is_ok() {
         client_state::set_local_window_zoom(app, window.label(), zoom);
-        return;
-    }
-    let zoom = zoom.clamp(0.25, 5.0);
-    if window.set_zoom(zoom).is_ok() {
-        if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
-            levels.insert(window.label().to_string(), zoom);
-        }
     }
 }
 
@@ -1280,12 +614,7 @@ fn target_zoom(app: &AppHandle, window: &tauri::WebviewWindow) -> f64 {
     if identity::local_window_id(window.label()).is_ok() {
         client_state::local_window_zoom(app, window.label())
     } else {
-        app.state::<AppState>()
-            .remote_zoom_levels
-            .lock()
-            .ok()
-            .and_then(|levels| levels.get(window.label()).copied())
-            .unwrap_or(client_state::DEFAULT_ZOOM_LEVEL)
+        client_state::DEFAULT_ZOOM_LEVEL
     }
 }
 
@@ -1507,17 +836,11 @@ fn main() {
             manager: CliProcessManager::new(),
             developer_mode,
             wake_lock: Mutex::new(WakeLockState::default()),
-            remote_navigation: Mutex::new(HashMap::new()),
-            remote_navigation_generation: AtomicU64::new(0),
-            remote_profiles: Mutex::new(HashMap::new()),
-            remote_window_operations: RemoteWindowOperationLocks::default(),
-            remote_proxy_cleanup_claims: Mutex::new(HashSet::new()),
-            remote_tls_handlers: Mutex::new(HashMap::new()),
-            remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
+            keep_alive_for_remote_control: AtomicBool::new(false),
         })
         .on_page_load(|webview, payload| {
             if identity::local_window_id(webview.label()).is_ok()
@@ -1542,12 +865,6 @@ fn main() {
                     .state::<local_windows::LocalWindows>()
                     .set_workspace_menu_enabled(webview.label(), false);
                 update_workspace_menu_state(&webview.app_handle());
-            }
-            if matches!(
-                payload.event(),
-                PageLoadEvent::Started | PageLoadEvent::Finished
-            ) {
-                apply_remote_window_title(&webview.app_handle(), webview.label());
             }
             if webview.label() == preferences_window::LABEL
                 && payload.event() == PageLoadEvent::Finished
@@ -1588,7 +905,6 @@ fn main() {
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
-            needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
             preferences_window::preferences_get_request,
@@ -1596,7 +912,6 @@ fn main() {
             preferences_window::preferences_resolve_transition,
             window_control,
             popup_titlebar_menu,
-            open_remote_window,
             client_state::client_state_claim_access,
             client_state::client_state_load,
             client_state::client_state_save,
@@ -1735,6 +1050,13 @@ fn main() {
                     return;
                 }
                 api.prevent_exit();
+                if app_handle
+                    .state::<AppState>()
+                    .keep_alive_for_remote_control
+                    .load(Ordering::SeqCst)
+                {
+                    return;
+                }
                 shutdown::request(app_handle.clone());
             }
             tauri::RunEvent::WindowEvent {
@@ -1812,7 +1134,11 @@ fn main() {
                     is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
                     api.prevent_close();
-                    shutdown::request(app_handle.clone());
+                    if local_window {
+                        request_final_local_window_close(app_handle.clone(), label);
+                    } else {
+                        shutdown::request(app_handle.clone());
+                    }
                     return;
                 }
                 if local_window {
@@ -1839,12 +1165,18 @@ fn main() {
                         wake.handle.take();
                     }
                 }
-                if let Ok(mut zoom) = app_handle.state::<AppState>().remote_zoom_levels.lock() {
-                    zoom.remove(&label);
-                }
                 update_workspace_menu_state(&app_handle);
                 update_fullscreen_shortcut(&app_handle);
                 if !app_handle.webview_windows().is_empty() {
+                    return;
+                }
+
+                if !should_shutdown_after_last_window(
+                    app_handle
+                        .state::<AppState>()
+                        .keep_alive_for_remote_control
+                        .load(Ordering::SeqCst),
+                ) {
                     return;
                 }
 
@@ -2161,12 +1493,9 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 #[cfg(test)]
 mod menu_tests {
     use super::{
-        build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, require_http_url,
-        rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
-        should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
-        RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
-        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        build_about_metadata, is_allowed_local_origin, is_final_application_window,
+        run_update_with_fallback, should_open_external_url, should_shutdown_after_last_window,
+        titlebar_menu_id, WakeLockState, RELEASES_URL,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2184,8 +1513,14 @@ mod menu_tests {
         ));
         assert!(!is_final_application_window(
             "local-a",
-            ["local-a", "preferences", "remote-a"].into_iter(),
+            ["local-a", "preferences", "local-b"].into_iter(),
         ));
+    }
+
+    #[test]
+    fn remote_control_keeps_the_backend_alive_without_windows() {
+        assert!(!should_shutdown_after_last_window(true));
+        assert!(should_shutdown_after_last_window(false));
     }
 
     #[test]
@@ -2226,53 +1561,6 @@ mod menu_tests {
     }
 
     #[test]
-    fn remote_windows_identify_as_remote_tauri_windows() {
-        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_RUNTIME_HOST__ = 'tauri'"));
-        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'remote'"));
-
-        let capability: serde_json::Value = serde_json::from_str(include_str!(
-            "../capabilities/remote-window-notifications.json"
-        ))
-        .unwrap();
-        assert_eq!(capability["local"], false);
-        assert_eq!(
-            capability["remote"]["urls"],
-            json!(["http://*:*", "https://*:*"])
-        );
-        assert_eq!(capability["windows"], json!(["remote-*"]));
-        assert_eq!(
-            capability["permissions"],
-            json!([
-                "notification:allow-is-permission-granted",
-                "notification:allow-request-permission",
-                "notification:allow-notify"
-            ])
-        );
-
-        let config: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        assert!(config["app"]["security"]["capabilities"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("remote-window-notifications")));
-        assert_eq!(config["app"]["windows"], json!([]));
-        let local: serde_json::Value =
-            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
-        assert_eq!(local["windows"], json!(["local-*"]));
-        assert!(local["permissions"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("allow-cli-restart")));
-        assert!(!capability["permissions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|permission| permission
-                .as_str()
-                .is_some_and(|value| value.starts_with("allow-cli"))));
-    }
-
-    #[test]
     fn wake_lock_request_labels_are_reference_counted() {
         let mut state = WakeLockState::default();
         state.labels.insert("local-a".into());
@@ -2282,108 +1570,6 @@ mod menu_tests {
             state.labels,
             std::collections::HashSet::from(["local-b".to_string()])
         );
-    }
-
-    #[test]
-    fn remote_windows_stay_on_their_registered_http_origin() {
-        let origin = "https://remote.example:9898";
-        assert!(should_allow_registered_origin(
-            Some(origin),
-            &Url::parse("https://remote.example:9898/settings").unwrap()
-        ));
-        assert!(!should_allow_registered_origin(
-            Some(origin),
-            &Url::parse("http://localhost:9898/").unwrap()
-        ));
-        assert!(should_allow_registered_origin(
-            Some(origin),
-            &Url::parse("about:blank").unwrap()
-        ));
-    }
-
-    #[test]
-    fn failed_remote_navigation_restores_exact_previous_authority() {
-        let previous = RemoteWindowMetadata {
-            origin: "https://old.example".into(),
-            title: "Old title".into(),
-            allow_linux_tls_certificate: false,
-            generation: 4,
-            window_generation: 2,
-        };
-        let mut values = std::collections::HashMap::from([(
-            "remote-a".to_string(),
-            RemoteWindowMetadata {
-                origin: "https://new.example".into(),
-                title: "New title".into(),
-                allow_linux_tls_certificate: true,
-                generation: 5,
-                window_generation: 2,
-            },
-        )]);
-
-        assert!(rollback_remote_window_metadata(
-            &mut values,
-            "remote-a",
-            5,
-            Some(previous.clone()),
-        ));
-        assert_eq!(values.get("remote-a"), Some(&previous));
-    }
-
-    #[test]
-    fn stale_remote_navigation_failure_cannot_rollback_newer_authority() {
-        let current = RemoteWindowMetadata {
-            origin: "https://newest.example".into(),
-            title: "Newest title".into(),
-            allow_linux_tls_certificate: true,
-            generation: 6,
-            window_generation: 3,
-        };
-        let mut values =
-            std::collections::HashMap::from([("remote-a".to_string(), current.clone())]);
-
-        assert!(!rollback_remote_window_metadata(
-            &mut values,
-            "remote-a",
-            5,
-            None,
-        ));
-        assert_eq!(values.get("remote-a"), Some(&current));
-    }
-
-    #[test]
-    fn stale_window_cleanup_cannot_remove_replacement_tls_handler() {
-        let mut handlers = std::collections::HashMap::from([("remote-a".to_string(), 2)]);
-
-        assert!(!clear_remote_tls_handler(&mut handlers, "remote-a", 1));
-        assert_eq!(handlers.get("remote-a"), Some(&2));
-        assert!(clear_remote_tls_handler(&mut handlers, "remote-a", 2));
-        assert!(!handlers.contains_key("remote-a"));
-    }
-
-    #[test]
-    fn remote_window_urls_require_http_or_https() {
-        assert_eq!(
-            require_http_url("http://localhost:3000/app", "baseUrl")
-                .unwrap()
-                .scheme(),
-            "http"
-        );
-        assert_eq!(
-            require_http_url("https://example.com/app", "entryUrl")
-                .unwrap()
-                .scheme(),
-            "https"
-        );
-        for value in [
-            "file:///tmp/app",
-            "data:text/html,hi",
-            "javascript:alert(1)",
-        ] {
-            assert!(require_http_url(value, "baseUrl")
-                .unwrap_err()
-                .contains("must use HTTP or HTTPS"));
-        }
     }
 
     #[test]
@@ -2430,67 +1616,6 @@ mod menu_tests {
             .iter()
             .any(|permission| permission == "opener:allow-default-urls"
                 || permission == "opener:allow-open-url"));
-    }
-
-    #[test]
-    fn remote_window_reuse_requires_exact_profile_identity() {
-        let direct = RemoteProfileIdentity::Direct;
-        let proxy_a = RemoteProfileIdentity::Proxy("a".into());
-        let proxy_b = RemoteProfileIdentity::Proxy("b".into());
-        assert!(!should_recreate_remote_window(Some(&direct), &direct));
-        assert!(!should_recreate_remote_window(Some(&proxy_a), &proxy_a));
-        assert!(should_recreate_remote_window(Some(&direct), &proxy_a));
-        assert!(should_recreate_remote_window(Some(&proxy_a), &direct));
-        assert!(should_recreate_remote_window(Some(&proxy_a), &proxy_b));
-        assert!(should_recreate_remote_window(None, &direct));
-    }
-
-    #[test]
-    fn remote_window_operations_serialize_only_matching_labels() {
-        let operations = RemoteWindowOperationLocks::default();
-        let first = operations.for_label("remote-a").unwrap();
-        let same = operations.for_label("remote-a").unwrap();
-        let other = operations.for_label("remote-b").unwrap();
-
-        tauri::async_runtime::block_on(async {
-            let _guard = first.lock().await;
-            assert!(same.try_lock().is_err());
-            assert!(other.try_lock().is_ok());
-        });
-    }
-
-    #[test]
-    fn proxy_cleanup_is_claimed_once_and_never_while_owned() {
-        let mut profiles = std::collections::HashMap::from([(
-            "remote-a".to_string(),
-            RemoteProfileIdentity::Proxy("previous".into()),
-        )]);
-        let mut claims = std::collections::HashSet::new();
-
-        assert!(!claim_unowned_remote_proxy_session(
-            &profiles,
-            &mut claims,
-            "previous",
-        ));
-        profiles.insert(
-            "remote-a".into(),
-            RemoteProfileIdentity::Proxy("newer".into()),
-        );
-        assert!(claim_unowned_remote_proxy_session(
-            &profiles,
-            &mut claims,
-            "previous",
-        ));
-        assert!(!claim_unowned_remote_proxy_session(
-            &profiles,
-            &mut claims,
-            "previous",
-        ));
-        assert!(!claim_unowned_remote_proxy_session(
-            &profiles,
-            &mut claims,
-            "newer",
-        ));
     }
 
     #[test]

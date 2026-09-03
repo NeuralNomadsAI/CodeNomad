@@ -31,7 +31,7 @@ test("closing one local window removes only its V3 record and leaves backend run
   assert.deepEqual(calls, ["prevent", "renderer:one", "native:one", "remove:one", "close:one"])
 })
 
-test("closing the sole local window while a remote remains removes its V3 record", async () => {
+test("closing the sole local window while a support window remains removes its V3 record", async () => {
   const calls: string[] = []
   const local = windowRecord("local", calls)
   const remote = { isDestroyed: () => false }
@@ -47,7 +47,7 @@ test("closing the sole local window while a remote remains removes its V3 record
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
 })
 
-test("Preferences does not turn the final local close into a destructive window removal", () => {
+test("Preferences does not turn the final local close into a destructive window removal", async () => {
   const calls: string[] = []
   const local = windowRecord("local", calls)
   const preferences = { isDestroyed: () => false }
@@ -60,10 +60,11 @@ test("Preferences does not turn the final local close into a destructive window 
   })
   lifecycle.attach(local)
   local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
   assert.deepEqual(calls, ["prevent", "quit"])
 })
 
-test("Preferences does not keep the final remote window alive", () => {
+test("Preferences does not keep the final support window alive", async () => {
   const calls: string[] = []
   const remote = windowRecord("remote", calls)
   const preferences = { isDestroyed: () => false }
@@ -74,9 +75,35 @@ test("Preferences does not keep the final remote window alive", () => {
     isSupportWindow: (window) => window === preferences,
     removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
-  lifecycle.attachRemote(remote.window)
+  lifecycle.attachSupportWindow(remote.window)
   remote.events.get("close")?.({ defaultPrevented: false, preventDefault: () => calls.push("prevent") })
+  await tick()
   assert.deepEqual(calls, ["prevent", "quit"])
+})
+
+test("Remote Control keeps the backend alive after the last local window closes", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const local = windowRecord("local", calls)
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [local],
+    getAllWindows: () => [local.window],
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true },
+    getAllowedRendererOrigins: () => ["http://localhost"],
+    isTrustedRendererOrigin: () => true,
+    shouldKeepBackendAlive: async () => true,
+  })
+  lifecycle.attach(local)
+  lifecycle.registerAppEvents()
+
+  local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  events.get("window-all-closed")?.()
+
+  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
 })
 
 test("persisted local close waits for confirmed removal and remains retryable", async () => {
@@ -176,6 +203,7 @@ test("final close retains its record and shutdown stops/releases once", async ()
   })
   lifecycle.attach(first); lifecycle.registerAppEvents()
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
   assert.deepEqual(calls, ["prevent", "quit"])
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
@@ -207,7 +235,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
   assert.deepEqual(calls, ["renderer:one", "native:one", "aggregate", "stop", "release", "exit"])
 })
 
-test("remote windows receive session-end cleanup without local close semantics", async () => {
+test("support windows receive session-end cleanup without local close semantics", async () => {
   const calls: string[] = []
   const events = new Map<string, Function>()
   const remote = { on: (name: string, handler: Function) => events.set(name, handler), isDestroyed: () => false }
@@ -360,7 +388,7 @@ test("final remote close stays restorable by routing through app shutdown", asyn
     getLocalWindows: () => [], getAllWindows: () => [remote.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => [], isTrustedRendererOrigin: () => false,
   })
-  lifecycle.attachRemote(remote.window); lifecycle.registerAppEvents()
+  lifecycle.attachSupportWindow(remote.window); lifecycle.registerAppEvents()
 
   remote.events.get("close")?.({ preventDefault: () => calls.push("prevent-close") })
   await tick(); await tick()
