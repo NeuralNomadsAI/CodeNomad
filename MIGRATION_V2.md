@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI declare `@opencode-ai/client@beta`. The latest published beta is always the source of truth. Refreshing that dependency updates `node_modules` and rewrites `package-lock.json`; the lock is only the generated snapshot of the last dependency resolution, never a compatibility authority. Refresh it before migration audits or builds. It does not constrain the independently managed runtime CLI. The tested 2026-09-02 client and runtime snapshot is `beta-18866`.
+Server and UI declare `@opencode-ai/client@beta`. The latest published beta is always the source of truth. Refreshing that dependency updates `node_modules` and rewrites `package-lock.json`; the lock is only the generated snapshot of the last dependency resolution, never a compatibility authority. Refresh it before migration audits or builds. It does not constrain the independently managed runtime CLI. The tested 2026-09-03 client and runtime snapshot is `beta-18999`.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -21,9 +21,9 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Replace CodeNomad background processes with native `shell.*` resources. The Status UI lists, displays bounded output for, and removes Shells; create/output/timeout routes remain available through the ownership-checked proxy. Interactive `pty.*` terminals remain separate.
 - Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
 - Inherit native durable JSON `SessionMetadata` directly from `SessionInfo`. Do not widen it to arbitrary `unknown` values or maintain a parallel CodeNomad-only metadata contract.
-- Keep the narrow project-local `codenomad.automation` exception on the V2 `setup` and `tool.transform` contract; it is active under `beta-18866`.
+- Keep the narrow project-local `codenomad.automation` exception on the V2 `setup` and `tool.transform` contract; it remains active under `beta-18999`.
 
-### Beta 18866 Contract Review
+### Beta 18866 Contract Review (Historical)
 
 The `beta-18414` to `beta-18866` review found these additive client surfaces:
 
@@ -35,6 +35,8 @@ The `beta-18414` to `beta-18866` review found these additive client surfaces:
 | `experimental.persistentPty.read` | Keep blocked. | CodeNomad uses native Shell resources for background output and has no owned persistent-session-terminal lifecycle. |
 | `vcs.base` and diff base selection | Deferred read-only candidate. | The current Git Changes UI displays working-tree and index changes and does not yet offer base-branch comparison. |
 | `Service.stop({ pty })` handoff/clear behavior | Do not adopt. | CodeNomad does not own or stop the shared OpenCode service. |
+
+The subsequent refresh to `beta-18999` retained these integrations. Both UI and server resolve the same client version, and the independently managed runtime used for the final native validation also reported `beta-18999`.
 
 ## Shared Service Model
 
@@ -72,8 +74,10 @@ The `beta-18414` to `beta-18866` review found these additive client surfaces:
 
 ## UI and Memory Optimizations
 
-- Virtualize session lists and message timelines with `virtua` to bound mounted DOM for large histories.
-- Preserve user-controlled scroll position, bottom-follow intent, oversized streaming hold points, and anchor-based restore across live updates.
+- Virtualize session lists and message timelines with `virtua` `0.51.0` to bound mounted DOM for large histories.
+- Preserve user-controlled scroll position, bottom-follow intent, oversized streaming hold points, and anchor-based restore across live updates, pagination, tab changes, and desktop restarts.
+- Shift ordered slides of the capped 200-message window in place. Reordered, paginated, and otherwise non-aligned key changes advance a measurement epoch and remount the virtualizer so stale measurements cannot be reused.
+- Finalize the temporary `200 -> 201 -> 200` shift in a generation-guarded microtask before paint, and compensate followed content growth from a `ResizeObserver` attached to the mounted Virtua content root. Only explicit user scroll intent disables following.
 - Keep native cursors authoritative; do not infer completion from page length.
 - Bound instance logs and validate restore-state counts, IDs, paths, snapshots, string budgets, partition sizes, and graph sizes.
 - Reconcile only affected resources after native events or reconnects instead of periodically reloading full message history.
@@ -177,8 +181,19 @@ During stabilization, CodeNomad implements the public native V2 contract and rem
 
 This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the current V2 client.
 
+## Validation
+
+At the 2026-08-28 migration gate (`878550ca`), UI and server typechecks, 86 focused UI tests, 64 focused server tests, the production UI/server build, Tauri `cargo check`, all 121 Rust tests, and `git diff --check` passed.
+
+At the 2026-09-03 timeline stabilization head (`dea20996`):
+
+- UI TypeScript typecheck passed.
+- All 68 focused timeline, pagination, request-authority, and restore tests passed.
+- The Tauri release build passed against the `beta-18999` lock.
+- Native Developer Mode validation observed in-place capped-window shifts with no remount or empty frame, same-cycle growth compensation, preserved manual escape, and inactive-tab anchor restoration within 0.3125 px.
+
 ## Review Notes
 
 - The generated V2 client remains experimental. Review its current documentation, installed declarations, proxy/API parity, runtime health, and `/api/plugin` failures whenever the beta contract changes. The SDK documentation describes an alternative embedded host; CodeNomad uses the network client.
-- V1-style global plugins are outside the CodeNomad client migration. Under `beta-18866`, the installed After Effects, Blender, Microsoft 365, Resolve, Unreal, Ponytail, and Gemini Auth integrations require independent migrations to a V2 definition with an `id` and `setup` or `effect`.
+- V1-style global plugins are outside the CodeNomad client migration. Under the reviewed V2 contract through `beta-18999`, the installed After Effects, Blender, Microsoft 365, Resolve, Unreal, Ponytail, and Gemini Auth integrations require independent migrations to a V2 definition with an `id` and `setup` or `effect`.
 - Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), `packages/server/node_modules/@opencode-ai/client/dist/promise/`, and `packages/ui/node_modules/@opencode-ai/client/dist/promise/`.

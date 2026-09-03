@@ -4,9 +4,9 @@
 
 This review compares:
 
-- CodeNomad `DEV-v2` through the fixes accompanying this document.
+- CodeNomad `DEV-v2` at `dea20996` (2026-09-03).
 - Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/beta` at `eb1ac54d73` (2026-08-25).
-- CodeNomad declares `@opencode-ai/client@beta`; the runtime CLI version is managed independently.
+- CodeNomad declares `@opencode-ai/client@beta`; UI and server resolve `beta-18999`, while the runtime CLI version is managed independently.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. Older `v2`, `opencode-2-0`, and intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -64,6 +64,18 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 `tauri.conf.json` declared an unrestricted asset protocol scope even though the asset protocol feature is disabled and CodeNomad has no asset URL caller. It was not an exploitable file-read path in the reviewed build, but the unused broad scope was misleading and unsafe if the feature were enabled later. The configuration block has been deleted.
 
+### Native undo and redo
+
+CodeNomad maps command-palette Undo to staged `session.revert.stage` semantics and exposes Redo through `session.revert.clear`. It intentionally does not recreate arbitrary local message deletion.
+
+### Pending prompt correction
+
+Pending inbox prompts expose delivery switching, removal, and editing. Editing first awaits authoritative `session.inbox.cancel`, then restores text, structured payload metadata, files, and agent references to the composer. This matches the safe native correction workflow without simulating an atomic inbox update.
+
+### Bounded timeline continuity
+
+The 200-message resident window distinguishes ordered capped-window slides from unsafe key changes. Ordered slides use Virtua's shift path and settle before paint; pagination, reorder, and non-aligned replacement remount with a fresh measurement epoch. A content-root `ResizeObserver` compensates followed growth in the same observer cycle, while explicit user scroll intent remains authoritative across remote updates and tab restore.
+
 ## Existing Parity
 
 The review reconfirmed these areas and found no current incompatibility:
@@ -72,8 +84,8 @@ The review reconfirmed these areas and found no current incompatibility:
 - Multiple logical CodeNomad workspaces over one native location, including duplicate-folder instances.
 - Project-wide session inventory with directory scoping for native `global` projects, native session and message cursors, replace-in-place resident history windows, and ancestor hydration.
 - Optimistic prompt admission with client-minted identity and authoritative event reconciliation.
-- Native inbox queue/steer delivery with a persisted primary preference, inverse alternate shortcut, cancellation, and pending prompts ordered at the transcript tail.
-- User-controlled follow state across older-page positioning and remote updates, with bottom pinning reserved for a local send.
+- Native inbox queue/steer delivery with a persisted primary preference, inverse alternate shortcut, cancellation, cancel-first composer editing, and pending prompts ordered at the transcript tail.
+- User-controlled follow state across older-page positioning, capped-window shifts, remote updates, and tab restore, with bottom pinning reserved for a local send.
 - Native Forms, permissions, provider authentication, commands, agents, variants, attachments, and instructions.
 - One upstream event stream with reconnect generation fencing and targeted authoritative refresh.
 - Native `session.background` control plus background Shell listing, bounded output, removal, and ownership-checked Shell/PTY proxy routes.
@@ -92,14 +104,6 @@ Service stop removal is intentional: CodeNomad does not own the shared daemon. U
 `packages/ui/src/lib/hooks/use-instance-metadata.ts` currently queries MCP and plugin state with the instance root. The active session may belong to a worktree or nested location with different `.opencode` configuration. Official Desktop derives the status location from the selected session in `packages/app/src/pages/session.tsx` and `status-popover-body.tsx`.
 
 The CodeNomad metadata request and cache authority should be keyed by the active `SessionInfo.location`, and MCP toggles should use that same location. This needs a focused state change rather than a root fallback patch because switching tabs must not display or mutate another location's MCP state.
-
-### Queued prompt correction
-
-**Priority:** Medium. **Client upgrade required:** No.
-
-The V2 TUI lets users correct a queued prompt by removing it from its local queue and restoring it to the composer. CodeNomad currently exposes native inbox cancellation but does not restore the cancelled prompt for editing.
-
-Match that baseline with a cancel-first workflow: restore the prompt only after cancellation succeeds, and leave resubmission to the user. Do not restore the removed automatic replacement or suffix-rewrite approaches; they could race with an inbox drain and duplicate or prematurely execute prompts.
 
 ### Signed desktop releases
 
