@@ -93,7 +93,13 @@ const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
-const messagePageRequests = new Map<string, Promise<void>>()
+interface MessagePageRequest {
+  controller: AbortController
+  consumers: Set<symbol>
+  request: Promise<void>
+}
+
+const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
 const MESSAGE_STREAM_SCOPE = "message-stream"
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
@@ -1218,18 +1224,21 @@ function commitMessageWindow(
   instanceId: string,
   sessionId: string,
   window: MessageWindowState,
+  intent: MessageWindowIntent,
 ) {
   const store = messageStoreBus.getOrCreate(instanceId)
   store.setMessageWindow(sessionId, window)
   const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  const preservePosition = intent === "open"
+  const atBottom = intent === "older" || intent === "latest"
   store.setScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE, {
-    scrollTop: existing?.scrollTop ?? 0,
-    atBottom: existing?.atBottom ?? window.kind === "latest",
-    scrollRatio: existing?.scrollRatio,
-    maxScrollTop: existing?.maxScrollTop,
-    anchorKey: existing?.anchorKey,
-    anchorOffset: existing?.anchorOffset,
-    followModeType: existing?.followModeType,
+    scrollTop: preservePosition ? existing?.scrollTop ?? 0 : 0,
+    atBottom: preservePosition ? existing?.atBottom ?? window.kind === "latest" : atBottom,
+    scrollRatio: preservePosition ? existing?.scrollRatio : undefined,
+    maxScrollTop: preservePosition ? existing?.maxScrollTop : undefined,
+    anchorKey: preservePosition ? existing?.anchorKey : undefined,
+    anchorOffset: preservePosition ? existing?.anchorOffset : undefined,
+    followModeType: preservePosition ? existing?.followModeType : intent === "latest" ? "following" : "escaped",
     ...toWindowSnapshot(window),
   })
 }
@@ -1285,11 +1294,12 @@ async function loadMessages(
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
-  const isCurrentLoad = () => instances().get(instanceId)?.client === instanceClient
+  const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId)
     && generationCurrent()
     && (!historyAuthority || messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId)) === historyAuthority)
+  const isCurrentLoad = () => ownsLoadState() && options?.signal?.aborted !== true
   const isCurrent = () => isCurrentLoad()
     && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
     && store.getMessageWindow(sessionId) === storedWindow
@@ -1371,7 +1381,7 @@ async function loadMessages(
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
-        commitMessageWindow(instanceId, sessionId, nextWindow)
+        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
       }
     } else {
@@ -1434,12 +1444,13 @@ async function loadMessages(
       if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        commitMessageWindow(instanceId, sessionId, nextWindow)
+        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
       }
     }
   } catch (error) {
+    if (options?.signal?.aborted) return
     log.error("Failed to load messages:", error)
     const message = error instanceof Error ? error.message : String(error)
     if (isCurrent() && !message.includes("Stale read from")) {
@@ -1447,7 +1458,7 @@ async function loadMessages(
     }
     throw error
   } finally {
-    if (showLoading && isCurrentLoad()) {
+    if (showLoading && ownsLoadState()) {
       setLoading((prev) => {
         const next = { ...prev }
         const loadingSet = next.loadingMessages.get(instanceId)
@@ -1486,18 +1497,59 @@ function enqueueMessageWindowLoad(
   signal?: AbortSignal,
 ): Promise<void> {
   const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
-  const pending = messagePageRequests.get(key)
-  if (pending) return pending
-  let request!: Promise<void>
-  request = loadMessages(instanceId, sessionId, { force: true, intent, signal }).then(
-    () => { if (messagePageRequests.get(key) === request) messagePageRequests.delete(key) },
-    (error) => {
-      if (messagePageRequests.get(key) === request) messagePageRequests.delete(key)
-      throw error
-    },
-  )
-  messagePageRequests.set(key, request)
-  return request
+  let pending = messagePageRequests.get(key)
+  if (!pending) {
+    const controller = new AbortController()
+    pending = { controller, consumers: new Set(), request: undefined as unknown as Promise<void> }
+    const entry = pending
+    entry.request = loadMessages(instanceId, sessionId, { force: true, intent, signal: controller.signal }).then(
+      () => { if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key) },
+      (error) => {
+        if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key)
+        throw error
+      },
+    )
+    messagePageRequests.set(key, entry)
+  }
+
+  const consumer = Symbol()
+  pending.consumers.add(consumer)
+  if (signal?.aborted) {
+    pending.consumers.delete(consumer)
+    if (pending.consumers.size === 0) {
+      if (messagePageRequests.get(key) === pending) messagePageRequests.delete(key)
+      pending.controller.abort()
+    }
+    return Promise.resolve()
+  }
+
+  const entry = pending
+  return new Promise<void>((resolve, reject) => {
+    let finished = false
+    const finish = (error?: unknown) => {
+      if (finished) return
+      finished = true
+      signal?.removeEventListener("abort", handleAbort)
+      entry.consumers.delete(consumer)
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    const handleAbort = () => {
+      finish()
+      if (entry.consumers.size === 0) {
+        if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key)
+        entry.controller.abort()
+      }
+    }
+    signal?.addEventListener("abort", handleAbort, { once: true })
+    entry.request.then(
+      () => finish(),
+      (error) => {
+        if (signal?.aborted) finish()
+        else finish(error)
+      },
+    )
+  })
 }
 
 function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {

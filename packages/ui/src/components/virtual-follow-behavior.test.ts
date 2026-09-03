@@ -6,12 +6,14 @@ import {
   ANCHOR_RESTORE_STABLE_FRAMES,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  canScrollInDirection,
   classifyVirtualItemKeyChange,
   getKeyboardScrollIntent,
   getBottomAnchoredViewportOffset,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
   shouldAdvanceBottomPin,
+  shouldNavigateAtBoundary,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
@@ -206,13 +208,30 @@ describe("virtual follow behavior", () => {
     assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
   })
 
+  it("leaves nested scroll ownership with a descendant that can consume it", () => {
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "up"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "down"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 0, scrollHeight: 500, clientHeight: 100 }, "up"), false)
+    assert.equal(canScrollInDirection({ scrollTop: 400, scrollHeight: 500, clientHeight: 100 }, "down"), false)
+  })
+
+  it("requires fresh matching user intent before paging at a virtual boundary", () => {
+    const base = { atBoundary: true, restoring: false, programmatic: false, hasFreshIntent: true, intent: "up" as const, direction: "up" as const }
+    assert.equal(shouldNavigateAtBoundary(base), true)
+    assert.equal(shouldNavigateAtBoundary({ ...base, hasFreshIntent: false }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, restoring: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, programmatic: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, intent: "down" }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, atBoundary: false }), false)
+  })
+
   it("keeps the timeline viewport bottom anchored when its height changes", () => {
     assert.equal(getBottomAnchoredViewportOffset(2400, 200), 2600)
     assert.equal(getBottomAnchoredViewportOffset(2600, -200), 2400)
     assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
   })
 
-  it("invalidates measurements and follows when a capped window slides", () => {
+  it("invalidates measurements when a capped window slides", () => {
     const previous = Array.from({ length: 200 }, (_, index) => `m${index}`)
     const next = [...previous.slice(1), "compaction"]
 
@@ -224,6 +243,7 @@ describe("virtual follow behavior", () => {
       resetMeasurements: false,
       endChanged: false,
     })
+    assert.equal(classifyVirtualItemKeyChange(next, []).resetMeasurements, true)
   })
 
   it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {

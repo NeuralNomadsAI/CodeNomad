@@ -615,10 +615,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onReloadMessages={handleReloadMessages}
               hasMoreMessages={hasMoreMessages(props.instanceId, props.sessionId)}
               getMessageHistoryCursor={() => getMessageNextCursor(props.instanceId, props.sessionId)}
-              onLoadMoreMessages={() => loadMoreMessages(props.instanceId, props.sessionId)}
-              onLoadNewerMessages={() => loadNewerMessageWindow(props.instanceId, props.sessionId)}
-              onLoadLatestMessages={() => loadLatestMessageWindow(props.instanceId, props.sessionId)}
-              onLoadOldestMessages={() => loadOldestMessageWindow(props.instanceId, props.sessionId)}
+              onLoadMoreMessages={(signal) => loadMoreMessages(props.instanceId, props.sessionId, signal)}
+              onLoadNewerMessages={(signal) => loadNewerMessageWindow(props.instanceId, props.sessionId, signal)}
+              onLoadLatestMessages={(signal) => loadLatestMessageWindow(props.instanceId, props.sessionId, signal)}
+              onLoadOldestMessages={(signal) => loadOldestMessageWindow(props.instanceId, props.sessionId, signal)}
               sessionStreamingActive={sessionStreamingActive()}
               explicitBottomPinIntent={activeSubmitBottomPinIntent()}
               onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}

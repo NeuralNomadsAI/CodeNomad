@@ -56,11 +56,34 @@ export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boole
   return maxOffset > offset + 1
 }
 
+export function canScrollInDirection(
+  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  direction: "up" | "down",
+): boolean {
+  if (direction === "up") return metrics.scrollTop > 0
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+}
+
+export function shouldNavigateAtBoundary(input: {
+  atBoundary: boolean
+  restoring: boolean
+  programmatic: boolean
+  hasFreshIntent: boolean
+  intent: "up" | "down" | null
+  direction: "up" | "down"
+}): boolean {
+  return input.atBoundary
+    && !input.restoring
+    && !input.programmatic
+    && input.hasFreshIntent
+    && input.intent === input.direction
+}
+
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])
   return {
-    resetMeasurements: previous.length > 0 && next.length > 0 && !keepsPrefix,
+    resetMeasurements: previous.length > 0 && (next.length === 0 || !keepsPrefix),
     endChanged: previous.length > 0 && previous.at(-1) !== next.at(-1),
   }
 }

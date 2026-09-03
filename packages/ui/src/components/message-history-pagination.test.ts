@@ -61,7 +61,7 @@ describe("message history pagination", () => {
     assert.equal(pages, 1)
   })
 
-  it("resets virtual measurements only when the resident page changes", () => {
+  it("distinguishes resident pages for search and restore authority", () => {
     const latest = { kind: "latest", newerCursors: [] }
     const older = { kind: "history", resumeCursor: "older", newerCursors: ["newer"] }
     const next = { kind: "history", resumeCursor: "newer", newerCursors: [null] }

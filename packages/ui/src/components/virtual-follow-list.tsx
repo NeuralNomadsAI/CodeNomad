@@ -1,9 +1,10 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, classifyVirtualItemKeyChange, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
+const MEASUREMENT_RESET_SSR_COUNT = 8
 const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -16,11 +17,15 @@ const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contentedita
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
   minItemCount?: number
+  settleFrames?: number
 }
+
+export type VirtualBottomSettlement = "settled" | "cancelled" | "interrupted" | "timeout"
 
 export interface VirtualFollowListApi {
   scrollToTop: (opts?: { immediate?: boolean }) => void
   scrollToBottom: (opts?: { immediate?: boolean }) => void
+  settleAtBottom: () => Promise<VirtualBottomSettlement>
   scrollToKey: (
     key: string,
     opts?: { block?: ScrollLogicalPosition },
@@ -72,7 +77,6 @@ export interface VirtualFollowListProps<T> {
   initialScrollToBottom?: Accessor<boolean>
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
-  measurementResetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
   explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
@@ -85,7 +89,7 @@ export interface VirtualFollowListProps<T> {
   scrollToBottomAriaLabel?: Accessor<string>
   onScrollElementChange?: (element: HTMLDivElement | undefined) => void
   onShellElementChange?: (element: HTMLDivElement | undefined) => void
-  onScroll?: () => void
+  onScroll?: (snapshot?: VirtualFollowScrollSnapshot) => void
   onJumpTop?: () => void
   onJumpBottom?: () => void
   onUserReachedTop?: () => void
@@ -119,9 +123,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
   const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
   const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
-  const measurementAuthority = createMemo(() => ({
-    key: `${props.measurementResetKey?.() ?? "default"}\0${itemKeyMeasurementEpoch()}`,
-  }))
+  const measurementAuthority = createMemo(() => ({ key: itemKeyMeasurementEpoch() }))
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
   const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
@@ -139,18 +141,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingContentRenderedFrame: number | null = null
   let pendingExplicitBottomPinFrame: number | null = null
   let pendingViewportResizeFrame: number | null = null
+  let pendingViewportHeightDelta = 0
   let explicitBottomPinToken: string | number | null = null
   let lastHandledExplicitBottomPinToken: string | number | null = null
   let userCancelledExplicitBottomPinToken: string | number | null = null
   let explicitBottomPinMinItemCount = 0
   let explicitBottomPinSettleFrames = 0
+  let explicitBottomPinRequiredSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
   let explicitBottomPinFramesRemaining = 0
+  let explicitBottomPinLastMaxOffset: number | null = null
+  let explicitBottomPinNotifiesCancellation = false
+  let explicitBottomPinResolver: ((settlement: VirtualBottomSettlement) => void) | null = null
+  let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
   let previousItemKeys = props.items().map((item, index) => props.getKey(item, index))
-  let measurementResetCache: VirtualizerHandle["cache"] | undefined
-  let observedViewportHeight = 0
-  let lastEscapedResizeSnapshot: VirtualFollowScrollSnapshot | undefined
-  let pendingViewportResizeSnapshot: VirtualFollowScrollSnapshot | undefined
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -320,30 +324,22 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     const now = performance.now()
     const programmatic = hasProgrammaticScrollIntent()
-    const previousOffset = scrollController.snapshot().lastObservedOffset
-    const scrolledUp = offset < previousOffset - 1
-    const scrolledDown = offset > previousOffset + 1
     const result = scrollController.observeViewport(metrics, now, programmatic)
     const restoring = result.state.restoring
     const intent = result.state.userIntentDirection
     const hasFreshIntent = now <= result.state.userIntentUntil
-    if (!programmatic && !restoring && atTop && (scrolledUp || (hasFreshIntent && intent === "up"))) {
+    if (shouldNavigateAtBoundary({ atBoundary: atTop, restoring, programmatic, hasFreshIntent, intent, direction: "up" })) {
       props.onUserReachedTop?.()
     }
-    if (!programmatic && !restoring && atBottom && (scrolledDown || (hasFreshIntent && intent === "down"))) {
+    if (shouldNavigateAtBoundary({ atBoundary: atBottom, restoring, programmatic, hasFreshIntent, intent, direction: "down" })) {
       props.onUserReachedBottom?.()
     }
     syncControllerResult(result)
-    if (!result.state.restoring && result.state.mode.type === "escaped" && element.clientHeight === observedViewportHeight) {
-      lastEscapedResizeSnapshot = captureScrollSnapshot()
-    } else if (result.state.mode.type === "following") {
-      lastEscapedResizeSnapshot = undefined
-    }
   }
 
   function handleScroll() {
     updateScrollStateFromDom()
-    props.onScroll?.()
+    props.onScroll?.(captureScrollSnapshot())
 
     const handle = virtuaHandle()
     const element = scrollElement()
@@ -414,27 +410,45 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     return explicitBottomPinToken !== null
   }
 
-  function clearExplicitBottomPin() {
+  function clearExplicitBottomPin(settlement: VirtualBottomSettlement = "interrupted") {
+    const resolve = explicitBottomPinResolver
     explicitBottomPinToken = null
     explicitBottomPinMinItemCount = 0
     explicitBottomPinSettleFrames = 0
+    explicitBottomPinRequiredSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
     explicitBottomPinFramesRemaining = 0
+    explicitBottomPinLastMaxOffset = null
+    explicitBottomPinNotifiesCancellation = false
+    explicitBottomPinResolver = null
+    resolve?.(settlement)
   }
 
   function cancelExplicitBottomPinFromUser() {
     userCancelledExplicitBottomPinToken = explicitBottomPinToken ?? explicitBottomPinIntent()?.token ?? null
-    clearExplicitBottomPin()
-    props.onExplicitBottomPinCancelled?.()
+    const notifyCancellation = explicitBottomPinNotifiesCancellation || Boolean(explicitBottomPinIntent())
+    clearExplicitBottomPin("cancelled")
+    if (notifyCancellation) props.onExplicitBottomPinCancelled?.()
   }
 
-  function startExplicitBottomPin(intent: VirtualExplicitBottomPinIntent) {
+  function startExplicitBottomPin(
+    intent: VirtualExplicitBottomPinIntent,
+    notifyCancellation = true,
+    resolve?: (settlement: VirtualBottomSettlement) => void,
+  ) {
+    if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
+    pendingExplicitBottomPinFrame = null
+    if (hasActiveExplicitBottomPin()) clearExplicitBottomPin()
     cancelActiveScrollRestore()
     userCancelledExplicitBottomPinToken = null
     lastHandledExplicitBottomPinToken = intent.token
     explicitBottomPinToken = intent.token
     explicitBottomPinMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
-    explicitBottomPinSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
+    explicitBottomPinRequiredSettleFrames = Math.max(1, Math.floor(intent.settleFrames ?? EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES))
+    explicitBottomPinSettleFrames = explicitBottomPinRequiredSettleFrames
     explicitBottomPinFramesRemaining = EXPLICIT_BOTTOM_PIN_MAX_FRAMES
+    explicitBottomPinLastMaxOffset = null
+    explicitBottomPinNotifiesCancellation = notifyCancellation
+    explicitBottomPinResolver = resolve ?? null
     runExplicitBottomPinFrame()
   }
 
@@ -446,15 +460,25 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function runExplicitBottomPinFrame() {
     pendingExplicitBottomPinFrame = null
     if (!hasActiveExplicitBottomPin()) return
+    if (!isActive()) {
+      clearExplicitBottomPin()
+      return
+    }
     dispatchFollowEvent({ type: "jump-bottom", immediate: true, explicit: true })
 
     const ready = props.items().length >= explicitBottomPinMinItemCount && isActuallyAtBottom()
-    if (ready) explicitBottomPinSettleFrames -= 1
-    else explicitBottomPinSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
+    const maxOffset = captureScrollSnapshot()?.maxScrollTop ?? null
+    if (ready && maxOffset === explicitBottomPinLastMaxOffset) explicitBottomPinSettleFrames -= 1
+    else explicitBottomPinSettleFrames = explicitBottomPinRequiredSettleFrames
+    explicitBottomPinLastMaxOffset = maxOffset
     explicitBottomPinFramesRemaining -= 1
 
-    if ((ready && explicitBottomPinSettleFrames <= 0) || explicitBottomPinFramesRemaining <= 0) {
-      clearExplicitBottomPin()
+    if (ready && explicitBottomPinSettleFrames <= 0) {
+      clearExplicitBottomPin("settled")
+      return
+    }
+    if (explicitBottomPinFramesRemaining <= 0) {
+      clearExplicitBottomPin("timeout")
       return
     }
     scheduleExplicitBottomPinFrame()
@@ -528,7 +552,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       setFollowMode(mode)
       scrollController.restoreMode(mode)
       scrollController.setRestoring(false)
-      lastEscapedResizeSnapshot = mode.type === "escaped" ? captureScrollSnapshot() ?? snapshot : undefined
       opts?.onApplied?.()
     }
 
@@ -649,7 +672,21 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     detachScrollIntentListeners?.()
     detachScrollIntentListeners = undefined
     if (!element) return
-    const handleWheelIntent = (event: WheelEvent) => markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
+    const nestedScrollerConsumes = (target: EventTarget | null, direction: "up" | "down") => {
+      let current = target instanceof HTMLElement ? target : null
+      while (current && current !== element) {
+        const overflowY = getComputedStyle(current).overflowY
+        if ((overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay")
+          && canScrollInDirection(current, direction)) return true
+        current = current.parentElement
+      }
+      return false
+    }
+    const handleWheelIntent = (event: WheelEvent) => {
+      const direction = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
+      if (direction && nestedScrollerConsumes(event.target, direction)) return
+      markUserScrollIntent(direction)
+    }
     let lastPrimaryPointerY: number | null = null
     const handlePointerIntent = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest(INTERACTIVE_KEY_TARGET_SELECTOR)) return
@@ -685,7 +722,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         markUserScrollIntent(null)
         return
       }
-      markUserScrollIntent(nextY > previousY ? "up" : nextY < previousY ? "down" : null)
+      const direction = nextY > previousY ? "up" : nextY < previousY ? "down" : null
+      if (direction && nestedScrollerConsumes(event.target, direction)) return
+      markUserScrollIntent(direction)
     }
     const handleTouchEnd = () => {
       lastTouchY = null
@@ -767,6 +806,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const api: VirtualFollowListApi = {
     scrollToTop: (opts) => scrollToTop(opts?.immediate ?? true),
     scrollToBottom: (opts) => scrollToBottom(opts?.immediate ?? true),
+    settleAtBottom: () => new Promise<VirtualBottomSettlement>((resolve) => {
+      startExplicitBottomPin({ token: `local-bottom-pin-${++localBottomPinSequence}`, settleFrames: 8 }, false, resolve)
+    }),
     scrollToKey,
     notifyContentRendered: () => {
       if (restartAnchorRestore) {
@@ -807,19 +849,17 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }, { defer: true }))
 
+  createEffect(on(() => props.followToken?.(), () => {
+    if (autoScroll()) api.notifyContentRendered()
+  }, { defer: true }))
+
   createEffect(on(
     () => props.items().map((item, index) => props.getKey(item, index)),
     (nextItemKeys) => {
       const change = classifyVirtualItemKeyChange(previousItemKeys, nextItemKeys)
-      // Seed same-sized keyed replacements so measurement resets never paint an empty frame.
-      measurementResetCache = change.resetMeasurements && previousItemKeys.length === nextItemKeys.length
-        ? virtuaHandle()?.cache
-        : undefined
       previousItemKeys = nextItemKeys
       if (change.resetMeasurements) {
         itemElements.clear()
-        lastEscapedResizeSnapshot = undefined
-        pendingViewportResizeSnapshot = undefined
         setItemKeyMeasurementEpoch((epoch) => epoch + 1)
       }
       if (change.endChanged && autoScroll()) api.notifyContentRendered()
@@ -827,31 +867,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     { defer: true },
   ))
 
-  createEffect(on(() => props.followToken?.(), () => {
-    if (autoScroll()) api.notifyContentRendered()
-  }, { defer: true }))
-
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
     clearExplicitBottomPin()
+    if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
+    pendingViewportResizeFrame = null
+    pendingViewportHeightDelta = 0
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
     itemElements.clear()
-    lastEscapedResizeSnapshot = undefined
-    pendingViewportResizeSnapshot = undefined
   }))
 
-  createEffect(on(() => props.measurementResetKey?.(), () => {
-    itemElements.clear()
-    lastEscapedResizeSnapshot = undefined
-    pendingViewportResizeSnapshot = undefined
-  }, { defer: true }))
-
   createEffect(on(isActive, (active) => {
-    if (!active) return
+    if (!active) {
+      if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
+      pendingExplicitBottomPinFrame = null
+      clearExplicitBottomPin()
+      return
+    }
     if (pendingInitialScroll && props.items().length > 0) {
       pendingInitialScroll = false
       if (initialScrollToBottom()) scrollToBottom(true)
@@ -864,7 +900,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element || typeof ResizeObserver === "undefined") return
     let previousHeight = element.clientHeight
-    observedViewportHeight = previousHeight
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
@@ -872,19 +907,22 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         previousHeight = nextHeight
         return
       }
+      pendingViewportHeightDelta += previousHeight - nextHeight
       previousHeight = nextHeight
-      observedViewportHeight = nextHeight
-      if (scrollController.snapshot().restoring) return
-      if (!autoScroll() && !pendingViewportResizeSnapshot) pendingViewportResizeSnapshot = lastEscapedResizeSnapshot
+      if (scrollController.snapshot().restoring) {
+        pendingViewportHeightDelta = 0
+        return
+      }
       if (pendingViewportResizeFrame !== null) return
       pendingViewportResizeFrame = requestAnimationFrame(() => {
         pendingViewportResizeFrame = null
-        const snapshot = pendingViewportResizeSnapshot
-        pendingViewportResizeSnapshot = undefined
+        const heightDelta = pendingViewportHeightDelta
+        pendingViewportHeightDelta = 0
+        if (scrollController.snapshot().restoring) return
         if (autoScroll() && !externalSuspendAutoPinToBottom()) {
           pinDomBottomAfterLayout()
-        } else if (snapshot) {
-          restoreScrollSnapshot(snapshot)
+        } else {
+          scrollToOffset(getBottomAnchoredViewportOffset(virtuaHandle()?.scrollOffset ?? element.scrollTop, heightDelta), false)
         }
         updateScrollStateFromDom()
       })
@@ -894,12 +932,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       observer.disconnect()
       if (pendingViewportResizeFrame !== null) cancelAnimationFrame(pendingViewportResizeFrame)
       pendingViewportResizeFrame = null
-      pendingViewportResizeSnapshot = undefined
+      pendingViewportHeightDelta = 0
     })
   })
 
   onCleanup(() => {
     invalidateScrollRestore()
+    clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
     detachScrollIntentListeners?.()
@@ -925,19 +964,25 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         <Show keyed when={measurementAuthority()}>
           {(_authority) => (
             <Virtualizer
-              ref={(handle) => {
-                setVirtuaHandle(handle)
-                if (handle) measurementResetCache = undefined
-              }}
+              ref={setVirtuaHandle}
               scrollRef={scrollElement()}
               data={props.items()}
               bufferSize={props.overscanPx ?? 400}
-              cache={measurementResetCache}
+              ssrCount={Math.min(props.items().length, MEASUREMENT_RESET_SSR_COUNT)}
               onScroll={handleScroll}
             >
               {(item, index) => {
                 const key = props.getKey(item, index())
-                return <div id={getAnchorIdForKey(key)} data-virtual-follow-key={key} ref={(element) => registerItemElement(key, element)}>{props.renderItem(item, index())}</div>
+                return <div
+                  id={getAnchorIdForKey(key)}
+                  data-virtual-follow-key={key}
+                  ref={(element) => {
+                    registerItemElement(key, element)
+                    onCleanup(() => {
+                      if (itemElements.get(key) === element) itemElements.delete(key)
+                    })
+                  }}
+                >{props.renderItem(item, index())}</div>
               }}
             </Virtualizer>
           )}

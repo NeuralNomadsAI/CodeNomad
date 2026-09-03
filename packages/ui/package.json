@@ -35,7 +35,7 @@
     "shiki": "^3.13.0",
     "solid-js": "^1.8.0",
     "solid-toast": "^0.5.0",
-    "virtua": "^0.48.8",
+    "virtua": "^0.51.0",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
