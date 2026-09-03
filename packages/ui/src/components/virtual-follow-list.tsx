@@ -157,7 +157,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
   let virtualItemKeys = virtualItems().map((item, index) => props.getKey(item, index))
-  let pendingWindowShiftFrame: number | null = null
+  let windowShiftGeneration = 0
+  let virtualContentResizeObserver: ResizeObserver | null = null
+  let observedVirtualContent: HTMLElement | null = null
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -368,6 +370,27 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return
     }
     itemElements.set(key, element)
+    queueMicrotask(() => {
+      if (itemElements.get(key) !== element || !element.isConnected) return
+      // Solid calls refs before inserting the node. Once connected, Virtua's
+      // measured-height root is the parent of its item wrapper.
+      observeVirtualContent(element.parentElement?.parentElement)
+    })
+  }
+
+  function observeVirtualContent(element: HTMLElement | null | undefined) {
+    if (!element || element === observedVirtualContent || typeof ResizeObserver === "undefined") return
+    if (!virtualContentResizeObserver) {
+      virtualContentResizeObserver = new ResizeObserver(() => {
+        if (!isActive()) return
+        if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
+        pendingContentRenderedFrame = null
+        flushContentRendered()
+      })
+    }
+    if (observedVirtualContent) virtualContentResizeObserver.unobserve(observedVirtualContent)
+    observedVirtualContent = element
+    virtualContentResizeObserver.observe(element)
   }
 
   function maybeEscapeForHoldTrigger() {
@@ -874,8 +897,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return { items, keys: items.map((item, index) => props.getKey(item, index)) }
     },
     ({ items: nextItems, keys: nextItemKeys }) => {
-      if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
-      pendingWindowShiftFrame = null
+      const shiftGeneration = ++windowShiftGeneration
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
       if (change.shiftedStartCount > 0) {
@@ -883,8 +905,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         setShiftVirtualItems(false)
         setVirtualItems([...virtualItems(), ...nextItems.slice(retainedCount)])
         virtualItemKeys = [...virtualItemKeys, ...nextItemKeys.slice(retainedCount)]
-        pendingWindowShiftFrame = requestAnimationFrame(() => {
-          pendingWindowShiftFrame = null
+        queueMicrotask(() => {
+          if (shiftGeneration !== windowShiftGeneration) return
           setShiftVirtualItems(true)
           setVirtualItems(nextItems.slice())
           virtualItemKeys = nextItemKeys
@@ -915,8 +937,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingViewportHeightDelta = 0
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
-    if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
-    pendingWindowShiftFrame = null
+    windowShiftGeneration += 1
     const items = props.items()
     setShiftVirtualItems(false)
     setVirtualItems(items.slice())
@@ -984,7 +1005,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
-    if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
+    windowShiftGeneration += 1
+    virtualContentResizeObserver?.disconnect()
+    virtualContentResizeObserver = null
+    observedVirtualContent = null
     detachScrollIntentListeners?.()
   })
 
