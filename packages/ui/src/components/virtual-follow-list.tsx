@@ -1,7 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
-import { MeasurementResetContinuity } from "./virtual-follow-continuity.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -157,23 +156,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let programmaticScrollUntil = 0
   let previousItemKeys = props.items().map((item, index) => props.getKey(item, index))
 
-  const measurementResetContinuity = new MeasurementResetContinuity({
-    getScrollElement: scrollElement,
-    getShellElement: shellElement,
-    getVirtualizerRoot: getVirtualizerRootElement,
-    getSettlementMetrics: () => {
-      const element = scrollElement()
-      const handle = virtuaHandle()
-      if (!element || !handle) return null
-      return {
-        maxOffset: Math.max(handle.scrollSize - handle.viewportSize, 0),
-        atBottom: isActuallyAtBottom(),
-      }
-    },
-    isActive,
-    isFollowing: autoScroll,
-  })
-
   function invalidateScrollRestore() {
     restoreToken.invalidate()
     restartAnchorRestore = undefined
@@ -216,7 +198,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
-    measurementResetContinuity.clear()
     props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
@@ -383,16 +364,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return
     }
     itemElements.set(key, element)
-  }
-
-  function getVirtualizerRootElement() {
-    const element = scrollElement()
-    if (!element) return null
-    for (const itemElement of itemElements.values()) {
-      const root = itemElement.parentElement?.parentElement
-      if (root instanceof HTMLElement && root.parentElement === element) return root
-    }
-    return null
   }
 
   function maybeEscapeForHoldTrigger() {
@@ -899,7 +870,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const change = classifyVirtualItemKeyChange(previousItemKeys, nextItemKeys)
       previousItemKeys = nextItemKeys
       if (change.resetMeasurements) {
-        if (props.resetKey?.() === lastResetKey) measurementResetContinuity.preserve()
         itemElements.clear()
         setItemKeyMeasurementEpoch((epoch) => epoch + 1)
       }
@@ -910,7 +880,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
-    measurementResetContinuity.clear()
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
@@ -925,7 +894,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(isActive, (active) => {
     if (!active) {
-      measurementResetContinuity.clear()
       if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
       pendingExplicitBottomPinFrame = null
       clearExplicitBottomPin()
@@ -982,7 +950,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   onCleanup(() => {
     invalidateScrollRestore()
     clearExplicitBottomPin()
-    measurementResetContinuity.clear()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
     detachScrollIntentListeners?.()

@@ -55,17 +55,3 @@
   position: relative;
   background-color: transparent;
 }
-
-.message-stream.virtual-follow-list-continuity-layer {
-  position: absolute;
-  flex: none;
-  min-height: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 9;
-  scrollbar-width: none;
-}
-
-.message-stream.virtual-follow-list-continuity-layer::-webkit-scrollbar {
-  display: none;
-}
