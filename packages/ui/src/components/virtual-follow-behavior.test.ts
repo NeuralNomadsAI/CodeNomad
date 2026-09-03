@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import {
   ANCHOR_RESTORE_MAX_FRAMES,
   ANCHOR_RESTORE_STABLE_FRAMES,
+  advanceBottomPinSettlement,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
   canScrollInDirection,
@@ -206,6 +207,24 @@ describe("virtual follow behavior", () => {
     assert.equal(shouldAdvanceBottomPin(2400, 2200), false)
     assert.equal(shouldAdvanceBottomPin(2400, 2401), false)
     assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
+  })
+
+  it("restarts bottom settlement when Virtua discovers a later maximum", () => {
+    let state: { stableFrames: number; lastMaxOffset: number | null; settled?: boolean } = {
+      stableFrames: 0,
+      lastMaxOffset: null,
+    }
+    for (let frame = 0; frame < 7; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 24_000, requiredStableFrames: 8 })
+      assert.equal(state.settled, false)
+    }
+
+    state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    assert.deepEqual(state, { stableFrames: 0, lastMaxOffset: 26_000, settled: false })
+    for (let frame = 0; frame < 8; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    }
+    assert.equal(state.settled, true)
   })
 
   it("leaves nested scroll ownership with a descendant that can consume it", () => {

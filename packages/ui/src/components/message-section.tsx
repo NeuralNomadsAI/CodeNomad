@@ -421,12 +421,13 @@ export default function MessageSection(props: MessageSectionProps) {
           }
           return
         }
+        const wasRestoringScrollSnapshot = restoringScrollSnapshot
         pagingWindowController?.abort()
         pagingWindowController = null
         scrollRestoreGeneration += 1
-        restoringScrollSnapshot = false
         retryAnchorRestore = null
-        persistMessageScrollSnapshot({ requireActive: false })
+        if (!wasRestoringScrollSnapshot) persistMessageScrollSnapshot({ requireActive: false })
+        restoringScrollSnapshot = false
         pagingWindow = false
       },
     ),
@@ -578,10 +579,38 @@ export default function MessageSection(props: MessageSectionProps) {
     const snapshot = initialScrollSnapshot()
     if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
     if (!snapshot) {
-      api.setAutoScroll(true)
-      api.scrollToBottom({ immediate: true })
+      const restoreSessionId = props.sessionId
+      const restoreGeneration = ++scrollRestoreGeneration
+      const isCurrentRestore = () => isActive()
+        && api === listApi()
+        && isScrollRestoreGenerationCurrent(
+          restoreSessionId,
+          restoreGeneration,
+          props.sessionId,
+          scrollRestoreGeneration,
+        )
       restoredWithoutSnapshot = true
-      setDidRestoreScroll(true)
+      restoringScrollSnapshot = true
+      api.restoreScrollSnapshot({ scrollTop: 0, atBottom: true, followModeType: "following" }, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
       return
     }
 

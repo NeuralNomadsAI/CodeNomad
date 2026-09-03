@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
@@ -146,7 +146,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let lastHandledExplicitBottomPinToken: string | number | null = null
   let userCancelledExplicitBottomPinToken: string | number | null = null
   let explicitBottomPinMinItemCount = 0
-  let explicitBottomPinSettleFrames = 0
+  let explicitBottomPinStableFrames = 0
   let explicitBottomPinRequiredSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
   let explicitBottomPinFramesRemaining = 0
   let explicitBottomPinLastMaxOffset: number | null = null
@@ -414,7 +414,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const resolve = explicitBottomPinResolver
     explicitBottomPinToken = null
     explicitBottomPinMinItemCount = 0
-    explicitBottomPinSettleFrames = 0
+    explicitBottomPinStableFrames = 0
     explicitBottomPinRequiredSettleFrames = EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES
     explicitBottomPinFramesRemaining = 0
     explicitBottomPinLastMaxOffset = null
@@ -434,17 +434,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     intent: VirtualExplicitBottomPinIntent,
     notifyCancellation = true,
     resolve?: (settlement: VirtualBottomSettlement) => void,
+    cancelScrollRestore = true,
   ) {
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
     pendingExplicitBottomPinFrame = null
     if (hasActiveExplicitBottomPin()) clearExplicitBottomPin()
-    cancelActiveScrollRestore()
+    if (cancelScrollRestore) cancelActiveScrollRestore()
     userCancelledExplicitBottomPinToken = null
     lastHandledExplicitBottomPinToken = intent.token
     explicitBottomPinToken = intent.token
     explicitBottomPinMinItemCount = Math.max(0, Math.floor(intent.minItemCount ?? 0))
     explicitBottomPinRequiredSettleFrames = Math.max(1, Math.floor(intent.settleFrames ?? EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES))
-    explicitBottomPinSettleFrames = explicitBottomPinRequiredSettleFrames
+    explicitBottomPinStableFrames = 0
     explicitBottomPinFramesRemaining = EXPLICIT_BOTTOM_PIN_MAX_FRAMES
     explicitBottomPinLastMaxOffset = null
     explicitBottomPinNotifiesCancellation = notifyCancellation
@@ -468,12 +469,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
     const ready = props.items().length >= explicitBottomPinMinItemCount && isActuallyAtBottom()
     const maxOffset = captureScrollSnapshot()?.maxScrollTop ?? null
-    if (ready && maxOffset === explicitBottomPinLastMaxOffset) explicitBottomPinSettleFrames -= 1
-    else explicitBottomPinSettleFrames = explicitBottomPinRequiredSettleFrames
-    explicitBottomPinLastMaxOffset = maxOffset
+    const settlement = advanceBottomPinSettlement(
+      { stableFrames: explicitBottomPinStableFrames, lastMaxOffset: explicitBottomPinLastMaxOffset },
+      { ready, maxOffset, requiredStableFrames: explicitBottomPinRequiredSettleFrames },
+    )
+    explicitBottomPinStableFrames = settlement.stableFrames
+    explicitBottomPinLastMaxOffset = settlement.lastMaxOffset
     explicitBottomPinFramesRemaining -= 1
 
-    if (ready && explicitBottomPinSettleFrames <= 0) {
+    if (settlement.settled) {
       clearExplicitBottomPin("settled")
       return
     }
@@ -539,7 +543,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
 
     const token = restoreToken.begin()
-    const isCurrent = () => restoreToken.isCurrent(token) && Boolean(scrollElement())
+    const isCurrent = () => restoreToken.isCurrent(token) && Boolean(scrollElement()) && isActive()
     restartAnchorRestore = undefined
     scrollController.setRestoring(true)
     cancelRestore = () => opts?.onCancelled?.()
@@ -573,8 +577,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (snapshot.atBottom) {
-        performScrollToBottom(true)
-        requestAnimationFrame(finish)
+        startExplicitBottomPin(
+          { token: `local-bottom-restore-${++localBottomPinSequence}`, settleFrames: 8 },
+          false,
+          (settlement) => {
+            if (settlement === "cancelled" || !isCurrent()) return
+            finish()
+          },
+          false,
+        )
         return
       }
 
