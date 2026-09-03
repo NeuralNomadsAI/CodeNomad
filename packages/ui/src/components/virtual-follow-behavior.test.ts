@@ -250,19 +250,43 @@ describe("virtual follow behavior", () => {
     assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
   })
 
-  it("invalidates measurements when a capped window slides", () => {
+  it("preserves measurements when a capped window slides", () => {
     const previous = Array.from({ length: 200 }, (_, index) => `m${index}`)
     const next = [...previous.slice(1), "compaction"]
 
     assert.deepEqual(classifyVirtualItemKeyChange(previous, next), {
-      resetMeasurements: true,
+      resetMeasurements: false,
       endChanged: true,
+      shiftedStartCount: 1,
     })
     assert.deepEqual(classifyVirtualItemKeyChange(next, next), {
       resetMeasurements: false,
       endChanged: false,
+      shiftedStartCount: 0,
     })
-    assert.equal(classifyVirtualItemKeyChange(next, []).resetMeasurements, true)
+    assert.deepEqual(classifyVirtualItemKeyChange(next, []), {
+      resetMeasurements: true,
+      endChanged: true,
+      shiftedStartCount: 0,
+    })
+  })
+
+  it("only preserves measurements for an ordered suffix shift", () => {
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["b", "c", "d"]), {
+      resetMeasurements: false,
+      endChanged: true,
+      shiftedStartCount: 1,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["b", "x", "d"]), {
+      resetMeasurements: true,
+      endChanged: true,
+      shiftedStartCount: 0,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["x", "a", "b", "c"]), {
+      resetMeasurements: true,
+      endChanged: false,
+      shiftedStartCount: 0,
+    })
   })
 
   it("lets fresh downward intent rejoin at bottom during a programmatic window", () => {

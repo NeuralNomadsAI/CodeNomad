@@ -113,6 +113,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
   const [itemKeyMeasurementEpoch, setItemKeyMeasurementEpoch] = createSignal(0)
+  const [virtualItems, setVirtualItems] = createSignal<T[]>(props.items().slice())
+  const [shiftVirtualItems, setShiftVirtualItems] = createSignal(false)
 
   const isActive = () => props.isActive?.() ?? true
   const initialScrollToBottom = () => props.initialScrollToBottom?.() ?? true
@@ -154,7 +156,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let explicitBottomPinResolver: ((settlement: VirtualBottomSettlement) => void) | null = null
   let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
-  let previousItemKeys = props.items().map((item, index) => props.getKey(item, index))
+  let virtualItemKeys = virtualItems().map((item, index) => props.getKey(item, index))
+  let pendingWindowShiftFrame: number | null = null
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -266,12 +269,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function performScrollToBottom(immediate = true) {
     const handle = virtuaHandle()
     const element = scrollElement()
-    if (!element || props.items().length === 0) return
+    const items = virtualItems()
+    if (!element || items.length === 0) return
     const offset = handle?.scrollOffset ?? element.scrollTop
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
     if (handle && shouldAdvanceBottomPin(offset, maxOffset)) {
       markProgrammaticScroll()
-      handle.scrollToIndex(props.items().length - 1, { align: "end", smooth: !immediate })
+      handle.scrollToIndex(items.length - 1, { align: "end", smooth: !immediate })
     } else if (!handle && shouldAdvanceBottomPin(offset, maxOffset)) {
       scrollToOffset(maxOffset, true)
     }
@@ -301,7 +305,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function performScrollToKey(key: string, opts: { block: ScrollLogicalPosition; smooth: boolean }) {
-    const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
+    const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return
     markProgrammaticScroll()
     // Large smooth jumps over dynamically measured items can leave Virtua's
@@ -345,7 +349,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!handle || !element) return
     const start = handle.findItemIndex(handle.scrollOffset)
-    const item = props.items()[start]
+    const item = virtualItems()[start]
     if (!item) return
     const key = props.getKey(item, start)
     if (key !== activeKey()) {
@@ -524,7 +528,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     const handle = virtuaHandle()
     const index = handle?.findItemIndex(handle.scrollOffset)
-    const item = typeof index === "number" ? props.items()[index] : undefined
+    const item = typeof index === "number" ? virtualItems()[index] : undefined
     const preferredKey = item === undefined || index === undefined ? undefined : props.getKey(item, index)
     const anchor = selectTopViewportAnchor(candidates, containerRect.top, containerRect.bottom, preferredKey)
     return anchor ? { key: anchor.key, offset: anchor.top - containerRect.top } : null
@@ -566,7 +570,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const handle = virtuaHandle()
       const ready = isScrollRestoreMeasurementReady({
         hasHandle: Boolean(handle),
-        itemCount: props.items().length,
+        itemCount: virtualItems().length,
         scrollSize: handle?.scrollSize ?? element.scrollHeight,
         viewportSize: handle?.viewportSize ?? element.clientHeight,
       })
@@ -590,7 +594,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
 
       if (snapshot.anchorKey) {
-        const index = props.items().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
+        const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
         if (index !== -1) {
           markProgrammaticScroll()
           virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
@@ -617,7 +621,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function scrollToAnchorIndex(key: string) {
-    const index = props.items().findIndex((item, i) => props.getKey(item, i) === key)
+    const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return false
     markProgrammaticScroll()
     virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: false })
@@ -865,10 +869,32 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }, { defer: true }))
 
   createEffect(on(
-    () => props.items().map((item, index) => props.getKey(item, index)),
-    (nextItemKeys) => {
-      const change = classifyVirtualItemKeyChange(previousItemKeys, nextItemKeys)
-      previousItemKeys = nextItemKeys
+    () => {
+      const items = props.items()
+      return { items, keys: items.map((item, index) => props.getKey(item, index)) }
+    },
+    ({ items: nextItems, keys: nextItemKeys }) => {
+      if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
+      pendingWindowShiftFrame = null
+
+      const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
+      if (change.shiftedStartCount > 0) {
+        const retainedCount = virtualItemKeys.length - change.shiftedStartCount
+        setShiftVirtualItems(false)
+        setVirtualItems([...virtualItems(), ...nextItems.slice(retainedCount)])
+        virtualItemKeys = [...virtualItemKeys, ...nextItemKeys.slice(retainedCount)]
+        pendingWindowShiftFrame = requestAnimationFrame(() => {
+          pendingWindowShiftFrame = null
+          setShiftVirtualItems(true)
+          setVirtualItems(nextItems.slice())
+          virtualItemKeys = nextItemKeys
+        })
+      } else {
+        setShiftVirtualItems(false)
+        setVirtualItems(nextItems.slice())
+        virtualItemKeys = nextItemKeys
+      }
+
       if (change.resetMeasurements) {
         itemElements.clear()
         setItemKeyMeasurementEpoch((epoch) => epoch + 1)
@@ -889,6 +915,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     pendingViewportHeightDelta = 0
     dispatchFollowEvent({ type: "reset", follow: initialAutoScroll() })
     pendingInitialScroll = true
+    if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
+    pendingWindowShiftFrame = null
+    const items = props.items()
+    setShiftVirtualItems(false)
+    setVirtualItems(items.slice())
+    virtualItemKeys = items.map((item, index) => props.getKey(item, index))
     itemElements.clear()
   }))
 
@@ -952,6 +984,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
+    if (pendingWindowShiftFrame !== null) cancelAnimationFrame(pendingWindowShiftFrame)
     detachScrollIntentListeners?.()
   })
 
@@ -977,9 +1010,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
             <Virtualizer
               ref={setVirtuaHandle}
               scrollRef={scrollElement()}
-              data={props.items()}
+              data={virtualItems()}
+              shift={shiftVirtualItems()}
               bufferSize={props.overscanPx ?? 400}
-              ssrCount={Math.min(props.items().length, MEASUREMENT_RESET_SSR_COUNT)}
+              ssrCount={Math.min(virtualItems().length, MEASUREMENT_RESET_SSR_COUNT)}
               onScroll={handleScroll}
             >
               {(item, index) => {

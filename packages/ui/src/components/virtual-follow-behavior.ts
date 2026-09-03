@@ -101,9 +101,13 @@ export function shouldNavigateAtBoundary(input: {
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])
+  const shiftedStartCount = next.length > 0 ? previous.indexOf(next[0]) : -1
+  const keepsShiftedSuffix = shiftedStartCount > 0
+    && previous.slice(shiftedStartCount).every((key, index) => key === next[index])
   return {
-    resetMeasurements: previous.length > 0 && (next.length === 0 || !keepsPrefix),
+    resetMeasurements: previous.length > 0 && (next.length === 0 || (!keepsPrefix && !keepsShiftedSuffix)),
     endChanged: previous.length > 0 && previous.at(-1) !== next.at(-1),
+    shiftedStartCount: keepsShiftedSuffix ? shiftedStartCount : 0,
   }
 }
 
