@@ -455,6 +455,7 @@ const App: Component = () => {
         error,
         t("app.launchError.fallbackMessage"),
         t("app.launchError.invalidConfig"),
+        t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })

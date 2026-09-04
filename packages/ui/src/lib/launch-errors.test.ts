@@ -4,6 +4,18 @@ import { describe, it } from "node:test"
 import { formatLaunchErrorMessage } from "./launch-errors"
 
 describe("formatLaunchErrorMessage", () => {
+  it("localizes incompatible OpenCode V1 binary errors", () => {
+    assert.equal(
+      formatLaunchErrorMessage(
+        "opencode_v2_required: Host binary does not support the OpenCode V2 service lifecycle",
+        "fallback",
+        "Invalid configuration",
+        "Select an OpenCode V2 binary",
+      ),
+      "Select an OpenCode V2 binary",
+    )
+  })
+
   it("formats OpenCode configuration validation details", () => {
     const error = new Error(JSON.stringify({
       name: "ConfigInvalidError",

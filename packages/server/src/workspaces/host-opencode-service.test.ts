@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import { HostOpenCodeService, hostOpenCodeServiceIdentity } from "./host-opencode-service"
 import type { OpenCodeCliServiceDependencies, ServiceExecOptions } from "./opencode-cli-service"
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../api-types"
 
 const url = "http://127.0.0.1:4321"
 
@@ -89,6 +90,24 @@ describe("HostOpenCodeService", () => {
     })
     assert.match(identity, /:env:[a-f0-9]{64}$/)
     assert.equal(identity.includes(secret), false)
+  })
+
+  it("reports an actionable compatibility error for an OpenCode V1 binary", async () => {
+    const service = createService([], {}, {
+      execFile: async () => {
+        throw Object.assign(new Error("Command failed"), {
+          code: 1,
+          stdout: "",
+          stderr: `Commands:\n  opencode completion\n  opencode [project] start opencode tui [default]\n`,
+        })
+      },
+    })
+
+    await assert.rejects(service.discover(), (error: Error) => {
+      assert.match(error.message, new RegExp(OPENCODE_V2_REQUIRED_ERROR_CODE))
+      assert.doesNotMatch(error.message, /Commands:/)
+      return true
+    })
   })
 })
 

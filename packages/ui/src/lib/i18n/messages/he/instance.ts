@@ -261,6 +261,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "בחר קובץ בינארי של OpenCode",
   "opencodeBinarySelector.dialog.description": "עיין בקבצים החשופים על ידי שרת ה-CLI.",
   "opencodeBinarySelector.validation.invalidBinary": "קובץ בינארי לא תקין של OpenCode",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad דורש OpenCode V2. יש להתקין ולבחור בקובץ הבינארי opencode2.",
   "opencodeBinarySelector.validation.alreadyValidating": "כבר מאמת",
   "opencodeBinarySelector.display.systemPath": "{name} (נתיב מערכת)",
   "opencodeBinarySelector.versionLabel": "v{version}",

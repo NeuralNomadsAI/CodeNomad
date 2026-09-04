@@ -33,6 +33,7 @@ export function showWorkspaceLaunchError(workspace: WorkspaceDescriptor) {
     rawMessage,
     tGlobal("app.launchError.fallbackMessage"),
     tGlobal("app.launchError.invalidConfig"),
+    tGlobal("opencodeBinarySelector.validation.v2Required"),
   )
 
   const previous = lastWorkspaceErrorByInstanceId.get(instanceId)
