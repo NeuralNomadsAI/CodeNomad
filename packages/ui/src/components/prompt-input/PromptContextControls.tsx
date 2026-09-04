@@ -1,11 +1,13 @@
-import type { Component } from "solid-js"
+import { Show, type Component } from "solid-js"
 import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import ThinkingSelector from "../thinking-selector"
+import WorktreeSelector from "../worktree-selector"
 
 interface PromptContextControlsProps {
   instanceId: string
   sessionId: string
+  worktreeSessionId?: string
   currentAgent: string
   currentModel: { providerId: string; modelId: string }
   onAgentChange: (agent: string) => Promise<void>
@@ -13,7 +15,10 @@ interface PromptContextControlsProps {
 }
 
 const PromptContextControls: Component<PromptContextControlsProps> = (props) => (
-  <div class="prompt-context-controls">
+  <div class="prompt-context-controls" data-has-worktree={props.worktreeSessionId ? "true" : "false"}>
+    <Show when={props.worktreeSessionId}>
+      {(sessionId) => <WorktreeSelector instanceId={props.instanceId} sessionId={sessionId()} />}
+    </Show>
     <AgentSelector
       instanceId={props.instanceId}
       sessionId={props.sessionId}

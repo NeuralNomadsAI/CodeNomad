@@ -682,6 +682,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             <PromptContextControls
               instanceId={props.instanceId}
               sessionId={props.sessionId}
+              worktreeSessionId={props.sessionId}
               currentAgent={session()?.agent ?? ""}
               currentModel={session()?.model ?? { providerId: "", modelId: "" }}
               onAgentChange={props.onAgentChange}

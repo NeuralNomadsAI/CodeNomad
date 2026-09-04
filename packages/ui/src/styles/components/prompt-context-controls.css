@@ -5,6 +5,10 @@
   width: 100%;
 }
 
+.prompt-context-controls[data-has-worktree="true"] {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.85fr) minmax(0, 1.35fr) minmax(0, 1fr);
+}
+
 .prompt-context-controls .sidebar-selector,
 .prompt-context-controls .selector-trigger,
 .prompt-context-controls [data-model-selector-control],
@@ -41,7 +45,7 @@
   margin-inline-start: auto;
 }
 
-@container prompt-composer (max-width: 480px) {
+@container prompt-composer (max-width: 640px) {
   .prompt-context-controls .session-sidebar-selector-prefix {
     position: absolute;
     width: 1px;
