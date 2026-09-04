@@ -66,6 +66,20 @@ function validateServerProductionLock(lock) {
   return visited
 }
 
+function stagePrebuiltWorkspacePackage(source, destination) {
+  const sourceManifest = path.join(source, "package.json")
+  const sourceDist = path.join(source, "dist")
+  if (!fs.existsSync(sourceDist)) {
+    throw new Error(`Missing prebuilt workspace artifact: ${sourceDist}`)
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(sourceManifest, "utf8"))
+  delete manifest.scripts
+  fs.mkdirSync(destination, { recursive: true })
+  fs.writeFileSync(path.join(destination, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
+  fs.cpSync(sourceDist, path.join(destination, "dist"), { recursive: true })
+}
+
 function stagePackagedServer(options) {
   const { workspaceRoot, serverRoot, log = () => {}, env = process.env } = options
   const npmTarget = resolveNpmTarget(options.target || env.CODENOMAD_NODE_TARGET)
@@ -80,14 +94,10 @@ function stagePackagedServer(options) {
     fs.copyFileSync(lockPath, path.join(stagingRoot, "package-lock.json"))
     fs.copyFileSync(path.join(serverRoot, "package.json"), path.join(stagedServerRoot, "package.json"))
     for (const packagePath of productionClosure) {
-      if (!packagePath.startsWith("packages/") || packagePath === "packages/server") continue
+      if (!packagePath.startsWith("packages/") || packagePath === "packages/server" || packagePath.includes("/node_modules/")) continue
       const source = path.join(workspaceRoot, packagePath)
       const destination = path.join(stagingRoot, packagePath)
-      fs.mkdirSync(destination, { recursive: true })
-      fs.copyFileSync(path.join(source, "package.json"), path.join(destination, "package.json"))
-      if (fs.existsSync(path.join(source, "dist"))) {
-        fs.cpSync(path.join(source, "dist"), path.join(destination, "dist"), { recursive: true })
-      }
+      stagePrebuiltWorkspacePackage(source, destination)
     }
 
     log(`installing production server dependencies from the workspace lock for ${npmTarget.target}`)
@@ -336,6 +346,7 @@ function pruneKnownServerDependencies(root, log) {
 module.exports = {
   copyPackagedServerResources,
   resolveNpmTarget,
+  stagePrebuiltWorkspacePackage,
   stagePackagedServer,
   validateServerProductionLock,
 }
