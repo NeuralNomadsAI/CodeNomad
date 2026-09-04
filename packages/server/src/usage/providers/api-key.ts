@@ -106,6 +106,14 @@ const openRouter: UsageProvider = {
   },
 }
 
+const CREDIT_LIMIT_TYPE = "CREDIT_LIMIT"
+const UNIT_SECONDS: Record<number, number> = { 3: 3_600, 6: 604_800 }
+
+function unitWindowSeconds(unit: unknown, count: number | null): number | null {
+  const unitSeconds = typeof unit === "number" ? UNIT_SECONDS[unit] : undefined
+  return unitSeconds !== undefined && count !== null ? unitSeconds * count : null
+}
+
 function createTokenLimitProvider(input: { id: string; name: string; aliases: readonly string[]; url: string }): UsageProvider {
   return {
     id: input.id,
@@ -118,15 +126,27 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
         const payload = await fetchJson(input.url, { headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } })
         const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
         for (const limit of Array.isArray(payload?.data?.limits) ? payload.data.limits : []) {
-          if (limit?.type !== "TOKENS_LIMIT" && limit?.type !== "TIME_LIMIT") continue
-          const duration = toNumber(limit.number)
-          const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : limit.unit === 3 && duration ? duration * 3600 : null
-          const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
-          windows[label] = toUsageWindow({
-            usedPercent: toNumber(limit.percentage),
-            windowSeconds: seconds,
-            resetAt: toTimestamp(limit.nextResetTime),
-          })
+          const number = toNumber(limit?.number)
+          if (limit && (limit.type === "TOKENS_LIMIT" || limit.type === "TIME_LIMIT")) {
+            const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : unitWindowSeconds(limit.unit, number)
+            const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
+            windows[label] = toUsageWindow({
+              usedPercent: toNumber(limit.percentage),
+              windowSeconds: seconds,
+              resetAt: toTimestamp(limit.nextResetTime),
+            })
+          } else if (limit && limit.type === CREDIT_LIMIT_TYPE) {
+            const usedPercent = toNumber(limit.percentage)
+            const remaining = toNumber(limit.remaining)
+            const allowance = toNumber(limit.usage)
+            if (usedPercent === null && (remaining === null || allowance === null)) continue
+            const seconds = unitWindowSeconds(limit.unit, number)
+            windows[resolveWindowLabel(seconds)] = toUsageWindow({
+              usedPercent: usedPercent ?? (allowance !== null && allowance > 0 && remaining !== null ? ((allowance - remaining) / allowance) * 100 : null),
+              windowSeconds: seconds,
+              resetAt: toTimestamp(limit.nextResetTime),
+            })
+          }
         }
         return { windows }
       })
