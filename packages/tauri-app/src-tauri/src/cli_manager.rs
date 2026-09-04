@@ -1128,7 +1128,7 @@ impl CliProcessManager {
         }
 
         let command_info = if use_user_shell {
-            log_line("spawning via user shell");
+            log_line("spawning via POSIX-compatible shell");
             ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
         } else {
             log_line(if resolution.runner == Runner::Tsx {
@@ -1872,17 +1872,32 @@ fn build_shell_command_string(
     );
     let wrapped_command = wrap_command_for_shell(&command, &shell);
     let args = build_shell_args(&shell, &wrapped_command);
-    log_line(&format!("user shell command: {} {:?}", shell, args));
+    log_line(&format!("POSIX shell command: {} {:?}", shell, args));
     Ok(ShellCommand { shell, args })
 }
 
 fn default_shell() -> String {
-    if let Ok(shell) = std::env::var("SHELL") {
-        if !shell.trim().is_empty() {
-            return shell;
-        }
+    select_posix_shell(
+        std::env::var("SHELL").ok().as_deref(),
+        cfg!(target_os = "macos"),
+    )
+}
+
+fn select_posix_shell(configured_shell: Option<&str>, macos: bool) -> String {
+    if let Some(shell) = configured_shell.map(str::trim).filter(|shell| {
+        let name = std::path::Path::new(shell)
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or("")
+            .to_lowercase();
+        matches!(name.as_str(), "bash" | "zsh")
+    }) {
+        return shell.to_string();
     }
-    if cfg!(target_os = "macos") {
+
+    // The launch script uses POSIX syntax. Never pass it to arbitrary user shells
+    // such as Nushell or Fish even when they are configured through $SHELL.
+    if macos {
         "/bin/zsh".to_string()
     } else {
         "/bin/bash".to_string()
@@ -2022,6 +2037,32 @@ mod tests {
         assert_eq!(
             candidates.last(),
             Some(&workspace.join("packages/server/dist/bin.js"))
+        );
+    }
+
+    #[test]
+    fn posix_shell_selection_rejects_incompatible_user_shells() {
+        assert_eq!(
+            select_posix_shell(Some("/opt/homebrew/bin/nu"), true),
+            "/bin/zsh"
+        );
+        assert_eq!(
+            select_posix_shell(Some("/usr/bin/fish"), false),
+            "/bin/bash"
+        );
+        assert_eq!(select_posix_shell(Some("/tmp/not-bash"), true), "/bin/zsh");
+        assert_eq!(select_posix_shell(Some("  "), true), "/bin/zsh");
+    }
+
+    #[test]
+    fn posix_shell_selection_preserves_bash_and_zsh() {
+        assert_eq!(
+            select_posix_shell(Some("/opt/homebrew/bin/bash"), true),
+            "/opt/homebrew/bin/bash"
+        );
+        assert_eq!(
+            select_posix_shell(Some(" /usr/local/bin/zsh "), false),
+            "/usr/local/bin/zsh"
         );
     }
 

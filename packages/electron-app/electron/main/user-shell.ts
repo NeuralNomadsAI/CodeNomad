@@ -8,16 +8,27 @@ interface ShellCommand {
 
 const isWindows = process.platform === "win32"
 
-function getDefaultShellPath(): string {
-  if (process.env.SHELL && process.env.SHELL.trim().length > 0) {
-    return process.env.SHELL
+export function getDefaultShellPath(
+  platform: NodeJS.Platform = process.platform,
+  configuredShell = process.env.SHELL,
+): string {
+  const shellPath = configuredShell?.trim()
+  if (shellPath && isSupportedPosixShell(shellPath)) {
+    return shellPath
   }
 
-  if (process.platform === "darwin") {
+  // The launch script uses POSIX syntax. Never pass it to arbitrary user shells
+  // such as Nushell or Fish even when they are configured through $SHELL.
+  if (platform === "darwin") {
     return "/bin/zsh"
   }
 
   return "/bin/bash"
+}
+
+function isSupportedPosixShell(shellPath: string): boolean {
+  const shellName = path.basename(shellPath).toLowerCase()
+  return shellName === "bash" || shellName === "zsh"
 }
 
 function wrapCommandForShell(command: string, shellPath: string): string {
