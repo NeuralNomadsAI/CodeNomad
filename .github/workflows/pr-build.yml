@@ -106,7 +106,7 @@ jobs:
 
       - name: Test changed runnable UI behavior
         run: >-
-          node --import tsx --test
+          node --import tsx --test --test-force-exit
           packages/ui/src/components/browser-frame-security.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
@@ -115,10 +115,13 @@ jobs:
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
+          packages/ui/src/components/tool-call/permission-block.test.ts
+          packages/ui/src/components/tool-call/render-memory.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/lib/client-identity.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
+          packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
           packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
@@ -126,7 +129,9 @@ jobs:
           packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/retained-size.test.ts
           packages/ui/src/lib/runtime-env.test.ts
+          packages/ui/src/lib/session-transcript-lru.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
@@ -158,11 +163,13 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
+          packages/ui/src/components/tool-call/renderer-copy.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/message-v2/bus.test.ts
           packages/ui/src/stores/opencode-data.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts

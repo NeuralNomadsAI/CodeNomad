@@ -10,6 +10,7 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
@@ -283,6 +284,7 @@ async function sendMessage(
       isEphemeral: true,
       clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
     })
+    store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
   }
 

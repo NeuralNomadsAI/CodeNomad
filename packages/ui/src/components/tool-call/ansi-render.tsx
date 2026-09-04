@@ -3,6 +3,7 @@ import type { RenderCache } from "../../types/message"
 import { ansiToHtml, createAnsiStreamRenderer, hasAnsi } from "../../lib/ansi"
 import { escapeHtml } from "../../lib/text-render-utils"
 import type { AnsiRenderOptions, ToolScrollHelpers } from "./types"
+import { limitToolOutputForRender } from "./utils"
 
 type AnsiRenderCache = RenderCache & { hasAnsi: boolean }
 
@@ -129,6 +130,7 @@ export function createAnsiContentRenderer(params: {
       return null
     }
 
+    const content = limitToolOutputForRender(options.content)
     const size = options.size || "default"
     const messageClass = `message-text tool-call-markdown${size === "large" ? " tool-call-markdown-large" : ""}`
     const cacheHandle = options.variant === "running" ? params.ansiRunningCache : params.ansiFinalCache
@@ -143,7 +145,6 @@ export function createAnsiContentRenderer(params: {
     let nextCache: AnsiRenderCache
 
     if (isRunningVariant) {
-      const content = options.content
       const resetStreaming = !cached || !cached.text || !content.startsWith(cached.text) || cached.text !== runningAnsiSource
 
       if (resetStreaming) {
@@ -182,12 +183,12 @@ export function createAnsiContentRenderer(params: {
       runningAnsiSource = nextCache.text
       cacheHandle.set(nextCache)
     } else {
-      if (cached && cached.text === options.content) {
+      if (cached && cached.text === content) {
         nextCache = { ...cached, mode }
       } else {
-        const detectedAnsi = hasAnsi(options.content)
-        const html = detectedAnsi ? ansiToHtml(options.content) : escapeHtml(options.content)
-        nextCache = { text: options.content, html, mode, hasAnsi: detectedAnsi }
+        const detectedAnsi = hasAnsi(content)
+        const html = detectedAnsi ? ansiToHtml(content) : escapeHtml(content)
+        nextCache = { text: content, html, mode, hasAnsi: detectedAnsi }
         cacheHandle.set(nextCache)
       }
     }

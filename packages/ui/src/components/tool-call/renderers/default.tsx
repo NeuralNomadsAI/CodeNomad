@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, formatUnknown, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
 
 export const defaultRenderer: ToolRenderer = {
@@ -16,12 +16,13 @@ export const defaultRenderer: ToolRenderer = {
         ? metadata.output
         : metadata.diff ?? metadata.preview ?? input.content
 
-    const result = formatUnknown(primaryOutput)
-    if (!result) return undefined
+    if (primaryOutput === undefined || primaryOutput === null || primaryOutput === "" || (Array.isArray(primaryOutput) && primaryOutput.length === 0)) return undefined
+    const result = formatUnknownForRender(primaryOutput)
 
     return {
-      language: result.language ?? "text",
-      copyText: result.text,
+      language: result?.language ?? "text",
+      getCopyText: () => formatUnknownForCopy(primaryOutput)?.text ?? null,
+      hasCopyText: true,
       wrapToggle: true,
       suppressInnerHeader: true,
     }
@@ -37,7 +38,7 @@ export const defaultRenderer: ToolRenderer = {
         ? metadata.output
         : metadata.diff ?? metadata.preview ?? input.content
 
-    const result = formatUnknown(primaryOutput)
+    const result = formatUnknownForRender(primaryOutput)
     if (!result) return null
 
     const content = ensureMarkdownContent(result.text, result.language, true)
