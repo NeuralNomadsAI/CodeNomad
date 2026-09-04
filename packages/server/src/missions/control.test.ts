@@ -110,6 +110,7 @@ test("delegates between root sessions, queues reports, and restores the durable 
   assert.equal(delegated.mission.tasks[0]?.status, "queued")
   const actor = delegated.mission.actors.find((candidate) => candidate.kind === "specialist")!
   assert.equal(actor.managed, true)
+  assert.equal(Object.prototype.hasOwnProperty.call(actor.location, "workspaceID"), false)
   assert.equal(sessions.prompts[0]?.delivery, "queue")
   assert.equal(sessions.prompts[0]?.resume, true)
   assert.match(sessions.prompts[0]?.text ?? "", /mission\.report/)

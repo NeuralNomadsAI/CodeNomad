@@ -203,7 +203,9 @@ function eventBase(value: Record<string, unknown>) {
 function parseLocation(input: unknown): MissionLocation | undefined {
   if (!record(input) || !text(input.directory, MAX_TEXT)) return undefined
   if (input.workspaceID !== undefined && !text(input.workspaceID, MAX_SHORT_TEXT)) return undefined
-  return { directory: input.directory, workspaceID: input.workspaceID as string | undefined }
+  return input.workspaceID === undefined
+    ? { directory: input.directory }
+    : { directory: input.directory, workspaceID: input.workspaceID as string }
 }
 
 function template(value: unknown): value is MissionTemplateId {
