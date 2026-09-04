@@ -8,6 +8,7 @@ import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -925,6 +926,7 @@ describe("OpenCode data projection", () => {
   it("processes a rotation-boundary side-effect event exactly once", async () => {
     const instanceId = "opencode-data-single-side-effect"
     const sessionId = "session"
+    sseManager.seedStatus(instanceId, "connected")
     const client = getRootClient(instanceId)
     let reads = 0
     ;(client.session as any).message = async ({ messageID }: { messageID: string }) => {
