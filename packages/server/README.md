@@ -97,7 +97,7 @@ You can configure the server using flags or environment variables:
 | `--ui-auto-update <enabled>` | `CLI_UI_AUTO_UPDATE` | Enable remote UI updates (`true`) |
 | `--ui-manifest-url <url>` | `CLI_UI_MANIFEST_URL` | Remote UI manifest URL |
 
-Remote Control uses `https://remote.codenomad.neuralnomads.ai` by default. Set `CODENOMAD_REMOTE_CONTROL_RELAY_URL` to use another compatible relay.
+Remote Control uses `https://remote.codenomad.neuralnomads.ai` by default. Set `CODENOMAD_REMOTE_CONTROL_RELAY_URL` to use another compatible relay. The shared relay uses Cloudflare Durable Objects WebSocket Hibernation: idle host connections remain reachable without keeping an object active, and application heartbeats are answered without waking it. Protocol v2 encrypts application traffic end to end with directional AES-256-GCM keys derived from an ephemeral browser key, the pinned persistent host key, and fresh per-tunnel challenges; the relay routes ciphertext without receiving the decryption keys.
 
 ### Dev Releases (Advanced)
 
@@ -131,7 +131,7 @@ codenomad --https=true --http=true
 
 ### Remote Control Network Model
 
-Both HTTP and HTTPS listeners bind to `127.0.0.1`. Remote Control never forwards its device cookie to the local server: the outbound connector strips remote credentials and injects a dedicated internal CodeNomad session. OpenCode remains behind CodeNomad's existing authorization, workspace, Git, Yolo, and proxy boundaries.
+Both HTTP and HTTPS listeners bind to `127.0.0.1`. Remote Control opens only an outbound host WebSocket and requires no inbound port. It never forwards its device cookie or remote authorization headers to the local server: after host-side decryption, the connector injects a dedicated internal CodeNomad session. OpenCode remains behind CodeNomad's existing authorization, workspace, Git, Yolo, and proxy boundaries.
 
 ### Self-Signed Certificates
 
@@ -215,7 +215,7 @@ CodeNomad can be installed as a PWA from a supported browser, including from a p
 - **CodeNomad instance data**: `~/.config/codenomad/instances/`
 - **OpenCode V2 sessions, messages, and service registration**: OpenCode's platform-default global locations.
 - **Desktop restore state**: `~/.codenomad/client-state/v2/`
-- **Remote Control host identity**: `~/.config/codenomad/remote-control.json` (random host ID and secret; keep private)
+- **Remote Control host identity**: `~/.config/codenomad/remote-control.json` (random host ID, relay secret, and P-256 private key; keep private)
 
 CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Configured allowed `server.environmentVariables` and the current `NODE_EXTRA_CA_CERTS` apply only when CodeNomad starts a missing daemon. Existing daemons are unchanged; legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
 

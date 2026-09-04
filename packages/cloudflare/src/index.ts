@@ -1,5 +1,5 @@
 import { RemoteControlHost } from "./remote-control/host-object"
-import { HOST_ID_PATTERN } from "./remote-control/security"
+import { HOST_ID_PATTERN, RELAY_TOKEN_PATTERN, clearDeviceCookie, cookieToken } from "./remote-control/security"
 
 export { RemoteControlHost }
 
@@ -13,10 +13,11 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const baseHost = env.REMOTE_BASE_HOST.toLowerCase()
-    const hostId = remoteHostId(url.hostname, baseHost)
+    const hostname = requestHostname(request, url, baseHost)
+    const hostId = remoteHostId(hostname, baseHost)
 
     if (hostId) return handleRemoteHost(request, env, hostId)
-    if (url.hostname.toLowerCase() === baseHost && url.pathname.startsWith("/api/hosts/")) {
+    if ((hostname === baseHost || baseHost === "localhost") && url.pathname.startsWith("/api/hosts/")) {
       return handleHostControl(request, env)
     }
 
@@ -30,6 +31,17 @@ export default {
     }
     return env.ASSETS.fetch(request)
   },
+}
+
+function requestHostname(request: Request, url: URL, baseHost: string): string {
+  const hostname = url.hostname.toLowerCase()
+  if (baseHost === "localhost") {
+    const testHost = request.headers.get("x-codenomad-relay-test-host")
+    if (testHost) return testHost.toLowerCase()
+  }
+  if (baseHost !== "localhost" || (hostname !== "localhost" && !hostname.startsWith("127."))) return hostname
+  const presented = (request.headers.get("host") ?? hostname).split(":")[0].toLowerCase()
+  return presented === "localhost" || presented.startsWith("127.") ? baseHost : presented
 }
 
 async function handleHostControl(request: Request, env: Env): Promise<Response> {
@@ -60,11 +72,86 @@ async function handleRemoteHost(request: Request, env: Env, hostId: string): Pro
         "Cache-Control": "no-store",
         "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
       },
     })
   }
 
-  return hostStub(env, hostId).fetch(withOperation(request, "proxy"))
+  if (url.pathname === "/__codenomad/pair") return new Response(null, { status: 405 })
+
+  if (url.pathname === "/__codenomad/tunnel") {
+    if (!validDeviceCookie(request)) return unpairedResponse()
+    return hostStub(env, hostId).fetch(withOperation(request, "tunnel-connect"))
+  }
+
+  if (url.pathname === "/__codenomad/bootstrap") {
+    const authorized = await checkRemoteSession(request, env, hostId)
+    if (!authorized.ok) return authorized
+    return Response.json({ tunnelPath: "/__codenomad/tunnel" }, {
+      headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+    })
+  }
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/workspaces/")) {
+    const authorized = await checkRemoteSession(request, env, hostId)
+    if (!authorized.ok) return authorized
+    return Response.json({ error: "Encrypted Remote Control tunnel required" }, { status: 426 })
+  }
+  if (isHtmlNavigation(request, url)) {
+    const authorized = await checkRemoteSession(request, env, hostId)
+    if (!authorized.ok) return authorized
+  }
+  return remoteAsset(request, env)
+}
+
+function checkRemoteSession(request: Request, env: Env, hostId: string): Promise<Response> {
+  if (!validDeviceCookie(request)) return Promise.resolve(unpairedResponse())
+  return hostStub(env, hostId).fetch(withOperation(request, "session-check"))
+}
+
+function validDeviceCookie(request: Request): boolean {
+  return RELAY_TOKEN_PATTERN.test(cookieToken(request) ?? "")
+}
+
+function unpairedResponse(): Response {
+  return Response.json({ error: "Remote device is not paired" }, {
+    status: 401,
+    headers: { "Set-Cookie": clearDeviceCookie() },
+  })
+}
+
+function isHtmlNavigation(request: Request, url: URL): boolean {
+  return url.pathname === "/" || url.pathname.endsWith(".html")
+    || request.headers.get("accept")?.includes("text/html") === true
+}
+
+async function remoteAsset(request: Request, env: Env): Promise<Response> {
+  const response = await env.ASSETS.fetch(request)
+  const headers = new Headers(response.headers)
+  headers.set("Referrer-Policy", "no-referrer")
+  headers.set("X-Content-Type-Options", "nosniff")
+  headers.set("X-Frame-Options", "DENY")
+  const url = new URL(request.url)
+  const isHtml = response.headers.get("content-type")?.toLowerCase().includes("text/html")
+    || url.pathname === "/"
+    || url.pathname.endsWith(".html")
+  if (!isHtml) {
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  }
+  if (request.method === "HEAD") {
+    return new Response(null, { status: response.status, statusText: response.statusText, headers })
+  }
+  const html = await response.text()
+  const bootstrap = "<script>window.__CODENOMAD_REMOTE_CONTROL__={tunnelPath:'/__codenomad/tunnel'};</script>"
+  headers.set("Cache-Control", "no-store")
+  headers.delete("Content-Length")
+  headers.delete("Content-Encoding")
+  headers.delete("ETag")
+  const bootstrappedHtml = html.includes("</head>") ? html.replace("</head>", `${bootstrap}</head>`) : `${bootstrap}${html}`
+  return new Response(bootstrappedHtml, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 function hostStub(env: Env, hostId: string): DurableObjectStub {
@@ -108,8 +195,18 @@ function pairingPage(acceptLanguage: string | null): string {
 const messages=${messages};
 const status=document.getElementById('status');
 status.textContent=messages.connecting;
-const token=decodeURIComponent(location.hash.slice(1));
+let pairing;
+try {
+  const encoded=decodeURIComponent(location.hash.slice(1));
+  const bytes=Uint8Array.from(atob(encoded),character=>character.charCodeAt(0));
+  pairing=JSON.parse(new TextDecoder().decode(bytes));
+  const key=pairing.hostPublicKey;
+  if(pairing.protocol!==2||typeof pairing.token!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(pairing.token)||!key||key.kty!=='EC'||key.crv!=='P-256'||typeof key.x!=='string'||typeof key.y!=='string')throw new Error(messages.failed);
+} catch(error) {
+  status.textContent=messages.failed;
+  throw error;
+}
 history.replaceState(null,'',location.pathname);
-fetch(location.pathname,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token,name:navigator.userAgent.includes('Mobile')?messages.mobile:messages.browser})}).then(response=>{if(!response.ok)throw new Error(messages.failed);location.replace('/')}).catch(error=>{status.textContent=error.message});
+fetch(location.pathname,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:pairing.token,name:navigator.userAgent.includes('Mobile')?messages.mobile:messages.browser})}).then(response=>{if(!response.ok)throw new Error(messages.failed);localStorage.setItem('codenomad.remote-control.host-public-key',JSON.stringify(pairing.hostPublicKey));location.replace('/')}).catch(error=>{status.textContent=error.message});
 </script>`
 }

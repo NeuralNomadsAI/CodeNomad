@@ -6,11 +6,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "prebuild": "npm run build --workspace @codenomad/remote-control-protocol",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@codenomad/remote-control-protocol": "0.1.0",
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
     "@opencode-ai/client": "beta",

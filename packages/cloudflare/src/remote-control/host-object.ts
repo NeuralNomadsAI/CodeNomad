@@ -1,28 +1,34 @@
 import {
+  REMOTE_CONTROL_HEARTBEAT_REQUEST,
+  REMOTE_CONTROL_HEARTBEAT_RESPONSE,
+  REMOTE_CONTROL_MAX_HANDSHAKE_BYTES,
+  REMOTE_CONTROL_MAX_PLAINTEXT_BYTES,
   REMOTE_CONTROL_PROTOCOL_VERSION,
   decodeBase64,
   encodeBase64,
-  type HostToRelayMessage,
   type RelayToHostMessage,
 } from "@codenomad/remote-control-protocol"
-import { relayRequestHeaders, relayResponseHeaders } from "./headers"
-import { bearerToken, clearDeviceCookie, cookieToken, deviceCookie, randomToken, tokenHash } from "./security"
+import { base64ByteLength, parseHostMessage, readPairingInput, safeRelayCloseCode } from "./relay-messages"
+import { HOST_SECRET_PATTERN, RELAY_TOKEN_PATTERN, bearerToken, clearDeviceCookie, cookieToken, deviceCookie, randomToken, tokenHash } from "./security"
 
 const PAIRING_TTL_MS = 10 * 60_000
 const DEVICE_TTL_MS = 30 * 24 * 60 * 60_000
 const HOST_SECRET_KEY = "host-secret"
 const PAIRING_PREFIX = "pair:"
 const DEVICE_PREFIX = "device:"
-const SOCKET_HANDSHAKE_TIMEOUT_MS = 15_000
-const HTTP_RESPONSE_TIMEOUT_MS = 30_000
-const MAX_QUEUED_SOCKET_MESSAGES = 256
-const MAX_HTTP_REQUEST_BODY_BYTES = 20 * 1024 * 1024
+const HOST_TAG = "host"
+const CLIENT_TAG = "client"
+const MAX_ACTIVE_PAIRINGS = 8
+const MAX_CONNECTED_CLIENTS = 16
+const MAX_DEVICES = 64
+const MAX_PAIRING_BODY_BYTES = 4 * 1024
+const MAX_TUNNEL_FRAME_BYTES = REMOTE_CONTROL_MAX_PLAINTEXT_BYTES + 1024
+const MAX_HOST_MESSAGE_CHARS = Math.ceil(MAX_TUNNEL_FRAME_BYTES * 4 / 3) + 2 * 1024
 
 interface PairingRecord {
   expiresAt: number
   connectionId: string
 }
-
 interface DeviceRecord {
   id: string
   name: string
@@ -31,44 +37,123 @@ interface DeviceRecord {
   expiresAt: number
 }
 
-interface PendingHttp {
-  resolve: (value: { status: number; headers: Headers; stream: ReadableStream<Uint8Array> }) => void
-  reject: (reason: Error) => void
-  controller?: ReadableStreamDefaultController<Uint8Array>
-  queued: Uint8Array[]
-  ended: boolean
-  deviceId: string
-  timeout: ReturnType<typeof setTimeout>
+interface HostSocketAttachment {
+  role: "host"
+  connectionId: string
+  ready: boolean
+  active: boolean
 }
 
-interface PendingSocket {
-  client: WebSocket
-  ready: boolean
-  queued: Array<{ data: string; binary: boolean }>
-  resolveReady: (protocol?: string) => void
-  rejectReady: (error: Error) => void
+interface ClientSocketAttachment {
+  role: "client"
+  id: string
   deviceId: string
+  phase?: "hello" | "encrypted"
 }
+
+type SocketAttachment = HostSocketAttachment | ClientSocketAttachment
 
 export class RemoteControlHost implements DurableObject {
-  private hostSocket: WebSocket | null = null
-  private hostConnectionId: string | null = null
-  private hostReady = false
-  private readonly pendingHttp = new Map<string, PendingHttp>()
-  private readonly pendingSockets = new Map<string, PendingSocket>()
-
-  constructor(private readonly state: DurableObjectState) {}
+  constructor(private readonly state: DurableObjectState) {
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair(
+      REMOTE_CONTROL_HEARTBEAT_REQUEST,
+      REMOTE_CONTROL_HEARTBEAT_RESPONSE,
+    ))
+  }
 
   async fetch(request: Request): Promise<Response> {
     const operation = request.headers.get("x-codenomad-relay-operation")
-
     if (operation === "host-connect") return this.connectHost(request)
     if (operation === "pair-create") return this.createPairing(request)
     if (operation === "pair-exchange") return this.exchangePairing(request)
     if (operation === "devices") return this.devices(request)
     if (operation === "device-revoke") return this.revokeDevice(request)
-    if (operation === "proxy") return this.proxy(request)
+    if (operation === "session-check") return this.checkDevice(request)
+    if (operation === "tunnel-connect") return this.connectTunnel(request)
     return Response.json({ error: "Unknown remote-control operation" }, { status: 404 })
+  }
+
+  webSocketMessage(socket: WebSocket, payload: string | ArrayBuffer): void {
+    const attachment = socketAttachment(socket)
+    if (!attachment) {
+      socket.close(1008, "Missing relay socket identity")
+      return
+    }
+    if (attachment.role === "host") {
+      this.onHostMessage(socket, payload)
+      return
+    }
+
+    const bytes = typeof payload === "string" ? new TextEncoder().encode(payload) : new Uint8Array(payload)
+    if ((attachment.phase === undefined && typeof payload !== "string")
+      || attachment.phase === "hello"
+      || (attachment.phase === "encrypted" && typeof payload === "string")) {
+      this.closeClient(attachment.id, 1002, "Invalid encrypted tunnel sequence")
+      return
+    }
+    if (bytes.byteLength > (attachment.phase === "encrypted" ? MAX_TUNNEL_FRAME_BYTES : REMOTE_CONTROL_MAX_HANDSHAKE_BYTES)) {
+      this.closeClient(attachment.id, 1009, attachment.phase === "encrypted"
+        ? "Encrypted tunnel frame is too large"
+        : "Encryption handshake is too large")
+      return
+    }
+    if (!this.sendHost({
+      type: "tunnel.message",
+      id: attachment.id,
+      data: encodeBase64(bytes),
+      binary: typeof payload !== "string",
+    })) {
+      this.closeClient(attachment.id, 1013, "CodeNomad host disconnected")
+    } else if (attachment.phase !== "encrypted") {
+      attachment.phase = "hello"
+      socket.serializeAttachment(attachment)
+    }
+  }
+
+  webSocketClose(socket: WebSocket, code: number, reason: string): void {
+    const attachment = socketAttachment(socket)
+    if (!attachment) return
+    if (attachment.role === "host") {
+      this.onHostClosed(socket)
+      return
+    }
+    this.sendHost({ type: "tunnel.close", id: attachment.id, code, reason })
+  }
+
+  webSocketError(socket: WebSocket): void {
+    const attachment = socketAttachment(socket)
+    if (!attachment) return
+    if (attachment.role === "host") {
+      this.onHostClosed(socket)
+      return
+    }
+    this.sendHost({ type: "tunnel.close", id: attachment.id, code: 1011, reason: "Remote tunnel failed" })
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now()
+    const pairings = await this.state.storage.list<PairingRecord>({ prefix: PAIRING_PREFIX })
+    const devices = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+    const expiredDevices = Array.from(devices.entries()).filter(([, record]) => record.expiresAt <= now)
+    const expired = [
+      ...Array.from(pairings.entries()).filter(([, record]) => record.expiresAt <= now).map(([key]) => key),
+      ...expiredDevices.map(([key]) => key),
+    ]
+    if (expired.length) await this.state.storage.delete(expired)
+    const expiredDeviceIds = new Set(expiredDevices.map(([, record]) => record.id))
+    if (expiredDeviceIds.size) {
+      for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
+        const attachment = socketAttachment(socket)
+        if (attachment?.role === "client" && expiredDeviceIds.has(attachment.deviceId)) {
+          this.closeClient(attachment.id, 1008, "Remote device expired")
+        }
+      }
+    }
+    const nextExpiration = [...pairings.values(), ...devices.values()]
+      .map((record) => record.expiresAt)
+      .filter((expiresAt) => expiresAt > now)
+      .sort((left, right) => left - right)[0]
+    if (nextExpiration) await this.state.storage.setAlarm(nextExpiration)
   }
 
   private async connectHost(request: Request): Promise<Response> {
@@ -80,42 +165,79 @@ export class RemoteControlHost implements DurableObject {
     const pair = new WebSocketPair()
     const client = pair[0]
     const server = pair[1]
-    server.accept()
+    const previous = this.hostConnection()
+    if (previous) {
+      previous.attachment.active = false
+      previous.socket.serializeAttachment(previous.attachment)
+      previous.socket.close(1012, "Host reconnected")
+      this.closeAllClients("CodeNomad host reconnected")
+    }
+    const attachment: HostSocketAttachment = {
+      role: "host",
+      connectionId: crypto.randomUUID(),
+      ready: false,
+      active: true,
+    }
+    server.serializeAttachment(attachment)
+    this.state.acceptWebSocket(server, [HOST_TAG])
+    return new Response(null, { status: 101, webSocket: client })
+  }
 
-    const previous = this.hostSocket
-    if (previous) this.failPending("CodeNomad host reconnected")
-    this.hostSocket = server
-    this.hostConnectionId = crypto.randomUUID()
-    this.hostReady = false
-    previous?.close(1012, "Host reconnected")
-    server.addEventListener("message", (event) => this.onHostMessage(server, event))
-    server.addEventListener("close", () => this.onHostClosed(server))
-    server.addEventListener("error", () => this.onHostClosed(server))
+  private async connectTunnel(request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return Response.json({ error: "WebSocket required" }, { status: 426 })
+    }
+    const device = await this.authorizeDevice(request)
+    if (!device) return this.unpairedResponse()
+    if (!this.isHostConnected()) return Response.json({ error: "CodeNomad host is offline" }, { status: 503 })
+    if (this.state.getWebSockets(CLIENT_TAG).filter((socket) => socket.readyState === WebSocket.OPEN).length >= MAX_CONNECTED_CLIENTS) {
+      return Response.json({ error: "Too many active remote clients" }, { status: 429 })
+    }
 
+    const id = crypto.randomUUID()
+    const pair = new WebSocketPair()
+    const client = pair[0]
+    const server = pair[1]
+    const attachment: ClientSocketAttachment = { role: "client", id, deviceId: device.id }
+    server.serializeAttachment(attachment)
+    this.state.acceptWebSocket(server, [CLIENT_TAG, clientTag(id)])
+    if (!this.sendHost({ type: "tunnel.open", id })) {
+      server.close(1013, "CodeNomad host disconnected")
+      return Response.json({ error: "CodeNomad host is offline" }, { status: 503 })
+    }
     return new Response(null, { status: 101, webSocket: client })
   }
 
   private async createPairing(request: Request): Promise<Response> {
     if (request.method !== "POST") return new Response(null, { status: 405 })
     if (!(await this.authorizeHost(request))) return Response.json({ error: "Unauthorized" }, { status: 401 })
-    if (!this.isHostConnected()) return Response.json({ error: "Host is offline" }, { status: 409 })
+    const host = this.hostConnection()
+    if (!host?.attachment.ready) return Response.json({ error: "Host is offline" }, { status: 409 })
+
+    const pairings = await this.state.storage.list<PairingRecord>({ prefix: PAIRING_PREFIX })
+    const now = Date.now()
+    const expired = Array.from(pairings.entries()).filter(([, record]) => record.expiresAt <= now).map(([key]) => key)
+    if (expired.length) await this.state.storage.delete(expired)
+    if (pairings.size - expired.length >= MAX_ACTIVE_PAIRINGS) {
+      return Response.json({ error: "Too many active pairing links" }, { status: 429 })
+    }
 
     const token = randomToken()
-    const expiresAt = Date.now() + PAIRING_TTL_MS
+    const expiresAt = now + PAIRING_TTL_MS
     await this.state.storage.put(`${PAIRING_PREFIX}${await tokenHash(token)}`, {
       expiresAt,
-      connectionId: this.hostConnectionId!,
+      connectionId: host.attachment.connectionId,
     } satisfies PairingRecord)
+    await this.scheduleExpirationCleanup(expiresAt)
     return Response.json({ token, expiresAt: new Date(expiresAt).toISOString() })
   }
 
   private async exchangePairing(request: Request): Promise<Response> {
     if (request.method !== "POST") return new Response(null, { status: 405 })
-    const input: { token?: unknown; name?: unknown } = await request
-      .json<{ token?: unknown; name?: unknown }>()
-      .catch(() => ({}))
+    const input = await readPairingInput(request, MAX_PAIRING_BODY_BYTES)
+    if (!input) return Response.json({ error: "Invalid or oversized pairing request" }, { status: 400 })
     const token = typeof input.token === "string" ? input.token.trim() : ""
-    if (!token) return Response.json({ error: "Pairing token required" }, { status: 400 })
+    if (!RELAY_TOKEN_PATTERN.test(token)) return Response.json({ error: "Valid pairing token required" }, { status: 400 })
 
     const key = `${PAIRING_PREFIX}${await tokenHash(token)}`
     const pairing = await this.state.storage.transaction(async (transaction) => {
@@ -123,12 +245,18 @@ export class RemoteControlHost implements DurableObject {
       if (record) await transaction.delete(key)
       return record
     })
-    if (!pairing || pairing.expiresAt <= Date.now() || !this.isHostConnected() || pairing.connectionId !== this.hostConnectionId) {
+    const host = this.hostConnection()
+    if (!pairing || pairing.expiresAt <= Date.now() || !host?.attachment.ready || pairing.connectionId !== host.attachment.connectionId) {
       return Response.json({ error: "Pairing link is invalid or expired" }, { status: 401 })
     }
 
-    const deviceToken = randomToken()
+    const records = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
     const now = Date.now()
+    const expired = Array.from(records.entries()).filter(([, device]) => device.expiresAt <= now).map(([recordKey]) => recordKey)
+    if (expired.length) await this.state.storage.delete(expired)
+    if (records.size - expired.length >= MAX_DEVICES) return Response.json({ error: "Too many paired devices" }, { status: 429 })
+
+    const deviceToken = randomToken()
     const device: DeviceRecord = {
       id: crypto.randomUUID(),
       name: typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 80) : "Remote device",
@@ -137,6 +265,7 @@ export class RemoteControlHost implements DurableObject {
       expiresAt: now + DEVICE_TTL_MS,
     }
     await this.state.storage.put(`${DEVICE_PREFIX}${await tokenHash(deviceToken)}`, device)
+    await this.scheduleExpirationCleanup(device.expiresAt)
     return new Response(null, {
       status: 204,
       headers: { "Set-Cookie": deviceCookie(deviceToken, Math.floor(DEVICE_TTL_MS / 1000)) },
@@ -168,264 +297,130 @@ export class RemoteControlHost implements DurableObject {
     const entry = Array.from(records.entries()).find(([, device]) => device.id === deviceId)
     if (entry) {
       await this.state.storage.delete(entry[0])
-      for (const [id, pending] of this.pendingHttp) {
-        if (pending.deviceId !== deviceId) continue
-        this.sendHost({ type: "http.cancel", id })
-        this.failHttp(id, new Error("Remote device was revoked"))
-      }
-      for (const [id, pending] of this.pendingSockets) {
-        if (pending.deviceId === deviceId) this.closeSocket(id, "Remote device was revoked", 1008)
+      for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
+        const attachment = socketAttachment(socket)
+        if (attachment?.role === "client" && attachment.deviceId === deviceId) {
+          this.closeClient(attachment.id, 1008, "Remote device was revoked")
+        }
       }
     }
     return new Response(null, { status: 204 })
   }
 
-  private async proxy(request: Request): Promise<Response> {
-    const device = await this.authorizeDevice(request)
-    if (!device) {
-      return Response.json({ error: "Remote device is not paired" }, {
-        status: 401,
-        headers: { "Set-Cookie": clearDeviceCookie() },
-      })
-    }
-    if (!this.isHostConnected()) return Response.json({ error: "CodeNomad host is offline" }, { status: 503 })
-    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return this.proxySocket(request, device.id)
-    return this.proxyHttp(request, device.id)
+  private async checkDevice(request: Request): Promise<Response> {
+    return await this.authorizeDevice(request) ? new Response(null, { status: 204 }) : this.unpairedResponse()
   }
 
-  private async proxyHttp(request: Request, deviceId: string): Promise<Response> {
-    const id = crypto.randomUUID()
-    let body: string | undefined
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      const bytes = new Uint8Array(await request.arrayBuffer())
-      if (bytes.byteLength > MAX_HTTP_REQUEST_BODY_BYTES) {
-        return Response.json({ error: "Remote request body is too large" }, { status: 413 })
-      }
-      body = encodeBase64(bytes)
-    }
-    const message: RelayToHostMessage = {
-      type: "http.request",
-      id,
-      method: request.method,
-      path: remotePath(request),
-      headers: relayRequestHeaders(request.headers),
-      ...(body ? { body } : {}),
-    }
-
-    const response = new Promise<{ status: number; headers: Headers; stream: ReadableStream<Uint8Array> }>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.sendHost({ type: "http.cancel", id })
-        this.failHttp(id, new Error("CodeNomad host response timed out"))
-      }, HTTP_RESPONSE_TIMEOUT_MS)
-      this.pendingHttp.set(id, { resolve, reject, queued: [], ended: false, deviceId, timeout })
-    })
-    request.signal.addEventListener("abort", () => {
-      this.sendHost({ type: "http.cancel", id })
-      this.failHttp(id, new Error("Remote request cancelled"))
-    }, { once: true })
-    if (!this.sendHost(message)) this.failHttp(id, new Error("CodeNomad host disconnected"))
-
-    try {
-      const result = await response
-      const body = request.method === "HEAD" || responseMustNotHaveBody(result.status) ? null : result.stream
-      return new Response(body, {
-        status: result.status,
-        headers: result.headers,
-      })
-    } catch (error) {
-      return Response.json({ error: error instanceof Error ? error.message : "Remote request failed" }, { status: 502 })
-    }
-  }
-
-  private async proxySocket(request: Request, deviceId: string): Promise<Response> {
-    const id = crypto.randomUUID()
-    const pair = new WebSocketPair()
-    const client = pair[0]
-    const server = pair[1]
-    server.accept()
-    const protocols = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((value) => value.trim()).filter(Boolean)
-    let resolveReady!: (protocol?: string) => void
-    let rejectReady!: (error: Error) => void
-    const ready = new Promise<string | undefined>((resolve, reject) => {
-      resolveReady = resolve
-      rejectReady = reject
-    })
-    this.pendingSockets.set(id, { client: server, ready: false, queued: [], resolveReady, rejectReady, deviceId })
-    server.addEventListener("message", (event) => {
-      const binary = typeof event.data !== "string"
-      const bytes = binary ? new Uint8Array(event.data as ArrayBuffer) : new TextEncoder().encode(event.data as string)
-      this.sendHost({ type: "socket.message", id, data: encodeBase64(bytes), binary })
-    })
-    server.addEventListener("close", (event) => {
-      this.sendHost({ type: "socket.close", id, code: event.code, reason: event.reason })
-      const pending = this.pendingSockets.get(id)
-      if (pending && !pending.ready) pending.rejectReady(new Error("Remote WebSocket client disconnected"))
-      this.pendingSockets.delete(id)
-    })
-    server.addEventListener("error", () => {
-      this.sendHost({ type: "socket.close", id, code: 1011, reason: "Client socket failed" })
-      const pending = this.pendingSockets.get(id)
-      if (pending && !pending.ready) pending.rejectReady(new Error("Remote WebSocket client failed"))
-      this.pendingSockets.delete(id)
-    })
-    const sent = this.sendHost({
-      type: "socket.open",
-      id,
-      path: remotePath(request),
-      headers: relayRequestHeaders(request.headers),
-      protocols,
-    })
-    if (!sent) rejectReady(new Error("CodeNomad host disconnected"))
-    const timeout = setTimeout(() => rejectReady(new Error("CodeNomad WebSocket handshake timed out")), SOCKET_HANDSHAKE_TIMEOUT_MS)
-    try {
-      const protocol = await ready
-      const headers = protocol ? { "Sec-WebSocket-Protocol": protocol } : undefined
-      return new Response(null, { status: 101, webSocket: client, headers })
-    } catch (error) {
-      this.pendingSockets.delete(id)
-      server.close(1013, "CodeNomad host unavailable")
-      this.sendHost({ type: "socket.close", id, code: 1013, reason: "Remote handshake cancelled" })
-      return Response.json({ error: error instanceof Error ? error.message : "WebSocket handshake failed" }, { status: 502 })
-    } finally {
-      clearTimeout(timeout)
-    }
-  }
-
-  private onHostMessage(socket: WebSocket, event: MessageEvent) {
-    if (this.hostSocket !== socket) return
-    if (typeof event.data !== "string") return
-    let message: HostToRelayMessage
-    try {
-      message = JSON.parse(event.data) as HostToRelayMessage
-    } catch {
-      this.hostSocket?.close(1003, "Invalid relay message")
+  private onHostMessage(socket: WebSocket, payload: string | ArrayBuffer): void {
+    const current = this.hostConnection()
+    if (current?.socket !== socket) return
+    if (typeof payload !== "string") {
+      socket.close(1003, "Invalid binary host message")
       return
     }
-
+    if (payload.length > MAX_HOST_MESSAGE_CHARS) {
+      socket.close(1009, "Relay message is too large")
+      return
+    }
+    const message = parseHostMessage(payload)
+    if (!message) {
+      socket.close(1003, "Invalid relay message")
+      return
+    }
     if (message.type === "ready") {
       if (message.protocol !== REMOTE_CONTROL_PROTOCOL_VERSION) {
-        this.hostSocket?.close(1002, "Unsupported protocol")
+        socket.close(1002, "Unsupported protocol")
         return
       }
-      this.hostReady = true
+      current.attachment.ready = true
+      socket.serializeAttachment(current.attachment)
       this.sendHost({ type: "ready", protocol: REMOTE_CONTROL_PROTOCOL_VERSION })
       return
     }
-    if (message.type === "http.start") return this.startHttp(message)
-    if (message.type === "http.chunk") return this.chunkHttp(message.id, decodeBase64(message.data))
-    if (message.type === "http.end") return this.endHttp(message.id)
-    if (message.type === "http.error") return this.failHttp(message.id, new Error(message.message))
-    if (message.type === "socket.ready") return this.readySocket(message.id, message.protocol)
-    if (message.type === "socket.message") return this.messageSocket(message.id, message.data, message.binary)
-    if (message.type === "socket.close") return this.closeSocket(message.id, message.reason)
-    if (message.type === "socket.error") return this.closeSocket(message.id, message.message)
+    if (!current.attachment.ready) {
+      socket.close(1002, "Relay handshake required")
+      return
+    }
+    if (message.type === "tunnel.close") {
+      this.closeClient(message.id, message.code ?? 1011, message.reason ?? "CodeNomad closed the tunnel")
+      return
+    }
+    const client = this.clientSocket(message.id)
+    if (!client) return
+    const attachment = socketAttachment(client)
+    if (!attachment || attachment.role !== "client") return
+    const phase = attachment.phase ?? "hello"
+    if ((phase === "hello" && message.binary) || (phase === "encrypted" && !message.binary)) {
+      this.closeClient(message.id, 1002, "Invalid encrypted tunnel sequence")
+      return
+    }
+    const limit = phase === "hello" ? REMOTE_CONTROL_MAX_HANDSHAKE_BYTES : MAX_TUNNEL_FRAME_BYTES
+    if (base64ByteLength(message.data) > limit) {
+      this.closeClient(message.id, 1009, phase === "hello" ? "Encryption handshake is too large" : "Encrypted tunnel frame is too large")
+      return
+    }
+    try {
+      const bytes = decodeBase64(message.data)
+      client.send(message.binary ? bytes.buffer : new TextDecoder().decode(bytes))
+      if (phase === "hello") {
+        attachment.phase = "encrypted"
+        client.serializeAttachment(attachment)
+      }
+    } catch {
+      this.closeClient(message.id, 1003, "Invalid tunnel frame")
+    }
   }
 
-  private startHttp(message: Extract<HostToRelayMessage, { type: "http.start" }>) {
-    const pending = this.pendingHttp.get(message.id)
-    if (!pending) return
-    clearTimeout(pending.timeout)
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        pending.controller = controller
-        for (const chunk of pending.queued) controller.enqueue(chunk)
-        pending.queued.length = 0
-        if (pending.ended) controller.close()
-      },
-      cancel: () => {
-        this.sendHost({ type: "http.cancel", id: message.id })
-        this.pendingHttp.delete(message.id)
-      },
-    })
-    pending.resolve({ status: message.status, headers: relayResponseHeaders(message.headers), stream })
+  private onHostClosed(socket: WebSocket): void {
+    const attachment = socketAttachment(socket)
+    if (!attachment || attachment.role !== "host" || !attachment.active) return
+    attachment.active = false
+    socket.serializeAttachment(attachment)
+    this.closeAllClients("CodeNomad host disconnected")
   }
 
-  private chunkHttp(id: string, chunk: Uint8Array) {
-    const pending = this.pendingHttp.get(id)
-    if (!pending || pending.ended) return
-    if (pending.controller) pending.controller.enqueue(chunk)
-    else pending.queued.push(chunk)
+  private closeAllClients(reason: string): void {
+    for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
+      const attachment = socketAttachment(socket)
+      if (attachment?.role === "client") this.closeClient(attachment.id, 1012, reason)
+    }
   }
 
-  private endHttp(id: string) {
-    const pending = this.pendingHttp.get(id)
-    if (!pending) return
-    clearTimeout(pending.timeout)
-    pending.ended = true
-    pending.controller?.close()
-    this.pendingHttp.delete(id)
-  }
-
-  private failHttp(id: string, error: Error) {
-    const pending = this.pendingHttp.get(id)
-    if (!pending) return
-    clearTimeout(pending.timeout)
-    pending.reject(error)
-    pending.controller?.error(error)
-    this.pendingHttp.delete(id)
-  }
-
-  private readySocket(id: string, protocol?: string) {
-    const pending = this.pendingSockets.get(id)
-    if (!pending) return
-    pending.ready = true
-    pending.resolveReady(protocol)
-    for (const entry of pending.queued) this.sendSocket(pending.client, entry.data, entry.binary)
-    pending.queued.length = 0
-  }
-
-  private messageSocket(id: string, data: string, binary: boolean) {
-    const pending = this.pendingSockets.get(id)
-    if (!pending) return
-    if (!pending.ready && pending.queued.length >= MAX_QUEUED_SOCKET_MESSAGES) {
-      this.closeSocket(id, "Too many queued CodeNomad messages", 1009)
-    } else if (!pending.ready) pending.queued.push({ data, binary })
-    else this.sendSocket(pending.client, data, binary)
-  }
-
-  private sendSocket(socket: WebSocket, data: string, binary: boolean) {
-    const bytes = decodeBase64(data)
-    socket.send(binary ? bytes.buffer : new TextDecoder().decode(bytes))
-  }
-
-  private closeSocket(id: string, reason?: string, code = 1011) {
-    const pending = this.pendingSockets.get(id)
-    if (!pending) return
-    if (!pending.ready) pending.rejectReady(new Error(reason || "CodeNomad WebSocket handshake failed"))
-    pending.client.close(code, reason?.slice(0, 120) || "Host socket closed")
-    this.pendingSockets.delete(id)
-  }
-
-  private onHostClosed(socket: WebSocket) {
-    if (this.hostSocket !== socket) return
-    this.hostSocket = null
-    this.hostConnectionId = null
-    this.hostReady = false
-    this.failPending("CodeNomad host disconnected")
-  }
-
-  private failPending(reason: string) {
-    for (const id of this.pendingHttp.keys()) this.failHttp(id, new Error(reason))
-    for (const id of this.pendingSockets.keys()) this.closeSocket(id, reason)
+  private closeClient(id: string, code: number, reason: string): void {
+    this.clientSocket(id)?.close(safeRelayCloseCode(code), reason.slice(0, 120))
   }
 
   private isHostConnected(): boolean {
-    return this.hostReady && this.hostSocket?.readyState === WebSocket.OPEN
+    return this.hostConnection()?.attachment.ready === true
   }
 
   private sendHost(message: RelayToHostMessage): boolean {
-    if (!this.isHostConnected()) return false
+    const host = this.hostConnection()
+    if (!host?.attachment.ready && message.type !== "ready") return false
+    if (!host) return false
     try {
-      this.hostSocket!.send(JSON.stringify(message))
+      host.socket.send(JSON.stringify(message))
       return true
     } catch {
       return false
     }
   }
 
+  private hostConnection(): { socket: WebSocket; attachment: HostSocketAttachment } | null {
+    for (const socket of this.state.getWebSockets(HOST_TAG)) {
+      const attachment = socketAttachment(socket)
+      if (socket.readyState === WebSocket.OPEN && attachment?.role === "host" && attachment.active) return { socket, attachment }
+    }
+    return null
+  }
+
+  private clientSocket(id: string): WebSocket | null {
+    return this.state.getWebSockets(clientTag(id)).find((socket) => socket.readyState === WebSocket.OPEN) ?? null
+  }
+
   private async authorizeHost(request: Request, allowRegistration = false): Promise<boolean> {
     const token = bearerToken(request)
-    if (!token) return false
+    if (!token || !HOST_SECRET_PATTERN.test(token)) return false
     const presented = await tokenHash(token)
     if (!allowRegistration) return await this.state.storage.get<string>(HOST_SECRET_KEY) === presented
     return this.state.storage.transaction(async (transaction) => {
@@ -438,7 +433,7 @@ export class RemoteControlHost implements DurableObject {
 
   private async authorizeDevice(request: Request): Promise<DeviceRecord | null> {
     const token = cookieToken(request)
-    if (!token) return null
+    if (!token || !RELAY_TOKEN_PATTERN.test(token)) return null
     const key = `${DEVICE_PREFIX}${await tokenHash(token)}`
     const device = await this.state.storage.get<DeviceRecord>(key)
     if (!device || device.expiresAt <= Date.now()) {
@@ -451,13 +446,26 @@ export class RemoteControlHost implements DurableObject {
     }
     return device
   }
+
+  private unpairedResponse(): Response {
+    return Response.json({ error: "Remote device is not paired" }, {
+      status: 401,
+      headers: { "Set-Cookie": clearDeviceCookie() },
+    })
+  }
+
+  private async scheduleExpirationCleanup(expiresAt: number): Promise<void> {
+    const scheduled = await this.state.storage.getAlarm()
+    if (scheduled === null || expiresAt < scheduled) await this.state.storage.setAlarm(expiresAt)
+  }
 }
 
-function remotePath(request: Request): string {
-  const url = new URL(request.url)
-  return `${url.pathname}${url.search}`
+function clientTag(id: string): string {
+  return `${CLIENT_TAG}:${id}`
 }
 
-function responseMustNotHaveBody(status: number): boolean {
-  return status === 204 || status === 205 || status === 304
+function socketAttachment(socket: WebSocket): SocketAttachment | null {
+  const value = socket.deserializeAttachment() as Partial<SocketAttachment> | null
+  if (!value || (value.role !== "host" && value.role !== "client")) return null
+  return value as SocketAttachment
 }

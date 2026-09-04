@@ -4,6 +4,7 @@ import type {
   RemoteControlStartResponse,
   RemoteControlStatus,
 } from "@codenomad/remote-control-protocol"
+import { encodeBase64, REMOTE_CONTROL_PROTOCOL_VERSION } from "@codenomad/remote-control-protocol"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { RemoteControlConnector, normalizedRelayUrl, type ConnectorState } from "./connector"
@@ -31,6 +32,7 @@ export class RemoteControlManager {
       relayUrl: options.relayUrl,
       hostId: options.identity.hostId,
       secret: options.identity.secret,
+      encryptionPrivateKey: options.identity.encryptionPrivateKey,
       localUrl: options.localUrl,
       localCookie: options.localCookie,
       logger: options.logger,
@@ -81,9 +83,17 @@ export class RemoteControlManager {
     })
     if (!response.ok) throw new Error(await relayError(response, "Could not create a pairing link"))
     const payload = await response.json() as { token?: unknown; expiresAt?: unknown }
-    if (typeof payload.token !== "string" || typeof payload.expiresAt !== "string") throw new Error("Relay returned an invalid pairing link")
+    if (typeof payload.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(payload.token)
+      || typeof payload.expiresAt !== "string" || !Number.isFinite(Date.parse(payload.expiresAt))) {
+      throw new Error("Relay returned an invalid pairing link")
+    }
     const origin = remoteOrigin(relay, this.options.identity.hostId)
-    return { url: `${origin}/__codenomad/pair#${encodeURIComponent(payload.token)}`, expiresAt: payload.expiresAt }
+    const pairingFragment = encodeBase64(new TextEncoder().encode(JSON.stringify({
+      protocol: REMOTE_CONTROL_PROTOCOL_VERSION,
+      token: payload.token,
+      hostPublicKey: this.options.identity.encryptionPublicKey,
+    })))
+    return { url: `${origin}/__codenomad/pair#${encodeURIComponent(pairingFragment)}`, expiresAt: payload.expiresAt }
   }
 
   async devices(): Promise<RemoteControlDevice[]> {

@@ -2,6 +2,8 @@ const encoder = new TextEncoder()
 
 export const HOST_ID_PATTERN = /^[a-f0-9]{32}$/
 export const DEVICE_COOKIE = "codenomad_remote_device"
+export const RELAY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
+export const HOST_SECRET_PATTERN = /^[A-Za-z0-9_-]{40,128}$/
 
 export function randomToken(byteLength = 32): string {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength))
@@ -25,7 +27,13 @@ export function cookieToken(request: Request): string | null {
   const cookies = request.headers.get("cookie") ?? ""
   for (const entry of cookies.split(";")) {
     const [name, ...parts] = entry.trim().split("=")
-    if (name === DEVICE_COOKIE) return decodeURIComponent(parts.join("="))
+    if (name === DEVICE_COOKIE) {
+      try {
+        return decodeURIComponent(parts.join("="))
+      } catch {
+        return null
+      }
+    }
   }
   return null
 }

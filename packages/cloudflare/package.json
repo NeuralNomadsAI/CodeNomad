@@ -10,16 +10,20 @@
     "dev": "wrangler dev",
     "predeploy": "npm run build --prefix ../remote-control-protocol",
     "deploy": "wrangler deploy",
+    "pretest": "npm run build --prefix ../remote-control-protocol",
     "test": "node --import tsx --test src/**/*.test.ts",
+    "pretest:e2e": "node ./scripts/prepare-e2e-assets.mjs && npm run build --prefix ../remote-control-protocol",
+    "test:e2e": "node --import tsx --test scripts/remote-control-e2e.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@codenomad/remote-control-protocol": "file:../remote-control-protocol"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260702.1",
+    "@cloudflare/workers-types": "^5.20260903.1",
     "tsx": "^4.20.6",
     "typescript": "^5.6.3",
-    "wrangler": "^4.0.0"
+    "undici": "^6.19.8",
+    "wrangler": "^4.129.0"
   }
 }

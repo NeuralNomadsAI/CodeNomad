@@ -13,6 +13,7 @@ test("device credentials use secure host-scoped cookies", () => {
   assert.match(cookie, /HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=60/)
   assert.equal(cookieToken(new Request("https://host.relay.example", { headers: { Cookie: cookie } })), "device token")
   assert.match(clearDeviceCookie(), /Max-Age=0/)
+  assert.equal(cookieToken(new Request("https://host.relay.example", { headers: { Cookie: `${DEVICE_COOKIE}=%GG` } })), null)
 })
 
 test("stored credentials are deterministic hashes rather than raw tokens", async () => {
