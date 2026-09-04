@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { nativeBrowserHost, physicalBrowserBounds } from "./browser.ts"
+import { nativeBrowserHost, physicalBrowserBounds, selectBrowserOpenOwner } from "./browser.ts"
 
 describe("native browser adapter", () => {
   it("enables Tauri only for local Windows windows", () => {
@@ -17,5 +17,17 @@ describe("native browser adapter", () => {
       width: 151,
       height: 75,
     })
+  })
+
+  it("routes duplicate session owners through the active instance", () => {
+    const owners = [{ id: "first" }, { id: "active" }, { id: "third" }]
+    assert.equal(selectBrowserOpenOwner(owners, "active"), owners[1])
+  })
+
+  it("uses a sole owner and rejects unresolved duplicate owners", () => {
+    const only = { id: "only" }
+    assert.equal(selectBrowserOpenOwner([only], undefined), only)
+    assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], undefined), undefined)
+    assert.equal(selectBrowserOpenOwner([{ id: "first" }, { id: "second" }], "missing"), undefined)
   })
 })

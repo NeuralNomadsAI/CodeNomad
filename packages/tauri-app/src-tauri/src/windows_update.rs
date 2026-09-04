@@ -5,10 +5,10 @@ use std::os::windows::process::CommandExt;
 
 #[tauri::command]
 pub async fn install_stable_update(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_window(&window, &state)?;
+    crate::require_preferences_or_local_app_webview(&webview, &state)?;
     install_stable_update_impl().await
 }
 

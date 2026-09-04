@@ -351,12 +351,31 @@ async function withDebugger<T>(guest: WebContents, deadline: number, operation: 
 
 async function clearFocusedField(guest: WebContents, deadline: number): Promise<void> {
   await withDebugger(guest, deadline, async (debuggerSession) => {
-    const mac = process.platform === "darwin"
-    const modifier = mac ? { key: "Meta", code: "MetaLeft", modifiers: 4 } : { key: "Control", code: "ControlLeft", modifiers: 2 }
-    await debuggerSession.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...modifier })
-    await debuggerSession.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: modifier.modifiers })
-    await debuggerSession.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: modifier.modifiers })
-    await debuggerSession.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: modifier.key, code: modifier.code })
+    const modifier = process.platform === "darwin"
+      ? { key: "Meta", code: "MetaLeft", modifiers: 4, windowsVirtualKeyCode: 91 }
+      : { key: "Control", code: "ControlLeft", modifiers: 2, windowsVirtualKeyCode: 17 }
+    await debuggerSession.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...modifier })
+    await debuggerSession.sendCommand("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      key: "a",
+      code: "KeyA",
+      modifiers: modifier.modifiers,
+      windowsVirtualKeyCode: 65,
+      commands: ["selectAll"],
+    })
+    await debuggerSession.sendCommand("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "a",
+      code: "KeyA",
+      modifiers: modifier.modifiers,
+      windowsVirtualKeyCode: 65,
+    })
+    await debuggerSession.sendCommand("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: modifier.key,
+      code: modifier.code,
+      windowsVirtualKeyCode: modifier.windowsVirtualKeyCode,
+    })
   })
 }
 

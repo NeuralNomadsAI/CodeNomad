@@ -30,7 +30,12 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
-import { claimNativeBrowserOpen, onNativeBrowserOpen, releaseNativeBrowserOpen } from "./lib/native/browser"
+import {
+  claimNativeBrowserOpen,
+  onNativeBrowserOpen,
+  releaseNativeBrowserOpen,
+  selectBrowserOpenOwner,
+} from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
 import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
@@ -285,13 +290,22 @@ const App: Component = () => {
         await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
         owners = findOwners()
       }
-      if (disposed || owners.length !== 1) {
-        if (!disposed) log.warn("Failed to route agent-requested web preview", { sessionID, owners: owners.map((instance) => instance.id) })
+      const activeTab = activeAppTab()
+      const owner = selectBrowserOpenOwner(
+        owners,
+        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+      )
+      if (disposed || !owner) {
+        if (!disposed) log.warn("Failed to route agent-requested web preview", {
+          sessionID,
+          owners: owners.map((instance) => instance.id),
+          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+        })
         return
       }
       if (!await claimNativeBrowserOpen(requestID)) return
       try {
-        const instance = owners[0]
+        const instance = owner
         await openSessionPreview(sessionID, url, instance.folder)
         if (disposed) {
           await releaseNativeBrowserOpen(requestID)

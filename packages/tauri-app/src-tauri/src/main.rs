@@ -194,31 +194,17 @@ fn is_allowed_local_origin(url: &Url, managed_backend: Option<&str>) -> bool {
         || same_origin(url, managed_backend)
 }
 
-pub(crate) fn require_local_app_window(
-    window: &tauri::WebviewWindow,
+pub(crate) fn require_preferences_or_local_app_webview(
+    webview: &tauri::Webview,
     state: &AppState,
 ) -> Result<Url, String> {
-    identity::local_window_id(window.label())?;
-    let current = window.url().map_err(|error| error.to_string())?;
-    let status = state.manager.status();
-    if is_allowed_local_origin(&current, status.url.as_deref()) {
-        Ok(current)
-    } else {
-        Err("Native application commands require a trusted local renderer origin".into())
+    if webview.label() != preferences_window::LABEL {
+        return require_local_app_webview(webview, state);
     }
-}
-
-pub(crate) fn require_preferences_or_local_app_window(
-    window: &tauri::WebviewWindow,
-    state: &AppState,
-) -> Result<Url, String> {
-    if window.label() != preferences_window::LABEL {
-        return require_local_app_window(window, state);
-    }
-    let current = window.url().map_err(|error| error.to_string())?;
+    let current = webview.url().map_err(|error| error.to_string())?;
     let status = state.manager.status();
     if is_allowed_local_origin(&current, status.url.as_deref())
-        || preferences_window::is_trusted_renderer_origin(window, &current)
+        || preferences_window::is_trusted_renderer_origin(webview, &current)
     {
         Ok(current)
     } else {
@@ -226,7 +212,10 @@ pub(crate) fn require_preferences_or_local_app_window(
     }
 }
 
-fn require_local_app_webview(webview: &tauri::Webview, state: &AppState) -> Result<Url, String> {
+pub(crate) fn require_local_app_webview(
+    webview: &tauri::Webview,
+    state: &AppState,
+) -> Result<Url, String> {
     identity::local_window_id(webview.label())?;
     let current = webview.url().map_err(|error| error.to_string())?;
     let status = state.manager.status();
@@ -264,15 +253,15 @@ pub(crate) fn profile_identifier(identity: &str) -> [u8; 16] {
 
 #[tauri::command]
 fn set_workspace_menu_enabled(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_local_app_webview(&webview, &state)?;
     if !enabled {
         app.state::<local_windows::LocalWindows>()
-            .set_workspace_menu_enabled(window.label(), false)?;
+            .set_workspace_menu_enabled(webview.label(), false)?;
         update_workspace_menu_state(&app);
         return Ok(());
     }
@@ -281,12 +270,12 @@ fn set_workspace_menu_enabled(
         .local_cli_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let expected = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
-    let current = window.url().map_err(|error| error.to_string())?;
+    let current = webview.url().map_err(|error| error.to_string())?;
     if current.origin() != expected.origin() {
         return Err("Workspace menu updates require the local CodeNomad origin".into());
     }
     app.state::<local_windows::LocalWindows>()
-        .set_workspace_menu_enabled(window.label(), enabled)?;
+        .set_workspace_menu_enabled(webview.label(), enabled)?;
     update_workspace_menu_state(&app);
     Ok(())
 }
@@ -338,20 +327,20 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
 
 #[tauri::command]
 fn developer_mode_get(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
 ) -> Result<developer_mode::DeveloperModeState, String> {
-    require_local_app_window(&window, &state)?;
+    require_local_app_webview(&webview, &state)?;
     Ok(state.developer_mode.state())
 }
 
 #[tauri::command]
 fn developer_mode_set(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     enabled: bool,
 ) -> Result<developer_mode::DeveloperModeState, String> {
-    require_local_app_window(&window, &state)?;
+    require_local_app_webview(&webview, &state)?;
     state
         .developer_mode
         .set_enabled(enabled)
@@ -360,12 +349,13 @@ fn developer_mode_set(
 
 #[tauri::command]
 fn window_control(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     action: String,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_webview(&webview, &state)?;
+    let window = webview.window();
     match action.as_str() {
         "minimize" => window.minimize(),
         "maximize" => {
@@ -377,7 +367,7 @@ fn window_control(
         }
         "drag" => window.start_dragging(),
         "close" => {
-            if window.label() == preferences_window::LABEL {
+            if webview.label() == preferences_window::LABEL {
                 preferences_window::approve_close(&app)?;
             }
             window.close()
@@ -400,18 +390,18 @@ fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
 
 #[tauri::command]
 async fn popup_titlebar_menu(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     menu: String,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_local_app_webview(&webview, &state)?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
-    let app_menu = window
+    let app_menu = webview
         .app_handle()
         .menu()
         .ok_or_else(|| "Application menu is unavailable".to_string())?;
@@ -421,7 +411,8 @@ async fn popup_titlebar_menu(
     let submenu = item
         .as_submenu()
         .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
-    window
+    webview
+        .window()
         .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
         .map_err(|error| error.to_string())
 }
@@ -429,14 +420,11 @@ async fn popup_titlebar_menu(
 #[tauri::command]
 async fn browser_target_register(
     webview: tauri::Webview,
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetRegistration,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    let window = app
-        .get_webview_window(webview.label())
-        .ok_or_else(|| "Browser target requires a local application window".to_string())?;
+    let window = webview.window();
     state.browser_controller.register(&window, payload)
 }
 
@@ -614,20 +602,20 @@ struct WakeLockConfig {
 
 #[tauri::command]
 fn cli_get_status(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_webview(&webview, &state)?;
     Ok(state.manager.status())
 }
 
 #[tauri::command]
 fn cli_restart(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_webview(&webview, &state)?;
     shutdown::with_navigation_authority(&app, || {
         let dev_mode = is_dev_mode();
         state
@@ -645,11 +633,11 @@ fn cli_restart(
 
 #[tauri::command]
 fn wake_lock_start(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<AppState>,
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_local_app_webview(&webview, &state)?;
     let config = config.unwrap_or(WakeLockConfig {
         display: false,
         idle: true,
@@ -666,7 +654,7 @@ fn wake_lock_start(
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.insert(window.label().to_string());
+    state_lock.labels.insert(webview.label().to_string());
     if state_lock.handle.is_none() {
         state_lock.handle = Some(builder.create().map_err(|err| err.to_string())?);
     }
@@ -674,13 +662,10 @@ fn wake_lock_start(
 }
 
 #[tauri::command]
-fn wake_lock_stop(
-    window: tauri::WebviewWindow,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.remove(window.label());
+    state_lock.labels.remove(webview.label());
     if state_lock.labels.is_empty() {
         state_lock.handle.take();
     }
@@ -770,8 +755,8 @@ fn apply_remote_window_title(app_handle: &AppHandle, window_label: &str) {
         return;
     };
 
-    if let Some(window) = app_handle.get_webview_window(window_label) {
-        let _ = window.set_title(&title);
+    if let Some(webview) = app_handle.get_webview(window_label) {
+        let _ = webview.window().set_title(&title);
     }
 }
 
@@ -1194,10 +1179,10 @@ fn clear_remote_window_metadata(
 
 #[tauri::command]
 fn needs_local_certificate_install(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: tauri::State<AppState>,
 ) -> Result<bool, String> {
-    require_preferences_or_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_webview(&webview, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
@@ -1216,12 +1201,12 @@ fn needs_local_certificate_install(
 
 #[tauri::command]
 async fn open_remote_window(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    require_preferences_or_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_webview(&webview, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -1258,8 +1243,8 @@ fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
 }
 
 fn emit_window_event(app_handle: &AppHandle, window_label: &str, event_name: &str) {
-    if let Some(window) = app_handle.get_webview_window(window_label) {
-        let _ = window.emit(event_name, ());
+    if let Some(webview) = app_handle.get_webview(window_label) {
+        let _ = webview.emit(event_name, ());
     }
 }
 
@@ -1275,8 +1260,8 @@ fn emit_folder_drop_event(
         return;
     }
 
-    if let Some(window) = app_handle.get_webview_window(window_label) {
-        let _ = window.emit(event_name, json!({ "paths": directories }));
+    if let Some(webview) = app_handle.get_webview(window_label) {
+        let _ = webview.emit(event_name, json!({ "paths": directories }));
     }
 }
 
@@ -1296,7 +1281,7 @@ fn reload_target_window(app_handle: &AppHandle) {
         client_state::NavigationKind::Reload,
         None,
         move |app| {
-            app.get_webview_window(&target_label)
+            app.get_webview(&target_label)
                 .ok_or_else(|| "local window not found for reload".to_string())?
                 .reload()
                 .map_err(|err| format!("failed to reload local window: {err}"))
@@ -1321,7 +1306,7 @@ fn force_reload_target_window(app_handle: &AppHandle) {
         None,
         move |app| {
             let window = app
-                .get_webview_window(&target_label)
+                .get_webview(&target_label)
                 .ok_or_else(|| "local window not found for force reload".to_string())?;
             if let Ok(mut url) = window.url() {
                 if should_allow_internal(&url) {
@@ -1360,7 +1345,8 @@ fn force_reload_target_window(app_handle: &AppHandle) {
 }
 
 fn toggle_fullscreen_window(app_handle: &AppHandle) {
-    if let Some(window) = local_windows::targeted_window(app_handle) {
+    if let Some(webview) = local_windows::targeted_window(app_handle) {
+        let window = webview.window();
         let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
         let _ = window.set_fullscreen(next_fullscreen);
         if cfg!(not(target_os = "macos")) {
@@ -1369,28 +1355,28 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
     }
 }
 
-fn set_target_zoom(app: &AppHandle, window: &tauri::WebviewWindow, zoom: f64) {
-    if identity::local_window_id(window.label()).is_ok() {
-        client_state::set_local_window_zoom(app, window.label(), zoom);
+fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
+    if identity::local_window_id(webview.label()).is_ok() {
+        client_state::set_local_window_zoom(app, webview.label(), zoom);
         return;
     }
     let zoom = zoom.clamp(0.25, 5.0);
-    if window.set_zoom(zoom).is_ok() {
+    if webview.set_zoom(zoom).is_ok() {
         if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
-            levels.insert(window.label().to_string(), zoom);
+            levels.insert(webview.label().to_string(), zoom);
         }
     }
 }
 
-fn target_zoom(app: &AppHandle, window: &tauri::WebviewWindow) -> f64 {
-    if identity::local_window_id(window.label()).is_ok() {
-        client_state::local_window_zoom(app, window.label())
+fn target_zoom(app: &AppHandle, webview: &tauri::Webview) -> f64 {
+    if identity::local_window_id(webview.label()).is_ok() {
+        client_state::local_window_zoom(app, webview.label())
     } else {
         app.state::<AppState>()
             .remote_zoom_levels
             .lock()
             .ok()
-            .and_then(|levels| levels.get(window.label()).copied())
+            .and_then(|levels| levels.get(webview.label()).copied())
             .unwrap_or(client_state::DEFAULT_ZOOM_LEVEL)
     }
 }
@@ -1407,8 +1393,10 @@ fn update_fullscreen_shortcut(app: &AppHandle) {
     let Some(shortcut) = fullscreen_shortcut() else {
         return;
     };
-    let local_focused = app.webview_windows().into_values().any(|window| {
-        identity::local_window_id(window.label()).is_ok() && window.is_focused().unwrap_or(false)
+    let local_focused = app.webviews().into_values().any(|webview| {
+        identity::local_window_id(webview.label()).is_ok()
+            && webview.label() == webview.window().label()
+            && webview.window().is_focused().unwrap_or(false)
     });
     if local_focused {
         let _ = app.global_shortcut().register(shortcut);
@@ -1794,18 +1782,18 @@ fn main() {
 
                 // Window menu
                 "minimize" => {
-                    if let Some(window) = local_windows::targeted_window(app_handle) {
-                        let _ = window.minimize();
+                    if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        let _ = webview.window().minimize();
                     }
                 }
                 "zoom" => {
-                    if let Some(window) = local_windows::targeted_window(app_handle) {
-                        let _ = window.maximize();
+                    if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        let _ = webview.window().maximize();
                     }
                 }
                 "close_window" => {
-                    if let Some(window) = local_windows::targeted_window(app_handle) {
-                        let _ = window.close();
+                    if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        let _ = webview.window().close();
                     }
                 }
 
@@ -1824,8 +1812,8 @@ fn main() {
                 }
                 // App menu (macOS)
                 "hide" => {
-                    if let Some(window) = local_windows::targeted_window(app_handle) {
-                        let _ = window.hide();
+                    if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        let _ = webview.window().hide();
                     }
                 }
                 "hide_others" => {
