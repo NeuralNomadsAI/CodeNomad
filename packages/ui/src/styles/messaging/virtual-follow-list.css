@@ -11,6 +11,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  outline: none;
   background-color: var(--surface-base);
   color: inherit;
 
@@ -24,9 +25,6 @@
 
   /* Prevent browser scroll anchoring fighting our virtualization compensation. */
   overflow-anchor: none;
-  
-  /* Scrollbar styling */
-  scrollbar-gutter: stable;
 }
 
 .virtual-follow-list-overlay {
@@ -46,7 +44,8 @@
 .virtual-follow-list-controls-container {
   position: absolute;
   bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0px));
-  inset-inline-end: calc(var(--space-sm) + env(safe-area-inset-right, 0px));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 20;
 }
 

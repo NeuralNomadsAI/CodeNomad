@@ -1,7 +1,21 @@
-import { agents, providers } from "./session-state"
+import type { LocationRef } from "@opencode-ai/client"
+import { activeSessionId, agents, providers, sessions } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
+import { instances } from "./instances"
+import { getRootClient } from "./opencode-client"
+import { resolveAgentId } from "../types/session"
+import { toRequestLocation } from "./request-locations"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
+
+function getActiveCatalogLocation(instanceId: string): LocationRef {
+  const instance = instances().get(instanceId)
+  const selectedId = activeSessionId().get(instanceId)
+  const selectedLocation = selectedId && selectedId !== "info"
+    ? sessions().get(instanceId)?.get(selectedId)?.location
+    : undefined
+  return selectedLocation ?? { directory: instance?.folder ?? "" }
+}
 
 function isModelValid(
   instanceId: string,
@@ -31,9 +45,10 @@ async function getDefaultModel(
 ): Promise<{ providerId: string; modelId: string }> {
   const instanceProviders = providers().get(instanceId) || []
   const instanceAgents = agents().get(instanceId) || []
+  const agentId = agentName ? resolveAgentId(instanceAgents, agentName) : ""
 
-  if (agentName) {
-    const agent = instanceAgents.find((a) => a.name === agentName)
+  if (agentId) {
+    const agent = instanceAgents.find((a) => a.id === agentId)
     if (agent && agent.model && isModelValid(instanceId, agent.model)) {
       return {
         providerId: agent.model.providerId,
@@ -41,7 +56,7 @@ async function getDefaultModel(
       }
     }
 
-    const stored = await getAgentModelPreference(instanceId, agentName)
+    const stored = await getAgentModelPreference(instanceId, agentId)
     if (isModelValid(instanceId, stored)) {
       return stored
     }
@@ -75,7 +90,19 @@ async function getDefaultModel(
     }
   }
 
+  if (!instanceProviders.some((provider) => provider.models.length > 0)) {
+    const instance = instances().get(instanceId)
+    if (instance?.client) {
+      const response = await getRootClient(instanceId).model.default({
+        location: toRequestLocation(getActiveCatalogLocation(instanceId)),
+      }).catch(() => null)
+      if (response?.data) {
+        return { providerId: response.data.providerID, modelId: response.data.id }
+      }
+    }
+  }
+
   return { providerId: "", modelId: "" }
 }
 
-export { DEFAULT_MODEL_OUTPUT_LIMIT, getDefaultModel, getRecentModelPreferenceForInstance, isModelValid }
+export { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, getRecentModelPreferenceForInstance, isModelValid }

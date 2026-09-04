@@ -1,6 +1,7 @@
 import { createMemo, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
+import { isNativeApplicationWindow } from "../../lib/runtime-env"
 import { useConfig } from "../../stores/preferences"
 import EnvironmentVariablesEditor from "../environment-variables-editor"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
@@ -13,7 +14,8 @@ export const AdvancedSettingsSection: Component = () => {
       (setting) =>
         setting.id === "behavior.autoCleanupBlankSessions" ||
         setting.id === "behavior.keepUnseenSubagentIdleStatus" ||
-        setting.id === "behavior.tauriNativeEventTransport",
+        (setting.id === "behavior.focusExistingWindowOnSecondLaunch" && isNativeApplicationWindow()) ||
+        setting.id === "behavior.providerUsageCreditBalance",
     ),
   )
 

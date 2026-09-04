@@ -2,6 +2,7 @@ import type { Accessor } from "solid-js"
 import type {
   Preferences,
   ExpansionPreference,
+  FollowUpBehavior,
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
@@ -17,7 +18,7 @@ export type BehaviorToggleSetting = {
   titleKey: string
   subtitleKey: string
   get: (preferences: Preferences) => boolean
-  set: (next: boolean) => void
+  set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
 }
 
@@ -36,9 +37,9 @@ export type BehaviorSetting = BehaviorToggleSetting | BehaviorEnumSetting
 
 export type BehaviorRegistryActions = {
   preferences: Accessor<Preferences>
-  useTauriNativeEventTransport: Accessor<boolean>
-  setUseTauriNativeEventTransport: (next: boolean) => void
-  updatePreferences?: (updates: Partial<Preferences>) => void
+  useTauriNativeEventTransport?: Accessor<boolean>
+  setUseTauriNativeEventTransport?: (next: boolean) => void
+  updatePreferences?: (updates: Partial<Preferences>) => void | Promise<boolean>
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
@@ -84,14 +85,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.keyboardShortcutHints",
       titleKey: "settings.behavior.keyboardHints.title",
       subtitleKey: "settings.behavior.keyboardHints.subtitle",
-      get: (p) => Boolean(p.showKeyboardShortcutHints ?? true),
+      get: (p) => Boolean(p.showKeyboardShortcutHints ?? false),
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ showKeyboardShortcutHints: next })
           return
         }
         setBooleanByToggle(
-          () => Boolean(prefs().showKeyboardShortcutHints ?? true),
+          () => Boolean(prefs().showKeyboardShortcutHints ?? false),
           actions.toggleKeyboardShortcutHints,
           next,
         )
@@ -302,16 +303,38 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         }
       },
     },
-    ...(isLocalTauriHost()
+    {
+      kind: "toggle",
+      id: "behavior.focusExistingWindowOnSecondLaunch",
+      titleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.title",
+      subtitleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle",
+      get: (p) => p.focusExistingWindowOnSecondLaunch,
+      set: async (next) => {
+        if (await updatePreferences?.({ focusExistingWindowOnSecondLaunch: next }) === false) {
+          throw new Error("Failed to persist second-launch behavior")
+        }
+      },
+    },
+    {
+      kind: "toggle",
+      id: "behavior.providerUsageCreditBalance",
+      titleKey: "settings.behavior.providerUsageCreditBalance.title",
+      subtitleKey: "settings.behavior.providerUsageCreditBalance.subtitle",
+      get: (p) => Boolean(p.showProviderUsageCreditBalance),
+      set: (next) => {
+        updatePreferences?.({ showProviderUsageCreditBalance: next })
+      },
+    },
+    ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {
             kind: "toggle" as const,
             id: "behavior.tauriNativeEventTransport",
             titleKey: "settings.behavior.tauriNativeEventTransport.title",
             subtitleKey: "settings.behavior.tauriNativeEventTransport.subtitle",
-            get: () => actions.useTauriNativeEventTransport(),
+            get: () => actions.useTauriNativeEventTransport!(),
             set: (next: boolean) => {
-              actions.setUseTauriNativeEventTransport(next)
+              actions.setUseTauriNativeEventTransport!(next)
             },
           },
         ]
@@ -333,6 +356,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
           next,
         )
       },
+    },
+    {
+      kind: "enum",
+      id: "behavior.followUpBehavior",
+      titleKey: "settings.behavior.followUpBehavior.title",
+      subtitleKey: "settings.behavior.followUpBehavior.subtitle",
+      get: (p) => p.followUpBehavior,
+      set: (next) => updatePreferences?.({ followUpBehavior: next as FollowUpBehavior }),
+      options: [
+        { value: "steer", labelKey: "settings.behavior.followUpBehavior.option.steer" },
+        { value: "queue", labelKey: "settings.behavior.followUpBehavior.option.queue" },
+      ],
     },
     {
       kind: "toggle",

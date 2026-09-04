@@ -23,7 +23,7 @@
 - **Merge helper:** `packages/ui/src/lib/i18n/messages/merge.ts`
 - **Duplicate keys:** Throw at build time
 
-### Supported Locales (7)
+### Supported Locales (9)
 
 | Locale | Code | Direction |
 |--------|------|-----------|
@@ -34,6 +34,8 @@
 | Japanese | `ja` | LTR |
 | Simplified Chinese | `zh-Hans` | LTR |
 | Hebrew | `he` | RTL |
+| German | `de` | LTR |
+| Nepali | `ne` | LTR |
 
 ### Adding a New String
 

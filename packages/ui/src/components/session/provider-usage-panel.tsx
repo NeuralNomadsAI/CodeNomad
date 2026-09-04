@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Comp
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { useConfig } from "../../stores/preferences"
 
 interface ProviderUsagePanelProps {
   providerId: string
@@ -10,25 +11,38 @@ interface ProviderUsagePanelProps {
 }
 
 const REFRESH_INTERVAL_MS = 60_000
+const usageCache = new Map<string, { value: ProviderUsageResponse | null; updatedAt: number }>()
+
+export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) =>
+  label !== "credits_balance" || showCreditBalance
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
+  const { preferences } = useConfig()
   const source = createMemo(() => {
     const providerId = props.providerId.trim()
     if (!providerId) return null
-    return { providerId, modelId: props.modelId.trim() }
+    const modelId = props.modelId.trim()
+    return { providerId, modelId, key: `${providerId}\0${modelId}` }
   })
-  const [usage, setUsage] = createSignal<ProviderUsageResponse | null>()
+  const initialSource = source()
+  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>(
+    initialSource ? usageCache.get(initialSource.key)?.value : undefined,
+  )
   let requestId = 0
 
-  const refreshUsage = async (providerId: string, modelId: string, clear: boolean) => {
+  const refreshUsage = async (providerId: string, modelId: string, key: string, clear: boolean) => {
     const currentRequestId = ++requestId
     if (clear) setUsage(undefined)
     try {
       const response = await serverApi.fetchProviderUsage(providerId, modelId)
+      usageCache.set(key, { value: response, updatedAt: Date.now() })
       if (currentRequestId === requestId) setUsage(response)
     } catch {
-      if (currentRequestId === requestId && usage() === undefined) setUsage(null)
+      if (currentRequestId === requestId && usage() === undefined) {
+        usageCache.set(key, { value: null, updatedAt: Date.now() })
+        setUsage(null)
+      }
     }
   }
 
@@ -39,12 +53,16 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       setUsage(undefined)
       return
     }
-    void refreshUsage(current.providerId, current.modelId, true)
+    const cached = usageCache.get(current.key)
+    setUsage(cached?.value)
+    if (!cached || Date.now() - cached.updatedAt >= REFRESH_INTERVAL_MS) {
+      void refreshUsage(current.providerId, current.modelId, current.key, cached === undefined)
+    }
   })
 
   const refreshTimer = setInterval(() => {
     const current = source()
-    if (current) void refreshUsage(current.providerId, current.modelId, false)
+    if (current) void refreshUsage(current.providerId, current.modelId, current.key, false)
   }, REFRESH_INTERVAL_MS)
   onCleanup(() => {
     requestId += 1
@@ -52,6 +70,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   })
 
   const entries = createMemo(() => Object.entries(usage()?.windows ?? {}))
+  const displayedEntries = createMemo(() =>
+    entries().filter(([label]) => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
+  )
 
   const windowLabel = (label: string) => {
     const key = ({
@@ -63,6 +84,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       daily: "daily",
       monthly: "monthly",
       credits: "credits",
+      credits_balance: "credits",
       billing_cycle: "billingCycle",
       session: "session",
       premium: "premium",
@@ -94,13 +116,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <Show when={usage() !== undefined} fallback={<div class="text-xs text-tertiary">{t("providerUsage.loading")}</div>}>
-        <Show when={usage()} fallback={<div class="text-xs text-tertiary">{t("providerUsage.unavailable")}</div>}>
+      <Show when={usage() !== undefined} fallback={<div class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
+        <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
               when={data().supported && data().configured && data().ok && entries().length > 0}
               fallback={
-                <div class="text-xs text-tertiary">
+                <div class="right-panel-empty-text">
                   {t(
                     !data().supported
                       ? "providerUsage.unsupported"
@@ -112,7 +134,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
               }
             >
               <div class="space-y-2">
-                <For each={entries()}>
+                <For each={displayedEntries()}>
                   {([label, window]) => (
                     <div>
                       <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
@@ -150,7 +172,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
-      <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && entries().length > 0}>
+        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+      </Show>
     </div>
   )
 }

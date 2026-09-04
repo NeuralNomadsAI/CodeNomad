@@ -7,10 +7,9 @@ interface ContextMeterProps {
   usedLabel: string
   availableLabel: string
   class?: string
-  centerValue?: boolean
 }
 
-const LABEL_CLASS = "uppercase text-[10px] tracking-wide text-muted"
+const LABEL_CLASS = "context-meter-label uppercase text-[10px] tracking-wide text-muted"
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
@@ -51,7 +50,7 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
   }
 
   const containerClass =
-    `inline-flex items-center gap-2 rounded-full border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
+    `context-meter-values inline-flex items-center gap-2 rounded-full border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
 
   function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
     const rad = (angleDeg * Math.PI) / 180
@@ -117,18 +116,8 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
     </div>
   )
 
-  if (props.centerValue) {
-    return (
-      <div class="grid grid-cols-[22px_auto_22px] items-center gap-2" title={tooltipText()}>
-        <div class="flex justify-end">{circle()}</div>
-        {valuePill()}
-        <span aria-hidden="true" />
-      </div>
-    )
-  }
-
   return (
-    <div class="inline-flex items-center gap-2" title={tooltipText()}>
+    <div class="context-meter inline-flex items-center gap-2" title={tooltipText()}>
       {circle()}
       {valuePill()}
     </div>

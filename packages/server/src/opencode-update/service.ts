@@ -1,15 +1,15 @@
+import { spawn } from "node:child_process"
 import { fetch } from "undici"
 import type { OpenCodeUpdateResponse, OpenCodeUpdateStatus } from "../api-types"
 import type { SettingsService } from "../settings/service"
 import { BinaryResolver, type ResolvedBinary } from "../settings/binaries"
 import type { WorkspaceManager } from "../workspaces/manager"
-import { createInstanceClient } from "../workspaces/instance-client"
 import { probeBinaryVersion } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
 
-const OPENCODE_LATEST_URL = "https://registry.npmjs.org/opencode-ai/latest"
-const LATEST_VERSION_CACHE_MS = 5 * 60_000
-const UPGRADE_TIMEOUT_MS = 10 * 60_000
+const OPENCODE_PACKAGE_NAME = "@opencode-ai/cli"
+const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode-ai%2Fcli/dist-tags"
+export const TARGET_OPENCODE_CHANNEL = "beta"
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
@@ -17,17 +17,16 @@ type UpgradeResult = { success: true; version: string } | { success: false; erro
 export interface OpenCodeUpdateServiceDeps {
   resolveBinary: () => ResolvedBinary
   probeBinary: typeof probeBinaryVersion
-  findReadyInstanceId: (binaryPath: string) => string | undefined
-  upgradeInstance: (instanceId: string, target: string) => Promise<UpgradeResult>
-  fetchLatestVersion: () => Promise<string>
-  now?: () => number
+  resolveLatestVersion: () => Promise<string>
+  canUpgradeBinary: (binary: ResolvedBinary) => boolean
+  upgradeBinary: (binary: ResolvedBinary, target: string) => Promise<UpgradeResult>
 }
 
 export class OpenCodeUpdateError extends Error {
   constructor(
     readonly code:
       | "binary_unavailable"
-      | "no_ready_instance"
+      | "unsupported_binary"
       | "update_check_failed"
       | "upgrade_failed"
       | "upgrade_verification_failed",
@@ -39,34 +38,20 @@ export class OpenCodeUpdateError extends Error {
 }
 
 export class OpenCodeUpdateService {
-  private latestVersionCache: { version: string; expiresAt: number } | null = null
-
   constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
 
   async getStatus(): Promise<OpenCodeUpdateStatus> {
     const binary = this.deps.resolveBinary()
     const currentVersion = this.readCurrentVersion(binary.path)
-    let latestVersion: string
-    try {
-      latestVersion = await this.readLatestVersion()
-    } catch (error) {
-      if (!(error instanceof OpenCodeUpdateError) || error.code !== "update_check_failed") throw error
-      return {
-        currentVersion,
-        latestVersion: null,
-        updateAvailable: null,
-        canUpgrade: false,
-        checkError: "update_check_failed",
-      }
-    }
-    const updateAvailable = compareVersionStrings(latestVersion, currentVersion) > 0
-    const readyInstanceId = this.deps.findReadyInstanceId(binary.path)
+    const latestVersion = await this.readLatestVersion()
+    const updateAvailable = compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0
+    const canUpgrade = this.deps.canUpgradeBinary(binary)
 
     return {
       currentVersion,
       latestVersion,
       updateAvailable,
-      canUpgrade: updateAvailable && Boolean(readyInstanceId),
+      canUpgrade: updateAvailable && canUpgrade,
     }
   }
 
@@ -86,28 +71,27 @@ export class OpenCodeUpdateService {
     const currentVersion = this.readCurrentVersion(binary.path)
     const latestVersion = await this.readLatestVersion()
 
-    if (compareVersionStrings(latestVersion, currentVersion) <= 0) {
+    if (compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0) {
       return { success: true, version: currentVersion }
     }
 
-    const instanceId = this.deps.findReadyInstanceId(binary.path)
-    if (!instanceId) {
+    if (!this.deps.canUpgradeBinary(binary)) {
       throw new OpenCodeUpdateError(
-        "no_ready_instance",
-        "No running OpenCode instance uses the configured binary",
+        "unsupported_binary",
+        "Automatic updates are only available for the managed opencode2 command",
       )
     }
 
     try {
-      const result = await this.deps.upgradeInstance(instanceId, latestVersion)
+      const result = await this.deps.upgradeBinary(binary, latestVersion)
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = this.readCurrentVersion(binary.path)
-      if (compareVersionStrings(installedVersion, latestVersion) !== 0) {
+      if (installedVersion !== latestVersion) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
-          `OpenCode reported ${result.version}, but the configured binary is still ${installedVersion}`,
+          `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
         )
       }
       return { success: true, version: installedVersion }
@@ -133,40 +117,107 @@ export class OpenCodeUpdateService {
   }
 
   private async readLatestVersion(): Promise<string> {
-    const now = (this.deps.now ?? Date.now)()
-    if (this.latestVersionCache && this.latestVersionCache.expiresAt > now) {
-      return this.latestVersionCache.version
-    }
-
     try {
-      const version = stripTagPrefix(await this.deps.fetchLatestVersion())
-      if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-        throw new Error("OpenCode registry returned an invalid version")
-      }
-      this.latestVersionCache = { version, expiresAt: now + LATEST_VERSION_CACHE_MS }
+      const version = stripTagPrefix(await this.deps.resolveLatestVersion())
+      if (!version) throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a version`)
       return version
     } catch (error) {
       throw new OpenCodeUpdateError(
         "update_check_failed",
-        error instanceof Error ? error.message : "Unable to check the latest OpenCode version",
+        error instanceof Error ? error.message : "Unable to resolve the latest OpenCode beta",
       )
     }
   }
 }
 
-export async function fetchLatestOpenCodeVersion(): Promise<string> {
-  const response = await fetch(OPENCODE_LATEST_URL, {
-    headers: { Accept: "application/json", "User-Agent": "CodeNomad-CLI" },
+export type OpenCodePackageManager = "npm" | "pnpm" | "bun" | "yarn"
+
+export function compareOpenCodeVersionStrings(left: string, right: string): number {
+  const leftBeta = stripTagPrefix(left)?.match(/^0\.0\.0-beta-(\d+)$/)
+  const rightBeta = stripTagPrefix(right)?.match(/^0\.0\.0-beta-(\d+)$/)
+  if (leftBeta && rightBeta) return Number(leftBeta[1]) - Number(rightBeta[1])
+  return compareVersionStrings(left, right)
+}
+
+export function detectOpenCodePackageManager(
+  binaryPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): OpenCodePackageManager {
+  const pathSource = binaryPath.toLowerCase()
+  const launchSource = `${env.npm_config_user_agent ?? ""}\n${env.npm_execpath ?? ""}`.toLowerCase()
+  if (pathSource.includes("pnpm")) return "pnpm"
+  if (/[\\/]\.bun[\\/]/.test(pathSource)) return "bun"
+  if (pathSource.includes("yarn")) return "yarn"
+  if (/[\\/]npm[\\/]/.test(pathSource)) return "npm"
+  if (launchSource.includes("pnpm")) return "pnpm"
+  if (/(^|[\s/])bun(?:$|[\s/])/.test(launchSource)) return "bun"
+  if (launchSource.includes("yarn")) return "yarn"
+  return "npm"
+}
+
+export function buildOpenCodeUpgradeCommand(
+  version: string,
+  packageManager: OpenCodePackageManager,
+): { command: string; args: string[] } {
+  const packageSpec = `${OPENCODE_PACKAGE_NAME}@${version}`
+  if (packageManager === "pnpm") {
+    return { command: "pnpm", args: ["add", "-g", `--allow-build=${OPENCODE_PACKAGE_NAME}`, packageSpec] }
+  }
+  if (packageManager === "bun") {
+    return { command: "bun", args: ["install", "-g", "--trust", packageSpec] }
+  }
+  if (packageManager === "yarn") {
+    return { command: "yarn", args: ["global", "add", packageSpec] }
+  }
+  return { command: "npm", args: ["install", "-g", packageSpec] }
+}
+
+export function installOpenCodeCli(
+  binary: ResolvedBinary,
+  version: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<UpgradeResult> {
+  const upgrade = buildOpenCodeUpgradeCommand(version, detectOpenCodePackageManager(binary.path, env))
+  return new Promise((resolve) => {
+    const child = spawn(upgrade.command, upgrade.args, {
+      env,
+      shell: process.platform === "win32",
+      stdio: "ignore",
+      windowsHide: true,
+    })
+    child.once("error", (error) => resolve({ success: false, error: error.message }))
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        resolve({ success: false, error: `OpenCode update stopped by signal ${signal}` })
+        return
+      }
+      if (code !== 0) {
+        resolve({ success: false, error: `OpenCode update exited with code ${code ?? "unknown"}` })
+        return
+      }
+      resolve({ success: true, version })
+    })
+  })
+}
+
+type RegistryFetch = (
+  url: string,
+  init: Parameters<typeof fetch>[1],
+) => Promise<Pick<Awaited<ReturnType<typeof fetch>>, "ok" | "status" | "json">>
+
+export async function resolveLatestOpenCodeVersion(fetchRegistry: RegistryFetch = fetch): Promise<string> {
+  const response = await fetchRegistry(OPENCODE_REGISTRY_URL, {
+    headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   })
-  if (!response.ok) {
-    throw new Error(`OpenCode registry responded with ${response.status}`)
+  if (!response.ok) throw new Error(`OpenCode registry responded with ${response.status}`)
+
+  const metadata = (await response.json()) as Record<string, unknown>
+  const version = metadata[TARGET_OPENCODE_CHANNEL]
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a valid version`)
   }
-  const payload = (await response.json()) as { version?: unknown }
-  if (typeof payload.version !== "string") {
-    throw new Error("OpenCode registry response did not include a version")
-  }
-  return payload.version
+  return version
 }
 
 export function createOpenCodeUpdateService(
@@ -180,15 +231,8 @@ export function createOpenCodeUpdateService(
       return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
     },
     probeBinary: probeBinaryVersion,
-    findReadyInstanceId: (binaryPath) => workspaceManager.findReadyInstanceIdByBinary(binaryPath),
-    fetchLatestVersion: fetchLatestOpenCodeVersion,
-    upgradeInstance: async (instanceId, target) => {
-      const client = createInstanceClient(workspaceManager, instanceId, { timeoutMs: UPGRADE_TIMEOUT_MS })
-      if (!client) {
-        throw new OpenCodeUpdateError("no_ready_instance", "OpenCode instance is not ready")
-      }
-      const { data } = await client.global.upgrade({ target }, { throwOnError: true })
-      return data
-    },
+    resolveLatestVersion: resolveLatestOpenCodeVersion,
+    canUpgradeBinary: () => binaryResolver.resolveDefault().path === "opencode2",
+    upgradeBinary: installOpenCodeCli,
   })
 }

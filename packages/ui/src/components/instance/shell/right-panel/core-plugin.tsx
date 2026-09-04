@@ -16,7 +16,6 @@ interface CoreStatusSectionRenderers {
   renderPlanSectionContent: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
-  renderLspStatus: () => JSX.Element
   renderPluginStatus: () => JSX.Element
 }
 
@@ -63,7 +62,6 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     plan: renderers.renderPlanSectionContent,
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
-    lsp: renderers.renderLspStatus,
     plugins: renderers.renderPluginStatus,
   }
 

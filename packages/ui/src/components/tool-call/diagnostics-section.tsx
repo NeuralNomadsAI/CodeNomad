@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js"
+import { ChevronRight } from "lucide-solid"
 import type { DiagnosticEntry } from "./diagnostics"
 
 export function renderDiagnosticsSection(
@@ -17,9 +18,7 @@ export function renderDiagnosticsSection(
         aria-expanded={expanded}
         onClick={toggle}
       >
-        <span class="tool-call-icon" aria-hidden="true">
-          {expanded ? "▼" : "▶"}
-        </span>
+        <ChevronRight class="tool-call-icon disclosure-chevron" aria-hidden="true" />
         <span class="tool-call-emoji" aria-hidden="true">
           🛠
         </span>

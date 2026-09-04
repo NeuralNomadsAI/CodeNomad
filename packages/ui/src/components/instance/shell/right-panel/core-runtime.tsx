@@ -1,8 +1,7 @@
 import { createEffect, createMemo, createSignal, lazy, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../../types/tool-state"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
@@ -44,10 +43,6 @@ interface CoreRightPanelRuntimeOptions {
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
   latestTodoState: Accessor<ToolState | null>
-  backgroundProcessList: Accessor<BackgroundProcess[]>
-  onOpenBackgroundOutput: (process: BackgroundProcess) => void
-  onStopBackgroundProcess: (processId: string) => Promise<void> | void
-  onTerminateBackgroundProcess: (processId: string) => Promise<void> | void
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
@@ -230,10 +225,6 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         activeSessionId={options.activeSessionId}
         activeSession={options.activeSession}
         latestTodoState={options.latestTodoState}
-        backgroundProcessList={options.backgroundProcessList}
-        onOpenBackgroundOutput={options.onOpenBackgroundOutput}
-        onStopBackgroundProcess={options.onStopBackgroundProcess}
-        onTerminateBackgroundProcess={options.onTerminateBackgroundProcess}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}

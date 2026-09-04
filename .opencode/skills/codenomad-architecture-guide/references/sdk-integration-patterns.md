@@ -1,209 +1,46 @@
-# SDK Integration Patterns
+# Native OpenCode V2 Integration Patterns
 
-## Client Lifecycle
+## Shared Service
 
-### SDK Manager
+`WorkspaceManager` owns one `OpenCodeSharedService`. Production runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, creates one Promise client, and invalidates failed connections. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations.
 
-CodeNomad creates and manages `OpencodeClient` instances through `SDKManager`:
+OpenCode owns standard state/database. Allowed configured environment variables apply only to `service start` for a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
 
-```typescript
-// packages/ui/src/lib/sdk-manager.ts
-class SDKManager {
-  private clients = new Map<string, OpencodeClient>()
-  
-  createClient(instanceId: string, proxyPath: string): OpencodeClient {
-    const baseUrl = buildInstanceBaseUrl(proxyPath)
-    return createOpencodeClient({ baseUrl })
-  }
-}
+## Locations And Directories
+
+Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory/workspace ID. Explicit Stop Workspace calls `client.debug.location.evict` before removing the logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
+
+The instance proxy is method/path allowlisted, rejects unowned paths, `directory`, `location.directory`, and `location[directory]` values, and verifies session location before forwarding. Keep this check at the server trust boundary; new upstream routes require explicit review.
+
+## UI Client
+
+```ts
+const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
 ```
 
-### Worktree-Based Routing
+Use `getRootClient(instanceId)` from `packages/ui/src/stores/opencode-client.ts`. Native location/directory inputs replace the old per-worktree-client pattern. Destroy cached clients when an instance is removed.
 
-SDK clients are routed per worktree, not just per instance:
+## Session Shell, Background Shells, And PTYs
 
-```typescript
-// packages/ui/src/stores/worktrees.ts
-export function getOrCreateWorktreeClient(
-  instanceId: string, 
-  worktreeSlug: string
-): OpencodeClient {
-  const proxyPath = `/worktrees/${worktreeSlug}`
-  return sdkManager.createClient(instanceId, proxyPath)
-}
-```
+- Shell mode calls `client.session.shell({ sessionID, command })`.
+- Conversation mode adds/removes `client.session.instructions.entry` before `client.session.prompt`.
+- Session Shell remains separate from background Shell and native PTY management.
+- Background Shells are location-scoped and listed with `client.shell.list`; the Status panel refreshes on Shell lifecycle events and reconnect and displays native metadata.
+- Shell ID operations are ownership-checked against the native `cwd`; output preserves the native cursor and removal uses `client.shell.remove`.
+- Interactive terminals use separate `client.pty.*` APIs.
+- Keep `packages/opencode-plugin` and server plugin/background-process paths deleted.
 
-**Rule:** Always use `getOrCreateWorktreeClient()` rather than creating clients directly. This ensures:
-- Correct base URL with worktree proxy path
-- Client caching and reuse
-- Proper cleanup on instance disposal
+## Event Flow
 
-### Base URL Construction
+1. The server subscribes once with `client.event.subscribe()`.
+2. `InstanceEventBridge` maps location-scoped OpenCode events to CodeNomad `instance.event` records.
+3. `EventBus` also carries CodeNomad events such as workspace and Yolo changes.
+4. `/api/events` multiplexes those records to the UI; `packages/ui/src/lib/sse-manager.ts` reconnects and dispatches them.
 
-```typescript
-// packages/ui/src/lib/sdk-manager.ts
-export function buildInstanceBaseUrl(proxyPath: string): string {
-  const normalized = normalizeProxyPath(proxyPath)
-  const base = stripTrailingSlashes(CODENOMAD_API_BASE)
-  return `${base}${normalized}/`
-}
-```
+The native stream is volatile and does not guarantee replay. Reconnect must refetch authoritative sessions and pending requests; file/config consumers must also refresh after gaps. Current invalidations are `filesystem.changed` and `config.updated`, alongside native `session.*` lifecycle/output events.
 
-## Error Handling
+## CodeNomad Policy Boundaries
 
-### RequestData Wrapper
-
-Most SDK calls that return `{ data, error }` go through `requestData()` for consistent error handling:
-
-```typescript
-// packages/ui/src/lib/opencode-api.ts
-export async function requestData<T>(
-  promise: Promise<{ data?: T; error? }>,
-  operation: string
-): Promise<T> {
-  const response = await promise
-  if (response.error) {
-    log.error(`API error in ${operation}`, response.error)
-    throw response.error
-  }
-  if (response.data === undefined) {
-    throw new Error(`No data returned from ${operation}`)
-  }
-  return response.data
-}
-```
-
-### Pattern
-
-```typescript
-// Always wrap SDK calls
-const sessions = await requestData(
-  client.session.list(),
-  "session.list"
-)
-
-// Direct SDK calls are also used when the method doesn't return { data, error }
-// Example: const response = await rootClient.session.list()
-```
-
-## Optimistic Updates
-
-### Pattern
-
-1. Update local state immediately
-2. Make API call
-3. Handle success/error
-4. SSE events eventually confirm/converge
-
-```typescript
-// packages/ui/src/stores/message-v2/bridge.ts
-export function removePermissionV2(instanceId: string, requestId: string) {
-  // 1. Optimistic: Remove from local store
-  updateMessageStore(instanceId, (store) => {
-    store.permissions.delete(requestId)
-  })
-  
-  // 2. API call (may fail)
-  // 3. SSE event eventually confirms
-}
-```
-
-### Reconciliation
-
-SSE events from the server eventually reconcile optimistic state:
-
-| Event | Handler | File |
-|-------|---------|------|
-| `message.part.updated` | `updateMessagePartV2()` | `bridge.ts` |
-| `message.part.removed` | `removeMessagePartV2()` | `bridge.ts` |
-| `permission.replied` | `removePermissionV2()` | `bridge.ts` |
-| `question.replied` | `removeQuestionV2()` | `bridge.ts` |
-
-### Race Condition Warning
-
-Rapid successive operations can cause temporary desync:
-- Delete part → quickly delete message → may error if part delete in flight
-- Always check current state before optimistic updates
-
-## Permission Flow
-
-1. **Server emits** `permission.asked` or `permission.updated` SSE event
-   - Pushed through instance event stream
-2. **Server AutoAcceptManager** intercepts the event (if Yolo is enabled)
-   - File: `packages/server/src/permissions/auto-accept-manager.ts`
-   - Action: Auto-replies via SDK client (`createInstanceClient`), tracks pending permissions, drains on enable/ancestry change
-   - Emits `yolo.autoAccepted` + `yolo.stateChanged` events to UI
-3. **UI Store receives** via `serverEvents`
-   - File: `packages/ui/src/stores/instances.ts`
-   - **Branch:** IF `yolo.autoAccepted` event arrives → immediately marks replied + removes from queue
-   - **Branch:** ELSE (user must reply) → Queued in `permissionQueues` → Display modal
-4. **UI Store:** `packages/ui/src/stores/message-v2/bridge.ts` calls `upsertPermissionV2()`
-5. **UI Component:** `packages/ui/src/components/permission-approval-modal.tsx` displays
-6. **User Action:** Calls `packages/ui/src/stores/instances.ts:sendPermissionResponse()`
-7. **SDK Call:** `client.permission.reply()` via `packages/ui/src/lib/opencode-api.ts`
-8. **Optimistic Update:** `removePermissionV2()` in bridge
-9. **SSE Confirmation:** `permission.replied` event
-   - **Branch:** IF SSE disconnected → `syncPendingPermissions()` reconciles on reconnect
-
-## Session Event Handling
-
-### SSE Event Types
-
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `message.part.delta` | Server → UI | Streaming text update |
-| `message.part.updated` | Server → UI | Part content changed |
-| `message.part.removed` | Server → UI | Part deleted |
-| `session.status` | Server → UI | Session status changed |
-| `permission.asked` | Server → UI | New permission request |
-| `permission.updated` | Server → UI | Permission updated |
-| `permission.replied` | Server → UI | Permission resolved |
-| `question.asked` | Server → UI | New question |
-| `question.replied` | Server → UI | Question answered |
-| `question.rejected` | Server → UI | Question rejected |
-
-### Event Source Setup
-
-```typescript
-// packages/ui/src/lib/event-source-handlers.ts
-export function attachEventSourceHandlers(
-  source: EventSource, 
-  options: EventSourceHandlerOptions
-) {
-  source.onmessage = (event) => {
-    const payload = JSON.parse(event.data)
-    options.onEvent(payload)
-  }
-  
-  source.onerror = () => {
-    options.onError?.()
-  }
-  
-  ;(source as EventSourceWithClose).onclose = () => {
-    options.onError?.()
-  }
-}
-```
-
-## Worktree Client Pattern
-
-```typescript
-// Always route through worktree
-const worktreeSlug = getWorktreeSlugForSession(instanceId, sessionId)
-const client = getOrCreateWorktreeClient(instanceId, worktreeSlug)
-
-// Then use client normally
-const diff = await requestData(
-  client.session.diff({ sessionID: sessionId }),
-  "session.diff"
-)
-```
-
-## Cleanup Pattern
-
-```typescript
-// On instance disposal
-sdkManager.destroyClientsForInstance(instanceId)
-messageStoreBus.unregister(instanceId)
-clearCacheForInstance(instanceId)
-```
+- Git mutations run validated `git` commands in `packages/server/src/workspaces/git-mutations.ts` through `/api/workspaces/:id/worktrees/:slug/git-*`.
+- Yolo is server-owned. `AutoAcceptManager` persists CodeNomad metadata and replies through the shared native client, then emits `yolo.stateChanged`/`yolo.autoAccepted`.
+- Never move these operations into a browser-only client or an OpenCode plugin.

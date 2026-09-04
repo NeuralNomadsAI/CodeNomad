@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer, ToolScrollHelpers } from "../types"
 import { ensureMarkdownContent, formatUnknown, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"

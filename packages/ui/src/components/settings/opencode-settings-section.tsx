@@ -11,7 +11,7 @@ type LogLevelOption = { value: ServerLogLevel; label: string }
 export const OpenCodeSettingsSection: Component = () => {
   const { t } = useI18n()
   const { serverSettings, updateLastUsedBinary, updateLogLevel } = useConfig()
-  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
+  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode2")
   const logLevelOptions = createMemo<LogLevelOption[]>(() => [
     { value: "DEBUG", label: t("settings.opencode.logLevel.option.debug") },
     { value: "INFO", label: t("settings.opencode.logLevel.option.info") },
@@ -23,7 +23,7 @@ export const OpenCodeSettingsSection: Component = () => {
   )
 
   createEffect(() => {
-    const binary = serverSettings().opencodeBinary || "opencode"
+    const binary = serverSettings().opencodeBinary || "opencode2"
     setSelectedBinary((current) => (current === binary ? current : binary))
   })
 

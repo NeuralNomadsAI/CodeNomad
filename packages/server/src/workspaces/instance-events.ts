@@ -1,13 +1,28 @@
-import { Agent, fetch } from "undici"
-import { Agent as UndiciAgent } from "undici"
+import { isSessionNotFoundError, type OpenCodeEvent } from "@opencode-ai/client"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
-import { LOOPBACK_HOST } from "./loopback"
-import { InstanceStreamEvent, InstanceStreamStatus } from "../api-types"
+import { InstanceStreamStatus } from "../api-types"
 
-const STREAM_AGENT = new UndiciAgent({ bodyTimeout: 0, headersTimeout: 0 })
 const RECONNECT_DELAY_MS = 1000
+const DIRECTORY_OWNER_CACHE_MS = 2000
+const SESSION_DIRECTORY_CACHE_MS = 2000
+const GLOBAL_EVENT_TYPES = new Set([
+  "agent.updated",
+  "catalog.updated",
+  "command.updated",
+  "config.updated",
+  "credential.switched",
+  "credential.updated",
+  "integration.connection.updated",
+  "integration.updated",
+  "installation.update-available",
+  "installation.updated",
+  "mcp.resources.changed",
+  "mcp.status.changed",
+  "models-dev.refreshed",
+  "server.connected",
+])
 
 interface InstanceEventBridgeOptions {
   workspaceManager: WorkspaceManager
@@ -15,212 +30,246 @@ interface InstanceEventBridgeOptions {
   logger: Logger
 }
 
-interface ActiveStream {
-  controller: AbortController
-  task: Promise<void>
-}
-
 export class InstanceEventBridge {
-  private readonly streams = new Map<string, ActiveStream>()
+  private readonly controller = new AbortController()
+  private status: InstanceStreamStatus = "connecting"
+  private generation = 0
+  private task?: Promise<void>
+  private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
+  private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
+  private readonly ptyDirectories = new Map<string, string>()
+  private readonly shellDirectories = new Map<string, string>()
+  private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
+    this.clearLocationCaches()
+    if (!this.task) this.task = this.run()
+    else this.publishStatus(event.workspace.id, this.status)
+  }
+  private readonly onWorkspaceStopped = (event: { workspaceId: string }) => {
+    this.clearLocationCaches()
+    this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
+  }
+  private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
+    this.clearLocationCaches()
+    this.publishStatus(event.workspace.id, "disconnected", "workspace error")
+  }
 
   constructor(private readonly options: InstanceEventBridgeOptions) {
     const bus = this.options.eventBus
-    bus.on("workspace.started", (event) => this.startStream(event.workspace.id))
-    bus.on("workspace.stopped", (event) => this.stopStream(event.workspaceId, "workspace stopped"))
-    bus.on("workspace.error", (event) => this.stopStream(event.workspace.id, "workspace error"))
+    bus.on("workspace.started", this.onWorkspaceStarted)
+    bus.on("workspace.stopped", this.onWorkspaceStopped)
+    bus.on("workspace.error", this.onWorkspaceError)
   }
 
   shutdown() {
-    for (const [id, active] of this.streams) {
-      active.controller.abort()
-      this.publishStatus(id, "disconnected")
+    this.controller.abort()
+    const bus = this.options.eventBus
+    bus.off("workspace.started", this.onWorkspaceStarted)
+    bus.off("workspace.stopped", this.onWorkspaceStopped)
+    bus.off("workspace.error", this.onWorkspaceError)
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, "disconnected")
     }
-    this.streams.clear()
   }
 
-  private startStream(workspaceId: string) {
-    if (this.streams.has(workspaceId)) {
-      return
-    }
-
-    const controller = new AbortController()
-    const task = this.runStream(workspaceId, controller.signal)
-      .catch((error) => {
-        if (!controller.signal.aborted) {
-          this.options.logger.warn({ workspaceId, err: error }, "Instance event stream failed")
-          this.publishStatus(workspaceId, "error", error instanceof Error ? error.message : String(error))
-        }
-      })
-      .finally(() => {
-        const active = this.streams.get(workspaceId)
-        if (active?.controller === controller) {
-          this.streams.delete(workspaceId)
-        }
-      })
-
-    this.streams.set(workspaceId, { controller, task })
-  }
-
-  private stopStream(workspaceId: string, reason?: string) {
-    const active = this.streams.get(workspaceId)
-    if (!active) {
-      return
-    }
-    active.controller.abort()
-    this.streams.delete(workspaceId)
-    this.publishStatus(workspaceId, "disconnected", reason)
-  }
-
-  private async runStream(workspaceId: string, signal: AbortSignal) {
-    while (!signal.aborted) {
-      const port = this.options.workspaceManager.getInstancePort(workspaceId)
-      if (!port) {
-        await this.delay(RECONNECT_DELAY_MS, signal)
-        continue
-      }
-
-      this.publishStatus(workspaceId, "connecting")
-
+  private async run() {
+    while (!this.controller.signal.aborted) {
+      this.generation += 1
+      this.clearLocationCaches()
+      this.updateStatus("connecting")
       try {
-        await this.consumeStream(workspaceId, port, signal)
-      } catch (error) {
-        if (signal.aborted) {
-          break
+        const events = await this.options.workspaceManager.subscribeToSharedService(this.controller.signal)
+        let confirmed = false
+        for await (const event of events) {
+          if (this.controller.signal.aborted) return
+          if (!confirmed) {
+            if (event.type !== "server.connected") {
+              throw new Error(`Shared OpenCode event stream started with ${event.type}, expected server.connected`)
+            }
+            confirmed = true
+            this.updateStatus("connected")
+          }
+          await this.publishEvent(event)
         }
-        this.options.logger.warn({ workspaceId, err: error }, "Instance event stream disconnected")
-        this.publishStatus(workspaceId, "error", error instanceof Error ? error.message : String(error))
-        await this.delay(RECONNECT_DELAY_MS, signal)
+        if (!this.controller.signal.aborted) throw new Error("Shared OpenCode event stream ended")
+      } catch (error) {
+        if (this.controller.signal.aborted) return
+        this.options.logger.warn({ err: error }, "Shared OpenCode event stream disconnected")
+        this.updateStatus("error", error instanceof Error ? error.message : String(error))
+        await this.delay(RECONNECT_DELAY_MS)
       }
     }
   }
 
-  private async consumeStream(workspaceId: string, port: number, signal: AbortSignal) {
-    const url = `http://${LOOPBACK_HOST}:${port}/global/event`
+  private async publishEvent(event: OpenCodeEvent) {
+    const sessionId = this.sessionId(event)
+    const ptyId = this.ptyId(event)
+    const shellId = this.shellId(event)
+    if (event.type === "session.moved" && sessionId) this.sessionDirectories.delete(sessionId)
 
-    const headers: Record<string, string> = { Accept: "text/event-stream" }
-    const authHeader = this.options.workspaceManager.getInstanceAuthorizationHeader(workspaceId)
-    if (authHeader) {
-      headers["Authorization"] = authHeader
+    const directory = event.location?.directory
+      ?? this.ptyInfoDirectory(event)
+      ?? (ptyId ? this.ptyDirectories.get(ptyId) : undefined)
+      ?? this.shellInfoDirectory(event)
+      ?? (shellId ? this.shellDirectories.get(shellId) : undefined)
+      ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
+    if (!directory) {
+      if (GLOBAL_EVENT_TYPES.has(event.type)) {
+        this.broadcastEvent(event)
+        return
+      }
+      if (event.type === "session.deleted" && sessionId) {
+        // Deletion can make session.get return 404 before the event arrives. Session IDs are
+        // service-global, so notifying every logical workspace cannot delete another session.
+        this.broadcastEvent(event)
+        this.sessionDirectories.delete(sessionId)
+      }
+      return
+    }
+    if (sessionId) {
+      this.sessionDirectories.set(sessionId, {
+        expiresAt: Date.now() + SESSION_DIRECTORY_CACHE_MS,
+        directory: Promise.resolve(directory),
+      })
+    }
+    if (ptyId) this.ptyDirectories.set(ptyId, directory)
+    if (shellId) this.shellDirectories.set(shellId, directory)
+
+    const instanceIds = await this.resolveDirectoryOwners(directory)
+    if (instanceIds.length === 0) {
+      if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+      if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
+      if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
+      return
     }
 
-    const response = await fetch(url, {
-      headers,
-      signal,
-      dispatcher: STREAM_AGENT,
+    for (const instanceId of instanceIds) {
+      this.options.eventBus.publish({ type: "instance.event", instanceId, event })
+    }
+    if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
+    if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
+    if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
+  }
+
+  private sessionId(event: OpenCodeEvent): string | undefined {
+    const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
+    const sessionId = data.sessionID ?? (event.type === "form.created" ? data.form?.sessionID : undefined)
+    return typeof sessionId === "string" && sessionId ? sessionId : undefined
+  }
+
+  private ptyId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("pty.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private ptyInfoDirectory(event: OpenCodeEvent): string | undefined {
+    if (event.type !== "pty.created" && event.type !== "pty.updated") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? cwd : undefined
+  }
+
+  private shellId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("shell.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private shellInfoDirectory(event: OpenCodeEvent): string | undefined {
+    if (event.type !== "shell.created") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? cwd : undefined
+  }
+
+  private broadcastEvent(event: OpenCodeEvent): void {
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.options.eventBus.publish({ type: "instance.event", instanceId: workspace.id, event })
+    }
+  }
+
+  private resolveSessionDirectory(sessionId: string): Promise<string | undefined> {
+    const now = Date.now()
+    const cached = this.sessionDirectories.get(sessionId)
+    if (cached && cached.expiresAt > now) return cached.directory
+
+    const resolve = () => this.options.workspaceManager.getSharedServiceClient()
+      .then((client) => client.session.get({ sessionID: sessionId }))
+      .then((session) => session.location.directory)
+    const directory = resolve().catch((error) => {
+      if (isSessionNotFoundError(error)) return undefined
+      return resolve().catch((retryError) => {
+        this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
+        return undefined
+      })
     })
-
-    if (!response.ok || !response.body) {
-      throw new Error(`Instance event stream unavailable (${response.status})`)
-    }
-
-    this.publishStatus(workspaceId, "connected")
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-
-    while (!signal.aborted) {
-      const { done, value } = await reader.read()
-      if (done || !value) {
-        break
-      }
-      buffer += decoder.decode(value, { stream: true })
-      buffer = this.flushEvents(buffer, workspaceId)
-    }
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, directory }
+    this.sessionDirectories.set(sessionId, entry)
+    const settle = () => { entry.expiresAt = Date.now() + SESSION_DIRECTORY_CACHE_MS }
+    void directory.then(settle, settle)
+    return directory
   }
 
-  private flushEvents(buffer: string, workspaceId: string) {
-    let separatorIndex = buffer.indexOf("\n\n")
+  private resolveDirectoryOwners(directory: string): Promise<string[]> {
+    const now = Date.now()
+    const cached = this.directoryOwners.get(directory)
+    if (cached && cached.expiresAt > now) return cached.owners
 
-    while (separatorIndex >= 0) {
-      const chunk = buffer.slice(0, separatorIndex)
-      buffer = buffer.slice(separatorIndex + 2)
-      this.processChunk(chunk, workspaceId)
-      separatorIndex = buffer.indexOf("\n\n")
-    }
-
-    return buffer
+    const workspaces = this.options.workspaceManager.list()
+    const owners = Promise.allSettled(workspaces.map((workspace) => (
+      this.options.workspaceManager.ownsDirectory(workspace.id, directory)
+    )))
+      .then(async (ownership) => {
+        if (ownership.some((result) => result.status === "rejected")) {
+          ownership = await Promise.allSettled(ownership.map((result, index) => (
+            result.status === "fulfilled"
+              ? Promise.resolve(result.value)
+              : this.options.workspaceManager.ownsDirectory(workspaces[index].id, directory)
+          )))
+        }
+        const failed = ownership.find((result) => result.status === "rejected")
+        if (failed) {
+          this.options.logger.warn({ err: failed.reason, directory }, "Failed to resolve instance event directory owner")
+        }
+        const currentIds = new Set(this.options.workspaceManager.list().map((workspace) => workspace.id))
+        return ownership.flatMap((result, index) => {
+          const id = workspaces[index].id
+          return result.status === "fulfilled" && result.value && currentIds.has(id) ? [id] : []
+        })
+      })
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, owners }
+    this.directoryOwners.set(directory, entry)
+    const settle = () => { entry.expiresAt = Date.now() + DIRECTORY_OWNER_CACHE_MS }
+    void owners.then(settle, settle)
+    return owners
   }
 
-  private processChunk(chunk: string, workspaceId: string) {
-    const lines = chunk.split(/\r?\n/)
-    const dataLines: string[] = []
+  private clearLocationCaches(): void {
+    this.directoryOwners.clear()
+    this.sessionDirectories.clear()
+    this.ptyDirectories.clear()
+    this.shellDirectories.clear()
+  }
 
-    for (const line of lines) {
-      if (line.startsWith(":")) {
-        continue
-      }
-      if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trimStart())
-      }
-    }
-
-    if (dataLines.length === 0) {
-      return
-    }
-
-    const payload = dataLines.join("\n").trim()
-    if (!payload) {
-      return
-    }
-
-    try {
-      const parsed = JSON.parse(payload) as any
-      if (!parsed || typeof parsed !== "object") {
-        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
-        return
-      }
-
-      // OpenCode SSE payload shapes vary across versions.
-      // Common variants:
-      // - { type, properties, ... }
-      // - { payload: { type, properties, ... }, directory: "/abs/path" }
-      // - { payload: { type, properties, ... } }
-      const base = parsed.payload && typeof parsed.payload === "object" ? parsed.payload : parsed
-
-      const event: InstanceStreamEvent | null = base && typeof base === "object" ? ({ ...base } as any) : null
-
-      // Attach directory when available (don't overwrite if already present).
-      if (event && !(event as any).directory && typeof (parsed as any).directory === "string") {
-        ;(event as any).directory = (parsed as any).directory
-      }
-
-      if (!event || typeof (event as any).type !== "string") {
-        this.options.logger.warn({ workspaceId, chunk: payload }, "Dropped malformed instance event")
-        return
-      }
-
-      this.options.logger.debug({ workspaceId, eventType: (event as any).type }, "Instance SSE event received")
-      if (this.options.logger.isLevelEnabled("trace")) {
-        this.options.logger.trace({ workspaceId, event }, "Instance SSE event payload")
-      }
-      this.options.eventBus.publish({ type: "instance.event", instanceId: workspaceId, event })
-    } catch (error) {
-      this.options.logger.warn({ workspaceId, chunk: payload, err: error }, "Failed to parse instance SSE payload")
+  private updateStatus(status: InstanceStreamStatus, reason?: string) {
+    this.status = status
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, status, reason)
     }
   }
 
   private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {
-    this.options.logger.debug({ instanceId, status, reason }, "Instance SSE status updated")
-    this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, reason })
+    this.options.logger.debug({ instanceId, status, reason }, "Instance event status updated")
+    this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, generation: this.generation, reason })
   }
 
-  private delay(duration: number, signal: AbortSignal) {
-    if (duration <= 0) {
-      return Promise.resolve()
-    }
+  private delay(duration: number) {
     return new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        signal.removeEventListener("abort", onAbort)
-        resolve()
-      }, duration)
-
-      const onAbort = () => {
+      const timeout = setTimeout(resolve, duration)
+      this.controller.signal.addEventListener("abort", () => {
         clearTimeout(timeout)
         resolve()
-      }
-
-      signal.addEventListener("abort", onAbort, { once: true })
+      }, { once: true })
     })
   }
 }

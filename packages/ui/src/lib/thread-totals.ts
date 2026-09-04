@@ -8,7 +8,7 @@ export interface ThreadTotals {
 }
 
 export function computeThreadTotals(
-  family: { id: string }[],
+  family: { id: string; cost?: number; tokens?: { input?: number; output?: number; reasoning?: number } }[],
   infoMap: Map<string, SessionInfo> | undefined,
 ): ThreadTotals {
   let cost = 0
@@ -17,11 +17,11 @@ export function computeThreadTotals(
   let reasoningTokens = 0
   for (const session of family) {
     const sessionInfo = infoMap?.get(session.id)
-    inputTokens += sessionInfo?.inputTokens ?? 0
-    outputTokens += sessionInfo?.outputTokens ?? 0
-    reasoningTokens += sessionInfo?.reasoningTokens ?? 0
+    inputTokens += sessionInfo?.inputTokens ?? session.tokens?.input ?? 0
+    outputTokens += sessionInfo?.outputTokens ?? session.tokens?.output ?? 0
+    reasoningTokens += sessionInfo?.reasoningTokens ?? session.tokens?.reasoning ?? 0
     if (!sessionInfo?.isSubscriptionModel) {
-      cost += sessionInfo?.cost ?? 0
+      cost += sessionInfo?.cost ?? session.cost ?? 0
     }
   }
   return { cost, inputTokens, outputTokens, reasoningTokens }

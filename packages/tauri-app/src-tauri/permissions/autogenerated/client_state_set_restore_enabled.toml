@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-client-state-set-restore-enabled"
+description = "Enables the client_state_set_restore_enabled command without any pre-configured scope."
+commands.allow = ["client_state_set_restore_enabled"]
+
+[[permission]]
+identifier = "deny-client-state-set-restore-enabled"
+description = "Denies the client_state_set_restore_enabled command without any pre-configured scope."
+commands.deny = ["client_state_set_restore_enabled"]

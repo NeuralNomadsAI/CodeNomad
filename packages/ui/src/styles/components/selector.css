@@ -1,7 +1,9 @@
 /* Selector component utilities */
 .selector-trigger {
-  @apply inline-flex items-center justify-between gap-2 px-2 py-1 border rounded outline-none transition-colors text-xs min-w-[180px];
-  background-color: var(--surface-base);
+  @apply inline-flex items-center justify-between gap-2 px-2 border outline-none transition-colors text-xs min-w-[180px];
+  min-height: var(--selector-height);
+  border-radius: 0;
+  background-color: var(--surface-control);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
@@ -10,9 +12,9 @@
   background-color: var(--surface-hover);
 }
 
-.selector-trigger:focus {
-  @apply ring-2;
-  ring-color: var(--accent-primary);
+.selector-trigger:focus-visible {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
 .selector-trigger:disabled,
@@ -35,7 +37,7 @@
 }
 
 .selector-trigger-primary {
-  @apply text-sm font-medium truncate;
+  @apply text-sm font-normal truncate;
   color: var(--text-primary);
 }
 
@@ -50,7 +52,18 @@
 
 .selector-trigger-icon {
   @apply flex-shrink-0;
-  color: var(--text-muted);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
+}
+
+.selector-trigger-icon svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.selector-trigger:hover .selector-trigger-icon {
+  color: var(--icon-button-hover-color);
+  opacity: 1;
 }
 
 .selector-trigger-hint {
@@ -63,8 +76,9 @@
 }
 
 .selector-popover {
-  @apply rounded-md shadow-lg overflow-hidden min-w-[300px];
-  background-color: var(--surface-base);
+  @apply overflow-hidden min-w-[300px];
+  margin-block: var(--space-xs);
+  background-color: var(--surface-control);
   border: 1px solid var(--border-base);
   z-index: 2200;
 }
@@ -75,15 +89,17 @@
 }
 
 .selector-search-input {
-  @apply w-full px-3 py-1.5 text-xs border rounded outline-none transition-colors;
-  background-color: var(--surface-base);
+  @apply w-full px-3 text-xs border outline-none transition-colors;
+  min-height: var(--control-height);
+  border-radius: 0;
+  background-color: var(--surface-control);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
 
 .selector-search-input:focus {
-  @apply ring-2;
-  ring-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
 .selector-search-input::placeholder {
@@ -92,18 +108,17 @@
 
 .selector-listbox {
   @apply max-h-64 overflow-auto p-1;
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
 }
 
 .selector-option {
-  @apply px-3 py-2 cursor-pointer rounded outline-none transition-colors flex items-start gap-2 w-full;
+  @apply px-3 cursor-pointer outline-none transition-colors flex items-center gap-2 w-full;
+  min-height: 40px;
+  padding-block: 0.625rem;
   color: var(--text-primary);
 }
 
-.selector-option:hover {
-  background-color: var(--surface-hover);
-}
-
+.selector-option:hover,
 .selector-option[data-highlighted],
 .selector-option[data-focused] {
   background-color: var(--selection-highlight-bg);
@@ -114,12 +129,17 @@
   background-color: var(--selection-highlight-strong-bg);
 }
 
+.selector-option[data-selected]:hover,
+.selector-option-selected:hover {
+  background-color: var(--surface-hover);
+}
+
 .selector-option-content {
   @apply flex flex-col flex-1 min-w-0;
 }
 
 .selector-option-label {
-  @apply font-medium text-sm;
+  @apply font-normal text-sm;
   color: var(--text-primary);
 }
 
@@ -137,7 +157,8 @@
 }
 
 .remove-binary-button {
-  @apply p-1 rounded transition-all;
+  @apply p-1 transition-colors;
+  border-radius: 0;
   color: var(--text-muted);
 }
 
@@ -157,7 +178,8 @@
 }
 
 .selector-option-star {
-  @apply p-1 rounded transition-colors flex-shrink-0 mt-0.5;
+  @apply p-1 transition-colors flex-shrink-0 mt-0.5;
+  border-radius: 0;
   color: var(--text-muted);
 }
 
@@ -184,7 +206,8 @@
 }
 
 .selector-favorites-toggle {
-  @apply p-2 rounded border transition-colors flex items-center justify-center;
+  @apply p-2 border transition-colors flex items-center justify-center;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-muted);
@@ -210,7 +233,7 @@
 .selector-footer {
   @apply border-t;
   border-color: var(--border-base);
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   position: relative;
   z-index: 1;
 }
@@ -227,9 +250,9 @@
 }
 
 .selector-badge {
-  @apply rounded px-1.5 py-0.5 text-xs font-normal;
+  @apply px-1.5 py-0.5 text-xs font-normal;
   background-color: var(--accent-primary);
-  color: var(--text-inverted);
+  color: var(--text-on-accent);
 }
 
 .selector-badge-version {
@@ -243,7 +266,8 @@
 }
 
 .selector-validation-error {
-  @apply p-2 rounded border;
+  @apply p-2 border;
+  border-radius: 0;
   background-color: var(--message-error-bg);
   border-color: var(--status-error);
   color: var(--status-error);
@@ -267,15 +291,17 @@
 }
 
 .selector-input {
-  @apply flex-1 px-2 py-1.5 text-sm border rounded outline-none transition-colors;
+  @apply flex-1 px-2 text-sm border outline-none transition-colors;
+  min-height: var(--control-height);
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
 }
 
 .selector-input:focus {
-  @apply ring-1;
-  ring-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
 .selector-input::placeholder {
@@ -283,7 +309,9 @@
 }
 
 .selector-button {
-  @apply px-3 py-1.5 text-sm rounded transition-colors cursor-pointer w-full inline-flex items-center justify-center font-medium;
+  @apply px-3 text-sm transition-colors cursor-pointer w-full inline-flex items-center justify-center font-medium;
+  min-height: var(--control-height);
+  border-radius: 0;
   background-color: var(--surface-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border-base);
@@ -291,7 +319,7 @@
 
 .selector-button-primary {
   background-color: var(--accent-primary) !important;
-  color: var(--text-inverted) !important;
+  color: var(--text-on-accent) !important;
   border: 1px solid var(--accent-primary) !important;
 }
 

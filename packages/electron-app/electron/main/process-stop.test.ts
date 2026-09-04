@@ -514,7 +514,7 @@ test("signal dispatch is not confirmation while the captured identity remains", 
   assert.equal(await forceCapturedProcessTree(tree, () => "owned", undefined, kill), false)
 })
 
-test("incomplete shutdown status remains terminal", async () => {
+test("process manager keeps incomplete shutdown terminal and interrupts a pending startup", async () => {
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === "electron") {
@@ -536,6 +536,14 @@ test("incomplete shutdown status remains terminal", async () => {
 
     assert.equal((manager as any).shutdownStatus, "incomplete")
     assert.equal(enforcements, 1)
+
+    const pending = new CliProcessManager()
+    ;(pending as any).resolveCliEntry = () => new Promise(() => {})
+    const startup = pending.start({ dev: false })
+    await new Promise((resolve) => setImmediate(resolve))
+    const shutdown = pending.shutdown()
+    await assert.rejects(startup, /startup interrupted by shutdown/)
+    await shutdown
   } finally {
     hooks.deregister()
   }

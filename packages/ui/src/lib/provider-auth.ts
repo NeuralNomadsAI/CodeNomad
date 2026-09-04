@@ -1,30 +1,5 @@
-export type ProviderAuthMethod = {
-  type: "oauth" | "api"
-  label: string
-  prompts?: ProviderAuthPrompt[]
-}
-
-export type ProviderAuthPrompt =
-  | {
-      type: "text"
-      key: string
-      message: string
-      placeholder?: string
-      when?: ProviderAuthPromptCondition
-    }
-  | {
-      type: "select"
-      key: string
-      message: string
-      options: Array<{ label: string; value: string; hint?: string }>
-      when?: ProviderAuthPromptCondition
-    }
-
-export type ProviderAuthPromptCondition = {
-  key: string
-  op: "eq" | "neq"
-  value: string
-}
+import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode-ai/client"
+import { isFormFieldVisible } from "./form-schema"
 
 export type ProviderAuthAuthorization = {
   url: string
@@ -32,7 +7,22 @@ export type ProviderAuthAuthorization = {
   instructions: string
 }
 
-export const genericApiMethod: ProviderAuthMethod = { type: "api", label: "" }
+export const genericApiMethod: IntegrationKeyMethod = { type: "key", label: "" }
+
+function matchesStringFormat(value: string, format: Extract<FormField, { type: "string" }>["format"]): boolean {
+  if (!format) return true
+  if (format === "uri") {
+    try {
+      new URL(value)
+      return true
+    } catch {
+      return false
+    }
+  }
+  if (format === "email") return /^[^\s@]+@[^\s@]+$/.test(value)
+  if (format === "date") return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(value) && !Number.isNaN(Date.parse(value))
+}
 
 export function extractProviderAuthErrorMessage(error: unknown, fallback: string): string {
   const candidate = error as {
@@ -45,11 +35,62 @@ export function extractProviderAuthErrorMessage(error: unknown, fallback: string
   return typeof message === "string" && message.trim().length > 0 ? message : fallback
 }
 
-export function shouldShowProviderAuthPrompt(prompt: ProviderAuthPrompt, values: Record<string, string>): boolean {
-  if (!prompt.when) return true
-  const actual = values[prompt.when.key]
-  if (actual === undefined) return false
-  return prompt.when.op === "eq" ? actual === prompt.when.value : actual !== prompt.when.value
+export function getProviderAuthInitialAnswer(fields?: FormFields): FormAnswer {
+  const answer: FormAnswer = {}
+  for (const field of fields ?? []) {
+    if (field.type !== "external" && field.default !== undefined) answer[field.key] = field.default
+  }
+  return answer
+}
+
+export function getProviderAuthAnswer(fields: FormFields | undefined, values: FormAnswer): FormAnswer | undefined {
+  if (!fields) return undefined
+  return Object.fromEntries(
+    fields
+      .filter((field) => field.type !== "external" && isFormFieldVisible(field, values))
+      .flatMap((field) => values[field.key] === undefined ? [] : [[field.key, values[field.key] as FormValue]]),
+  )
+}
+
+export function isProviderAuthFieldComplete(field: FormField, answer: FormAnswer): boolean {
+  if (field.type === "external") return true
+  const value = answer[field.key]
+  if (value === undefined) return !field.required
+
+  if (field.type === "string") {
+    if (typeof value !== "string" || (field.required && value.trim().length === 0)) return false
+    if (field.minLength !== undefined && value.length < field.minLength) return false
+    if (field.maxLength !== undefined && value.length > field.maxLength) return false
+    if (!matchesStringFormat(value, field.format)) return false
+    if (field.options && !field.custom && !field.options.some((option) => option.value === value)) return false
+    if (field.pattern) {
+      try {
+        if (!new RegExp(`^(?:${field.pattern})$`).test(value)) return false
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
+
+  if (field.type === "number" || field.type === "integer") {
+    if (typeof value !== "number" || !Number.isFinite(value)) return false
+    if (field.type === "integer" && !Number.isInteger(value)) return false
+    if (typeof field.minimum === "number" && value < field.minimum) return false
+    if (typeof field.maximum === "number" && value > field.maximum) return false
+    return true
+  }
+
+  if (field.type === "multiselect") {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return false
+    if (field.required && value.length === 0) return false
+    if (field.minItems !== undefined && value.length < field.minItems) return false
+    if (field.maxItems !== undefined && value.length > field.maxItems) return false
+    if (!field.custom && value.some((item) => !field.options.some((option) => option.value === item))) return false
+    return true
+  }
+
+  return typeof value === "boolean"
 }
 
 export function isAbortError(error: unknown): boolean {

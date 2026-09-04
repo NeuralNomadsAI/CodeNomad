@@ -37,10 +37,10 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
   }
 
   const focusAgentSelectorControl = () => {
-    const agentTrigger = options.sidebarContentEl()?.querySelector("[data-agent-selector]") as HTMLElement | null
-    if (!agentTrigger) return false
-    agentTrigger.focus()
-    setTimeout(() => triggerKeyboardEvent(agentTrigger, { key: "Enter", code: "Enter", keyCode: 13 }), 10)
+    const input = options.sidebarContentEl()?.querySelector<HTMLInputElement>("[data-agent-selector]")
+    if (!input) return false
+    input.focus()
+    setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
     return true
   }
 

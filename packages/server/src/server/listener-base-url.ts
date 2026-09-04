@@ -28,6 +28,13 @@ export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
   return `${fallbackListener.protocol}://${fallbackListener.bindHost}:${fallbackListener.port}`
 }
 
+export function resolveAutomationBridgeUrl(listener: StartedListenerBaseUrlInput): string {
+  if (listener.protocol !== "http" || !acceptsLoopback(listener.bindHost)) {
+    throw new Error("Developer Mode requires a loopback HTTP listener")
+  }
+  return `http://127.0.0.1:${listener.port}`
+}
+
 function acceptsLoopback(bindHost: string): boolean {
   return bindHost === "0.0.0.0" || bindHost === "::" || bindHost === "localhost" || bindHost === "::1" || bindHost.startsWith("127.")
 }

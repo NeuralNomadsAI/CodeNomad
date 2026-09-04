@@ -1,58 +1,34 @@
 import type {
-  MessageInfo,
-  MessagePartRemovedEvent,
-  MessagePartDeltaEvent,
-  MessagePartUpdatedEvent,
-  MessageRemovedEvent,
-  MessageUpdateEvent,
-} from "../types/message"
-import type {
-  EventSessionCompacted,
-  EventSessionError,
-  EventSessionIdle,
-  EventSessionUpdated,
-  EventSessionStatus,
-} from "@opencode-ai/sdk"
-import type { MessageStatus } from "./message-v2/types"
-import { deriveMessageStatus } from "./message-v2/message-status"
-
+  PermissionAsked,
+  PermissionReplied,
+  SessionCompactionEnded,
+  SessionCreated,
+  SessionExecutionFailed,
+  SessionIdle,
+  SessionRevertCleared,
+  SessionRevertCommitted,
+  SessionRevertStaged,
+  SessionStatusUpdated,
+  TuiToastShow,
+} from "@opencode-ai/client"
 import { getLogger } from "../lib/logger"
-import type { EventSessionDeleted } from "../lib/sse-manager"
-import { requestData } from "../lib/opencode-api"
-import {
-  enqueueDelta,
-  clearPendingDeltasForPart,
-  flushPendingDeltasForMessage,
-  setFlushCallback,
-} from "./delta-buffer"
+import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
   getPermissionId,
   getPermissionKind,
   getPermissionSessionId,
   getRequestIdFromPermissionReply,
 } from "../types/permission"
-import type { LegacyPermissionAskedEvent, LegacyPermissionRepliedEvent, PermissionRequest } from "../types/permission"
-import { getQuestionId, getQuestionSessionId, getRequestIdFromQuestionReply } from "../types/question"
-import type { LegacyQuestionAnsweredEvent, LegacyQuestionAskedEvent, QuestionRequest } from "../types/question"
-import type {
-  EventPermissionV2Asked,
-  EventPermissionV2Replied,
-  EventQuestionV2Asked,
-  EventQuestionV2Rejected,
-  EventQuestionV2Replied,
-} from "@opencode-ai/sdk/v2"
+import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
   instances,
-  addPermissionToQueue,
-  getPermissionQueue,
-  removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
-  addQuestionToQueue,
-  removeQuestionFromQueue,
+  reconcilePendingSessionIndicators,
+  setPendingFormAddedHandler,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
 import {
@@ -64,36 +40,209 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
-import { normalizeMessagePart } from "./message-v2/normalizers"
-import { updateSessionInfo } from "./message-v2/session-info"
 import { tGlobal } from "../lib/i18n"
 
-import { loadMessages, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, loadMessages, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
-import { getWorktreeSlugForDirectory, getWorktreeSlugForSession } from "./worktrees"
-import { getOpenCodeWorkspaceIdForWorktree } from "./opencode-workspaces"
+import { getWorktrees } from "./worktrees"
 import {
-  applyPartUpdateV2,
-  applyPartDeltaV2,
-  reconcilePendingPermissionsV2,
-  reconcilePendingQuestionsV2,
-  upsertMessageInfoV2,
-  upsertPermissionV2,
-  upsertQuestionV2,
-  removeMessagePartV2,
-  removeMessageV2,
-  removePermissionV2,
-  removeQuestionV2,
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
-const pendingSessionFetches = new Map<string, Promise<void>>()
+const pendingSessionFetches = new Map<string, {
+  status: SessionStatus
+  retry?: SessionRetryState | null
+}>()
+const nativeLifecycleGenerations = new Map<string, number>()
 let activeRetryToast: ToastHandle | null = null
+
+function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
+  const key = `${instanceId}\0${sessionId}`
+  const generation = (nativeLifecycleGenerations.get(key) ?? 0) + 1
+  nativeLifecycleGenerations.set(key, generation)
+  return generation
+}
+
+function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
+  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+}
+
+function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
+  const store = messageStoreBus.getOrCreate(instanceId)
+  const messageId = store.getLastAssistantMessageId(sessionId)
+  const message = messageId ? store.getMessage(messageId) : undefined
+  if (!messageId || message?.status !== "complete") return
+  const info = store.getMessageInfo(messageId)
+  for (const partId of message.partIds) {
+    handleConversationAssistantPartUpdated(instanceId, message.parts[partId].data, info)
+  }
+}
+
+function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+  switch (event.type) {
+    case "form.created":
+    case "form.replied":
+    case "form.cancelled":
+      return
+    case "session.renamed":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, (session) => { session.title = event.data.title })
+      return
+    case "session.agent.selected":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, (session) => { session.agent = event.data.agent })
+      return
+    case "session.model.selected":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, (session) => {
+        session.model = { providerId: event.data.model.providerID, modelId: event.data.model.id }
+      })
+      return
+    case "session.usage.updated":
+      withSession(instanceId, event.data.sessionID, (session) => {
+        session.cost = event.data.cost as unknown as number
+        session.tokens = event.data.tokens as Session["tokens"]
+      })
+      return
+    case "session.moved":
+      handleSessionMoved(instanceId, event.data.sessionID, event.data.location.directory)
+      return
+    case "session.forked":
+      void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      return
+    case "session.compaction.started":
+      advanceNativeLifecycle(instanceId, event.data.sessionID)
+      ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
+      return
+    case "session.compaction.failed":
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: true,
+        directory: event.location?.directory,
+      })
+      return
+    case "session.execution.interrupted":
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: true,
+        interrupted: true,
+        refreshMessages: true,
+        directory: event.location?.directory,
+      })
+      return
+    case "session.execution.succeeded":
+      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+        failed: false,
+        directory: event.location?.directory,
+      })
+      return
+  }
+
+  if (!event.type.startsWith("session.")) return
+  const sessionId = "sessionID" in event.data ? event.data.sessionID : undefined
+  if (!sessionId) return
+  if (
+    event.type === "session.execution.started" ||
+    event.type === "session.step.started" ||
+    event.type.startsWith("session.text.") ||
+    event.type.startsWith("session.reasoning.") ||
+    event.type.startsWith("session.tool.")
+  ) {
+    advanceNativeLifecycle(instanceId, sessionId)
+    ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
+  }
+}
+
+async function reconcileTerminalNativeSessionStatus(
+  instanceId: string,
+  sessionId: string,
+  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; directory?: string },
+): Promise<void> {
+  const generation = advanceNativeLifecycle(instanceId, sessionId)
+  let activeSessions: Record<string, unknown> | null = null
+  try {
+    activeSessions = await getRootClient(instanceId).session.active()
+  } catch (error) {
+    log.warn("Failed to reconcile terminal session state", { instanceId, sessionId, error })
+  }
+  if (!isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
+
+  if (activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, sessionId)) {
+    withSession(instanceId, sessionId, (session) => { session.generationRecovery = null })
+    const existing = sessions().get(instanceId)?.get(sessionId)
+    if (existing) setSessionStatus(instanceId, sessionId, "working", { force: true })
+    else ensureSessionStatus(instanceId, sessionId, "working", options.directory)
+    return
+  }
+
+  if (options.interrupted) {
+    withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
+  }
+  setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
+  if (options.refreshMessages) {
+    void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+      log.warn("Failed to refresh interrupted session messages", { instanceId, sessionId, error })
+    })
+  }
+}
+
+function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, failed: boolean, directory?: string): void {
+  const existing = sessions().get(instanceId)?.get(sessionId)
+  if (existing) setSessionStatus(instanceId, sessionId, "idle", { force: true })
+  else ensureSessionStatus(instanceId, sessionId, "idle", directory)
+  if (failed) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
+  speakCompletedAssistantText(instanceId, sessionId)
+}
+
+function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
+  const normalized = directory.replace(/\\/g, "/").toLowerCase()
+  const targetInstanceId = Array.from(instances().values()).find((instance) => {
+    const directories = [instance.folder, ...getWorktrees(instance.id).map((worktree) => worktree.directory)]
+    return directories.some((candidate) => candidate.replace(/\\/g, "/").toLowerCase() === normalized)
+  })?.id
+
+  if (!targetInstanceId || targetInstanceId === sourceInstanceId) {
+    void fetchSessions(sourceInstanceId, { reset: true })
+    return
+  }
+
+  const moved = sessions().get(sourceInstanceId)?.get(sessionId)
+  setSessions((previous) => {
+    const next = new Map(previous)
+    const source = new Map(next.get(sourceInstanceId) ?? [])
+    source.delete(sessionId)
+    if (source.size) next.set(sourceInstanceId, source)
+    else next.delete(sourceInstanceId)
+    if (moved) {
+      const target = new Map(next.get(targetInstanceId) ?? [])
+      target.set(sessionId, { ...moved, instanceId: targetInstanceId, location: { directory } })
+      next.set(targetInstanceId, target)
+    }
+    return next
+  })
+  removeSessionListId(sourceInstanceId, sessionId)
+  if (moved && !moved.parentId) prependSessionListId(targetInstanceId, sessionId)
+  messageStoreBus.getOrCreate(sourceInstanceId).clearSession(sessionId)
+  void Promise.allSettled([
+    fetchSessions(sourceInstanceId, { reset: true }),
+    fetchSessions(targetInstanceId, { reset: true }),
+  ]).then(() => {
+    setSessions((previous) => {
+      const current = previous.get(sourceInstanceId)
+      if (!current?.has(sessionId)) return previous
+      const next = new Map(previous)
+      const source = new Map(current)
+      source.delete(sessionId)
+      if (source.size) next.set(sourceInstanceId, source)
+      else next.delete(sourceInstanceId)
+      return next
+    })
+    removeSessionListId(sourceInstanceId, sessionId)
+  })
+}
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
   if (typeof document === "undefined") return false
@@ -146,15 +295,15 @@ function fireOsNotification(payload: { title: string; body: string }) {
   })
 }
 
-interface TuiToastEvent {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    duration?: number
-  }
-}
+queueMicrotask(() => {
+  setPendingFormAddedHandler((instanceId, form) => {
+    if (!shouldSendOsNotificationForSession("needsInput", instanceId, form.sessionID)) return
+    fireOsNotification({
+      title: getInstanceDisplayName(instanceId),
+      body: tGlobal("settings.notifications.events.needsInput"),
+    })
+  })
+})
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
@@ -162,34 +311,12 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
-  const slugFromDirectory = getWorktreeSlugForDirectory(instanceId, directory)
-  const slug = slugFromDirectory ?? getWorktreeSlugForSession(instanceId, sessionId)
   const client = getRootClient(instanceId)
-  const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, slug)
+  void directory
 
   try {
-    const info = await requestData<any>(
-      client.session.get({ sessionID: sessionId, ...(workspace ? { workspace } : {}) }),
-      "session.get",
-    )
-
-    let rawStatus = (info as any)?.status
-    let fetchedStatusKnown = false
-    try {
-      const statuses = await requestData<Record<string, any>>(client.session.status(), "session.status")
-      rawStatus ??= statuses?.[sessionId]
-      fetchedStatusKnown = true
-    } catch (error) {
-      log.error("Failed to fetch session status", error)
-    }
-    const hasStatus = rawStatus && typeof rawStatus === "object" && typeof rawStatus.type === "string"
-    fetchedStatusKnown ||= Boolean(hasStatus)
-    const fetchedStatus: SessionStatus = hasStatus ? mapSdkSessionStatus(rawStatus) : "idle"
-    const fetchedRetry: SessionRetryState | null = hasStatus ? mapSdkSessionRetry(rawStatus) : null
-
-    const fetched = createClientSession(info, instanceId, "", { providerId: "", modelId: "" }, fetchedStatus)
-    fetched.retry = fetchedRetry
-    fetched.runtimeStatusKnown = fetchedStatusKnown
+    const info = await client.session.get({ sessionID: sessionId })
+    const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandAncestors = false
@@ -207,8 +334,8 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
         retry: compacting ? null : fetched.retry,
         idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
         pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
-        pendingQuestion: existing?.pendingQuestion ?? false,
-        runtimeStatusKnown: compacting || fetched.runtimeStatusKnown,
+        pendingForm: existing?.pendingForm ?? false,
+        runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
       }
       const merged = mergeFetchedSessionRuntimeState(
         candidate,
@@ -228,6 +355,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
+    reconcilePendingSessionIndicators(instanceId)
 
     if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 
@@ -252,163 +380,44 @@ function ensureSessionStatus(
   }
 
   const key = `${instanceId}:${sessionId}`
-  if (pendingSessionFetches.has(key)) return
+  const existingFetch = pendingSessionFetches.get(key)
+  if (existingFetch) {
+    existingFetch.status = status
+    existingFetch.retry = retry
+    return
+  }
 
+  const pendingState = { status, retry }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
-    setSessionStatus(instanceId, sessionId, status, { retry })
+    setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
-  pendingSessionFetches.set(key, pending)
-  void pending.finally(() => pendingSessionFetches.delete(key))
+  pendingSessionFetches.set(key, pendingState)
+  void pending.finally(() => {
+    if (pendingSessionFetches.get(key) === pendingState) pendingSessionFetches.delete(key)
+  })
 }
 
-function resolveMessageRole(info?: MessageInfo | null): "user" | "assistant" {
-  return info?.role === "user" ? "user" : "assistant"
-}
-
-function handleMessageUpdate(instanceId: string, event: MessageUpdateEvent | MessagePartUpdatedEvent): void {
-  const instanceSessions = sessions().get(instanceId)
-
-  if (event.type === "message.part.updated") {
-    const rawPart = event.properties?.part
-    if (!rawPart) return
- 
-    const part = normalizeMessagePart(rawPart)
-    const messageInfo = (event as any)?.properties?.message as MessageInfo | undefined
- 
-    const fallbackSessionId = typeof messageInfo?.sessionID === "string" ? messageInfo.sessionID : undefined
-    const fallbackMessageId = typeof messageInfo?.id === "string" ? messageInfo.id : undefined
- 
-    const sessionId = typeof part.sessionID === "string" ? part.sessionID : fallbackSessionId
-    const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId
-    if (!sessionId || !messageId) return
-    if (part.type === "compaction") {
-      ensureSessionStatus(instanceId, sessionId, "compacting", (event as any)?.directory)
-    }
-
-    const store = messageStoreBus.getOrCreate(instanceId)
-    const role = resolveMessageRole(messageInfo)
-    const createdAt = typeof messageInfo?.time?.created === "number" ? messageInfo.time.created : Date.now()
-
-    store.confirmServerMessage(messageId, { clearOptimisticParts: true })
-    const record = store.getMessage(messageId)
-
-    if (!record) {
-      store.upsertMessage({
-        id: messageId,
-        sessionId,
-        role,
-        status: "streaming",
-        createdAt,
-        updatedAt: createdAt,
-        isEphemeral: true,
-      })
-    }
-
-    if (messageInfo) {
-      upsertMessageInfoV2(instanceId, messageInfo, { status: "streaming" })
-    }
-  
-    // Clear any pending deltas for this part before applying the full part update.
-    // The part update contains the complete state from the server, so accumulated
-    // deltas would be stale and cause duplication if flushed later.
-    if (part.id) {
-      clearPendingDeltasForPart(instanceId, messageId, part.id)
-    }
-    applyPartUpdateV2(instanceId, { ...part, sessionID: sessionId, messageID: messageId })
-    handleConversationAssistantPartUpdated(instanceId, { ...part, sessionID: sessionId, messageID: messageId }, messageInfo)
-
-    if (part.type === "tool") {
-      // Interruptions can arrive before their tool part exists; re-link now.
-      reconcilePendingPermissionsV2(instanceId, sessionId)
-      reconcilePendingQuestionsV2(instanceId, sessionId)
-    }
-
-    updateSessionInfo(instanceId, sessionId)
-  } else if (event.type === "message.updated") {
-    const info = event.properties?.info
-    if (!info) return
-
-    const sessionId = typeof info.sessionID === "string" ? info.sessionID : undefined
-    const messageId = typeof info.id === "string" ? info.id : undefined
-    if (!sessionId || !messageId) return
-
-    // Flush any pending deltas for this message before applying the update.
-    // Deltas are buffered for up to 50ms; if message.updated arrives before
-    // the buffer flushes, the message could be marked complete/error with
-    // stale text mutations still pending. Flushing first preserves the
-    // server's event ordering: all delta content is applied, then the
-    // message status/metadata update runs on the complete content.
-    flushPendingDeltasForMessage(instanceId, messageId, applyPartDeltaV2)
-
-    const timeInfo = (info.time ?? {}) as { created?: number; updated?: number; end?: number }
-    const nextUpdated =
-      typeof timeInfo.end === "number" && timeInfo.end > 0
-        ? timeInfo.end
-        : typeof timeInfo.updated === "number" && timeInfo.updated > 0
-          ? timeInfo.updated
-          : typeof timeInfo.created === "number" && timeInfo.created > 0
-            ? timeInfo.created
-            : Date.now()
-
-    withSession(instanceId, sessionId, (session) => {
-      const currentUpdated = session.time?.updated ?? 0
-      if (nextUpdated <= currentUpdated) return false
-      session.time = { ...(session.time ?? {}), updated: nextUpdated }
+function handleSessionUpdate(
+  instanceId: string,
+  event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted,
+): void {
+  if (event.type !== "session.created") {
+    const revert = event.type === "session.revert.staged" ? event.data.revert : null
+    setSessionRevertV2(instanceId, event.data.sessionID, revert)
+    withSession(instanceId, event.data.sessionID, (session) => {
+      session.revert = revert ?? undefined
     })
-
-    const store = messageStoreBus.getOrCreate(instanceId)
-
-    const role = info.role === "user" ? "user" : "assistant"
-    const status: MessageStatus = deriveMessageStatus({
-      role: info.role,
-      error: (info as any).error,
-      time: info.time as { completed?: number } | undefined,
-    })
-
-    store.confirmServerMessage(messageId)
-    const record = store.getMessage(messageId)
-
-    if (!record) {
-      const createdAt = info.time?.created ?? Date.now()
-      const endAt = (info.time as { end?: number } | undefined)?.end
-      store.upsertMessage({
-        id: messageId,
-        sessionId,
-        role,
-        status,
-        createdAt,
-        updatedAt: endAt ?? createdAt,
-      })
-    }
-
-    upsertMessageInfoV2(instanceId, info, { status, bumpRevision: true })
-
-    updateSessionInfo(instanceId, sessionId)
+    return
   }
-}
 
-// Delta buffer callback setup
-setFlushCallback((batch) => {
-  for (const { instanceId, messageId, partId, field, delta } of batch) {
-    applyPartDeltaV2(instanceId, { messageId, partId, field, delta })
+  const info = {
+    ...event.data,
+    id: event.data.sessionID,
+    time: { created: event.created, updated: event.created },
   }
-})
-
-function handleMessagePartDelta(instanceId: string, event: MessagePartDeltaEvent): void {
-  const props = event.properties
-  if (!props) return
-  const { messageID, partID, field, delta } = props
-  if (!messageID || !partID || !field || typeof delta !== "string") return
-  enqueueDelta(instanceId, messageID, partID, field, delta)
-}
-
-function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): void {
-  const info = event.properties?.info
-
-  if (!info) return
   if (getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(info.id)) return
 
   const instanceSessions = sessions().get(instanceId) ?? new Map<string, Session>()
@@ -421,30 +430,24 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       instanceId,
       title: info.title || tGlobal("sessionList.session.untitled"),
       parentId: info.parentID || null,
-      agent: "",
-      model: {
-        providerId: "",
-        modelId: "",
-      },
+      agent: info.agent ?? "",
+      model: info.model
+        ? { providerId: info.model.providerID, modelId: info.model.id }
+        : { providerId: "", modelId: "" },
       status: "idle",
       retry: null,
       idleSince: null,
       version: info.version || "0",
-      metadata: (info as any).metadata,
+      projectID: (info as any).projectID ?? "",
+      cost: (info as any).cost ?? 0,
+      tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      location: (info as any).location ?? { directory: instances().get(instanceId)?.folder ?? "" },
       time: info.time
         ? { ...info.time }
         : {
             created: Date.now(),
             updated: Date.now(),
           },
-      revert: info.revert
-        ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
-        : undefined,
     } as Session
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -459,7 +462,6 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -476,16 +478,7 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
       parentId: info.parentID ?? existingSession.parentId,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
-      metadata: (info as any).metadata ?? existingSession.metadata,
       time: mergedTime,
-      revert: info.revert
-        ? {
-            messageID: info.revert.messageID,
-            partID: info.revert.partID,
-            snapshot: info.revert.snapshot,
-            diff: info.revert.diff,
-          }
-        : existingSession.revert,
     }
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -500,23 +493,24 @@ function handleSessionUpdate(instanceId: string, event: EventSessionUpdated): vo
     })
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
-    setSessionRevertV2(instanceId, info.id, info.revert ?? null)
   }
+  reconcilePendingSessionIndicators(instanceId)
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {
-  const properties = event.properties
-  const sessionId = properties?.info?.id ?? properties?.sessionID ?? properties?.id
+  const sessionId = event.data?.sessionID
   if (!sessionId) return
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
+  nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
-function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
-  const sessionId = event.properties?.sessionID
+function handleSessionIdle(instanceId: string, event: SessionIdle): void {
+  const sessionId = event.data.sessionID
   if (!sessionId) return
 
+  advanceNativeLifecycle(instanceId, sessionId)
   if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
     const title = getInstanceDisplayName(instanceId)
     const label = getSessionTitle(instanceId, sessionId)
@@ -524,18 +518,20 @@ function handleSessionIdle(instanceId: string, event: EventSessionIdle): void {
     fireOsNotification({ title, body })
   }
 
-  ensureSessionStatus(instanceId, sessionId, "idle", (event as any)?.directory)
+  ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
+  speakCompletedAssistantText(instanceId, sessionId)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
 
-function handleSessionStatus(instanceId: string, event: EventSessionStatus): void {
-  const sessionId = event.properties?.sessionID
+function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): void {
+  const sessionId = event.data.sessionID
   if (!sessionId) return
 
-  const rawStatus = event.properties.status
+  advanceNativeLifecycle(instanceId, sessionId)
+  const rawStatus = event.data.status
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
-  ensureSessionStatus(instanceId, sessionId, status, (event as any)?.directory, retry)
+  ensureSessionStatus(instanceId, sessionId, status, event.location?.directory, retry)
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =
@@ -558,17 +554,16 @@ function handleSessionStatus(instanceId: string, event: EventSessionStatus): voi
   log.info(`[SSE] Session status updated: ${sessionId}`, { status })
 }
 
-function handleSessionCompacted(instanceId: string, event: EventSessionCompacted): void {
-  const sessionID = event.properties?.sessionID
+function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
+  const sessionID = event.data.sessionID
   if (!sessionID) return
 
   log.info(`[SSE] Session compacted: ${sessionID}`)
+  advanceNativeLifecycle(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
-  else ensureSessionStatus(instanceId, sessionID, "working", (event as any)?.directory)
-
-  loadMessages(instanceId, sessionID, { force: true }).catch((error) => log.error("Failed to reload session after compaction", error))
+  else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
 
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
@@ -585,10 +580,15 @@ function handleSessionCompacted(instanceId: string, event: EventSessionCompacted
   })
 }
 
-function handleSessionError(instanceId: string, event: EventSessionError): void {
-  const error = event.properties?.error
-  const sessionId = event.properties?.sessionID
-  if (sessionId) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
+function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
+  const error = event.data.error
+  const sessionId = event.data.sessionID
+  if (sessionId) {
+    void reconcileTerminalNativeSessionStatus(instanceId, sessionId, {
+      failed: true,
+      directory: event.location?.directory,
+    })
+  }
   log.error(`[SSE] Session error:`, error)
 
   let message = tGlobal("sessionEvents.sessionError.unknown")
@@ -607,26 +607,8 @@ function handleSessionError(instanceId: string, event: EventSessionError): void 
   })
 }
 
-function handleMessageRemoved(instanceId: string, event: MessageRemovedEvent): void {
-  const { sessionID, messageID } = event.properties
-  if (!sessionID || !messageID) return
-
-  log.info(`[SSE] Message removed from session ${sessionID}`, { messageID })
-  removeMessageV2(instanceId, messageID, sessionID)
-  updateSessionInfo(instanceId, sessionID)
-}
-
-function handleMessagePartRemoved(instanceId: string, event: MessagePartRemovedEvent): void {
-  const { sessionID, messageID, partID } = event.properties
-  if (!sessionID || !messageID || !partID) return
-
-  log.info(`[SSE] Message part removed from session ${sessionID}`, { messageID, partID })
-  removeMessagePartV2(instanceId, messageID, partID, sessionID)
-  updateSessionInfo(instanceId, sessionID)
-}
-
-function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
-  const payload = event?.properties
+function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
+  const payload = event.data
   if (!payload || typeof payload.message !== "string" || typeof payload.variant !== "string") return
   if (!payload.message.trim()) return
 
@@ -642,8 +624,8 @@ function handleTuiToast(_instanceId: string, event: TuiToastEvent): void {
   })
 }
 
-function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Asked | LegacyPermissionAskedEvent): void {
-  const permission = event?.properties as PermissionRequest | undefined
+function handlePermissionUpdated(instanceId: string, event: PermissionAsked): void {
+  const permission = event.data as PermissionRequest
   if (!permission) return
   const permissionId = getPermissionId(permission)
   if (!permissionId) return
@@ -651,14 +633,7 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
     log.info(`[SSE] Ignoring stale permission request after local reply: ${permissionId}`)
     return
   }
-  const isPending = getPermissionQueue(instanceId).some((pending) => pending.id === permissionId)
-  const source = event.type === "permission.v2.asked"
-    ? "v2"
-    : event.type === "permission.updated" && isPending ? undefined : "legacy"
-
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
-  const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
-  upsertPermissionV2(instanceId, queuedPermission)
 
   const sessionId = getPermissionSessionId(permission)
 
@@ -670,58 +645,18 @@ function handlePermissionUpdated(instanceId: string, event: EventPermissionV2Ask
   }
 }
 
-function handlePermissionReplied(instanceId: string, event: EventPermissionV2Replied | LegacyPermissionRepliedEvent): void {
-  const properties = event?.properties
-  const requestId = getRequestIdFromPermissionReply(properties)
+function handlePermissionReplied(instanceId: string, event: PermissionReplied): void {
+  const requestId = getRequestIdFromPermissionReply(event.data)
   if (!requestId) return
 
   log.info(`[SSE] Permission replied: ${requestId}`)
   markPermissionReplied(instanceId, requestId)
-  removePermissionFromQueue(instanceId, requestId)
-  removePermissionV2(instanceId, requestId)
-}
-
-function handleQuestionAsked(instanceId: string, event: EventQuestionV2Asked | LegacyQuestionAskedEvent): void {
-  const request = event?.properties as QuestionRequest | undefined
-  if (!request) return
-  const source = event.type === "question.asked" ? "legacy" : "v2"
-
-  log.info(`[SSE] Question asked: ${getQuestionId(request)}`)
-  addQuestionToQueue(instanceId, request, source)
-  upsertQuestionV2(instanceId, request)
-
-  const sessionId = getQuestionSessionId(request)
-
-  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" needs input` : "Session needs input"
-    fireOsNotification({ title, body })
-  }
-}
-
-function handleQuestionAnswered(
-  instanceId: string,
-  event: EventQuestionV2Replied | EventQuestionV2Rejected | LegacyQuestionAnsweredEvent,
-): void {
-  const properties = event?.properties
-  const requestId = getRequestIdFromQuestionReply(properties)
-  if (!requestId) return
-
-  log.info(`[SSE] Question answered: ${requestId}`)
-  removeQuestionFromQueue(instanceId, requestId)
-  removeQuestionV2(instanceId, requestId)
 }
 
 export {
-  handleMessagePartRemoved,
-  handleMessageRemoved,
-  handleMessagePartDelta,
-  handleMessageUpdate,
+  handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
-  handleQuestionAsked,
-  handleQuestionAnswered,
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,

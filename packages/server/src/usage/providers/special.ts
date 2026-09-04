@@ -1,5 +1,5 @@
 import type { UsageProvider } from "../types"
-import { fetchJson, getString, notConfigured, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import { fetchJson, getString, notConfigured, result, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
 
 function decodeJwtExpiration(token: string): number | null {
   try {
@@ -10,20 +10,6 @@ function decodeJwtExpiration(token: string): number | null {
   } catch {
     return null
   }
-}
-
-async function resolveCursorToken(): Promise<string | null> {
-  const accessToken = getString(process.env.CURSOR_ACCESS_TOKEN) ?? getString(process.env.CURSOR_TOKEN)
-  const refreshToken = getString(process.env.CURSOR_REFRESH_TOKEN)
-  const expiresAt = accessToken ? decodeJwtExpiration(accessToken) : null
-  if (accessToken && (!expiresAt || expiresAt > Date.now() + 5 * 60_000)) return accessToken
-  if (!refreshToken) return accessToken
-  const payload = await fetchJson("https://api2.cursor.sh/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ grant_type: "refresh_token", client_id: "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB", refresh_token: refreshToken }),
-  })
-  return getString(payload?.access_token)
 }
 
 async function cursorPost(url: string, token: string): Promise<any> {
@@ -39,8 +25,16 @@ const cursor: UsageProvider = {
   name: "Cursor",
   aliases: ["cursor"],
   async fetchQuota() {
-    const token = await resolveCursorToken().catch(() => null)
+    const token = getString(process.env.CURSOR_ACCESS_TOKEN) ?? getString(process.env.CURSOR_TOKEN)
     if (!token) return notConfigured(this.id, this.name)
+    const expiresAt = decodeJwtExpiration(token)
+    if (expiresAt !== null && expiresAt <= Date.now() + 5 * 60_000) {
+      return result(this.id, this.name, {
+        ok: false,
+        configured: true,
+        error: "Cursor access token expired. Provide a current CURSOR_ACCESS_TOKEN or CURSOR_TOKEN.",
+      })
+    }
     return safeFetch(this.id, this.name, async () => {
       const usage = await cursorPost("https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage", token)
       const plan = await cursorPost("https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo", token).catch(() => null)

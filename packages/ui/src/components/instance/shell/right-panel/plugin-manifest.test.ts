@@ -72,7 +72,6 @@ describe("right panel plugin manifests", () => {
       renderPlanSectionContent: render,
       renderBackgroundProcesses: render,
       renderMcpStatus: render,
-      renderLspStatus: render,
       renderPluginStatus: render,
     })
 
@@ -86,7 +85,6 @@ describe("right panel plugin manifests", () => {
       "plan",
       "background-processes",
       "mcp",
-      "lsp",
       "plugins",
     ])
   })

@@ -5,7 +5,7 @@ import { serverApi } from "../lib/api-client.ts"
 import { ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees } from "./worktrees.ts"
 
 describe("handleWorktreeReady", () => {
-  it("refreshes worktrees before synchronizing OpenCode workspaces", async () => {
+  it("refreshes worktrees", async () => {
     const calls: string[] = []
 
     await handleWorktreeReady(
@@ -18,12 +18,9 @@ describe("handleWorktreeReady", () => {
       async (instanceId) => {
         calls.push(`worktrees:${instanceId}`)
       },
-      async (instanceId) => {
-        calls.push(`workspaces:${instanceId}`)
-      },
     )
 
-    assert.deepEqual(calls, ["worktrees:instance-1", "workspaces:instance-1"])
+    assert.deepEqual(calls, ["worktrees:instance-1"])
   })
 
   it("serializes overlapping ready events for the same instance", async () => {
@@ -39,18 +36,15 @@ describe("handleWorktreeReady", () => {
       calls.push(`worktrees:${refreshCount}`)
       if (refreshCount === 1) await firstPending
     }
-    const refreshWorkspaces = async () => {
-      calls.push(`workspaces:${refreshCount}`)
-    }
     const event = {
       type: "worktree.ready" as const,
       directory: "/tmp/opencode/worktree/feature",
       properties: { name: "feature" },
     }
 
-    const first = handleWorktreeReady("instance-concurrent", event, refreshWorktrees, refreshWorkspaces)
+    const first = handleWorktreeReady("instance-concurrent", event, refreshWorktrees)
     await Promise.resolve()
-    const second = handleWorktreeReady("instance-concurrent", event, refreshWorktrees, refreshWorkspaces)
+    const second = handleWorktreeReady("instance-concurrent", event, refreshWorktrees)
     await Promise.resolve()
 
     assert.deepEqual(calls, ["worktrees:1"])
@@ -58,7 +52,7 @@ describe("handleWorktreeReady", () => {
     releaseFirst()
     await Promise.all([first, second])
 
-    assert.deepEqual(calls, ["worktrees:1", "workspaces:1", "worktrees:2", "workspaces:2"])
+    assert.deepEqual(calls, ["worktrees:1", "worktrees:2"])
   })
 
   it("continues processing after an earlier refresh rejects", async () => {
@@ -74,7 +68,6 @@ describe("handleWorktreeReady", () => {
         async () => {
           throw new Error("refresh failed")
         },
-        async () => undefined,
       ),
       /refresh failed/,
     )
@@ -86,12 +79,9 @@ describe("handleWorktreeReady", () => {
       async () => {
         calls.push("worktrees")
       },
-      async () => {
-        calls.push("workspaces")
-      },
     )
 
-    assert.deepEqual(calls, ["worktrees", "workspaces"])
+    assert.deepEqual(calls, ["worktrees"])
   })
 
   it("orders initial hydration before a trailing reload", async () => {

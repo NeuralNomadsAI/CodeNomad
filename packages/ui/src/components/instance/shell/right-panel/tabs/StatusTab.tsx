@@ -1,5 +1,6 @@
-import { For, Show, createMemo, type Accessor, type Component } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
+import type { ShellInfo } from "@opencode-ai/client"
+import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -12,10 +13,9 @@ import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
 import Switch from "@suid/material/Switch"
 
-import { BellRing, ChevronDown, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronRight, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../../server/src/api-types"
 import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"
@@ -26,6 +26,10 @@ import { togglePermissionAutoAcceptForSession } from "../../../../../stores/inst
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
 import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
+import { shellStore } from "../../../../../stores/shells"
+import { showConfirmDialog } from "../../../../../stores/alerts"
+import { showToastNotification } from "../../../../../lib/notifications"
+import { ShellOutputDialog } from "../../../../shell-output-dialog"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -37,11 +41,6 @@ interface StatusTabProps {
   activeSession: Accessor<Session | null>
 
   latestTodoState: Accessor<ToolState | null>
-
-  backgroundProcessList: Accessor<BackgroundProcess[]>
-  onOpenBackgroundOutput: (process: BackgroundProcess) => void
-  onStopBackgroundProcess: (processId: string) => Promise<void> | void
-  onTerminateBackgroundProcess: (processId: string) => Promise<void> | void
 
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
@@ -64,10 +63,9 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
         <Accordion.Header class="right-panel-accordion-header-row">
           <Accordion.Trigger class="right-panel-accordion-trigger">
             <span class="section-left">
-              <GripVertical class="h-3.5 w-3.5 text-tertiary" aria-hidden="true" />
+              <ChevronRight class="right-panel-accordion-chevron disclosure-chevron" />
               <span class="section-label">{props.t(props.section.labelKey)}</span>
             </span>
-            <ChevronDown class={`right-panel-accordion-chevron ${props.expanded ? "right-panel-accordion-chevron-expanded" : ""}`} />
           </Accordion.Trigger>
           <Tooltip openDelay={200} gutter={4} placement="top">
             <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
@@ -77,6 +75,7 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
               <Tooltip.Content class="section-info-tooltip">{props.t(props.section.tooltipKey)}</Tooltip.Content>
             </Tooltip.Portal>
           </Tooltip>
+          <GripVertical class="right-panel-section-grip" aria-hidden="true" />
         </Accordion.Header>
         <Accordion.Content class="right-panel-accordion-content">{props.section.render()}</Accordion.Content>
       </Accordion.Item>
@@ -86,6 +85,14 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
+  const shellDirectory = createMemo(() => props.activeSession()?.location.directory ?? props.instance.folder)
+  const shellState = createMemo(() => shellStore.getState(props.instanceId, shellDirectory()))
+  const [outputShell, setOutputShell] = createSignal<ShellInfo | null>(null)
+
+  createEffect(on(
+    () => [props.instanceId, shellDirectory()] as const,
+    ([instanceId, directory]) => void shellStore.load(instanceId, directory),
+  ))
 
   const renderYoloModeSection = () => {
     const session = props.activeSession()
@@ -103,8 +110,11 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         <div class="-mr-2 shrink-0">
           <Switch
             checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
-            color="warning"
             size="small"
+            sx={{
+              "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--session-yolo-accent)" },
+              "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
+            }}
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
             onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
           />
@@ -133,93 +143,93 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     return <TodoListView state={todoState} emptyLabel={props.t("instanceShell.plan.empty")} showStatusLabel={false} />
   }
 
-  const renderBackgroundProcesses = () => {
-    const processes = props.backgroundProcessList()
-    if (processes.length === 0) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span>
-        </div>
-      )
-    }
-
-    return (
-      <div class="flex flex-col gap-2">
-        <For each={processes}>
-          {(process) => (
-            <div class="status-process-card">
-              <div class="status-process-header">
-                <span class="status-process-title">{process.title}</span>
-                <div class="status-process-meta">
-                  <span
-                    classList={{
-                      "text-success": Boolean(process.notifyEnabled),
-                      "text-tertiary": !process.notifyEnabled,
-                    }}
-                    aria-label={props.t(
-                      process.notifyEnabled
-                        ? "instanceShell.backgroundProcesses.notify.enabled"
-                        : "instanceShell.backgroundProcesses.notify.disabled",
-                    )}
-                    title={props.t(
-                      process.notifyEnabled
-                        ? "instanceShell.backgroundProcesses.notify.enabled"
-                        : "instanceShell.backgroundProcesses.notify.disabled",
-                    )}
-                  >
-                    <BellRing class="h-3.5 w-3.5" />
-                  </span>
-                  <span>{props.t("instanceShell.backgroundProcesses.status", { status: process.status })}</span>
-                  <Show when={typeof process.outputSizeBytes === "number"}>
-                    <span>
-                      {props.t("instanceShell.backgroundProcesses.output", {
-                        sizeKb: Math.round((process.outputSizeBytes ?? 0) / 1024),
-                      })}
-                    </span>
-                  </Show>
-                </div>
-              </div>
-              <div class="status-process-actions">
-                <button
-                  type="button"
-                  class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                  onClick={() => props.onOpenBackgroundOutput(process)}
-                  aria-label={props.t("instanceShell.backgroundProcesses.actions.output")}
-                  title={props.t("instanceShell.backgroundProcesses.actions.output")}
-                >
-                  <TerminalSquare class="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                  disabled={process.status !== "running"}
-                  onClick={() => props.onStopBackgroundProcess(process.id)}
-                  aria-label={props.t("instanceShell.backgroundProcesses.actions.stop")}
-                  title={props.t("instanceShell.backgroundProcesses.actions.stop")}
-                >
-                  <XOctagon class="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  class="button-tertiary w-full p-1 inline-flex items-center justify-center"
-                  onClick={() => props.onTerminateBackgroundProcess(process.id)}
-                  aria-label={props.t("instanceShell.backgroundProcesses.actions.terminate")}
-                  title={props.t("instanceShell.backgroundProcesses.actions.terminate")}
-                >
-                  <Trash2 class="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </For>
-      </div>
+  const removeShell = async (shellId: string, command: string, running: boolean) => {
+    const confirmed = await showConfirmDialog(
+      props.t("instanceShell.backgroundProcesses.remove.message", { title: command }),
+      {
+        title: props.t("instanceShell.backgroundProcesses.remove.title"),
+        confirmLabel: props.t(running
+          ? "instanceShell.backgroundProcesses.actions.stopRemove"
+          : "instanceShell.backgroundProcesses.actions.remove"),
+      },
     )
+    if (confirmed && !await shellStore.remove(props.instanceId, shellDirectory(), shellId)) {
+      showToastNotification({ message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+    }
   }
+
+  const renderBackgroundProcesses = () => (
+    <Show
+      when={!shellState().failed}
+      fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.error")}</span></div>}
+    >
+      <Show
+        when={!shellState().loading || shellState().items.length > 0}
+        fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.loading")}</span></div>}
+      >
+        <Show
+          when={shellState().items.length > 0}
+          fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span></div>}
+        >
+          <div class="flex flex-col gap-1">
+            <For each={shellState().items}>
+              {(shell) => {
+                const running = () => shell.status === "running"
+                return (
+                  <article class="status-process-card">
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="min-w-0 flex-1">
+                        <h4 class="truncate text-xs font-medium text-primary" title={shell.command}>{shell.command}</h4>
+                        <code class="mt-1 block truncate text-xs text-secondary" title={shell.shell}>{shell.shell}</code>
+                      </div>
+                    </div>
+                    <div class="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-tertiary">
+                      <span>{props.t(`instanceShell.backgroundProcesses.status.${shell.status}`)}</span>
+                      <Show when={shell.pid !== undefined}>
+                        <span>{props.t("instanceShell.backgroundProcesses.pid", { pid: shell.pid })}</span>
+                      </Show>
+                      <Show when={shell.exit !== undefined}>
+                        <span>{props.t("instanceShell.backgroundProcesses.exitCode", { code: shell.exit })}</span>
+                      </Show>
+                    </div>
+                    <div class="mt-1 truncate text-xs text-tertiary" title={shell.cwd}>{shell.cwd}</div>
+                    <div class="status-process-actions">
+                      <button
+                        type="button"
+                        class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
+                        onClick={() => setOutputShell(shell)}
+                      >
+                        <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
+                        {props.t("instanceShell.backgroundProcesses.actions.output")}
+                      </button>
+                      <button
+                        type="button"
+                        class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
+                        disabled={shellState().loading}
+                        onClick={() => void removeShell(shell.id, shell.command, running())}
+                      >
+                        <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
+                          <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
+                        </Show>
+                        {props.t(running()
+                          ? "instanceShell.backgroundProcesses.actions.stopRemove"
+                          : "instanceShell.backgroundProcesses.actions.remove")}
+                      </button>
+                    </div>
+                  </article>
+                )
+              }}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </Show>
+  )
 
   const renderProviderUsage = () => {
     const session = props.activeSession()
     if (!session) {
-      return <div class="text-xs text-tertiary">{props.t("providerUsage.noSession")}</div>
+      return <div class="right-panel-empty-text">{props.t("providerUsage.noSession")}</div>
     }
     return (
       <div class="border border-base bg-surface-secondary px-3 py-2">
@@ -235,7 +245,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderPlanSectionContent,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
-      renderLspStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["lsp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
         <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
       ),
@@ -270,10 +279,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()}>
-        {(activeSession) => (
-          <ContextUsagePanel instanceId={props.instanceId} sessionId={activeSession().id} class="status-tab-context-panel" />
-        )}
+      <Show when={props.activeSession()?.id}>
+        <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} class="status-tab-context-panel" />
       </Show>
 
       <Accordion.Root
@@ -293,6 +300,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           </DragDropSensors>
         </DragDropProvider>
       </Accordion.Root>
+      <ShellOutputDialog
+        open={Boolean(outputShell())}
+        instanceId={props.instanceId}
+        directory={shellDirectory()}
+        shell={outputShell()}
+        onClose={() => setOutputShell(null)}
+      />
     </div>
   )
 }

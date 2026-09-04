@@ -1,19 +1,20 @@
 import { For, Show, Suspense, createMemo, createSignal, createEffect, lazy, onCleanup, type Component } from "solid-js"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionCallId, getPermissionDisplayTitle, getPermissionKind, getPermissionMessageId, getPermissionSessionId } from "../types/permission"
-import { getQuestionCallId, getQuestionMessageId, getQuestionSessionId, type QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import {
   activeInterruption,
   getPermissionQueue,
   getPermissionEnqueuedAtForInstance,
-  getQuestionQueue,
-  getQuestionEnqueuedAtForInstance,
   sendPermissionResponse,
 } from "../stores/instances"
-import { ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
+import { activeSessionId, ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
+import FormRequest from "./form-request"
+import { getFormQueue, type FormInfo } from "../stores/forms"
+import { sendFormCancel, sendFormReply } from "../stores/instances"
+import { shouldRenderFormInFallback } from "./form-request-tool-target"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -99,40 +100,6 @@ function resolveToolCallFromPermission(
   return null
 }
 
-function resolveToolCallFromQuestion(instanceId: string, request: QuestionRequest): ResolvedToolCall | null {
-  const sessionId = getQuestionSessionId(request)
-  const messageId = getQuestionMessageId(request)
-  if (!sessionId || !messageId) return null
-
-  const store = messageStoreBus.getInstance(instanceId)
-  if (!store) return null
-
-  const record = store.getMessage(messageId)
-  if (!record) return null
-
-  const callId = getQuestionCallId(request)
-  if (!callId) return null
-
-  for (const partId of record.partIds) {
-    const partRecord = record.parts?.[partId]
-    const part = partRecord?.data as any
-    if (!part || part.type !== "tool") continue
-    const partCallId = part.callID ?? part.callId ?? part.toolCallID ?? part.toolCallId ?? undefined
-    if (partCallId !== callId) continue
-
-    if (typeof part.id !== "string" || part.id.length === 0) continue
-    return {
-      messageId,
-      sessionId,
-      toolPart: part as ResolvedToolCall["toolPart"],
-      messageVersion: record.revision,
-      partVersion: partRecord?.revision ?? 0,
-    }
-  }
-
-  return null
-}
-
 const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props) => {
   const { t } = useI18n()
   const [loadingSession, setLoadingSession] = createSignal<string | null>(null)
@@ -194,12 +161,12 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   }
 
   const permissionQueue = createMemo(() => getPermissionQueue(props.instanceId))
-  const questionQueue = createMemo(() => getQuestionQueue(props.instanceId))
+  const formQueue = createMemo(() => getFormQueue(props.instanceId))
   const active = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
   type InterruptionItem =
     | { kind: "permission"; id: string; sessionId: string; createdAt: number; payload: PermissionRequest }
-    | { kind: "question"; id: string; sessionId: string; createdAt: number; payload: QuestionRequest }
+    | { kind: "form"; id: string; sessionId: string; createdAt: number; payload: FormInfo }
 
   const orderedQueue = createMemo<InterruptionItem[]>(() => {
     const permissions = permissionQueue().map((permission) => ({
@@ -210,15 +177,20 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
       payload: permission,
     }))
 
-    const questions = questionQueue().map((question) => ({
-      kind: "question" as const,
-      id: question.id,
-      sessionId: getQuestionSessionId(question) || "",
-      createdAt: getQuestionEnqueuedAtForInstance(props.instanceId, question.id),
-      payload: question,
+    const formsForFallback = formQueue().filter((form) => shouldRenderFormInFallback(
+      form,
+      activeSessionId().get(props.instanceId),
+      messageStoreBus.getOrCreate(props.instanceId),
+    ))
+    const forms = formsForFallback.map((form, index) => ({
+      kind: "form" as const,
+      id: form.id,
+      sessionId: form.sessionID,
+      createdAt: Number.MAX_SAFE_INTEGER - formsForFallback.length + index,
+      payload: form,
     }))
 
-    return [...permissions, ...questions].sort((a, b) => a.createdAt - b.createdAt)
+    return [...permissions, ...forms].sort((a, b) => a.createdAt - b.createdAt)
   })
 
   const hasRequests = createMemo(() => orderedQueue().length > 0)
@@ -305,7 +277,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                       if (item.kind === "permission") {
                         return resolveToolCallFromPermission(props.instanceId, item.payload)
                       }
-                      return resolveToolCallFromQuestion(props.instanceId, item.payload)
+                       return null
                     })
 
                     const showFallback = () => !resolved()
@@ -313,24 +285,20 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                     const kindLabel = () =>
                       item.kind === "permission"
                         ? t("permissionApproval.kind.permission")
-                        : t("permissionApproval.kind.question")
+                        : t("permissionApproval.kind.form")
 
                     const primaryTitle = () => {
                       if (item.kind === "permission") {
                         return getPermissionDisplayTitle(item.payload)
                       }
-                      const first = item.payload.questions?.[0]?.question
-                      return typeof first === "string" && first.trim().length > 0 ? first : t("permissionApproval.kind.question")
+                       return item.payload.title
                     }
 
                     const secondaryTitle = () => {
                       if (item.kind === "permission") {
                         return getPermissionKind(item.payload)
                       }
-                      const count = item.payload.questions?.length ?? 0
-                      return count === 1
-                        ? t("permissionApproval.questionCount.one", { count })
-                        : t("permissionApproval.questionCount.other", { count })
+                       return t("permissionApproval.kind.form")
                     }
 
                     return (
@@ -376,85 +344,74 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                           </div>
                         </div>
 
-                          <Show
-                            when={resolved()}
-                            fallback={
-                              <div class="permission-center-fallback">
-                                <div class="permission-center-fallback-title">
-                                  <code>{primaryTitle()}</code>
-                                </div>
-                                <Show when={item.kind === "permission"}>
-                                  <div class="tool-call-permission-reject-reason">
-                                    <textarea
-                                      id={`permission-center-reject-reason-${item.id}`}
-                                      class="tool-call-permission-reject-textarea"
-                                      value={getPermissionRejectReason(item.id)}
-                                      rows={1}
-                                      maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
-                                      placeholder={t("permissionApproval.rejectReason.placeholder")}
-                                      aria-label={t("permissionApproval.rejectReason.placeholder")}
-                                      disabled={permissionSubmitting().has(item.id)}
-                                      onInput={(event) => setPermissionRejectReason(item.id, event.currentTarget.value)}
-                                    />
+                          <Show when={item.kind === "form"} fallback={
+                            <Show
+                              when={resolved()}
+                              fallback={
+                                <div class="permission-center-fallback">
+                                  <div class="permission-center-fallback-title">
+                                    <code>{primaryTitle()}</code>
                                   </div>
-                                  <div class="tool-call-permission-actions">
-                                    <div class="tool-call-permission-buttons">
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
+                                  <Show when={item.kind === "permission"}>
+                                    <div class="tool-call-permission-reject-reason">
+                                      <textarea
+                                        id={`permission-center-reject-reason-${item.id}`}
+                                        class="tool-call-permission-reject-textarea"
+                                        value={getPermissionRejectReason(item.id)}
+                                        rows={1}
+                                        maxLength={PERMISSION_REJECT_REASON_MAX_LENGTH}
+                                        placeholder={t("permissionApproval.rejectReason.placeholder")}
+                                        aria-label={t("permissionApproval.rejectReason.placeholder")}
                                         disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}
-                                      >
-                                        {t("permissionApproval.actions.allowOnce")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}
-                                      >
-                                        {t("permissionApproval.actions.alwaysAllow")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="tool-call-permission-button"
-                                        disabled={permissionSubmitting().has(item.id)}
-                                        onClick={() =>
-                                          void handlePermissionDecision(
-                                            item.payload as PermissionRequest,
-                                            "reject",
-                                            getPermissionRejectReason(item.id).trim() || undefined,
-                                          )
-                                        }
-                                      >
-                                        {t("permissionApproval.actions.deny")}
-                                      </button>
+                                        onInput={(event) => setPermissionRejectReason(item.id, event.currentTarget.value)}
+                                      />
                                     </div>
-                                  </div>
-                                  <Show when={permissionError().get(item.id)}>
-                                    {(err) => <div class="tool-call-permission-error">{err()}</div>}
+                                    <div class="tool-call-permission-actions">
+                                      <div class="tool-call-permission-buttons">
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}>
+                                          {t("permissionApproval.actions.allowOnce")}
+                                        </button>
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}>
+                                          {t("permissionApproval.actions.alwaysAllow")}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="tool-call-permission-button"
+                                          disabled={permissionSubmitting().has(item.id)}
+                                          onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "reject", getPermissionRejectReason(item.id).trim() || undefined)}
+                                        >
+                                          {t("permissionApproval.actions.deny")}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <Show when={permissionError().get(item.id)}>
+                                      {(err) => <div class="tool-call-permission-error">{err()}</div>}
+                                    </Show>
                                   </Show>
-                                </Show>
-                                <Show when={item.kind !== "permission"}>
-                                  <div class="permission-center-fallback-hint">{t("permissionApproval.fallbackHint")}</div>
-                                </Show>
-                              </div>
-                            }
-                          >
-                          {(data) => (
-                            <Suspense fallback={<div class="tool-call tool-call-loading" />}>
-                              <LazyToolCall
-                                toolCall={data().toolPart}
-                                toolCallId={data().toolPart.id}
-                                messageId={data().messageId}
-                                messageVersion={data().messageVersion}
-                                partVersion={data().partVersion}
-                                instanceId={props.instanceId}
-                                sessionId={data().sessionId}
-                              />
-                            </Suspense>
-                          )}
-                        </Show>
+                                </div>
+                              }
+                            >
+                              {(data) => (
+                                <Suspense fallback={<div class="tool-call tool-call-loading" />}>
+                                  <LazyToolCall
+                                    toolCall={data().toolPart}
+                                    toolCallId={data().toolPart.id}
+                                    messageId={data().messageId}
+                                    messageVersion={data().messageVersion}
+                                    partVersion={data().partVersion}
+                                    instanceId={props.instanceId}
+                                    sessionId={data().sessionId}
+                                  />
+                                </Suspense>
+                              )}
+                            </Show>
+                          }>
+                            <FormRequest
+                              form={item.payload as FormInfo}
+                              onReply={(answer) => sendFormReply(props.instanceId, item.id, answer)}
+                              onCancel={() => sendFormCancel(props.instanceId, item.id)}
+                            />
+                          </Show>
                       </div>
                     )
                   }}

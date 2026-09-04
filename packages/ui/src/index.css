@@ -14,7 +14,31 @@
   padding: 0;
 }
 
+:root body * {
+  scrollbar-color: var(--scrollbar-thumb) transparent !important;
+  scrollbar-width: thin;
+}
 
+:root body *::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+:root body *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root body *::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+:root body *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+:root body *::-webkit-scrollbar-button {
+  display: none;
+}
 
 body {
   font-family: var(--font-family-sans);
@@ -32,33 +56,4 @@ body {
   height: 100vh;
   background-color: var(--surface-base);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

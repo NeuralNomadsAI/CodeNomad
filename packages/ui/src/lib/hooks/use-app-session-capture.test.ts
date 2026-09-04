@@ -1,37 +1,30 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { describe, it } from "node:test"
+import { it } from "node:test"
 
-const source = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8")
+const capture = readFileSync(new URL("./use-app-session-capture.ts", import.meta.url), "utf8")
 
-describe("app session capture listener readiness", () => {
-  it("waits for both Tauri flush listeners before restore starts capture", () => {
-    const capture = source("./use-app-session-capture.ts")
-    const restore = source("./use-app-session-restore.ts")
-    const ready = capture.slice(capture.indexOf("const ready ="), capture.indexOf("const markScrollAuthority"))
-    assert.match(ready, /Promise\.all/)
-    assert.match(ready, /client-state:flush-requested/)
-    assert.match(ready, /client-state:navigation-flush-requested/)
-    assert.ok(restore.indexOf("await capture.ready") < restore.indexOf("capture.start("))
-  })
+it("preserves settled tabs during native shutdown", () => {
+  assert.match(capture, /nativeShutdown\s*&& current\.tabs\.length === 0/)
+  assert.match(capture, /\(nativeFallbackState\?\.tabs\.length \?\? 0\) > 0/)
+})
 
-  it("uses the serialized commit queue without serializing create requests", () => {
-    const restore = source("./use-app-session-restore.ts")
-    assert.match(restore, /runWithSerializedCommits/)
-    assert.match(restore, /waitForCreateCommit/)
-    assert.doesNotMatch(restore, /for \(const match of missing\) await restoreWorkspace/)
-  })
+it("makes native shutdown terminal for reactive captures", () => {
+  assert.match(capture, /if \(nativeShutdown\) nativeShutdownGeneration = nativeShutdownGenerationRequest/)
+  assert.match(capture, /if \(!enabled\(\) \|\| disposed \|\| nativeShutdownGeneration !== null\) return/)
+})
 
-  it("does not track prompt hydration writes in the capture effect", () => {
-    const capture = source("./use-app-session-capture.ts")
-    assert.match(capture, /untrack\(\(\) => hydratePreservedPrompts/)
-  })
+it("keeps navigation flushes nonterminal", () => {
+  assert.match(capture, /flush\(nativeShutdown \? payload\.generation : undefined\)/)
+  assert.match(capture, /"client-state:flush-requested",[\s\S]*?, true\)/)
+  assert.match(capture, /"client-state:navigation-flush-requested",[\s\S]*?, false\)/)
+})
 
-  it("reapplies full preserved state after transient reopen hydration", () => {
-    const capture = source("./use-app-session-capture.ts")
-    assert.match(capture, /waitForInstanceInitialSessionHydration/)
-    assert.match(capture, /hydrateRestoredWorkspaceState/)
-    assert.match(capture, /settlePreservedTab/)
-  })
+it("resumes capture only after native shutdown cancellation", () => {
+  assert.match(capture, /listen<\{ generation: number \}>\("client-state:flush-cancelled"/)
+  assert.match(capture, /if \(nativeShutdownGeneration !== payload\.generation\) return[\s\S]*nativeShutdownGeneration = null[\s\S]*schedule\(\)/)
+})
 
+it("waits for server storage writes during native shutdown", () => {
+  assert.match(capture, /nativeShutdown \? \[storage\.flushWrites\(\)\] : \[\]/)
 })

@@ -1,27 +1,34 @@
 import type { BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
+import { SerializedLifecycle } from "./serialized-lifecycle"
 
 interface ClientStateNavigationDependencies {
   clientStateManager: Pick<ClientStateManager, "isPrimary">
   isTrustedOrigin(url: string): boolean
   reportFlushError(error: unknown): void
+  lifecycle?: SerializedLifecycle
 }
 
 export class ClientStateNavigationController {
-  private queue: Promise<void> = Promise.resolve()
+  private readonly lifecycle: SerializedLifecycle
   private generation = 0
 
   constructor(
     private readonly window: BrowserWindow,
     private readonly dependencies: ClientStateNavigationDependencies,
-  ) {}
+  ) {
+    this.lifecycle = dependencies.lifecycle ?? new SerializedLifecycle()
+  }
 
   navigate(operation: (window: BrowserWindow, generation: number) => void | Promise<void>): Promise<void> {
     const generation = ++this.generation
-    const request = this.queue.catch(() => {}).then(() => this.performNavigation(operation, generation))
-    this.queue = request
-    return request
+    if (this.lifecycle.stopped) return Promise.resolve()
+    return this.lifecycle.enqueue(() => this.performNavigation(operation, generation))
+  }
+
+  isCurrent(generation: number): boolean {
+    return generation === this.generation
   }
 
   private async performNavigation(
@@ -29,7 +36,7 @@ export class ClientStateNavigationController {
     generation: number,
   ): Promise<void> {
     const { window } = this
-    if (window.isDestroyed() || window.webContents.isDestroyed()) return
+    if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return
 
     try {
       await flushRendererClientStateBeforeShutdown(
@@ -41,7 +48,7 @@ export class ClientStateNavigationController {
       this.dependencies.reportFlushError(error)
     }
 
-    if (window.isDestroyed() || window.webContents.isDestroyed()) return
+    if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return
     await operation(window, generation)
   }
 }

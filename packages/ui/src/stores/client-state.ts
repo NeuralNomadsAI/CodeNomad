@@ -1,10 +1,15 @@
 import { createSignal } from "solid-js"
-import { clearNativeClientState, loadNativeClientState, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
-import { decodeClientSnapshot, isFutureClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
+import { clearNativeClientState, commitNativeClientStatePartitions, loadNativeClientState, loadNativeClientStatePartition,
+  saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
+import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
+import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
+import type { ClientSnapshotV2 } from "./client-state-partitions"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
+export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
 const FLUSH_MAX_ATTEMPTS = 3
+const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
 const MAX_LAYOUT_KEY_LENGTH = 256
 const MAX_LAYOUT_VALUE_LENGTH = 4096
@@ -24,6 +29,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
+let partitionProtocolVersion: 1 | undefined
 const transactionLayoutWrites = new Set<string>()
 function useLocalStorage<T>(fallback: T, operation: (storage: Storage) => T): T {
   try {
@@ -92,7 +98,22 @@ function enqueuePendingSave(): Promise<void> {
   dirty = false
   const saveAttempt = writeQueue.then(async () => {
     try {
-      if (!await saveNativeClientState(normalizedSnapshot)) {
+      const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
+      if (partitioned && !canCommitClientSnapshotV2(partitioned)) {
+        throw new Error("Client snapshot exceeds the native partition count or size limits")
+      }
+      if (!partitioned && new TextEncoder().encode(JSON.stringify(normalizedSnapshot)).byteLength > MAX_V1_SNAPSHOT_BYTES) {
+        throw new Error("Client snapshot exceeds the V1 1 MiB limit and partition persistence is unavailable")
+      }
+      const accepted = partitioned
+        ? await commitNativeClientStatePartitions({
+          protocolVersion: 1,
+          snapshot: partitioned.root,
+          partitions: partitioned.partitions,
+          partitionKeys: partitioned.partitionKeys,
+        })
+        : await saveNativeClientState(normalizedSnapshot)
+      if (!accepted) {
         setClientStateIsPrimary(false)
         throw new Error("Native client state save was rejected")
       }
@@ -261,6 +282,7 @@ export function initializeClientState(): Promise<void> {
   initialization = (async () => {
     try {
       const loaded = await loadNativeClientState()
+      partitionProtocolVersion = loaded.partitionProtocolVersion
       setClientStateIsPrimary(loaded.isPrimary)
       setRestorePreviousStateEnabledSignal(loaded.restoreEnabled)
       resetLoadedState(null, true)
@@ -270,8 +292,24 @@ export function initializeClientState(): Promise<void> {
       transactionLayoutWrites.clear()
       initialized = true
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
-      writeBlock = isFutureClientSnapshot(loaded.snapshot) ? "snapshot" : false
-      const snapshot = decodeClientSnapshot(loaded.snapshot)
+      let snapshot: ClientSnapshotV1 | null
+      if (isClientSnapshotV2(loaded.snapshot)) {
+        writeBlock = "snapshot"
+        try {
+          snapshot = await decodeClientSnapshotV2(
+            loaded.snapshot,
+            loaded.partitionProtocolVersion,
+            loadNativeClientStatePartition,
+          )
+        } catch (error) {
+          snapshot = null
+          console.warn("[client-state] failed to load client snapshot partition", error)
+        }
+        if (snapshot) writeBlock = false
+      } else {
+        snapshot = decodeClientSnapshot(loaded.snapshot)
+        writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
+      }
       resetLoadedState(snapshot, true)
       if (!writeBlock && migrateLegacyLayoutValues()) scheduleSave()
     } catch (error) {

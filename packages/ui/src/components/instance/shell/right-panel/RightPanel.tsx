@@ -1,5 +1,5 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Accessor, type Component } from "solid-js"
+import type { ToolState } from "../../../../types/tool-state"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -10,15 +10,11 @@ import {
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
 import MenuOpenIcon from "@suid/icons-material/MenuOpen"
-import PushPinIcon from "@suid/icons-material/PushPin"
-import PushPinOutlinedIcon from "@suid/icons-material/PushPinOutlined"
 import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
-import type { DrawerViewState } from "../types"
 import type { RightPanelTab } from "./types"
 
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
@@ -86,19 +82,11 @@ interface RightPanelProps {
   activeSession: Accessor<Session | null>
 
   latestTodoState: Accessor<ToolState | null>
-  backgroundProcessList: Accessor<BackgroundProcess[]>
-  onOpenBackgroundOutput: (process: BackgroundProcess) => void
-  onStopBackgroundProcess: (processId: string) => Promise<void> | void
-  onTerminateBackgroundProcess: (processId: string) => Promise<void> | void
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
-  rightDrawerState: Accessor<DrawerViewState>
-  rightPinned: Accessor<boolean>
   onCloseRightDrawer: () => void
-  onPinRightDrawer: () => void
-  onUnpinRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
 
   setContentEl: (el: HTMLElement | null) => void
@@ -109,6 +97,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
+  let customizationTriggerRef: HTMLButtonElement | undefined
+  let customizationPopoverRef: HTMLDivElement | undefined
   const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
     parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
   )
@@ -118,6 +108,29 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+  })
+
+  createEffect(() => {
+    if (!rightPanelCustomizationOpen()) return
+    queueMicrotask(() => customizationPopoverRef?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus())
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!customizationTriggerRef?.contains(target) && !customizationPopoverRef?.contains(target)) {
+        setRightPanelCustomizationOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      setRightPanelCustomizationOpen(false)
+      queueMicrotask(() => customizationTriggerRef?.focus())
+    }
+    document.addEventListener("pointerdown", closeOutside)
+    document.addEventListener("keydown", closeOnEscape)
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOutside)
+      document.removeEventListener("keydown", closeOnEscape)
+    })
   })
 
   const handleAccordionChange = (values: string[]) => {
@@ -185,10 +198,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         activeSessionId: props.activeSessionId,
         activeSession: props.activeSession,
         latestTodoState: props.latestTodoState,
-        backgroundProcessList: props.backgroundProcessList,
-        onOpenBackgroundOutput: props.onOpenBackgroundOutput,
-        onStopBackgroundProcess: props.onStopBackgroundProcess,
-        onTerminateBackgroundProcess: props.onTerminateBackgroundProcess,
         isPhoneLayout: props.isPhoneLayout,
         rightDrawerWidth: props.rightDrawerWidth,
         rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
@@ -244,31 +253,21 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   return (
     <div class="relative flex flex-col h-full" ref={props.setContentEl}>
-      <div class="right-panel-tab-bar">
+      <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
-          <div class="tab-strip-shortcuts text-primary">
-            <Show when={props.rightDrawerState() === "floating-open"}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
-                title={props.t("instanceShell.rightDrawer.toggle.close")}
-                onClick={props.onCloseRightDrawer}
-              >
-                <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
-              </IconButton>
-            </Show>
-            <Show when={!props.isPhoneLayout()}>
-              <IconButton
-                size="small"
-                color="inherit"
-                aria-label={props.rightPinned() ? props.t("instanceShell.rightDrawer.unpin") : props.t("instanceShell.rightDrawer.pin")}
-                onClick={() => (props.rightPinned() ? props.onUnpinRightDrawer() : props.onPinRightDrawer())}
-              >
-                {props.rightPinned() ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
-              </IconButton>
-            </Show>
+          <div class="panel-header-actions tab-strip-shortcuts">
             <IconButton
+              size="small"
+              color="inherit"
+              aria-label={props.t("instanceShell.rightDrawer.toggle.close")}
+              title={props.t("instanceShell.rightDrawer.toggle.close")}
+              onClick={props.onCloseRightDrawer}
+            >
+              <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+            </IconButton>
+            <IconButton
+              ref={customizationTriggerRef}
+              class="icon-toggle"
               size="small"
               color="inherit"
               aria-label={props.t("instanceShell.rightPanel.customize.toggle")}
@@ -304,15 +303,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                   </DragDropSensors>
                 </DragDropProvider>
               </div>
-
-              <div class="tab-strip-spacer" />
             </div>
           </div>
         </div>
       </div>
 
       <Show when={rightPanelCustomizationOpen()}>
-        <div class="right-panel-customization-popover" role="dialog" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
+        <div ref={customizationPopoverRef} class="right-panel-customization-popover" role="group" aria-label={props.t("instanceShell.rightPanel.customize.title")}>
           <div class="right-panel-customization-grid">
             <For each={orderedRightPanelTabs()}>
               {(tab) => {

@@ -1,7 +1,6 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
 import type { Agent } from "../types/session"
-import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { CommandInfo } from "@opencode-ai/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -71,7 +70,7 @@ function mapEntriesToFileItems(entries: { path: string; type: "file" | "director
 type PickerItem =
   | { type: "agent"; agent: Agent }
   | { type: "file"; file: FileItem }
-  | { type: "command"; command: SDKCommand }
+  | { type: "command"; command: CommandInfo }
 
 export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
 
@@ -82,8 +81,7 @@ interface UnifiedPickerProps {
   onClose: () => void
   onSubmitWithoutSelection?: () => void
   agents: Agent[]
-  commands?: SDKCommand[]
-  instanceClient: OpencodeClient | null
+  commands?: CommandInfo[]
   searchQuery: string
   textareaRef?: HTMLTextAreaElement
   workspaceId: string

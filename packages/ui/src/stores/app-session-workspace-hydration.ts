@@ -1,6 +1,7 @@
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { getUnavailableRestoredSessionIds, resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
+import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
 import { getSessionAncestorIdsFromMap } from "./session-tree"
@@ -12,18 +13,51 @@ import {
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 export const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
+export function seedRestoredWorkspaceScrollSnapshots(
+  instanceId: string,
+  snapshot: RestorableWorkspaceTabState,
+): void {
+  const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
+    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
+  messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
+}
+
 export async function hydrateRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
   signal: AbortSignal,
   isCurrentBinding: () => boolean,
 ): Promise<Set<string> | null> {
+  if (signal.aborted) throw getAbortReason(signal)
+  if (!isCurrentBinding()) return null
+  // Session selection mounts MessageSection synchronously. Seed scroll state
+  // first so its initial restore cannot mistake an unavailable snapshot for a
+  // deliberate at-bottom state.
+  seedRestoredWorkspaceScrollSnapshots(instanceId, snapshot)
   await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
-  const sessions = getSessions(instanceId)
+  let sessions = getSessions(instanceId)
+  let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  if (!hasAuthoritativeSessionSelection(instanceId)) {
+    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
+  }
+  hydrateWorkspacePromptState(
+    instanceId,
+    snapshot,
+    new Set(sessions.map(({ id }) => id)),
+    NO_SESSION_DRAFT_SESSION_ID,
+  )
+
+  await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
+    Object.keys(snapshot.drafts),
+    Object.keys(snapshot.attachments),
+  ]), signal)
+  if (signal.aborted) throw getAbortReason(signal)
+  if (!isCurrentBinding()) return null
+  sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
-  const selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
   const unavailable = getUnavailableRestoredSessionIds(sessions, {
     activeParentSessionId: snapshot.activeParentSessionId, activeSessionId: snapshot.activeSessionId,
     draftSessionIds: Object.keys(snapshot.drafts), attachmentSessionIds: Object.keys(snapshot.attachments),
@@ -38,11 +72,6 @@ export async function hydrateRestoredWorkspaceState(
     ? getSessionAncestorIdsFromMap(new Map(sessions.map((session) => [session.id, session])), selection.activeSessionId)
     : [])
   hydrateSessionExpansion(instanceId, expandedSessionIds)
-  const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
-    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
-  messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
-  if (!hasAuthoritativeSessionSelection(instanceId)) {
-    hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
-  }
+  if (!hasAuthoritativeSessionSelection(instanceId)) hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
   return unavailable
 }

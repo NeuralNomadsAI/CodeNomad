@@ -1,27 +1,28 @@
 import assert from "node:assert/strict"
 import { afterEach, test } from "node:test"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { OpenCodeClient, PermissionReplyInput } from "@opencode-ai/client"
 import { sdkManager } from "../lib/sdk-manager"
 import type { Instance } from "../types/instance"
 import {
   addInstance,
   addPermissionToQueue,
-  addQuestionToQueue,
   clearPermissionQueue,
-  clearQuestionQueue,
   getPermissionQueue,
-  getQuestionQueue,
+  hasRepliedPermission,
+  markPermissionReplied,
+  reconcilePendingRequestLiveness,
+  removeInstance,
   sendPermissionResponse,
   syncPendingRequests,
   updateInstance,
 } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
-import { handlePermissionUpdated } from "./session-events"
+import { setSessions } from "./session-state"
 
 const instanceIds: string[] = []
 const originalCreateClient = sdkManager.createClient
 
-function addTestInstance(id: string, client: OpencodeClient): void {
+function addTestInstance(id: string, client: OpenCodeClient): void {
   instanceIds.push(id)
   addInstance({
     id,
@@ -37,124 +38,197 @@ function addTestInstance(id: string, client: OpencodeClient): void {
 afterEach(() => {
   for (const instanceId of instanceIds.splice(0)) {
     clearPermissionQueue(instanceId)
-    clearQuestionQueue(instanceId)
+    setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
     messageStoreBus.unregisterInstance(instanceId)
     sdkManager.destroyClientsForInstance(instanceId)
   }
   sdkManager.createClient = originalCreateClient
 })
 
-test("permission.updated preserves the V2 reply route", async () => {
-  let legacyReplies = 0
-  let v2Replies = 0
+test("permission replies use the queued request session", async () => {
+  let input: PermissionReplyInput | undefined
   const client = {
     permission: {
-      reply: async () => { legacyReplies += 1; return { data: true } },
+      reply: async (next: PermissionReplyInput) => { input = next },
     },
-    v2: { session: { permission: {
-      reply: async () => { v2Replies += 1; return { data: true } },
-    } } },
-  } as unknown as OpencodeClient
+  } as unknown as OpenCodeClient
   sdkManager.createClient = (() => client) as typeof sdkManager.createClient
-  addTestInstance("permission-v2-source", client)
-
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.v2.asked",
-    properties: { id: "permission", sessionID: "session", action: "external_directory", resources: ["C:/work"] },
-  } as never)
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
+  addTestInstance("permission-reply", client)
+  addPermissionToQueue("permission-reply", {
+    id: "permission",
+    sessionID: "queued-session",
+    action: "external_directory",
+    resources: ["C:/work"],
   })
-  await sendPermissionResponse("permission-v2-source", "session", "permission", "always")
 
-  assert.equal(v2Replies, 1)
-  assert.equal(legacyReplies, 0)
-  handlePermissionUpdated("permission-v2-source", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
+  await sendPermissionResponse("permission-reply", "stale-session", "permission", "always", "trusted")
+
+  assert.deepEqual(input, {
+    sessionID: "queued-session",
+    requestID: "permission",
+    reply: "always",
+    message: "trusted",
   })
-  assert.deepEqual(getPermissionQueue("permission-v2-source"), [])
-})
-
-test("standalone permission.updated remains a legacy permission request", async () => {
-  let legacyReplies = 0
-  let v2Replies = 0
-  const client = {
-    permission: {
-      reply: async () => { legacyReplies += 1; return { data: true } },
-    },
-    v2: { session: { permission: {
-      reply: async () => { v2Replies += 1; return { data: true } },
-    } } },
-  } as unknown as OpencodeClient
-  sdkManager.createClient = (() => client) as typeof sdkManager.createClient
-  addTestInstance("permission-legacy-update", client)
-
-  handlePermissionUpdated("permission-legacy-update", {
-    type: "permission.updated",
-    properties: { id: "permission", sessionID: "session", patterns: ["C:/work"] },
-  })
-  assert.equal(getPermissionQueue("permission-legacy-update").length, 1)
-  await sendPermissionResponse("permission-legacy-update", "session", "permission", "always")
-
-  assert.equal(legacyReplies, 1)
-  assert.equal(v2Replies, 0)
+  assert.deepEqual(getPermissionQueue("permission-reply"), [])
 })
 
 test("pending request sync cannot erase newer SSE mutations", async () => {
   const newPermission = {
-    id: "new-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
+    id: "new-permission", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
   }
-  const newQuestion = { id: "new-question", sessionID: "session", questions: [] }
-  let resolvePermissions!: (value: { data: never[] }) => void
-  let resolveQuestions!: (value: { data: never[] }) => void
+  let resolvePermissions!: (value: { location: never; data: never[] }) => void
   let permissionCalls = 0
-  let questionCalls = 0
   const client = {
-    permission: { list: () => ++permissionCalls === 1
+    permission: { request: { list: () => ++permissionCalls === 1
       ? new Promise((resolve) => { resolvePermissions = resolve })
-      : Promise.resolve({ data: [newPermission] }) },
-    question: { list: () => ++questionCalls === 1
-      ? new Promise((resolve) => { resolveQuestions = resolve })
-      : Promise.resolve({ data: [newQuestion] }) },
-    v2: {
-      permission: { request: { list: async () => ({ data: { data: [] } }) } },
-      question: { request: { list: async () => ({ data: { data: [] } }) } },
-    },
-  } as unknown as OpencodeClient
+      : Promise.resolve({ location: {} as never, data: [newPermission] }) } },
+    form: { request: { list: async () => ({ location: {} as never, data: [] }) } },
+  } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
-  addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session" } as never)
-  addQuestionToQueue("pending-request-race", { id: "stale-question", sessionID: "session" } as never)
+  setSessions((previous) => new Map(previous).set("pending-request-race", new Map([["session", {
+    id: "session", location: { directory: "/workspace" },
+  } as any]])))
+  addPermissionToQueue("pending-request-race", { id: "stale-permission", sessionID: "session", action: "edit", resources: [] })
 
   const sync = syncPendingRequests("pending-request-race")
   assert.equal(syncPendingRequests("pending-request-race"), sync)
   await new Promise<void>((resolve) => setImmediate(resolve))
   updateInstance("pending-request-race", { pid: 2 })
-  addPermissionToQueue("pending-request-race", newPermission as never)
-  addQuestionToQueue("pending-request-race", newQuestion as never)
-  resolvePermissions({ data: [] })
-  resolveQuestions({ data: [] })
+  addPermissionToQueue("pending-request-race", newPermission)
+  resolvePermissions({ location: {} as never, data: [] })
 
   await sync
   assert.deepEqual(getPermissionQueue("pending-request-race").map(({ id }) => id), ["new-permission"])
-  assert.deepEqual(getQuestionQueue("pending-request-race").map(({ id }) => id), ["new-question"])
 })
 
-test("pending request sync still loads V2 requests when legacy listing fails", async () => {
+test("pending request sync uses native global lists with an explicit directory", async () => {
+  const locations: unknown[] = []
   const client = {
-    permission: { list: async () => ({ error: { message: "legacy unavailable" } }) },
-    question: { list: async () => ({ data: [] }) },
-    v2: {
-      permission: { request: { list: async () => ({ data: { data: [{
-        id: "v2-permission", sessionID: "session", permission: "edit", patterns: ["*"], metadata: {},
-      }] } }) } },
-      question: { request: { list: async () => ({ data: { data: [] } }) } },
-    },
-  } as unknown as OpencodeClient
-  addTestInstance("partial-pending-api", client)
+    permission: { request: {
+      list: async (input: { location?: unknown }) => {
+        locations.push(input.location)
+        return { location: {} as never, data: [{
+          id: "permission", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
+        }] }
+      },
+    } },
+    form: { request: {
+      list: async (input: { location?: unknown }) => {
+        locations.push(input.location)
+        return { location: {} as never, data: [] }
+      },
+    } },
+  } as unknown as OpenCodeClient
+  addTestInstance("native-pending-api", client)
+  setSessions((previous) => {
+    const next = new Map(previous)
+    next.set("native-pending-api", new Map([["session", {
+      id: "session", location: { directory: "/worktree" },
+    } as any]]))
+    return next
+  })
 
-  await syncPendingRequests("partial-pending-api")
+  await syncPendingRequests("native-pending-api")
 
-  assert.deepEqual(getPermissionQueue("partial-pending-api").map(({ id }) => id), ["v2-permission"])
+  assert.deepEqual(locations, [
+    { directory: "/workspace" }, { directory: "/worktree" },
+    { directory: "/workspace" }, { directory: "/worktree" },
+  ])
+  assert.deepEqual(getPermissionQueue("native-pending-api").map(({ id }) => id), ["permission"])
+})
+
+test("liveness recovers a missed permission with an idle session and empty queue", async () => {
+  const client = {
+    permission: { request: {
+      list: async ({ location }: { location: { directory?: string } }) => {
+        return { location, data: location.directory === "/workspace" ? [{
+          id: "missed", sessionID: "session", action: "edit", resources: ["*"], metadata: {},
+        }] : [] }
+      },
+    } },
+    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("missed-permission", client)
+
+  await reconcilePendingRequestLiveness("missed-permission")
+
+  assert.deepEqual(getPermissionQueue("missed-permission").map(({ id }) => id), ["missed"])
+})
+
+test("pending sync removes a stale permission after its session disappears", async () => {
+  const client = {
+    permission: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("deleted-permission-session", client)
+  addPermissionToQueue("deleted-permission-session", {
+    id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
+  }, "/workspace")
+
+  await syncPendingRequests("deleted-permission-session")
+
+  assert.deepEqual(getPermissionQueue("deleted-permission-session"), [])
+})
+
+test("partial pending scans preserve permission reply tombstones", async () => {
+  const location = { directory: "/worktree" }
+  const client = {
+    permission: { request: { list: async ({ location: requested }: { location: { directory?: string } }) => {
+      if (requested.directory === "/workspace") throw new Error("root unavailable")
+      return { location, data: [] }
+    } } },
+    form: { request: { list: async ({ location: requested }: { location: unknown }) => ({ location: requested, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("partial-permission-scan", client)
+  setSessions((previous) => new Map(previous).set("partial-permission-scan", new Map([["session", {
+    id: "session", location,
+  } as any]])))
+  markPermissionReplied("partial-permission-scan", "answered")
+
+  await assert.rejects(syncPendingRequests("partial-permission-scan"))
+
+  assert.equal(hasRepliedPermission("partial-permission-scan", "answered"), true)
+})
+
+test("pending authority normalizes Windows directory keys", async () => {
+  const location = { directory: "c:/repo" }
+  const client = {
+    permission: { request: { list: async () => ({ location, data: [] }) } },
+    form: { request: { list: async () => ({ location, data: [] }) } },
+  } as unknown as OpenCodeClient
+  addTestInstance("normalized-permission-location", client)
+  addPermissionToQueue("normalized-permission-location", {
+    id: "stale", sessionID: "deleted", action: "edit", resources: ["*"], metadata: {},
+  }, "C:\\Repo\\")
+
+  await syncPendingRequests("normalized-permission-location")
+
+  assert.deepEqual(getPermissionQueue("normalized-permission-location"), [])
+})
+
+test("cancelling a bounded pending scan does not launch queued locations", async () => {
+  let calls = 0
+  const list = (_input: unknown, options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+    calls++
+    options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true })
+  })
+  const client = {
+    permission: { request: { list } },
+    form: { request: { list } },
+  } as unknown as OpenCodeClient
+  const instanceId = "cancelled-bounded-scan"
+  addTestInstance(instanceId, client)
+  setSessions((previous) => new Map(previous).set(instanceId, new Map(Array.from({ length: 10 }, (_, index) => [
+    `session-${index}`,
+    { id: `session-${index}`, location: { directory: `/workspace-${index}` } } as any,
+  ]))))
+
+  const sync = syncPendingRequests(instanceId)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(calls, 8)
+  removeInstance(instanceId)
+  await sync
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 8)
 })

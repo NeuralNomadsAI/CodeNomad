@@ -1,15 +1,13 @@
 import { batch, createSignal } from "solid-js"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages } from "./session-api"
+import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -202,8 +200,8 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission || session.pendingQuestion) {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission || session.pendingForm) {
     return "permission"
   }
   const status = session.status ?? "idle"
@@ -270,7 +268,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let compacting = 0
 
   for (const session of instanceSessions.values()) {
-    if (session.pendingPermission || session.pendingQuestion) {
+    if (session.pendingPermission || session.pendingForm) {
       permission += 1
       continue
     }
@@ -366,6 +364,33 @@ function invalidateSessionMessageLoad(instanceId: string, sessionId: string): vo
 }
 
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
+
+function clearInstanceMessageLoads(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const key of messageLoadEpochs.keys()) {
+    if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  }
+  setMessagesLoaded((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setMessageLoadErrors((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setLoading((prev) => {
+    if (!prev.loadingMessages.has(instanceId)) return prev
+    const loadingMessages = new Map(prev.loadingMessages)
+    loadingMessages.delete(instanceId)
+    return { ...prev, loadingMessages }
+  })
+}
+
+messageStoreBus.onInstanceDestroyed(clearInstanceMessageLoads)
 
 function getDraftKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
@@ -564,7 +589,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 function setSessionPending(
   instanceId: string,
   sessionId: string,
-  field: "pendingPermission" | "pendingQuestion",
+  field: "pendingPermission" | "pendingForm",
   pending: boolean,
 ): void {
   if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
@@ -582,20 +607,20 @@ function setSessionPendingPermission(instanceId: string, sessionId: string, pend
   setSessionPending(instanceId, sessionId, "pendingPermission", pending)
 }
 
-function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
-  setSessionPending(instanceId, sessionId, "pendingQuestion", pending)
+function setSessionPendingForm(instanceId: string, sessionId: string, pending: boolean): void {
+  setSessionPending(instanceId, sessionId, "pendingForm", pending)
 }
 
 function reconcileSessionPendingState(
   instanceId: string,
   permissionSessionIds: ReadonlySet<string>,
-  questionSessionIds: ReadonlySet<string>,
+  formSessionIds: ReadonlySet<string> = new Set(),
 ): void {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
 
-    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, formSessionIds)
     if (reconciled === instanceSessions) return prev
 
     const next = new Map(prev)
@@ -651,7 +676,7 @@ function hydrateSessionGenerationRecovery(
 ): void {
   for (const [sessionId, persisted] of Object.entries(markers)) {
     withSession(instanceId, sessionId, (session) => {
-      const recovery = session.pendingPermission || session.pendingQuestion
+      const recovery = session.pendingPermission || session.pendingForm
         ? null
         : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
       if ((session.generationRecovery ?? null) === recovery) return false
@@ -725,6 +750,7 @@ function writeSessionSelection(
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
     // matches the server even on first connect / multi-client scenarios.
@@ -1008,21 +1034,13 @@ function getVisibleSessionIds(instanceId: string): string[] {
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
-  const root = getSessionRoot(instanceId, sessionId)
-  if (!root) return
+  const root = getSessionRoot(instanceId, sessionId) ?? session
   ensureSessionAncestorsExpanded(instanceId, sessionId)
 
   batch(() => {
     setActiveParentSession(instanceId, root.id)
     if (session.id !== root.id) setActiveSession(instanceId, session.id)
   })
-}
-
-function isSessionBusy(instanceId: string, sessionId: string): boolean {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return false
-  if (!instanceSessions.has(sessionId)) return false
-  return true
 }
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
@@ -1118,11 +1136,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
   let messages: any[] = []
   try {
     const client = getRootClient(instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
-    messages = await requestData<any[]>(
-      client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
-      "session.messages",
-    )
+    messages = (await client.message.list({ sessionID: session.id })).data
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
     return isFreshSession
@@ -1139,24 +1153,22 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     if (messages.length === 0) return true
 
     const hasStreaming = messages.some((msg) => {
-      const info = msg.info.status || msg.status
-      return info === "streaming" || info === "sending"
+      return msg.type === "assistant" && !msg.time?.completed
     })
 
     const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.parts || []
+    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
     const hasToolPart = lastParts.some((part: any) =>
       part.type === "tool" || part.data?.type === "tool"
     )
 
-    return !hasStreaming && !session.pendingPermission && !hasToolPart
+    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
   } else {
     // Fork: blank if somehow has no messages or at revert point
     if (messages.length === 0) return true
 
     const lastMessage = messages[messages.length - 1]
-    const lastInfo = lastMessage?.info || lastMessage
-    return lastInfo?.id === session.revert?.messageID
+    return lastMessage?.id === session.revert?.messageID
   }
 }
 
@@ -1225,6 +1237,7 @@ export {
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
   invalidateSessionMessageLoad,
+  clearInstanceMessageLoads,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
@@ -1249,7 +1262,7 @@ export {
   pruneDraftPrompts,
   withSession,
   setSessionPendingPermission,
-  setSessionPendingQuestion,
+  setSessionPendingForm,
   reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
@@ -1285,7 +1298,6 @@ export {
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
   setActiveSessionFromList,
-  isSessionBusy,
   isSessionMessagesLoading,
   getSessionMessagesLoadError,
   getSessionInfo,

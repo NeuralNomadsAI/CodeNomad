@@ -13,7 +13,6 @@ import {
   getGitRepoStatus,
   getWorktreeSlugForParentSession,
   getWorktrees,
-  reloadWorktreeMap,
   reloadWorktrees,
   setWorktreeSlugForParentSession,
 } from "../stores/worktrees"
@@ -303,6 +302,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   return (
     <div class="sidebar-selector">
       <Select<WorktreeOption>
+        gutter={0}
         open={isOpen()}
         onOpenChange={setIsOpen}
         value={selectedOption() ?? null}
@@ -393,7 +393,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 if (worktreesUnavailable()) {
                   return (
                     <div class="selector-trigger-label selector-trigger-label--stacked">
-                      <span class="selector-trigger-primary selector-trigger-primary--align-left">Worktree: Unavailable</span>
+                      <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                        <span class="session-sidebar-selector-prefix">Worktree:</span> Unavailable
+                      </span>
                     </div>
                   )
                 }
@@ -402,7 +404,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 const label = value && value.kind === "worktree" ? (value.slug === "root" ? "Workspace" : value.slug) : "Workspace"
                 return (
                   <div class="selector-trigger-label selector-trigger-label--stacked">
-                    <span class="selector-trigger-primary selector-trigger-primary--align-left">Worktree: {label}</span>
+                    <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                      <span class="session-sidebar-selector-prefix">Worktree:</span> {label}
+                    </span>
                   </div>
                 )
               }}
@@ -414,7 +418,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         </Select.Trigger>
 
         <Select.Portal>
-          <Select.Content class="selector-popover max-h-80 overflow-auto p-1">
+          <Select.Content class="selector-popover session-sidebar-selector-popover">
             <Select.Listbox class="selector-listbox" />
           </Select.Content>
         </Select.Portal>
@@ -546,13 +550,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     void (async () => {
                       setIsDeleting(true)
                       setDeleteError(null)
-                      await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
-                      await reloadWorktrees(props.instanceId)
-                      await reloadWorktreeMap(props.instanceId)
-
-                      if (currentSlug() === target.slug) {
-                        await setWorktreeSlugForParentSession(props.instanceId, parentId(), "root")
-                      }
+                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
+                       await reloadWorktrees(props.instanceId)
 
                       closeDeleteDialog()
                       showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })

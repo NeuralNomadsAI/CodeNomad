@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 use tauri::State;
 
 #[derive(Clone)]
@@ -39,17 +40,18 @@ fn get_local_json<T: DeserializeOwned>(
     path: &str,
 ) -> Result<T, String> {
     let config = manager
-        .desktop_event_stream_config()
+        .local_cli_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let url = format!("{}{}", config.base_url.trim_end_matches('/'), path);
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| error.to_string())?;
     let mut request = client.get(url);
-    if let Some(cookie) = config.session_cookie {
-        request = request.header(
-            reqwest::header::COOKIE,
-            format!("{}={cookie}", config.cookie_name),
-        );
-    }
+    request = request.header(
+        reqwest::header::COOKIE,
+        format!("{}={}", config.cookie_name, config.session_cookie),
+    );
     request
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
@@ -572,12 +574,10 @@ pub async fn open_workspace_target(
     path: Option<String>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    if window.label() != "main" {
-        return Err("Workspace open requests are limited to the local main window".into());
-    }
+    crate::identity::local_window_id(window.label())?;
     let config = state
         .manager
-        .desktop_event_stream_config()
+        .local_cli_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
     let current = window.url().map_err(|error| error.to_string())?;

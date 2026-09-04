@@ -3,7 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronDown, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -560,7 +560,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
     const needsPermission = () => Boolean(rowProps.session.pendingPermission)
-    const needsQuestion = () => Boolean((rowProps.session as any)?.pendingQuestion)
+    const needsQuestion = () => Boolean(rowProps.session.pendingForm)
     const needsInput = () => needsPermission() || needsQuestion()
     const statusClassName = () => {
       if (needsInput()) return "session-permission"
@@ -672,12 +672,13 @@ const SessionList: Component<SessionListProps> = (props) => {
                   }}
                   role="button"
                   tabIndex={0}
+                  aria-expanded={Boolean(rowProps.expanded)}
                   aria-label={
                     rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
                   }
                   title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
                 >
-                  <ChevronDown class={`w-3.5 h-3.5 transition-transform ${rowProps.expanded ? "" : "-rotate-90"}`} />
+                  <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
                 </span>
               </Show>
               <Show when={showStatus()}>
@@ -890,7 +891,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             )}
           </Show>
 
-          <Show when={!sessionListError() && isFetchingSessions() && visibleProjection().ids.length === 0}>
+          <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>
             <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
               <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
             </div>
@@ -912,33 +913,27 @@ const SessionList: Component<SessionListProps> = (props) => {
                  {(sessionId, index) => {
                    const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
                    return (
-                     <Show when={row()}>
-                       {(current) => (
-                         <SessionRow
-                           session={current().thread.session}
-                           depth={current().depth}
-                           hasChildren={current().hasChildren}
-                           expanded={current().expanded}
-                           onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
-                           isLastChild={current().isLastChild}
-                           isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
-                         />
-                       )}
+                     <Show when={Boolean(row())}>
+                       <SessionRow
+                         session={row()!.thread.session}
+                         depth={row()!.depth}
+                         hasChildren={row()!.hasChildren}
+                         expanded={row()!.expanded}
+                         onToggleExpand={() => toggleSessionExpanded(props.instanceId, sessionId)}
+                         isLastChild={row()!.isLastChild}
+                         isLastRow={index() === visibleProjection().ids.length - 1 && !hasMore() && !isFetchingSessions()}
+                       />
                      </Show>
                    )
                  }}
                </Virtualizer>
              </Show>
              <Show when={hasMore() || isFetchingSessions()}>
-               <div
-                 ref={(el) => setSentinelEl(el)}
-                 class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
-                 data-session-sentinel
-               >
-                 <Show when={isFetchingSessions()}>
-                   <span class="animate-pulse">{t("sessionList.loading.more")}</span>
-                 </Show>
-               </div>
+                <div
+                  ref={(el) => setSentinelEl(el)}
+                  class="session-list-sentinel flex items-center justify-center py-3 text-text-weak text-xs"
+                  data-session-sentinel
+                />
              </Show>
            </div>
          </Show>

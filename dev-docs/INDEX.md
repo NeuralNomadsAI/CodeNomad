@@ -16,6 +16,18 @@ Executive summary of the entire project - **start here!**
 
 **MVP development philosophy** - Focus on functionality, NOT performance ⚡
 
+### [DESKTOP_V2_COMPARISON.md](../DESKTOP_V2_COMPARISON.md)
+
+Incremental comparison with official OpenCode Desktop V2, including parity, closed defects, remaining correctness work, runtime upgrade scope, and optional feature gaps.
+
+### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
+
+Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.
+
+### [DEVELOPER_MODE.md](DEVELOPER_MODE.md)
+
+Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
+
 ---
 
 ## Specification Documents
@@ -50,47 +62,12 @@ Executive summary of the entire project - **start here!**
 
 - File structure
 - TypeScript interfaces
-- Process management logic
-- SDK integration patterns
+- Shared OpenCode service and location ownership
+- Native `@opencode-ai/client` integration
 - IPC communication
 - Error handling strategies
 
-**Read this to understand:** How to actually build it
-
-### [build-roadmap.md](build-roadmap.md)
-
-**Development plan**
-
-- 8 phases of development
-- Task dependencies
-- Timeline estimates
-- Success criteria
-- Risk mitigation
-
-**Read this to understand:** The development journey from start to finish
-
----
-
-## Task Documents
-
-### [tasks/README.md](../tasks/README.md)
-
-**Task management guide**
-
-- Task workflow
-- Naming conventions
-- How to work on tasks
-- Progress tracking
-
-### Task Files (in tasks/todo/)
-
-- **001-project-setup.md** - Electron + SolidJS boilerplate
-- **002-empty-state-ui.md** - Initial UI with folder selection
-- **003-process-manager.md** - OpenCode server spawning
-- **004-sdk-integration.md** - API client integration
-- **005-session-picker-modal.md** - Session selection UI
-
-More tasks will be added as we progress through phases.
+**Read this to understand:** Current implementation boundaries
 
 ---
 
@@ -101,27 +78,17 @@ More tasks will be added as we progress through phases.
 1. [SUMMARY.md](SUMMARY.md) - Get the big picture
 2. [architecture.md](architecture.md) - Understand the structure
 3. [user-interface.md](user-interface.md) - See what you're building
-4. [build-roadmap.md](build-roadmap.md) - Understand the plan
-5. [tasks/README.md](../tasks/README.md) - Learn the workflow
 
 ### For Implementers:
 
-1. [tasks/README.md](../tasks/README.md) - Understand task workflow
-2. [technical-implementation.md](technical-implementation.md) - Implementation patterns
-3. [tasks/todo/001-\*.md](../tasks/todo/) - Start with first task
-4. Refer to architecture.md and user-interface.md as needed
+1. [technical-implementation.md](technical-implementation.md) - Implementation patterns
+2. Refer to architecture.md and user-interface.md as needed
 
 ### For Designers:
 
 1. [user-interface.md](user-interface.md) - Complete UI specs
 2. [architecture.md](architecture.md) - Component structure
 3. [SUMMARY.md](SUMMARY.md) - Feature overview
-
-### For Project Managers:
-
-1. [SUMMARY.md](SUMMARY.md) - Executive overview
-2. [build-roadmap.md](build-roadmap.md) - Timeline and phases
-3. [tasks/README.md](../tasks/README.md) - Task tracking
 
 ---
 
@@ -130,10 +97,7 @@ More tasks will be added as we progress through phases.
 ### Common Questions
 
 **Q: Where do I start?**  
-A: Read [SUMMARY.md](SUMMARY.md), then start [Task 001](../tasks/todo/001-project-setup.md)
-
-**Q: How long will this take?**  
-A: See [build-roadmap.md](build-roadmap.md) - MVP in 3-7 weeks depending on commitment
+A: Read [SUMMARY.md](SUMMARY.md), then [architecture.md](architecture.md) and [technical-implementation.md](technical-implementation.md).
 
 **Q: What does the UI look like?**  
 A: See [user-interface.md](user-interface.md) for complete specifications
@@ -143,38 +107,3 @@ A: See [architecture.md](architecture.md) for system design
 
 **Q: How do I build feature X?**  
 A: See [technical-implementation.md](technical-implementation.md) for patterns
-
-**Q: What's the development plan?**  
-A: See [build-roadmap.md](build-roadmap.md) for phases
-
----
-
-## Document Status
-
-| Document                    | Status      | Last Updated |
-| --------------------------- | ----------- | ------------ |
-| README.md                   | ✅ Complete | 2024-10-22   |
-| SUMMARY.md                  | ✅ Complete | 2024-10-22   |
-| architecture.md             | ✅ Complete | 2024-10-22   |
-| user-interface.md           | ✅ Complete | 2024-10-22   |
-| technical-implementation.md | ✅ Complete | 2024-10-22   |
-| build-roadmap.md            | ✅ Complete | 2024-10-22   |
-| tasks/README.md             | ✅ Complete | 2024-10-22   |
-| Task 001-005                | ✅ Complete | 2024-10-22   |
-
-**Project phase:** Post-MVP (Phases 1-3 complete; Phase 4 work underway).
-
----
-
-## Contributing to Documentation
-
-When updating documentation:
-
-1. Update the relevant file
-2. Update "Last Updated" in this index
-3. Update SUMMARY.md if adding major changes
-4. Keep consistent formatting and style
-
----
-
-_This index will be updated as more documentation is added._

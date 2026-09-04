@@ -5,18 +5,17 @@
  * (`packages/ui/src/stores/permission-auto-accept.ts`) so the inheritance
  * semantics are preserved exactly:
  *   - state is keyed by the resolved *family root* session id
- *   - a session with a `revert` snapshot is treated as its own root (fork)
+ *   - a session with native `fork` metadata is treated as its own root
  *   - enabling any session enables its whole family root and vice-versa
  *
  * This store remains in-memory; AutoAcceptManager hydrates and persists it
- * through OpenCode session metadata.
+ * through CodeNomad's state store.
  */
 
 export interface AutoAcceptSessionInfo {
   id: string
   parentId?: string | null
-  /** Truthy value marks the session as a fork that roots at itself. */
-  revert?: unknown
+  fork?: unknown
 }
 
 type SessionLookup = (sessionId: string) => AutoAcceptSessionInfo | undefined
@@ -36,7 +35,7 @@ export function resolveFamilyRoot(sessionId: string, getSession: SessionLookup):
     const session = getSession(currentId)
     if (!session) return lastKnownId
     lastKnownId = session.id
-    if (session.revert) return session.id
+    if (session.fork) return session.id
     if (!session.parentId) return session.id
     currentId = session.parentId
   }
@@ -88,13 +87,17 @@ export class AutoAcceptStore {
     tree.set(info.id, {
       id: info.id,
       parentId: info.parentId ?? null,
-      revert: info.revert,
+      fork: info.fork,
     })
     this.migrateEnabledRoots(instanceId)
   }
 
   removeSession(instanceId: string, sessionId: string): void {
     this.sessions.get(instanceId)?.delete(sessionId)
+  }
+
+  hasSession(instanceId: string, sessionId: string): boolean {
+    return this.sessions.get(instanceId)?.has(sessionId) ?? false
   }
 
   clearInstance(instanceId: string): void {
@@ -114,7 +117,7 @@ export class AutoAcceptStore {
 
   /**
    * Re-resolves every enabled family root for an instance after the session
-   * tree changes (new session, updated parent/revert). If a root now resolves
+   * tree changes (new session or discovered fork). If a root now resolves
    * to a different id, the enabled entry is migrated so toggles survive late
    * ancestry discovery.
    */

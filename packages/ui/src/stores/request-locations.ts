@@ -1,30 +1,38 @@
-export type V2Location = {
+import type { LocationGetInput, LocationRef } from "@opencode-ai/client"
+
+export type RequestLocation = NonNullable<LocationGetInput["location"]>
+
+type RequestLocationWorktree = {
   directory?: string
-  workspace?: string
+  workspaceID?: string
 }
 
-export type V2RequestLocationWorktree = {
-  slug?: string
+export function createRequestLocation(directory?: string): RequestLocation {
+  return directory ? { directory } : {}
+}
+
+export function toRequestLocation(location: LocationRef): RequestLocation {
+  return {
+    directory: location.directory,
+    ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
+  }
 }
 
 export function buildV2RequestLocations(
   directory: string | undefined,
-  worktrees: V2RequestLocationWorktree[],
-  workspaceBySlug: Map<string, string>,
-): V2Location[] {
-  const rootLocation: V2Location = directory ? { directory } : {}
-  const locations: V2Location[] = [rootLocation]
-  const seen = new Set([JSON.stringify(rootLocation)])
+  worktrees: RequestLocationWorktree[],
+): RequestLocation[] {
+  const locations = [createRequestLocation(directory)]
+  const seen = new Set(directory ? [`${directory}\0`] : [])
 
   for (const worktree of worktrees) {
-    if (!worktree.slug || worktree.slug === "root") continue
-    const workspace = workspaceBySlug.get(worktree.slug)
-    if (!workspace) continue
-    const location: V2Location = { ...rootLocation, workspace }
-    const key = JSON.stringify(location)
-    if (seen.has(key)) continue
+    const worktreeDirectory = worktree.directory?.trim()
+    const key = `${worktreeDirectory}\0${worktree.workspaceID ?? ""}`
+    if (!worktreeDirectory || seen.has(key)) continue
     seen.add(key)
-    locations.push(location)
+    locations.push(worktree.workspaceID
+      ? { directory: worktreeDirectory, workspace: worktree.workspaceID }
+      : createRequestLocation(worktreeDirectory))
   }
 
   return locations

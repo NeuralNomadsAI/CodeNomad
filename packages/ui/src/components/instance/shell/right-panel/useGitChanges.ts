@@ -1,15 +1,14 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
-import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
 import { getRootClient } from "../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
-import { requestData } from "../../../../lib/opencode-api"
+import { instances } from "../../../../stores/instances"
+import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
-import { serverEvents } from "../../../../lib/server-events"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
 
 type UseGitChangesOptions = {
   t: (key: string, vars?: Record<string, any>) => string
@@ -39,8 +38,16 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let passiveGitRefreshInFlight = false
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let previousGitChangesActivationKey: string | null = null
+  let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+
+  const gitLocation = (slug: string) => {
+    const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
+      ?? (slug === "root" ? instances().get(options.instanceId)?.folder : undefined)
+    if (!directory) throw new Error(`Missing directory for worktree ${slug}`)
+    return { directory }
+  }
 
   const clearGitBulkSelection = () => {
     setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
@@ -168,12 +175,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (!force && gitStatusEntries() !== null) return
     const slug = options.worktreeSlug()
     const client = getRootClient(options.instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, slug)
     const requestVersion = ++gitStatusRequestVersion
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status({ ...(workspace ? { workspace } : {}) }), "file.status")
+      const sdkStatusPromise = client.vcs.status({ location: gitLocation(slug) }).then((result) => result.data)
       const detailList = await serverApi.fetchWorktreeGitStatus(options.instanceId, slug)
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== options.worktreeSlug()) return
@@ -424,21 +430,15 @@ export function useGitChanges(options: UseGitChangesOptions) {
     void passiveRefreshGitStatus()
   })
 
+  const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {
-    if (options.rightPanelTab() !== "git-changes") return
-
-    const unsubscribe = serverEvents.on("instance.event", (event) => {
-      if (event.type !== "instance.event") return
-      if (event.instanceId !== options.instanceId) return
-      const eventType = (event.event as { type?: unknown } | undefined)?.type
-      if (eventType !== "session.updated") return
-      void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
-    })
-
-    onCleanup(() => {
-      unsubscribe()
-    })
+    const version = filesystemInvalidationVersion(options.instanceId)
+    if (version === seenFilesystemInvalidation) return
+    seenFilesystemInvalidation = version
+    if (options.rightPanelTab() === "git-changes") filesystemRefresh.trigger()
+    else setGitStatusEntries(null)
   })
+  onCleanup(() => filesystemRefresh.cancel())
 
   createEffect(() => {
     if (options.rightPanelTab() === "git-changes") return

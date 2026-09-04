@@ -30,8 +30,8 @@ type HomeTab = "local" | "servers"
 
 
 interface FolderSelectionViewProps {
-  onSelectFolder: (folder: string, binaryPath?: string, options?: { forceNew?: boolean }) => void
-  onSelectExistingInstance: (instanceId: string, recentPath: string, binaryPath: string) => void
+  onSelectFolder: (folder: string) => void
+  onSelectExistingInstance: (instanceId: string, recentPath: string) => void
   onOpenSidecar?: () => void
   isLoading?: boolean
   onClose?: () => void
@@ -42,7 +42,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     recentFolders,
     removeRecentFolder,
     renameRecentFolderProject,
-    serverSettings,
   } = useConfig()
   const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const { t } = useI18n()
@@ -50,7 +49,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
   const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
-  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
   const [isFolderBrowserOpen, setIsFolderBrowserOpen] = createSignal(false)
   const [isCloneDialogOpen, setIsCloneDialogOpen] = createSignal(false)
   const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
@@ -75,14 +73,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   function getActiveListLength() {
     return activeTab() === "local" ? folders().length : serverList().length
   }
-
-  // Update selected binary when preferences change
-  createEffect(() => {
-    const lastUsed = serverSettings().opencodeBinary
-    if (!lastUsed) return
-    setSelectedBinary((current) => (current === lastUsed ? current : lastUsed))
-  })
-
 
   function scrollToIndex(index: number) {
     const container = recentListRef
@@ -189,7 +179,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (activeTab() === "local") {
       const folder = folders()[index]
       if (folder) {
-        handleFolderSelect(folder.path, true)
+        handleFolderSelect(folder.path)
       }
       return
     }
@@ -289,14 +279,14 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     return t("time.relative.justNow")
   }
 
-  function handleFolderSelect(path: string, forceNew = false) {
+  function handleFolderSelect(path: string) {
     if (isLoading()) return
-    props.onSelectFolder(path, selectedBinary(), forceNew ? { forceNew: true } : undefined)
+    props.onSelectFolder(path)
   }
 
   function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
     if (isLoading()) return
-    props.onSelectExistingInstance(instanceId, recentPath, selectedBinary())
+    props.onSelectExistingInstance(instanceId, recentPath)
   }
 
   function setRecentActionHovered(path: string, active: boolean) {
@@ -810,8 +800,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     class="folder-home-recent-primary-action"
                                     disabled={isLoading()}
                                     aria-labelledby={projectLabelId()}
-                                    title={t("folderSelection.recent.openNewInstance")}
-                                    onClick={() => handleFolderSelect(folder.path, true)}
+                                    onClick={() => handleFolderSelect(folder.path)}
                                     onFocus={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())

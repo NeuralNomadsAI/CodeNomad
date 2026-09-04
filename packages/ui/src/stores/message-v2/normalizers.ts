@@ -1,4 +1,6 @@
 import { decodeHtmlEntities } from "../../lib/text-render-utils"
+import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { ClientPart, Message, MessageInfo } from "../../types/message"
 
 function decodeTextSegment(segment: any): any {
   if (typeof segment === "string") {
@@ -35,7 +37,7 @@ export function normalizeMessagePart(part: any): any {
     throw new Error("Tool part missing id")
   }
 
-  if (part.type !== "text") {
+  if (part.type !== "text" && part.type !== "reasoning") {
     return part
   }
 
@@ -74,5 +76,143 @@ export function normalizeMessagePart(part: any): any {
   }
 
   return normalized
+}
+
+export interface NormalizedSessionMessage {
+  message: Message
+  info: MessageInfo
+}
+
+function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
+  return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
+}
+
+function normalizeStatus(source: SessionMessageInfo): Message["status"] {
+  if (source.type === "assistant") {
+    if (source.error) return "error"
+    return source.time.completed ? "complete" : "streaming"
+  }
+  if (source.type === "compaction") return source.status === "failed" ? "error" : source.status === "running" ? "sent" : "complete"
+  if (source.type === "shell") {
+    if (source.status === "running") return "sent"
+    return source.status === "exited" && (source.exit === undefined || source.exit === 0) ? "complete" : "error"
+  }
+  return "complete"
+}
+
+function toolOutput(content: unknown): unknown {
+  if (!Array.isArray(content)) return content
+  const text = content
+    .filter((item): item is { type: "text"; text: string } => item?.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n")
+  return text || content
+}
+
+export function normalizeSessionMessage(sessionId: string, source: SessionMessageInfo): NormalizedSessionMessage {
+  const assistant = source.type === "assistant" ? source : undefined
+  const role: MessageInfo["role"] = source.type === "user" ? "user" : "assistant"
+  const info: MessageInfo = {
+    id: source.id,
+    sessionID: sessionId,
+    role,
+    time: source.time,
+    ...(assistant
+      ? {
+          mode: assistant.agent,
+          agent: assistant.agent,
+          providerID: assistant.model?.providerID,
+          modelID: assistant.model?.id,
+          variant: assistant.model?.variant,
+          cost: assistant.cost,
+          tokens: assistant.tokens,
+          error: assistant.error ? structuredError(assistant.error) : undefined,
+        }
+      : {}),
+    ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
+    ...(source.type === "user" ? { text: source.text } : {}),
+  }
+
+  let parts: ClientPart[]
+  if (source.type === "assistant") {
+    parts = source.content.map((part, index) => {
+      if (part.type !== "tool") {
+        return normalizeMessagePart({
+          ...part,
+          id: `${source.id}-${part.type}-${index}`,
+          sessionID: sessionId,
+          messageID: source.id,
+        }) as ClientPart
+      }
+      const state = part.state
+      const normalizedState = state.status === "streaming"
+        ? { status: "pending" as const }
+        : {
+            ...state,
+            ...(state.status === "completed" ? { output: toolOutput(state.content) } : {}),
+            ...(state.status === "error" ? { error: state.error.message } : {}),
+          }
+      return {
+        id: part.id,
+        type: "tool",
+        tool: part.name,
+        callID: part.id,
+        sessionID: sessionId,
+        messageID: source.id,
+        time: part.time,
+        state: normalizedState,
+      } as unknown as ClientPart
+    })
+    if (parts.length === 0 && source.error) {
+      parts = [normalizeMessagePart({
+        id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id,
+      }) as ClientPart]
+    }
+  } else if (source.type === "user") {
+    parts = [
+      normalizeMessagePart({ id: `${source.id}-text`, type: "text", text: source.text, sessionID: sessionId, messageID: source.id }),
+      ...(source.files ?? []).map((file, index) => ({
+        id: `${source.id}-file-${index}`,
+        type: "file" as const,
+        url: file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`,
+        mime: file.mime,
+        filename: file.name,
+        sessionID: sessionId,
+        messageID: source.id,
+      } as ClientPart)),
+    ]
+  } else if (source.type === "compaction") {
+    parts = [{
+      id: source.id,
+      type: "compaction",
+      auto: source.reason === "auto",
+      text: "summary" in source ? source.summary : source.error.message,
+      sessionID: sessionId,
+      messageID: source.id,
+    } as ClientPart]
+  } else {
+    const text = "text" in source ? source.text : source.type === "shell" ? source.output?.output ?? source.command : source.type
+    parts = [normalizeMessagePart({
+      id: source.id,
+      type: "text",
+      text,
+      synthetic: source.type !== "system",
+      sessionID: sessionId,
+      messageID: source.id,
+    }) as ClientPart]
+  }
+
+  return {
+    info,
+    message: {
+      id: source.id,
+      sessionId,
+      type: role,
+      parts,
+      timestamp: source.time.created,
+      status: normalizeStatus(source),
+      version: 0,
+    },
+  }
 }
 

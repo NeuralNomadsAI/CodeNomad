@@ -44,8 +44,8 @@ export const readRenderer: ToolRenderer = {
   getOutputChrome({ toolState }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
-    const { metadata, input } = readToolStatePayload(state)
-    const preview = typeof metadata.preview === "string" ? metadata.preview : null
+    const { output, input } = readToolStatePayload(state)
+    const preview = typeof output === "string" ? output : null
     if (!preview) return undefined
     const language = inferLanguageFromPath(getReadPath(input)) ?? "text"
     return { language, copyText: preview, wrapToggle: true, suppressInnerHeader: true }
@@ -53,8 +53,8 @@ export const readRenderer: ToolRenderer = {
   renderBody({ toolState, renderMarkdown }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
-    const { metadata, input } = readToolStatePayload(state)
-    const preview = typeof metadata.preview === "string" ? metadata.preview : null
+    const { output, input } = readToolStatePayload(state)
+    const preview = typeof output === "string" ? output : null
     const language = inferLanguageFromPath(getReadPath(input))
     const content = ensureMarkdownContent(preview, language, true)
     if (!content) return null

@@ -1,39 +1,34 @@
-// SDK v2 types
 import type {
-  EventMessageUpdated as MessageUpdateEvent,
-  EventMessageRemoved as MessageRemovedEvent,
-  EventMessagePartUpdated as MessagePartUpdatedEvent,
-  EventMessagePartRemoved as MessagePartRemovedEvent,
-  Part as SDKPart,
-  Message as SDKMessage,
-  AssistantMessage as SDKAssistantMessageV2,
-} from "@opencode-ai/sdk/v2"
+  SessionStructuredError,
+} from "@opencode-ai/client"
 
 import type { PermissionRequest } from "./permission"
+import type { ToolState } from "./tool-state"
 
-// Re-export for other modules
-export type {
-  MessageUpdateEvent,
-  MessageRemovedEvent,
-  MessagePartUpdatedEvent,
-  MessagePartRemovedEvent,
-  SDKPart,
-  SDKMessage,
-  SDKAssistantMessageV2,
+interface PartBase {
+  id?: string
+  sessionID?: string
+  messageID?: string
+  synthetic?: boolean
+  [key: string]: unknown
 }
 
-// Server streaming event: append-only delta updates.
-// Emitted over SSE by newer OpenCode builds.
-export interface MessagePartDeltaEvent {
-  type: "message.part.delta"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
-    field: string
-    delta: string
-  }
-}
+interface TextMessagePart extends PartBase { type: "text"; text: string }
+interface ReasoningMessagePart extends PartBase { type: "reasoning"; text: string }
+interface FileMessagePart extends PartBase { type: "file"; filename?: string }
+interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?: ToolState }
+interface CompactionMessagePart extends PartBase { type: "compaction" }
+interface StepStartMessagePart extends PartBase { type: "step-start" }
+interface StepFinishMessagePart extends PartBase { type: "step-finish" }
+
+export type NormalizedMessagePart =
+  | TextMessagePart
+  | ReasoningMessagePart
+  | FileMessagePart
+  | ToolMessagePart
+  | CompactionMessagePart
+  | StepStartMessagePart
+  | StepFinishMessagePart
 
 export interface RenderCache {
   text: string
@@ -48,8 +43,8 @@ export interface PendingPermissionState {
   active: boolean
 }
 
-// Client-specific part extensions (using intersection type since SDKPart is a union)
-export type ClientPart = SDKPart & {
+// Client-specific extensions on the normalized part union.
+export type ClientPart = NormalizedMessagePart & {
   sessionID?: string
   messageID?: string
   synthetic?: boolean
@@ -76,7 +71,33 @@ export interface TextPart {
   renderCache?: RenderCache
 }
 
-export type MessageInfo = SDKMessage
+export interface MessageInfo {
+  id: string
+  sessionID: string
+  role: "user" | "assistant"
+  time: {
+    created: number
+    completed?: number
+  }
+  mode?: string
+  agent?: string
+  providerID?: string
+  modelID?: string
+  variant?: string
+  cost?: number
+  tokens?: {
+    input?: number
+    output?: number
+    reasoning?: number
+    cache?: { read?: number; write?: number }
+  }
+  error?: (SessionStructuredError & {
+    name?: string
+    data?: { message?: string }
+  }) | null
+  summary?: boolean
+  text?: string
+}
 
 export function isHiddenSyntheticTextPart(part: ClientPart): boolean {
   return Boolean(part && part.type === "text" && part.synthetic)
@@ -103,21 +124,19 @@ export function partHasRenderableText(part: ClientPart): boolean {
     return false
   }
 
-  const typedPart = part as SDKPart
-  
-  if (typedPart.type === "text" && hasTextSegment(typedPart.text)) {
+  if (part.type === "text" && hasTextSegment(part.text)) {
     return true
   }
 
-  if (typedPart.type === "file" && (typedPart as any).filename) {
+  if (part.type === "file" && part.filename) {
     return true
   }
 
-  if (typedPart.type === "tool") {
+  if (part.type === "tool") {
     return true // Tool parts are always renderable
   }
 
-  if (typedPart.type === "reasoning" && hasTextSegment(typedPart.text)) {
+  if (part.type === "reasoning" && hasTextSegment(part.text)) {
     return true
   }
 

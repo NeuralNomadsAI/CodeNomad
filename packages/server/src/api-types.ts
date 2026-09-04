@@ -6,6 +6,7 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
+import type { OpenCodeEvent } from "@opencode-ai/client"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -40,9 +41,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
-  binaryPath?: string
   requestId?: string
-  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -56,7 +55,7 @@ export interface WorkspaceCloneResponse {
 }
 
 export type WorkspaceCreateResponse = WorkspaceDescriptor & {
-  /** True when an active workspace with the same canonical path was returned. */
+  /** True when this request did not own creation of the returned workspace. */
   reused?: true
 }
 export type WorkspaceListResponse = WorkspaceDescriptor[]
@@ -109,14 +108,6 @@ export interface WorktreeCreateRequest {
   slug: string
   /** Optional branch name (defaults to slug). */
   branch?: string
-}
-
-export interface WorktreeMap {
-  version: 1
-  /** Default worktree to use for new sessions and as fallback. */
-  defaultWorktreeSlug: string
-  /** Mapping of *parent* session IDs to a worktree slug. */
-  parentSessionWorktreeSlug: Record<string, string>
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
@@ -287,11 +278,7 @@ export interface InstanceData {
 
 export type InstanceStreamStatus = "connecting" | "connected" | "error" | "disconnected"
 
-export interface InstanceStreamEvent {
-  type: string
-  properties?: Record<string, unknown>
-  [key: string]: unknown
-}
+export type InstanceStreamEvent = OpenCodeEvent
 
 export type SideCarKind = "port"
 
@@ -407,16 +394,8 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
-export interface VoiceModeStateResponse {
-  enabled: boolean
-}
-
 export interface YoloStateResponse {
   enabled: boolean
-}
-
-export interface SessionMetadataResponse {
-  metadata: Record<string, unknown>
 }
 
 export interface RemoteServerProfile {
@@ -483,7 +462,7 @@ export type WorkspaceEventPayload =
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
-  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 
@@ -543,37 +522,6 @@ export interface ServerMeta {
   support?: SupportMeta
   /** Optional update info (dev channel only). */
   update?: LatestReleaseInfo | null
-}
-
-export type BackgroundProcessStatus = "running" | "stopped" | "error"
-
-export type BackgroundProcessTerminalReason = "finished" | "failed" | "user_stopped" | "user_terminated"
-
-export interface BackgroundProcess {
-  id: string
-  workspaceId: string
-  title: string
-  command: string
-  cwd: string
-  status: BackgroundProcessStatus
-  pid?: number
-  startedAt: string
-  stoppedAt?: string
-  exitCode?: number
-  outputSizeBytes?: number
-  terminalReason?: BackgroundProcessTerminalReason
-  notifyEnabled?: boolean
-}
-
-export interface BackgroundProcessListResponse {
-  processes: BackgroundProcess[]
-}
-
-export interface BackgroundProcessOutputResponse {
-  id: string
-  content: string
-  truncated: boolean
-  sizeBytes: number
 }
 
 export type {

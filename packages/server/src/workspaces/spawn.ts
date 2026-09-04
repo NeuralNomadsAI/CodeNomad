@@ -1,5 +1,5 @@
-import { spawnSync } from "child_process"
-import { statSync } from "fs"
+import { execFile, spawnSync } from "child_process"
+import { readFileSync, statSync } from "fs"
 import path from "path"
 
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
@@ -7,51 +7,25 @@ export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
 const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
-const CODENOMAD_PLUGIN_PACKAGE_NAME = "@codenomad/codenomad-opencode-plugin"
-const WSL_PLUGIN_PATH_ENV = "CODENOMAD_OPENCODE_PLUGIN_WSL_PATH"
-const WSL_PLUGIN_PATH_PLACEHOLDER = "__CODENOMAD_OPENCODE_PLUGIN_WSL_PATH__"
-const CODENOMAD_PLUGIN_FILE_SPEC_REGEX = new RegExp(
-  `(${escapeRegex(CODENOMAD_PLUGIN_PACKAGE_NAME)}@file:)([A-Za-z]:[^"\\r\\n]+?\\.tgz)`,
-)
-const WSL_PATH_ENV_KEYS = new Set(["NODE_EXTRA_CA_CERTS", WSL_PLUGIN_PATH_ENV])
-const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"])
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
-const WINDOWS_SHELL_NAMES = new Set([
-  "bash",
-  "bash.exe",
-  "cmd",
-  "cmd.exe",
-  "command.com",
-  "powershell",
-  "powershell.exe",
-  "pwsh",
-  "pwsh.exe",
-  "sh",
-  "sh.exe",
-])
-
-export type SpawnProcessKind = "posix" | "windows-direct" | "windows-wrapper" | "wsl"
 
 export interface SpawnSpec {
   command: string
   args: string[]
-  processKind: SpawnProcessKind
   options: {
     windowsVerbatimArguments?: boolean
   }
   cwd?: string
   env?: NodeJS.ProcessEnv
-  wsl?: {
-    distro: string
-    pidMarker?: string
-  }
 }
+
+export type ServiceLaunchSpec =
+  | { kind: "host"; binary: string; platform: NodeJS.Platform }
+  | { kind: "wsl"; distro: string; binary: string }
 
 interface BuildSpawnSpecOptions {
   cwd?: string
   env?: NodeJS.ProcessEnv
-  propagateEnvKeys?: string[]
-  wslPidMarker?: string
   platform?: NodeJS.Platform
 }
 
@@ -97,7 +71,8 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return buildWslSpawnSpec(wslPath, args, options)
   }
 
-  const resolvedBinaryPath = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedCommand = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
+  const resolvedBinaryPath = resolveWindowsNpmExecutable(resolvedCommand) ?? resolvedCommand
   const extension = path.win32.extname(resolvedBinaryPath).toLowerCase()
 
   if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
@@ -111,7 +86,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return {
       command: comspec,
       args: ["/d", "/s", "/c", commandLine],
-      processKind: "windows-wrapper",
       options: { windowsVerbatimArguments: true },
       cwd: options.cwd,
       env: options.env,
@@ -123,7 +97,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
     return {
       command: "powershell.exe",
       args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolvedBinaryPath, ...args],
-      processKind: "windows-wrapper",
       options: {},
       cwd: options.cwd,
       env: options.env,
@@ -133,7 +106,6 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
   return {
     command: resolvedBinaryPath,
     args,
-    processKind: classifyWindowsCommand(resolvedBinaryPath),
     options: {},
     cwd: options.cwd,
     env: options.env,
@@ -145,7 +117,6 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
     return {
       command: binaryPath,
       args,
-      processKind: "posix",
       options: {},
       cwd: options.cwd,
       env: options.env,
@@ -153,6 +124,53 @@ export function buildSpawnSpec(binaryPath: string, args: string[], options: Buil
   }
 
   return buildWindowsSpawnSpec(binaryPath, args, options)
+}
+
+export function resolveWslServiceDirectory(
+  folder: string,
+  distro: string,
+  translateWindowsPath: (folder: string, distro: string, timeoutMs: number) => string | undefined | Promise<string | undefined> =
+    (windowsFolder, wslDistro, timeoutMs) => translateWslPath(["-au", windowsFolder], wslDistro, timeoutMs),
+  timeoutMs = 5_000,
+): Promise<string | null> {
+  const directory = resolveWslWorkingDirectory(folder, distro)
+  if (!directory) return Promise.resolve(null)
+  if (directory.kind === "linux") return Promise.resolve(directory.path)
+  return Promise.resolve(translateWindowsPath(directory.path, distro, Math.max(1, timeoutMs)))
+    .then((translated) => translated?.trim() || null)
+}
+
+export function resolveWslHostDirectory(
+  folder: string,
+  distro: string,
+  translateLinuxPath: (folder: string, distro: string, timeoutMs: number) => string | undefined | Promise<string | undefined> =
+    (linuxFolder, wslDistro, timeoutMs) => translateWslPath(["-aw", linuxFolder], wslDistro, timeoutMs),
+  timeoutMs = 5_000,
+): Promise<string | null> {
+  if (!path.posix.isAbsolute(folder)) return Promise.resolve(null)
+  return Promise.resolve(translateLinuxPath(folder, distro, Math.max(1, timeoutMs)))
+    .then((translated) => translated?.trim() || null)
+}
+
+function translateWslPath(args: string[], distro: string, timeoutMs: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile("wsl.exe", ["--distribution", distro, "--exec", "wslpath", ...args], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    }, (error, stdout) => resolve(error ? undefined : stdout.trim()))
+  })
+}
+
+export function buildServiceLaunchSpec(
+  binaryPath: string,
+  options: BuildSpawnSpecOptions = {},
+): ServiceLaunchSpec {
+  const platform = options.platform ?? process.platform
+  const wslPath = platform === "win32" ? parseWslUncPath(binaryPath) : null
+  if (wslPath) return { kind: "wsl", distro: wslPath.distro, binary: wslPath.linuxPath }
+  return { kind: "host", binary: binaryPath, platform }
 }
 
 export function probeBinaryVersion(binaryPath: string): {
@@ -211,8 +229,6 @@ export function probeBinaryVersion(binaryPath: string): {
 
 function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawnSpecOptions): SpawnSpec {
   const workingDirectory = options.cwd ? resolveWslWorkingDirectory(options.cwd, wslPath.distro) : undefined
-  const env = buildWslEnvironment(options.env, options.propagateEnvKeys)
-  const shouldTranslatePluginPath = Boolean(env?.[WSL_PLUGIN_PATH_ENV])
   if (options.cwd && !workingDirectory) {
     throw new Error(
       `Unable to translate workspace folder for WSL binary in distro "${wslPath.distro}": ${options.cwd}`,
@@ -220,14 +236,14 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   }
 
   const wslArgs = ["--distribution", wslPath.distro]
-  const shouldWrapWithShell = Boolean(options.wslPidMarker) || workingDirectory?.kind === "windows" || shouldTranslatePluginPath
+  const shouldWrapWithShell = workingDirectory?.kind === "windows"
 
   if (!shouldWrapWithShell && workingDirectory?.kind === "linux") {
     wslArgs.push("--cd", workingDirectory.path)
   }
 
   if (shouldWrapWithShell) {
-    const launchScript = buildWslLaunchScript(workingDirectory ?? undefined, options.wslPidMarker, shouldTranslatePluginPath)
+    const launchScript = buildWslLaunchScript(workingDirectory)
     wslArgs.push(
       "--exec",
       "sh",
@@ -249,27 +265,9 @@ function buildWslSpawnSpec(wslPath: WslPath, args: string[], options: BuildSpawn
   return {
     command: "wsl.exe",
     args: wslArgs,
-    processKind: "wsl",
     options: {},
-    env,
-    wsl: { distro: wslPath.distro, pidMarker: options.wslPidMarker },
+    env: options.env,
   }
-}
-
-function classifyWindowsCommand(binaryPath: string): SpawnProcessKind {
-  const commandName = path.win32.basename(binaryPath).toLowerCase()
-  if (WINDOWS_SHELL_NAMES.has(commandName)) {
-    return "windows-wrapper"
-  }
-
-  const extension = path.win32.extname(binaryPath).toLowerCase()
-  if (extension) {
-    return WINDOWS_DIRECT_EXTENSIONS.has(extension) ? "windows-direct" : "windows-wrapper"
-  }
-
-  // Bare commands can resolve to npm/script shims, so keep them on the
-  // wrapper path. That path owns cleanup without requiring process discovery.
-  return "windows-wrapper"
 }
 
 function resolveBareWindowsCommand(binaryPath: string, options: BuildSpawnSpecOptions): string | null {
@@ -316,18 +314,8 @@ function unquoteWindowsPathEntry(entry: string): string {
     : trimmed
 }
 
-function buildWslLaunchScript(
-  workingDirectory: WslWorkingDirectory | undefined,
-  pidMarker: string | undefined,
-  translatePluginPath: boolean,
-): string {
+function buildWslLaunchScript(workingDirectory: WslWorkingDirectory | undefined): string {
   const steps: string[] = []
-
-  if (pidMarker) {
-    steps.push(
-      `codenomad_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]'); codenomad_start=$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null); codenomad_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null); test -n "$codenomad_pgid" && test -n "$codenomad_start" && test -n "$codenomad_boot" && printf '%s%s:%s:%s:%s\\n' '${pidMarker}' "$$" "$codenomad_pgid" "$codenomad_start" "$codenomad_boot"`,
-    )
-  }
 
   if (workingDirectory?.kind === "linux") {
     steps.push('cd "$1"')
@@ -337,14 +325,22 @@ function buildWslLaunchScript(
     steps.push("shift")
   }
 
-  if (translatePluginPath) {
-    steps.push(
-      `if [ -n "$${WSL_PLUGIN_PATH_ENV}" ] && [ -n "$OPENCODE_CONFIG_CONTENT" ]; then escaped_plugin_path=$(printf '%s' "$${WSL_PLUGIN_PATH_ENV}" | sed 's/[\\&|]/\\\\&/g'); OPENCODE_CONFIG_CONTENT=$(printf '%s' "$OPENCODE_CONFIG_CONTENT" | sed "s|${WSL_PLUGIN_PATH_PLACEHOLDER}|$escaped_plugin_path|g"); export OPENCODE_CONFIG_CONTENT; unset ${WSL_PLUGIN_PATH_ENV}; fi`,
-    )
-  }
-
   steps.push('exec "$@"')
   return steps.join(" && ")
+}
+
+function resolveWindowsNpmExecutable(command: string): string | null {
+  if (!WINDOWS_CMD_EXTENSIONS.has(path.win32.extname(command).toLowerCase())) return null
+  try {
+    const script = readFileSync(command, "utf8")
+    if (script.length > 64 * 1024) return null
+    const match = script.match(/["'](?:%~dp0|%dp0%)[\\/]([^"'\r\n]+\.exe)["']\s+%\*/i)
+    if (!match?.[1]) return null
+    const executable = path.win32.resolve(path.win32.dirname(command), match[1])
+    return statSync(executable).isFile() ? executable : null
+  } catch {
+    return null
+  }
 }
 
 function normalizeWindowsPath(input: string): string | null {
@@ -358,71 +354,4 @@ function normalizeWindowsPath(input: string): string | null {
   }
 
   return null
-}
-
-function buildWslEnvironment(env: NodeJS.ProcessEnv | undefined, propagateEnvKeys: string[] | undefined): NodeJS.ProcessEnv | undefined {
-  if (!env) {
-    return env
-  }
-
-  const next = { ...env }
-  rewriteOpencodePluginPathForWsl(next)
-
-  const keysToPropagate = Array.from(
-    new Set([
-      ...(propagateEnvKeys ?? []).filter((key) => next[key] !== undefined),
-      ...Array.from(WSL_PATH_ENV_KEYS).filter((key) => next[key] !== undefined),
-    ]),
-  )
-  if (keysToPropagate.length === 0) {
-    return next
-  }
-
-  const entries = (next.WSLENV ?? "").split(":").filter((entry) => entry.length > 0)
-  const byName = new Map(entries.map((entry) => [entry.split("/")[0] ?? entry, entry]))
-
-  for (const key of keysToPropagate) {
-    const existingEntry = byName.get(key)
-    if (existingEntry) {
-      byName.set(key, ensureWslenvEntry(existingEntry, WSL_PATH_ENV_KEYS.has(key)))
-      continue
-    }
-    byName.set(key, WSL_PATH_ENV_KEYS.has(key) ? `${key}/p` : key)
-  }
-
-  next.WSLENV = Array.from(byName.values()).join(":")
-  return next
-}
-
-function rewriteOpencodePluginPathForWsl(env: NodeJS.ProcessEnv) {
-  const content = env.OPENCODE_CONFIG_CONTENT
-  if (!content) {
-    return
-  }
-
-  const match = content.match(CODENOMAD_PLUGIN_FILE_SPEC_REGEX)
-  const hostPath = match?.[2]
-  if (!hostPath) {
-    return
-  }
-
-  env.OPENCODE_CONFIG_CONTENT = content.replace(hostPath, WSL_PLUGIN_PATH_PLACEHOLDER)
-  env[WSL_PLUGIN_PATH_ENV] = path.win32.normalize(hostPath)
-}
-
-function ensureWslenvEntry(entry: string, requiresPathTranslation: boolean): string {
-  if (!requiresPathTranslation) {
-    return entry
-  }
-
-  const [name, rawFlags = ""] = entry.split("/")
-  if (rawFlags.includes("p")) {
-    return entry
-  }
-
-  return rawFlags.length > 0 ? `${name}/${rawFlags}p` : `${name}/p`
-}
-
-function escapeRegex(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

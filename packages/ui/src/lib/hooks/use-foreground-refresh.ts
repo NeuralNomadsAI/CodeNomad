@@ -41,7 +41,6 @@ export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
       }
       controller.handle(status)
     })
-
     onCleanup(() => {
       controller.dispose()
       unsubscribe()

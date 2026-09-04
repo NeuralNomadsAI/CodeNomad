@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../types/tool-state"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
@@ -154,18 +154,20 @@ export function createDiffContentRenderer(params: {
             </button>
             <button
               type="button"
-              class="file-viewer-toolbar-icon-button"
+              class="file-viewer-toolbar-icon-button icon-toggle"
               onClick={() => handleModeChange(nextViewMode())}
               aria-label={viewModeTitle()}
+              aria-pressed={currentMode() === "split"}
               title={viewModeTitle()}
             >
               {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
             </button>
             <button
               type="button"
-              class={`file-viewer-toolbar-icon-button${wordWrapEnabled() ? " active" : ""}`}
+              class="file-viewer-toolbar-icon-button icon-toggle"
               onClick={() => setWordWrapEnabled((enabled) => !enabled)}
               aria-label={wordWrapTitle()}
+              aria-pressed={wordWrapEnabled()}
               title={wordWrapTitle()}
             >
               <WrapText class="h-4 w-4" aria-hidden="true" />

@@ -1,53 +1,48 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { CheckSquare2, Copy, ListStart, Split, Square, Trash, Undo, Volume2 } from "lucide-solid"
-import type { MessageInfo, ClientPart, SDKAssistantMessageV2 } from "../types/message"
+import { Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import type { SessionInboxUser } from "@opencode-ai/client"
+import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
-import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage } from "../stores/session-actions"
 import { isTauriHost } from "../lib/runtime-env"
-import type { DeleteHoverState } from "../types/delete-hover"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
-
-function DeleteUpToIcon() {
-  return (
-    <span class="relative inline-block w-3.5 h-3.5" aria-hidden="true">
-      <ListStart class="absolute inset-0 w-3.5 h-3.5" aria-hidden="true" />
-    </span>
-  )
-}
+import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
+import { deleteMessageTechnicalParts } from "../stores/session-actions"
+import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
+import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
 
 interface MessageItemProps {
   record: MessageRecord
   messageInfo?: MessageInfo
   instanceId: string
   sessionId: string
-  isQueued?: boolean
   parts: ClientPart[]
   onRevert?: (messageId: string) => void
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
+  pendingPrompt?: SessionInboxUser
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
   showAgentMeta?: boolean
   contentStartPartId?: string
+  showTechnicalCleanup?: boolean
+  technicalCleanupParts: () => TechnicalCleanupPart[]
+  onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
-  showDeleteMessage?: boolean
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
 }
 
 export default function MessageItem(props: MessageItemProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [copied, setCopied] = createSignal(false)
-  const [deletingMessage, setDeletingMessage] = createSignal(false)
-  const [deletingUpTo, setDeletingUpTo] = createSignal(false)
+  const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
   type ImagePreviewState = {
     url: string
@@ -100,8 +95,6 @@ export default function MessageItem(props: MessageItemProps) {
     })
   })
 
-  const isSelectedForDeletion = () => Boolean(props.selectedMessageIds?.().has(props.record.id))
-
   let topRowEl: HTMLDivElement | undefined
   let actionsEl: HTMLDivElement | undefined
   let speakerPrimaryEl: HTMLDivElement | undefined
@@ -141,12 +134,20 @@ export default function MessageItem(props: MessageItemProps) {
   })
 
   const isUser = () => props.record.role === "user"
+  const userMenuState = () => getUserMessageMenuState(props.record.status, props.pendingPrompt?.delivery)
+  const canUseHistoryActions = () => !isUser() || userMenuState() === "history"
   const createdTimestamp = () => getMessageStartedAt(props.messageInfo, props.record.createdAt) ?? props.record.createdAt
   const totalDuration = () => getMessageDurationMs(props.messageInfo, props.record.status, props.record.createdAt)
 
   const timestamp = () => {
     const date = new Date(createdTimestamp())
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    return date.toLocaleString(locale(), {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
   }
 
   const timestampIso = () => new Date(createdTimestamp()).toISOString()
@@ -280,18 +281,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const isGenerating = () => {
-    if (hasContent()) {
-      return false
-    }
-
-    // Prefer the local record status for streaming placeholders.
-    if (!isUser() && props.record.status === "streaming") {
-      return true
-    }
-
-    const info = props.messageInfo
-    const timeInfo = info?.time as { created: number; end?: number } | undefined
-    return Boolean(info && info.role === "assistant" && (timeInfo?.end === undefined || timeInfo?.end === 0))
+    return shouldShowGeneratingPlaceholder(hasContent(), isUser() ? "user" : "assistant", props.record.status)
   }
 
   const handleRevert = () => {
@@ -311,7 +301,7 @@ export default function MessageItem(props: MessageItemProps) {
   }
 
   const speech = useSpeech({
-    id: () => `${props.instanceId}:${props.sessionId}:${props.record.id}`,
+    id: () => `${props.instanceId}:${props.sessionId}:${props.record?.id ?? ""}`,
     text: getRawContent,
   })
 
@@ -325,30 +315,46 @@ export default function MessageItem(props: MessageItemProps) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleDeleteMessage = async () => {
-    if (deletingMessage()) return
-    setDeletingMessage(true)
+  const technicalPartCounts = () => {
+    let tools = 0
+    let reasoning = 0
+    for (const part of props.technicalCleanupParts()) {
+      if (part.type === "tool") tools += 1
+      if (part.type === "reasoning") reasoning += 1
+    }
+    return { tools, reasoning }
+  }
+
+  const handleDeleteTechnicalParts = async () => {
+    if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
+    const counts = technicalPartCounts()
+    if (counts.tools + counts.reasoning === 0) return
+    const confirmed = await showConfirmDialog(t("messageItem.actions.deleteTechnicalParts.confirmMessage", {
+      toolCount: counts.tools,
+      reasoningCount: counts.reasoning,
+    }), {
+      title: t("messageItem.actions.deleteTechnicalParts.confirmTitle"),
+      confirmLabel: t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
+      variant: "warning",
+    })
+    if (!confirmed) return
+    setDeletingTechnicalParts(true)
     try {
-      await deleteMessage(props.instanceId, props.sessionId, props.record.id)
+      const byMessage = new Map<string, TechnicalCleanupPart[]>()
+      for (const part of props.technicalCleanupParts()) {
+        byMessage.set(part.messageId, [...(byMessage.get(part.messageId) ?? []), part])
+      }
+      for (const [messageId, parts] of byMessage) {
+        await deleteMessageTechnicalParts(props.instanceId, props.sessionId, messageId, parts.map((part) => part.partId))
+      }
     } catch (error) {
-      showAlertDialog(t("messageItem.actions.deleteMessageFailedMessage"), {
-        title: t("messageItem.actions.deleteMessageFailedTitle"),
+      showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
+        title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
         detail: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
     } finally {
-      setDeletingMessage(false)
-    }
-  }
-
-  const handleDeleteUpTo = async () => {
-    if (!props.onDeleteMessagesUpTo) return
-    if (deletingUpTo()) return
-    setDeletingUpTo(true)
-    try {
-      await props.onDeleteMessagesUpTo(props.record.id)
-    } finally {
-      setDeletingUpTo(false)
+      setDeletingTechnicalParts(false)
     }
   }
 
@@ -358,8 +364,8 @@ export default function MessageItem(props: MessageItemProps) {
 
   const containerClass = () =>
     isUser()
-      ? "message-item-base bg-[var(--message-user-bg)] border-l-4 border-[var(--message-user-border)]"
-      : "message-item-base assistant-message border-l-4 border-[var(--message-assistant-border)]"
+      ? "message-item-base bg-[var(--message-user-bg)] border-l border-[var(--message-user-border)]"
+      : "message-item-base assistant-message border-l border-[var(--message-assistant-border)]"
 
   const agentIdentifier = () => {
     if (isUser()) return ""
@@ -378,9 +384,9 @@ export default function MessageItem(props: MessageItemProps) {
     const base = modelID && providerID ? `${providerID}/${modelID}` : modelID
     if (!base) return ""
 
-    const variant = (info as SDKAssistantMessageV2).variant
+    const variant = info.variant
     if (typeof variant === "string" && variant.trim().length > 0) {
-      return `${base} (${variant.trim()})`
+      return `${base} • ${variant.trim()}`
     }
 
     return base
@@ -391,12 +397,8 @@ export default function MessageItem(props: MessageItemProps) {
     const segments: string[] = []
     const agent = agentIdentifier()
     const model = modelIdentifier()
-    if (agent) {
-      segments.push(t("messageItem.agentMeta.agentLabel", { agent }))
-    }
-    if (model) {
-      segments.push(t("messageItem.agentMeta.modelLabel", { model }))
-    }
+    if (agent) segments.push(agent)
+    if (model) segments.push(model)
     return segments.join(" • ")
   }
 
@@ -430,21 +432,34 @@ export default function MessageItem(props: MessageItemProps) {
   const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
-    if (props.showDeleteMessage) {
-      items.push({
-        key: "select",
-        label: isSelectedForDeletion()
-          ? t("messageItem.selection.deselectForDeletion")
-          : t("messageItem.selection.selectForDeletion"),
-        icon: isSelectedForDeletion()
-          ? <CheckSquare2 class="w-3.5 h-3.5" aria-hidden="true" />
-          : <Square class="w-3.5 h-3.5" aria-hidden="true" />,
-        checked: isSelectedForDeletion(),
-        onSelect: () => props.onToggleSelectedMessage?.(props.record.id, !isSelectedForDeletion()),
-      })
-    }
-
-    if (includePrimaryActions) {
+    const pending = props.pendingPrompt
+    if (includePrimaryActions && pending) {
+      items.push(
+        {
+          key: "pending-delivery",
+          label: t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`),
+          disabled: props.pendingPromptBusy,
+          icon: pending.delivery === "queue"
+            ? <Play class="w-3.5 h-3.5" aria-hidden="true" />
+            : <Undo class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => props.onPendingPromptDeliveryChange?.(pending),
+        },
+        {
+          key: "pending-edit",
+          label: t("promptQueue.actions.edit"),
+          disabled: props.pendingPromptBusy,
+          icon: <Pencil class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => props.onPendingPromptEdit?.(pending),
+        },
+        {
+          key: "pending-remove",
+          label: t("promptQueue.actions.remove"),
+          disabled: props.pendingPromptBusy,
+          icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: () => props.onPendingPromptRemove?.(pending),
+        },
+      )
+    } else if (includePrimaryActions && canUseHistoryActions()) {
       items.push({
         key: "copy",
         label: copyLabel(),
@@ -460,9 +475,10 @@ export default function MessageItem(props: MessageItemProps) {
           onSelect: () => void speech.toggle(),
         })
       }
+
     }
 
-    if (isUser() && props.onFork) {
+    if (isUser() && canUseHistoryActions() && props.onFork) {
       items.push({
         key: "fork",
         label: t("messageItem.actions.fork"),
@@ -471,7 +487,7 @@ export default function MessageItem(props: MessageItemProps) {
       })
     }
 
-    if (isUser() && props.onRevert) {
+    if (isUser() && canUseHistoryActions() && props.onRevert) {
       items.push({
         key: "revert",
         label: t("messageItem.actions.revertTitle"),
@@ -480,33 +496,41 @@ export default function MessageItem(props: MessageItemProps) {
       })
     }
 
-    if (props.showDeleteMessage) {
-      items.push(
-        {
-          key: "delete-up-to",
-          label: t("messageItem.actions.deleteMessagesUpTo"),
-          icon: <DeleteUpToIcon />,
-          disabled: !props.onDeleteMessagesUpTo || deletingUpTo(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "deleteUpTo", messageId: props.record.id }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: () => void handleDeleteUpTo(),
-        },
-        {
-          key: "delete-message",
-          label: deletingMessage() ? t("messageItem.actions.deletingMessage") : t("messageItem.actions.deleteMessage"),
-          icon: <Trash class="w-3.5 h-3.5" aria-hidden="true" />,
-          disabled: deletingMessage(),
-          destructive: true,
-          onMouseEnter: () => props.onDeleteHoverChange?.({ kind: "message", messageId: props.record.id }),
-          onMouseLeave: () => props.onDeleteHoverChange?.({ kind: "none" }),
-          onSelect: handleDeleteMessage,
-        },
-      )
+    const counts = technicalPartCounts()
+    if (!isUser() && props.showTechnicalCleanup && (props.record.status === "complete" || props.record.status === "error") && counts.tools + counts.reasoning > 0) {
+      items.push({
+        key: "delete-technical-parts",
+        label: deletingTechnicalParts()
+          ? t("messagePart.actions.deleting")
+          : t("messageItem.actions.deleteTechnicalParts"),
+        icon: <Eraser class="w-3.5 h-3.5" aria-hidden="true" />,
+        disabled: deletingTechnicalParts(),
+        onMouseEnter: () => props.onTechnicalCleanupHoverChange?.(true),
+        onMouseLeave: () => props.onTechnicalCleanupHoverChange?.(false),
+        onSelect: handleDeleteTechnicalParts,
+      })
     }
 
     return items
   }
+
+  const renderSecondaryActions = () => (
+    <For each={actionMenuItems()}>
+      {(item) => (
+        <button
+          class="message-action-button"
+          disabled={item.disabled}
+          onClick={() => void item.onSelect()}
+          onPointerEnter={() => item.onMouseEnter?.()}
+          onPointerLeave={() => item.onMouseLeave?.()}
+          title={item.label}
+          aria-label={item.label}
+        >
+          {item.icon}
+        </button>
+      )}
+    </For>
+  )
 
 
   return (
@@ -547,42 +571,75 @@ export default function MessageItem(props: MessageItemProps) {
 
           <div
             class="message-item-actions"
-            data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}
+            data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}
             ref={(el) => (actionsEl = el)}
           >
             <Show when={isUser()}>
               <div class="message-action-group">
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-
-                <Show when={canSpeakMessage()}>
-                  <SpeechActionButton
+                <Show when={canUseHistoryActions()}>
+                  <button
                     class="message-action-button"
-                    onClick={() => void speech.toggle()}
-                    title={speech.buttonTitle()}
-                    isLoading={speech.isLoading()}
-                    isPlaying={speech.isPlaying()}
-                  />
+                    onClick={handleCopy}
+                    title={copyLabel()}
+                    aria-label={copyLabel()}
+                  >
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+
+                  <Show when={canSpeakMessage()}>
+                    <SpeechActionButton
+                      class="message-action-button"
+                      onClick={() => void speech.toggle()}
+                      title={speech.buttonTitle()}
+                      isLoading={speech.isLoading()}
+                      isPlaying={speech.isPlaying()}
+                    />
+                  </Show>
                 </Show>
 
+                <Show when={props.pendingPrompt} keyed>
+                  {(pending) => (
+                    <>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptDeliveryChange?.(pending)}
+                        title={t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`)}
+                        aria-label={t(`promptQueue.actions.${pending.delivery === "queue" ? "steer" : "queue"}`)}
+                      >
+                        <Show when={pending.delivery === "queue"} fallback={<Undo class="w-3.5 h-3.5" aria-hidden="true" />}>
+                          <Play class="w-3.5 h-3.5" aria-hidden="true" />
+                        </Show>
+                      </button>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptEdit?.(pending)}
+                        title={t("promptQueue.actions.edit")}
+                        aria-label={t("promptQueue.actions.edit")}
+                      >
+                        <Pencil class="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                      <button
+                        class="message-action-button"
+                        disabled={props.pendingPromptBusy}
+                        onClick={() => props.onPendingPromptRemove?.(pending)}
+                        title={t("promptQueue.actions.remove")}
+                        aria-label={t("promptQueue.actions.remove")}
+                      >
+                        <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </>
+                  )}
+                </Show>
+
+                {renderSecondaryActions()}
               </div>
-              <ActionOverflowMenu
-                items={actionMenuItems()}
-                label={t("messageItem.actions.more")}
-                triggerClass="message-action-button action-overflow-wide"
-                minItems={1}
-              />
               <ActionOverflowMenu
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
-                minItems={1}
+                minItems={2}
               />
             </Show>
             <Show when={!isUser()}>
@@ -606,18 +663,13 @@ export default function MessageItem(props: MessageItemProps) {
                   />
                 </Show>
 
+                {renderSecondaryActions()}
               </div>
-              <ActionOverflowMenu
-                items={actionMenuItems()}
-                label={t("messageItem.actions.more")}
-                triggerClass="message-action-button action-overflow-wide"
-                minItems={1}
-              />
               <ActionOverflowMenu
                 items={actionMenuItems(true)}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
-                minItems={1}
+                minItems={2}
               />
             </Show>
           </div>
@@ -633,8 +685,7 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
-
-        <Show when={props.isQueued && isUser()}>
+        <Show when={isUser() && userMenuState() === "queue"}>
           <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
         </Show>
 
@@ -742,7 +793,7 @@ export default function MessageItem(props: MessageItemProps) {
           }}
         </Show>
 
-        <Show when={props.record.status === "sending"}>
+        <Show when={isUser() && userMenuState() === "queue"}>
           <div class="message-sending">
             <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
           </div>

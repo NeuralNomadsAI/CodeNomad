@@ -1,20 +1,21 @@
-import { createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { ArrowRightSquare, Check, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
+import { For, createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { ArrowRightSquare, Check, ChevronRight, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import { activeInterruption, sendPermissionResponse, sendQuestionReject, sendQuestionReply } from "../stores/instances"
+import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse } from "../stores/instances"
+import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
-import type { QuestionRequest } from "../types/question"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { QuestionToolBlock } from "./tool-call/question-block"
 import { PermissionToolBlock } from "./tool-call/permission-block"
+import FormRequest from "./form-request"
+import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -22,9 +23,6 @@ import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
 import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
-  DiffRenderOptions,
-  MarkdownRenderOptions,
-  AnsiRenderOptions,
   ToolCallPart,
   ToolOutputChrome,
   ToolRendererContext,
@@ -33,10 +31,8 @@ import type {
 import {
   buildToolSpeechText,
   ensureMarkdownContent,
-  getRelativePath,
   getToolName,
   isToolStateCompleted,
-  isToolStateError,
   isToolStateRunning,
   getDefaultToolAction,
   readToolStatePayload,
@@ -49,7 +45,7 @@ import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
 
-type ToolState = import("@opencode-ai/sdk/v2").ToolState
+import type { ToolState } from "../types/tool-state"
 
 const TOOL_CALL_CACHE_SCOPE = "tool-call"
 
@@ -121,9 +117,7 @@ function ToolCallDetails(props: {
   t: ReturnType<typeof useI18n>["t"]
   store: () => ReturnType<typeof messageStoreBus.getOrCreate>
   pendingPermission: () => { permission: PermissionRequest; active: boolean } | undefined
-  pendingQuestion: () => { request: QuestionRequest; active: boolean } | undefined
   isPermissionActive: () => boolean
-  isQuestionActive: () => boolean
   hasToolInput: () => boolean
   isToolInputVisible: () => boolean
   toolInput: () => Record<string, any> | undefined
@@ -175,16 +169,10 @@ function ToolCallDetails(props: {
   const ansiFinalCache = createVariantCache("ansi-final")
 
   const permissionDetails = createMemo(() => props.pendingPermission()?.permission)
-  const questionDetails = createMemo(() => props.pendingQuestion()?.request)
 
   const activePermissionKey = createMemo(() => {
     const permission = permissionDetails()
     return permission && props.isPermissionActive() ? permission.id : ""
-  })
-
-  const activeQuestionKey = createMemo(() => {
-    const request = questionDetails()
-    return request && props.isQuestionActive() ? request.id : ""
   })
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
@@ -220,7 +208,7 @@ function ToolCallDetails(props: {
   })
 
   createEffect(() => {
-    const activeKey = activePermissionKey() || activeQuestionKey()
+    const activeKey = activePermissionKey()
     if (!activeKey) return
     requestAnimationFrame(() => {
       props.toolCallRootEl()?.scrollIntoView({ block: "center", behavior: "smooth" })
@@ -262,10 +250,6 @@ function ToolCallDetails(props: {
     onCleanup(() => document.removeEventListener("keydown", handler))
   })
 
-  const [questionSubmitting, setQuestionSubmitting] = createSignal(false)
-  const [questionError, setQuestionError] = createSignal<string | null>(null)
-  const [questionDraftAnswers, setQuestionDraftAnswers] = createSignal<Record<string, string[][]>>({})
-
   function isTextInputFocused() {
     const active = document.activeElement
     return (
@@ -274,83 +258,6 @@ function ToolCallDetails(props: {
       (active?.hasAttribute("contenteditable") ?? false)
     )
   }
-
-  async function handleQuestionSubmit() {
-    const request = questionDetails()
-    if (!request || !props.isQuestionActive()) {
-      return
-    }
-    const answers = (questionDraftAnswers()[request.id] ?? []).map((x) => (Array.isArray(x) ? x : []))
-    const normalized = request.questions.map((_, index) => {
-      const row = answers[index] ?? []
-      return row.map((value) => value.trim()).filter((value) => value.length > 0)
-    })
-    if (normalized.some((item) => (item?.length ?? 0) === 0)) {
-      setQuestionError(props.t("toolCall.question.validation.answerAll"))
-      return
-    }
-
-    setQuestionSubmitting(true)
-    setQuestionError(null)
-    try {
-      await sendQuestionReply(props.instanceId, request.sessionID, request.id, normalized)
-    } catch (error) {
-      log.error("Failed to send question reply", error)
-      setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToReply"))
-    } finally {
-      setQuestionSubmitting(false)
-    }
-  }
-
-  async function handleQuestionDismiss() {
-    const request = questionDetails()
-    if (!request || !props.isQuestionActive()) {
-      return
-    }
-    setQuestionSubmitting(true)
-    setQuestionError(null)
-    try {
-      await sendQuestionReject(props.instanceId, request.sessionID, request.id)
-    } catch (error) {
-      log.error("Failed to reject question", error)
-      setQuestionError(error instanceof Error ? error.message : props.t("toolCall.question.errors.unableToDismiss"))
-    } finally {
-      setQuestionSubmitting(false)
-    }
-  }
-
-  createEffect(() => {
-    const activeKey = activeQuestionKey()
-    if (!activeKey) return
-    const handler = (event: KeyboardEvent) => {
-      if (isTextInputFocused()) return
-      if (event.key === "Enter") {
-        event.preventDefault()
-        void handleQuestionSubmit()
-      } else if (event.key === "Escape") {
-        event.preventDefault()
-        void handleQuestionDismiss()
-      }
-    }
-    document.addEventListener("keydown", handler)
-    onCleanup(() => document.removeEventListener("keydown", handler))
-  })
-
-  createEffect(() => {
-    const request = questionDetails()
-    if (!request) {
-      setQuestionSubmitting(false)
-      setQuestionError(null)
-      return
-    }
-    setQuestionError(null)
-    const requestId = request.id
-    setQuestionDraftAnswers((prev) => {
-      if (prev[requestId]) return prev
-      const initial = request.questions.map(() => [])
-      return { ...prev, [requestId]: initial }
-    })
-  })
 
   const status = () => props.toolState()?.status || ""
 
@@ -494,22 +401,6 @@ function ToolCallDetails(props: {
     />
   )
 
-  const renderQuestionBlock = () => (
-    <QuestionToolBlock
-      toolName={props.toolName}
-      toolState={props.toolState}
-      toolCallId={props.toolCallIdentifier}
-      request={questionDetails}
-      active={props.isQuestionActive}
-      submitting={questionSubmitting}
-      error={questionError}
-      draftAnswers={questionDraftAnswers}
-      setDraftAnswers={setQuestionDraftAnswers}
-      onSubmit={() => void handleQuestionSubmit()}
-      onDismiss={() => void handleQuestionDismiss()}
-    />
-  )
-
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
     return status() === "pending" && !props.pendingPermission() && tool !== "todowrite"
@@ -536,11 +427,10 @@ function ToolCallDetails(props: {
     copyTitle?: () => string
     copyAriaLabel?: () => string
     actions?: () => JSXElement
-    wrapToggle?: () => boolean | undefined
   }) => (
     <div class="tool-call-io-header">
       <button type="button" class="tool-call-io-toggle" aria-expanded={options.expanded()} onClick={options.onToggle}>
-        <span class="tool-call-io-disclosure" aria-hidden="true">{options.expanded() ? "▼" : "▶"}</span>
+        <ChevronRight class="tool-call-io-disclosure disclosure-chevron" aria-hidden="true" />
         <span class="tool-call-io-title">{options.title()}</span>
         <Show when={options.language?.()}>
           {(language) => <span class="tool-call-io-language">{language()}</span>}
@@ -564,26 +454,41 @@ function ToolCallDetails(props: {
           </button>
         )}
       </Show>
-
-      <Show when={options.wrapToggle?.()}>
-        <button
-          type="button"
-          class={`tool-call-header-icon-button tool-call-header-copy tool-call-io-wrap${props.outputWrapEnabled() ? " active" : ""}`}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            props.toggleOutputWrap()
-          }}
-          aria-label={outputWrapTitle()}
-          title={outputWrapTitle()}
-        >
-          <WrapText class="w-3.5 h-3.5" aria-hidden="true" />
-        </button>
-      </Show>
     </div>
   )
 
   const shouldUseToolHeaderOutputControls = () => Boolean(outputChrome().wrapToggle)
+
+  const renderOutputRail = () => (
+    <div class="tool-call-output-rail">
+      <button
+        type="button"
+        class="tool-call-header-icon-button icon-toggle"
+        onClick={props.toggleOutputWrap}
+        aria-label={outputWrapTitle()}
+        aria-pressed={props.outputWrapEnabled()}
+        title={outputWrapTitle()}
+      >
+        <WrapText class="w-3.5 h-3.5" aria-hidden="true" />
+      </button>
+    </div>
+  )
+
+  const renderOutputIoBody = (body: JSXElement, error: JSXElement, showPending: boolean) => (
+    <div class="tool-call-io-body" data-suppress-inner-header={outputChrome().suppressInnerHeader === false ? undefined : "true"}>
+      {body}
+      {error}
+
+      <Show when={showPending}>
+        <div class="tool-call-pending-message">
+          <span class="spinner-small"></span>
+          <span>{props.t("toolCall.pending.waitingToRun")}</span>
+        </div>
+      </Show>
+    </div>
+  )
+
+  const renderCurrentOutputIoBody = () => renderOutputIoBody(renderToolBody(), renderError(), shouldShowPendingMessage())
 
   const renderToolOutputBody = () => {
     const body = renderToolBody()
@@ -597,18 +502,9 @@ function ToolCallDetails(props: {
 
     if (chrome.wrapToggle) {
       return (
-        <div class="tool-call-body">
-          <div class="tool-call-io-body" data-suppress-inner-header={chrome.suppressInnerHeader === false ? undefined : "true"}>
-            {body}
-            {error}
-
-            <Show when={showPending}>
-              <div class="tool-call-pending-message">
-                <span class="spinner-small"></span>
-                <span>{props.t("toolCall.pending.waitingToRun")}</span>
-              </div>
-            </Show>
-          </div>
+        <div class="tool-call-body tool-call-output-shell">
+          {renderOutputRail()}
+          {renderOutputIoBody(body, error, showPending)}
         </div>
       )
     }
@@ -671,27 +567,16 @@ function ToolCallDetails(props: {
                     copyTitle: () => props.t("toolCall.io.copyOutputTitle"),
                     copyAriaLabel: () => props.t("toolCall.io.copyOutputAriaLabel"),
                     actions: () => outputChrome().actions,
-                    wrapToggle: () => outputChrome().wrapToggle,
                   })}
               </Show>
 
               <Show when={shouldUseToolHeaderOutputControls() || props.outputSectionExpanded()}>
-                <div>
-                  <div
-                    class="tool-call-io-body"
-                    data-suppress-inner-header={outputChrome().suppressInnerHeader === false ? undefined : "true"}
-                  >
-                    {renderToolBody()}
-                    {renderError()}
-
-                    <Show when={shouldShowPendingMessage()}>
-                      <div class="tool-call-pending-message">
-                        <span class="spinner-small"></span>
-                        <span>{props.t("toolCall.pending.waitingToRun")}</span>
-                      </div>
-                    </Show>
+                {shouldUseToolHeaderOutputControls() ? (
+                  <div class="tool-call-output-shell">
+                    {renderOutputRail()}
+                    {renderCurrentOutputIoBody()}
                   </div>
-                </div>
+                ) : renderCurrentOutputIoBody()}
               </Show>
             </div>
           </div>
@@ -699,7 +584,6 @@ function ToolCallDetails(props: {
       </Show>
 
       {renderPermissionBlock()}
-      {renderQuestionBlock()}
     </div>
   )
 }
@@ -735,14 +619,11 @@ export default function ToolCall(props: ToolCallProps) {
     return toolCallMemo()?.pendingPermission
   })
 
-  const questionState = createMemo(() => store().getQuestionState(props.messageId, toolCallIdentifier()))
-  const pendingQuestion = createMemo(() => {
-    const state = questionState()
-    if (state) {
-      return { request: state.entry.request as QuestionRequest, active: state.active }
-    }
-    return undefined
-  })
+  const pendingForm = createMemo(() => getFormQueue(props.instanceId).find((form) => {
+    if (form.sessionID !== props.sessionId || !props.messageId) return false
+    const target = resolveFormToolTarget(form, store())
+    return target?.messageId === props.messageId && target.partId === toolCallIdentifier()
+  }))
 
   const diagnosticsVisibility = createMemo(() => preferences().diagnosticsExpansion || "expanded")
   const diagnosticsDefaultExpanded = createMemo(() => diagnosticsVisibility() === "expanded")
@@ -787,18 +668,12 @@ export default function ToolCall(props: ToolCallProps) {
     return active?.kind === "permission" && active.id === pending.permission.id
   })
 
-  const isQuestionActive = createMemo(() => {
-    const pending = pendingQuestion()
-    if (!pending?.request) return false
-    if (pending.active) return true
-    const active = activeRequest()
-    return active?.kind === "question" && active.id === pending.request.id
-  })
+  const hasPendingForm = createMemo(() => Boolean(pendingForm()))
 
-  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || isQuestionActive())
+  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || hasPendingForm())
 
   const expanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || hasPendingForm()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -819,7 +694,7 @@ export default function ToolCall(props: ToolCallProps) {
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || isQuestionActive()) return true
+    if (isPermissionActive() || hasPendingForm()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -853,7 +728,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   const combinedStatusClass = () => {
     const base = statusClass()
-    return pendingPermission() || pendingQuestion() ? `${base} tool-call-awaiting-permission` : base
+    return pendingPermission() || pendingForm() ? `${base} tool-call-awaiting-permission` : base
   }
 
   function toggle() {
@@ -962,12 +837,6 @@ export default function ToolCall(props: ToolCallProps) {
 
   const headerCopyText = createMemo(() => headerOutputChrome().copyText || "")
   const canCopyHeaderOutput = () => headerCopyText().length > 0
-  const canToggleOutputWrap = () => Boolean(headerOutputChrome().wrapToggle)
-  const outputWrapTitle = () =>
-    outputWrapEnabled()
-      ? t("toolCall.diff.disableWordWrap")
-      : t("toolCall.diff.enableWordWrap")
-
   const speechText = createMemo(() =>
     buildToolSpeechText({
       title: headerText(),
@@ -1021,17 +890,6 @@ export default function ToolCall(props: ToolCallProps) {
         })
       }
 
-      if (canToggleOutputWrap()) {
-        items.push({
-          key: "toggle-output-wrap",
-          label: outputWrapTitle(),
-          icon: <WrapText class="w-3.5 h-3.5" aria-hidden="true" />,
-          onSelect: () => {
-            toggleOutputWrap()
-          },
-        })
-      }
-
       if (canSpeakToolCall()) {
         items.push({
           key: "speak",
@@ -1064,14 +922,15 @@ export default function ToolCall(props: ToolCallProps) {
         data-message-id={props.messageId}
         data-part-id={toolCallIdentifier()}
       >
-      <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length > 0 ? "true" : undefined}>
+      <Show when={!hasPendingForm()}>
+        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
           onClick={toggle}
           aria-expanded={expanded()}
         >
-          <span class="tool-call-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+          <ChevronRight class="tool-call-disclosure disclosure-chevron" aria-hidden="true" />
           <span class="tool-call-summary">
             <span class="tool-call-summary-type">{toolTypeLabel()}</span>
             <Show when={headerTitleDetail()}>
@@ -1093,22 +952,6 @@ export default function ToolCall(props: ToolCallProps) {
           </button>
         </Show>
 
-        <Show when={canToggleOutputWrap()}>
-          <button
-            type="button"
-            class={`tool-call-header-icon-button tool-call-header-copy tool-call-header-wrap${outputWrapEnabled() ? " active" : ""}`}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              toggleOutputWrap()
-            }}
-            aria-label={outputWrapTitle()}
-            title={outputWrapTitle()}
-          >
-            <WrapText class="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </Show>
-
         <Show when={canSpeakToolCall()}>
           <SpeechActionButton
             class="tool-call-header-icon-button tool-call-header-copy"
@@ -1123,21 +966,36 @@ export default function ToolCall(props: ToolCallProps) {
           {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
-        <ActionOverflowMenu
-          items={actionMenuItems()}
-          label={t("messageItem.actions.more")}
-          triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-wide"
-          minItems={1}
-        />
+        <For each={actionMenuItems()}>
+          {(item) => (
+            <button
+              type="button"
+              class="tool-call-header-icon-button tool-call-header-copy"
+              disabled={item.disabled}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                void item.onSelect()
+              }}
+              onPointerEnter={() => item.onMouseEnter?.()}
+              onPointerLeave={() => item.onMouseLeave?.()}
+              aria-label={item.label}
+              title={item.label}
+            >
+              {item.icon}
+            </button>
+          )}
+        </For>
         <ActionOverflowMenu
           items={actionMenuItems(true)}
           label={t("messageItem.actions.more")}
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
-          minItems={1}
+          minItems={2}
         />
-      </div>
+        </div>
+      </Show>
 
-      <Show when={expanded()}>
+      <Show when={!hasPendingForm() && expanded()}>
         <ToolCallDetails
           toolCallMemo={toolCallMemo}
           toolState={toolState}
@@ -1155,9 +1013,7 @@ export default function ToolCall(props: ToolCallProps) {
           t={t}
           store={store}
           pendingPermission={pendingPermission}
-          pendingQuestion={pendingQuestion}
           isPermissionActive={isPermissionActive}
-          isQuestionActive={isQuestionActive}
           hasToolInput={hasToolInput}
           isToolInputVisible={isToolInputVisible}
           toolInput={toolInput}
@@ -1173,7 +1029,7 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
+      <Show when={!hasPendingForm() && diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
@@ -1184,6 +1040,16 @@ export default function ToolCall(props: ToolCallProps) {
             return !current
           }),
           diagnosticFileName(diagnosticsEntries()),
+        )}
+      </Show>
+
+      <Show keyed when={pendingForm()}>
+        {(form) => (
+          <FormRequest
+            form={form}
+            onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
+            onCancel={() => sendFormCancel(props.instanceId, form.id)}
+          />
         )}
       </Show>
     </div>

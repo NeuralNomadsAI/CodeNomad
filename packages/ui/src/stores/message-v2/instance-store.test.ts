@@ -17,7 +17,7 @@ describe("message-v2 permission state", () => {
         sessionID: "session-1",
         action: "edit",
         resources: ["file-a.ts"],
-        source: { type: "tool", callID: "call-1", messageID: "message-1" },
+        source: { type: "tool", id: "call-1", messageID: "message-1" },
       },
       messageId: "message-1",
       partId: "part-1",
@@ -26,7 +26,7 @@ describe("message-v2 permission state", () => {
 
     assert.equal(store.state.permissions.queue.length, 1)
     assert.equal(store.getPermissionState(undefined, "permission-1"), null)
-    assert.equal((store.getPermissionState("message-1", "part-1")?.entry.permission as any).source?.callID, "call-1")
+    assert.equal(store.getPermissionState("message-1", "part-1")?.entry.permission.source?.id, "call-1")
     assert.equal(store.getPermissionState("message-1", "part-1")?.active, true)
   })
 
@@ -41,6 +41,28 @@ describe("message-v2 permission state", () => {
     assert.equal(store.getPermissionState(undefined, "permission-2")?.active, true)
   })
 
+})
+
+describe("message-v2 todo state", () => {
+  it("does not expose a plan from before the latest compaction", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [
+      {
+        id: "msg-todo", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "todo", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [{ content: "Old task", status: "in_progress" }] } } } as any],
+      },
+      {
+        id: "msg-compaction", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "compaction", type: "compaction" } as any],
+      },
+    ], [
+      { id: "msg-todo", sessionID: "session-1", role: "assistant", time: { created: 1 } } as any,
+      { id: "msg-compaction", sessionID: "session-1", role: "assistant", time: { created: 2 } } as any,
+    ])
+
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
@@ -138,6 +160,26 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.hydrateMessages("session-1", [duplicated, duplicated])
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1"])
+  })
+
+  it("dedupes repeated part ids while keeping the newest part payload", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "part-1", type: "text", text: "stale" } as any,
+        { id: "part-1", type: "text", text: "current" } as any,
+      ],
+    })
+
+    const message = store.getMessage("msg-1")
+    assert.deepEqual(message?.partIds, ["part-1"])
+    assert.equal((message?.parts["part-1"]?.data as any)?.text, "current")
   })
 
   it("drops a definitively failed send on the next authoritative snapshot", () => {
@@ -243,11 +285,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       messageId: "msg-stale",
       enqueuedAt: 1,
     })
-    store.upsertQuestion({
-      request: { id: "question-stale", sessionID: "session-1", questions: [] },
-      messageId: "msg-stale",
-      enqueuedAt: 1,
-    })
     store.upsertMessage({
       id: "msg-inflight", sessionId: "session-1", role: "user", status: "sending",
       parts: [{ type: "text", text: "new" } as any], isEphemeral: true,
@@ -263,8 +300,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.state.pendingParts["msg-stale"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-stale"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
-    assert.equal(store.state.questions.byMessage["msg-stale"], undefined)
-    assert.equal(store.state.questions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
     assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
   })
@@ -285,11 +320,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       messageId: "msg-old",
       enqueuedAt: 1,
     })
-    store.upsertQuestion({
-      request: { id: "question-old", sessionID: "session-1", questions: [] },
-      messageId: "msg-old",
-      enqueuedAt: 1,
-    })
 
     store.hydrateMessages("session-1", [{
       id: "msg-new", sessionId: "session-1", role: "user", status: "complete",
@@ -301,8 +331,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.state.pendingParts["msg-old"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-old"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
-    assert.equal(store.state.questions.byMessage["msg-old"], undefined)
-    assert.equal(store.state.questions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
     assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
   })

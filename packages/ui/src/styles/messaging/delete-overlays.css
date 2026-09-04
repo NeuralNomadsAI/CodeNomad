@@ -1,29 +1,18 @@
-/* Hover overlays for destructive actions (delete part / delete message). */
-
-.message-stream-block[data-delete-message-hover="true"] {
-  position: relative;
-}
-
-.message-stream-block[data-delete-message-hover="true"]::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  background: var(--status-error-bg);
-  border-radius: 0;
-  pointer-events: none;
-  /* Overlay must sit above the message cards (they have opaque backgrounds). */
-  z-index: 10;
-}
+/* Hover overlay for destructive part actions. */
 
 .message-part-shell {
   display: block;
 }
 
-.delete-hover-scope[data-delete-part-hover="true"] {
+.delete-hover-scope[data-delete-part-hover="true"],
+.tool-call-message[data-delete-technical-selected="true"] > .delete-hover-scope,
+.message-reasoning-card[data-delete-technical-selected="true"] {
   position: relative;
 }
 
-.delete-hover-scope[data-delete-part-hover="true"]::before {
+.delete-hover-scope[data-delete-part-hover="true"]::before,
+.tool-call-message[data-delete-technical-selected="true"] > .delete-hover-scope::before,
+.message-reasoning-card[data-delete-technical-selected="true"]::before {
   content: "";
   position: absolute;
   inset: -4px;
@@ -32,6 +21,10 @@
   pointer-events: none;
   /* Overlay must sit above the part card background. */
   z-index: 10;
+}
+.message-technical-group[data-delete-technical-selected="true"] > .message-technical-group-toggle,
+.message-technical-group[data-delete-technical-selected="true"] > .message-technical-group-header {
+  background: var(--status-error-bg);
 }
 .message-reasoning-card[data-delete-part-hover="true"]::before {
   inset: 0;

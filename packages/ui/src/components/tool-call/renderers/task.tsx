@@ -1,5 +1,5 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
@@ -352,9 +352,9 @@ export const taskRenderer: ToolRenderer = {
     const headerMeta = createMemo(() => {
       const agent = agentLabel()
       const model = modelLabel()
-      if (agent && model) return t("toolCall.task.meta.agentModel", { agent, model })
-      if (agent) return t("toolCall.task.meta.agent", { agent })
-      if (model) return t("toolCall.task.meta.model", { model })
+      if (agent && model) return `${agent} \u2022 ${model}`
+      if (agent) return agent
+      if (model) return model
       return null
     })
 

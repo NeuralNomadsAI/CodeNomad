@@ -1,5 +1,5 @@
 import { createMemo, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../../types/tool-state"
 import type { Session } from "../../../types/session"
 import {
   activeParentSessionId,
@@ -12,7 +12,6 @@ import {
   setActiveSessionFromList,
 } from "../../../stores/sessions"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
-import { getBackgroundProcesses } from "../../../stores/background-processes"
 import type { LatestTodoSnapshot, SessionUsageState } from "../../../stores/message-v2/types"
 
 type InstanceSessionContextOptions = {
@@ -36,9 +35,6 @@ type InstanceSessionContextState = {
   // Todo state
   latestTodoSnapshot: Accessor<LatestTodoSnapshot | null>
   latestTodoState: Accessor<ToolState | null>
-
-  // Background processes
-  backgroundProcessList: Accessor<ReturnType<typeof getBackgroundProcesses>>
 
   // Controller
   handleSessionSelect: (sessionId: string) => void
@@ -103,7 +99,7 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     if (!sessionId || sessionId === "info") return null
     const store = messageStore()
     if (!store) return null
-    const snapshot = store.state.latestTodos[sessionId]
+    const snapshot = store.getLatestTodoSnapshot(sessionId)
     return snapshot ?? null
   })
 
@@ -121,8 +117,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     if (!state || state.status !== "completed") return null
     return state
   })
-
-  const backgroundProcessList = createMemo(() => getBackgroundProcesses(options.instanceId()))
 
   const handleSessionSelect = (sessionId: string) => {
     const instanceId = options.instanceId()
@@ -147,7 +141,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     tokenStats,
     latestTodoSnapshot,
     latestTodoState,
-    backgroundProcessList,
     handleSessionSelect,
   }
 }

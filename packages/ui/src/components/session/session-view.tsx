@@ -1,22 +1,22 @@
-import { Show, createMemo, createEffect, createSignal, on, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode-ai/client"
 import type { Session } from "../../types/session"
-import type { Attachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
-import { getAttachments, removeAttachment } from "../../stores/attachments"
+import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
-import { loadMessages, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession } from "../../stores/sessions"
+import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
+import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
-import { deleteMessage } from "../../stores/session-actions"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useActiveSessionMessageLoad } from "../../lib/hooks/use-active-session-message-load"
-import { requestData } from "../../lib/opencode-api"
 import { useI18n } from "../../lib/i18n"
-import type { PromptInputApi, PromptInsertMode } from "../prompt-input/types"
+import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
 import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
@@ -24,6 +24,7 @@ import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
+import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
 
 const log = getLogger("session")
 
@@ -49,6 +50,24 @@ interface SessionViewProps {
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
+  const [documentAttentionActive, setDocumentAttentionActive] = createSignal(false)
+
+  onMount(() => {
+    const updateDocumentAttention = () => setDocumentAttentionActive(canMarkSessionIdleSeen({
+      active: true,
+      visibilityState: document.visibilityState,
+      focused: document.hasFocus(),
+    }))
+    updateDocumentAttention()
+    window.addEventListener("focus", updateDocumentAttention)
+    window.addEventListener("blur", updateDocumentAttention)
+    document.addEventListener("visibilitychange", updateDocumentAttention)
+    onCleanup(() => {
+      window.removeEventListener("focus", updateDocumentAttention)
+      window.removeEventListener("blur", updateDocumentAttention)
+      document.removeEventListener("visibilitychange", updateDocumentAttention)
+    })
+  })
   const { t } = useI18n()
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId)
@@ -68,24 +87,39 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const sessionNeedsInput = createMemo(() => {
     const currentSession = session()
     if (!currentSession) return false
-    return Boolean(currentSession.pendingPermission || (currentSession as any).pendingQuestion)
+    return Boolean(currentSession.pendingPermission || currentSession.pendingForm)
   })
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
-  const preview = createMemo(() => getSessionPreview(props.sessionId))
+  const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
+    .filter((item): item is SessionInboxUser => item.type === "user"))
+  const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
+  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
+  let pendingQueuedPayload: SessionInboxUserPayload | undefined
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
   let pendingCommentText: string | null = null
+  const [queueBusyId, setQueueBusyId] = createSignal<string>()
+
+  createEffect(on(
+    () => `${props.instanceId}:${props.sessionId}`,
+    () => void syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
+      .catch((error) => log.error("Failed to load prompt queue", error)),
+  ))
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const pendingIdleSeenTimers = new Set<string>()
   const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
   let submitBottomPinIntentSequence = 0
+
+  function visibleMessageCount() {
+    return messageStore().getSessionMessageIds(props.sessionId).length
+  }
 
   function shouldScrollToBottomOnActivate() {
     const current = session()
@@ -114,7 +148,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   ) {
     submitBottomPinIntentSequence += 1
     const previous = submitBottomPinIntent()
-    const createdMessageCount = options?.createdMessageCount ?? messageStore().getSessionMessageIds(props.sessionId).length
+    const createdMessageCount = options?.createdMessageCount ?? visibleMessageCount()
     const shouldPreserveObservedStreaming = Boolean(
       options?.preserveObservedStreaming &&
       previous?.sessionId === props.sessionId &&
@@ -145,7 +179,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const currentSession = session()
     if (!intent || !currentSession) return null
 
-    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    const messageCount = visibleMessageCount()
     if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
@@ -206,7 +240,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       return
     }
 
-    const messageCount = messageStore().getSessionMessageIds(currentSession.id).length
+    const messageCount = visibleMessageCount()
     if (shouldClearSessionBottomPinIntent(intent, {
       sessionId: currentSession.id,
       messageCount,
@@ -218,7 +252,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   createEffect(() => {
     const currentSession = session()
-    if (!props.isActive || !currentSession) return
+    if (!currentSession || !canMarkSessionIdleSeen({
+      active: props.isActive === true && documentAttentionActive(),
+      visibilityState: document.visibilityState,
+      focused: document.hasFocus(),
+    })) return
 
     const seenIdleEntries = getSeenIdleEntries(currentSession, preferences().keepUnseenSubagentIdleStatus)
     for (const entry of seenIdleEntries) {
@@ -322,8 +360,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     props.registerSessionPromptApi?.(props.sessionId, api)
 
     if (pendingPromptText) {
-      api.setPromptText(pendingPromptText, { focus: true })
+      if (pendingQueuedPayload) api.restoreQueuedPrompt(pendingPromptText, pendingQueuedPayload)
+      else api.setPromptText(pendingPromptText, { focus: true })
       pendingPromptText = null
+      pendingQueuedPayload = undefined
     }
 
     if (pendingSelectionInsert) {
@@ -360,13 +400,21 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
   }
 
-  async function handleSendMessage(prompt: string, attachments: Attachment[]) {
-    const messageCount = messageStore().getSessionMessageIds(props.sessionId).length
+  async function handleSendMessage(
+    prompt: string,
+    attachments: Attachment[],
+    delivery: PromptDelivery,
+    restoredPayload?: SessionInboxUserPayload,
+  ) {
+    if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
+      await loadLatestMessageWindow(props.instanceId, props.sessionId)
+    }
+    const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = forceSubmittedExchangeToBottom(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments)
-      const latestMessageCount = messageStore().getSessionMessageIds(props.sessionId).length
+      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
+      const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
       } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
@@ -378,6 +426,56 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     } catch (error) {
       setSubmitBottomPinIntent(null)
       throw error
+    }
+  }
+
+  function showQueueError(error: unknown) {
+    log.error("Prompt queue operation failed", error)
+    showAlertDialog(t("promptQueue.error.message"), {
+      title: t("promptQueue.error.title"),
+      variant: "error",
+    })
+  }
+
+  async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "edit" | "remove") {
+    if (queueBusyId()) return
+    setQueueBusyId(item.id)
+    try {
+      const inbox = instances().get(props.instanceId)?.client?.session.inbox
+      if (!inbox) throw new Error("Instance not ready")
+      if (action === "remove" || action === "edit") {
+        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+        if (action === "edit") {
+          const displayText = item.payload.metadata?.displayText
+          const text = typeof displayText === "string" && displayText ? displayText : item.payload.text
+          const restoredAttachments = [
+            ...(item.payload.files ?? []).map((file) => {
+              const uri = file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`
+              const name = file.name ?? file.mention?.text.replace(/^@/, "") ?? file.mime
+              const attachment = createFileAttachment(uri, name, file.mime)
+              if (file.mention?.text) attachment.display = file.mention.text
+              return attachment
+            }),
+            ...(item.payload.agents ?? []).map((agent) => createAgentAttachment(agent.name)),
+          ]
+          clearAttachments(props.instanceId, props.sessionId)
+          for (const attachment of restoredAttachments) addAttachment(props.instanceId, props.sessionId, attachment)
+          if (promptInputApi) promptInputApi.restoreQueuedPrompt(text, item.payload)
+          else {
+            pendingPromptText = text
+            pendingQueuedPayload = item.payload
+          }
+        }
+      } else if (item.delivery === "queue") {
+        await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
+      } else {
+        await inbox.queue({ sessionID: props.sessionId, inboxID: item.id })
+      }
+    } catch (error) {
+      showQueueError(error)
+    } finally {
+      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
+      setQueueBusyId(undefined)
     }
   }
 
@@ -397,6 +495,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
         title: t("sessionView.alerts.abortFailed.title"),
         detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    }
+  }
+
+  async function handleBackgroundSession() {
+    try {
+      await backgroundSession(props.instanceId, props.sessionId)
+    } catch (error) {
+      log.error("Failed to move blocking tools to background", error)
+      showAlertDialog(t("promptInput.background.error.message"), {
+        title: t("promptInput.background.error.title"),
         variant: "error",
       })
     }
@@ -424,13 +534,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!instance || !instance.client) return
 
     try {
-      await requestData(
-        instance.client.session.revert({
-          sessionID: props.sessionId,
-          messageID: messageId,
-        }),
-        "session.revert",
-      )
+      await instance.client.session.revert.stage({
+        sessionID: props.sessionId,
+        messageID: messageId,
+      })
 
       const restoredText = getUserMessageText(messageId)
       if (restoredText) {
@@ -438,6 +545,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           promptInputApi.setPromptText(restoredText, { focus: true })
         } else {
           pendingPromptText = restoredText
+          pendingQueuedPayload = undefined
         }
       }
     } catch (error) {
@@ -446,35 +554,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         title: t("sessionView.alerts.revertFailed.title"),
         variant: "error",
       })
-    }
-  }
-
-  async function handleDeleteMessagesUpTo(messageId: string) {
-    const ids = messageStore().getSessionMessageIds(props.sessionId)
-    const index = ids.indexOf(messageId)
-    if (index === -1) return
-
-    const restoredText = getUserMessageText(messageId)
-    const toDelete = ids.slice(index)
-
-    try {
-      for (let idx = toDelete.length - 1; idx >= 0; idx -= 1) {
-        await deleteMessage(props.instanceId, props.sessionId, toDelete[idx])
-      }
-    } catch (error) {
-      log.error("Failed to delete messages up to", error)
-      showAlertDialog(t("sessionView.alerts.deleteUpToFailed.message"), {
-        title: t("sessionView.alerts.deleteUpToFailed.title"),
-        variant: "error",
-      })
-    } finally {
-      if (restoredText) {
-        if (promptInputApi) {
-          promptInputApi.setPromptText(restoredText, { focus: true })
-        } else {
-          pendingPromptText = restoredText
-        }
-      }
     }
   }
 
@@ -504,6 +583,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
            promptInputApi.setPromptText(restoredText, { focus: true })
          } else {
            pendingPromptText = restoredText
+           pendingQueuedPayload = undefined
          }
        }
     } catch (error) {
@@ -516,85 +596,88 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
   return (
     <Show
-      when={session()}
+      when={session()?.id}
       fallback={
         <div class="flex items-center justify-center h-full">
           <div class="text-center text-gray-500">{t("sessionView.fallback.sessionNotFound")}</div>
         </div>
       }
     >
-      {(sessionAccessor) => {
-        const activeSession = sessionAccessor()
-        if (!activeSession) return null
-        return (
-          <div ref={rootRef} class="session-view">
-            <Show
-              when={preview()?.mode === "preview" && preview()}
-              fallback={
-                <MessageSection
-                  instanceId={props.instanceId}
-                  sessionId={activeSession.id}
-                  loading={messagesLoading()}
-                  loadError={messagesLoadError()}
-                  onReloadMessages={handleReloadMessages}
-                  sessionStreamingActive={sessionStreamingActive()}
-                  explicitBottomPinIntent={activeSubmitBottomPinIntent()}
-                  onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
-                  onRevert={handleRevert}
-                  onDeleteMessagesUpTo={handleDeleteMessagesUpTo}
-                  onFork={handleFork}
-                  isActive={props.isActive}
-                  registerScrollToBottom={(fn) => {
-                    scrollToBottomHandle = fn ?? undefined
-                  }}
-                  showSidebarToggle={props.showSidebarToggle}
-                  onSidebarToggle={props.onSidebarToggle}
-                  forceCompactStatusLayout={props.forceCompactStatusLayout}
-                  onQuoteSelection={handleQuoteSelection}
-                />
-              }
-            >
-              {(activePreview) => (
-                <SessionPreviewView
-                  preview={activePreview()}
-                  onBackToChat={() => showSessionChat(props.sessionId)}
-                  onClose={() => void closeSessionPreview(props.sessionId)}
-                  onInsertComment={handleInsertPreviewComment}
-                />
-              )}
-            </Show>
-
-            <Show when={attachments().length > 0}>
-              <PromptAttachmentsBar
-                attachments={attachments()}
-                onRemoveAttachment={(attachmentId) => {
-                  if (promptInputApi) {
-                    promptInputApi.removeAttachment(attachmentId)
-                    return
-                  }
-                  removeAttachment(props.instanceId, props.sessionId, attachmentId)
-                }}
-                onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
-              />
-            </Show>
-
-            <PromptInput
+      <div ref={rootRef} class="session-view">
+        <Show
+          when={preview()?.mode === "preview"}
+          fallback={
+            <MessageSection
               instanceId={props.instanceId}
-              instanceFolder={props.instanceFolder}
-              sessionId={activeSession.id}
+              sessionId={props.sessionId}
+              loading={messagesLoading()}
+              loadError={messagesLoadError()}
+              onReloadMessages={handleReloadMessages}
+              hasMoreMessages={hasMoreMessages(props.instanceId, props.sessionId)}
+              getMessageHistoryCursor={() => getMessageNextCursor(props.instanceId, props.sessionId)}
+              onLoadMoreMessages={(signal) => loadMoreMessages(props.instanceId, props.sessionId, signal)}
+              onLoadNewerMessages={(signal) => loadNewerMessageWindow(props.instanceId, props.sessionId, signal)}
+              onLoadLatestMessages={(signal) => loadLatestMessageWindow(props.instanceId, props.sessionId, signal)}
+              onLoadOldestMessages={(signal) => loadOldestMessageWindow(props.instanceId, props.sessionId, signal)}
+              sessionStreamingActive={sessionStreamingActive()}
+              explicitBottomPinIntent={activeSubmitBottomPinIntent()}
+              onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
+              onRevert={handleRevert}
+              onFork={handleFork}
               isActive={props.isActive}
-              compactLayout={props.compactPromptLayout}
-              onSend={handleSendMessage}
-              onRunShell={handleRunShell}
-              escapeInDebounce={props.escapeInDebounce}
-              isSessionBusy={sessionBusy()}
-              disabled={sessionNeedsInput()}
-              onAbortSession={handleAbortSession}
-              registerPromptInputApi={registerPromptInputApi}
+              registerScrollToBottom={(fn) => {
+                scrollToBottomHandle = fn ?? undefined
+              }}
+              showSidebarToggle={props.showSidebarToggle}
+              onSidebarToggle={props.onSidebarToggle}
+              forceCompactStatusLayout={props.forceCompactStatusLayout}
+              pendingPrompts={pendingPromptById()}
+              pendingPromptBusy={Boolean(queueBusyId())}
+              onPendingPromptDeliveryChange={(item) => void manageQueuedPrompt(item, "delivery")}
+              onPendingPromptEdit={(item) => void manageQueuedPrompt(item, "edit")}
+              onPendingPromptRemove={(item) => void manageQueuedPrompt(item, "remove")}
+              onQuoteSelection={handleQuoteSelection}
             />
-            </div>
-          )
-        }}
+          }
+        >
+          <SessionPreviewView
+            preview={preview()!}
+            onBackToChat={() => showSessionChat(props.instanceFolder)}
+            onClose={() => void closeSessionPreview(props.instanceFolder)}
+            onInsertComment={handleInsertPreviewComment}
+          />
+        </Show>
+
+        <Show when={attachments().length > 0}>
+          <PromptAttachmentsBar
+            attachments={attachments()}
+            onRemoveAttachment={(attachmentId) => {
+              if (promptInputApi) {
+                promptInputApi.removeAttachment(attachmentId)
+                return
+              }
+              removeAttachment(props.instanceId, props.sessionId, attachmentId)
+            }}
+            onExpandTextAttachment={(attachmentId) => promptInputApi?.expandTextAttachment(attachmentId)}
+          />
+        </Show>
+
+        <PromptInput
+          instanceId={props.instanceId}
+          instanceFolder={props.instanceFolder}
+          sessionId={props.sessionId}
+          isActive={props.isActive}
+          compactLayout={props.compactPromptLayout}
+          onSend={handleSendMessage}
+          onRunShell={handleRunShell}
+          escapeInDebounce={props.escapeInDebounce}
+          isSessionBusy={sessionBusy()}
+          disabled={sessionNeedsInput()}
+          onAbortSession={handleAbortSession}
+          onBackgroundSession={handleBackgroundSession}
+          registerPromptInputApi={registerPromptInputApi}
+        />
+      </div>
     </Show>
   )
 }

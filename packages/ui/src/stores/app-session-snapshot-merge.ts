@@ -123,7 +123,7 @@ export function markPreservedWorkspaceRemoved(
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
 ): RestorableSessionPreservation {
   const index = findWorkspaceSourceIndex(preservation, workspace)
-  if (index !== undefined && preservation.results[index]?.status === "pending") {
+  if (index !== undefined && preservation.results[index]?.status !== "removed") {
     preservation.results[index] = { status: "removed" }
     preservation.removalRevisions[index] = (preservation.removalRevisions[index] ?? 0) + 1
   }
@@ -298,6 +298,7 @@ export function markPreservedWorkspaceUnavailable(
 ): RestorableSessionPreservation {
   const index = findWorkspaceSourceIndex(preservation, workspace)
   if (index === undefined) return preservation
+  if (preservation.results[index]?.status === "removed") return preservation
   const source = preservation.sourceTabs[index]
   if (current) preservation.sourceTabs[index] = source?.kind === "workspace"
     ? mergeWorkspaceState(current, source, authority)

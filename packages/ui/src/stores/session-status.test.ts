@@ -8,17 +8,17 @@ import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
 describe("shouldSessionHoldWakeLock", () => {
   it("holds wake lock only for qualifying active work", () => {
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingQuestion: false }), true)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingForm: false }), true)
     assert.equal(
-      shouldSessionHoldWakeLock({ status: "compacting", pendingPermission: false, pendingQuestion: false }),
+      shouldSessionHoldWakeLock({ status: "compacting", pendingPermission: false, pendingForm: false }),
       true,
     )
-    assert.equal(shouldSessionHoldWakeLock({ status: "idle", pendingPermission: false, pendingQuestion: false }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "idle", pendingPermission: false, pendingForm: false }), false)
   })
 
   it("does not hold wake lock while waiting for permission or input", () => {
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: true, pendingQuestion: false }), false)
-    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingQuestion: true }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: true, pendingForm: false }), false)
+    assert.equal(shouldSessionHoldWakeLock({ status: "working", pendingPermission: false, pendingForm: true }), false)
   })
 })
 

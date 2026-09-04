@@ -23,3 +23,20 @@ export function deriveMessageStatus(info: {
   const completed = info.time?.completed
   return typeof completed === "number" && completed > 0 ? "complete" : "streaming"
 }
+
+export function shouldShowGeneratingPlaceholder(
+  hasContent: boolean,
+  role: "user" | "assistant",
+  status: MessageStatus,
+): boolean {
+  return !hasContent && role === "assistant" && status === "streaming"
+}
+
+export function getUserMessageMenuState(
+  status: MessageStatus,
+  delivery?: "queue" | "steer",
+): "queue" | "steer" | "history" | "failed" {
+  if (status === "error") return "failed"
+  if (delivery) return delivery
+  return status === "complete" ? "history" : "queue"
+}

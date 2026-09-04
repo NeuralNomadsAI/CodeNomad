@@ -2,7 +2,6 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../../stores/c
 
 export const DEFAULT_SESSION_SIDEBAR_WIDTH = 340
 export const MIN_SESSION_SIDEBAR_WIDTH = 220
-export const MAX_SESSION_SIDEBAR_WIDTH = 400
 
 export const RIGHT_DRAWER_WIDTH = 260
 export const MIN_RIGHT_DRAWER_WIDTH = 200
@@ -32,8 +31,7 @@ export const RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY = "opencode-session-right
 export const RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY = "opencode-session-right-panel-changes-diff-word-wrap-v1"
 export const RIGHT_PANEL_FILES_WORD_WRAP_KEY = "opencode-session-right-panel-files-word-wrap-v1"
 
-export const clampWidth = (value: number) =>
-  Math.min(MAX_SESSION_SIDEBAR_WIDTH, Math.max(MIN_SESSION_SIDEBAR_WIDTH, value))
+export const clampWidth = (value: number) => Math.max(MIN_SESSION_SIDEBAR_WIDTH, value)
 
 export const clampRightWidth = (value: number) => {
   const windowMax = typeof window !== "undefined" ? Math.floor(window.innerWidth * 0.7) : MAX_RIGHT_DRAWER_WIDTH

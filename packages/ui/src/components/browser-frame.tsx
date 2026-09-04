@@ -1,5 +1,7 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Expand, MessageSquarePlus, Monitor, RefreshCw, RotateCw, Smartphone, Tablet } from "lucide-solid"
-import { Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, untrack, type Component } from "solid-js"
+import { runtimeEnv } from "../lib/runtime-env"
+import { getBrowserFramePolicy } from "./browser-frame-security"
 
 export interface BrowserFrameElementTarget {
   pagePath: string
@@ -49,9 +51,15 @@ const VIEWPORT_OPTIONS = [
 interface BrowserFrameProps {
   title: string
   initialUrl: string
+  initialAddress?: string
   proxyBasePath: string
-  lockedBaseLabel: string
+  lockedBaseLabel?: string
   labels: BrowserFrameLabels
+  addressMode?: "path" | "url"
+  onNavigate?: (address: string) => Promise<string>
+  onNavigationError?: (error: unknown) => void
+  onFrameLocation?: (path: string) => string | void
+  commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
   onCommentTarget?: (target: BrowserFrameElementTarget) => void
@@ -90,15 +98,17 @@ function getElementSelector(element: Element): string {
 
 export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
-  const [pathInput, setPathInput] = createSignal("/")
+  const [pathInput, setPathInput] = createSignal(props.initialAddress ?? "/")
   const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>("responsive")
   const [viewportMenuOpen, setViewportMenuOpen] = createSignal(false)
+  const [navigating, setNavigating] = createSignal(false)
   const [highlight, setHighlight] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null)
   let iframeRef: HTMLIFrameElement | undefined
   let frameWrapRef: HTMLDivElement | undefined
   let cleanupFrameListeners: (() => void) | null = null
 
-  const canComment = createMemo(() => Boolean(props.onToggleCommentMode && props.onCommentTarget))
+  const framePolicy = getBrowserFramePolicy(runtimeEnv)
+  const canComment = createMemo(() => (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
@@ -107,6 +117,19 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     try {
       const parsed = new URL(url, window.location.origin)
       const basePath = props.proxyBasePath
+      if (props.addressMode === "url") {
+        if (props.initialAddress && parsed.href === new URL(props.initialUrl, window.location.origin).href) {
+          return props.initialAddress
+        }
+        if (props.initialAddress && basePath && parsed.pathname.startsWith(basePath)) {
+          const target = new URL(props.initialAddress)
+          target.pathname = parsed.pathname.slice(basePath.length) || "/"
+          target.search = parsed.search
+          target.hash = parsed.hash
+          return target.href
+        }
+        return parsed.href
+      }
       let pathname = parsed.pathname
 
       if (basePath && pathname.startsWith(basePath)) {
@@ -161,9 +184,42 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     cleanupFrameListeners = null
     setHighlight(null)
 
-    if (!props.commentMode || !iframeRef?.contentDocument || !iframeRef.contentWindow || !frameWrapRef) return
-    const doc = iframeRef.contentDocument
+    if (!iframeRef?.contentWindow || !frameWrapRef) return
     const frameWindow = iframeRef.contentWindow
+    if (props.commentBridge && !framePolicy.canInspectDom) {
+      frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: Boolean(props.commentMode) }, "*")
+      const handleMessage = (event: MessageEvent) => {
+        if (event.source !== frameWindow || event.origin !== "null") return
+        if (event.data?.type === "codenomad-preview-location") {
+          const path = event.data.path
+          if (typeof path !== "string" || path.length > 4_096 || !path.startsWith("/")) return
+          const address = props.onFrameLocation?.(path)
+          if (address) setPathInput(address)
+          return
+        }
+        if (event.data?.type !== "codenomad-preview-comment" || !props.commentMode) return
+        if (event.data.kind === "leave") return setHighlight(null)
+        const target = event.data.target as BrowserFrameElementTarget | undefined
+        const rect = target?.rect
+        if (!target || !rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return
+        const frameRect = iframeRef?.getBoundingClientRect()
+        const wrapRect = frameWrapRef?.getBoundingClientRect()
+        if (!frameRect || !wrapRect) return
+        setHighlight({
+          x: frameRect.left - wrapRect.left + rect.x,
+          y: frameRect.top - wrapRect.top + rect.y,
+          width: rect.width,
+          height: rect.height,
+        })
+        if (event.data.kind === "select") props.onCommentTarget?.(target)
+      }
+      window.addEventListener("message", handleMessage)
+      cleanupFrameListeners = () => window.removeEventListener("message", handleMessage)
+      return
+    }
+    if (!props.commentMode) return
+    if (!framePolicy.canInspectDom || !iframeRef.contentDocument) return
+    const doc = iframeRef.contentDocument
 
     const handleMove = (event: MouseEvent) => {
       const target = event.target
@@ -212,8 +268,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   createEffect(() => {
-    setFrameSrc(props.initialUrl)
-    setPathInput(getEditablePathFromUrl(props.initialUrl))
+    const initialUrl = props.initialUrl
+    untrack(() => {
+      setFrameSrc(initialUrl)
+      setPathInput(props.initialAddress ?? getEditablePathFromUrl(initialUrl))
+    })
   })
 
   createEffect(() => {
@@ -244,8 +303,20 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     requestAnimationFrame(() => setFrameSrc(props.initialUrl))
   }
 
-  const handleGo = (event?: Event) => {
+  const handleGo = async (event?: Event) => {
     event?.preventDefault()
+    if (props.addressMode === "url" && props.onNavigate) {
+      if (navigating()) return
+      setNavigating(true)
+      try {
+        setFrameSrc(await props.onNavigate(pathInput()))
+      } catch (error) {
+        props.onNavigationError?.(error)
+      } finally {
+        setNavigating(false)
+      }
+      return
+    }
     const nextUrl = buildNormalizedTargetUrl(pathInput())
     setFrameSrc(nextUrl)
     setPathInput(getEditablePathFromUrl(nextUrl))
@@ -260,15 +331,18 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         <button type="button" class="new-tab-button" onClick={handleRefresh} title={props.labels.refresh} aria-label={props.labels.refresh}>
           <RefreshCw class="h-4 w-4" />
         </button>
-        <div class="shrink-0 rounded-md px-3 py-1.5 text-sm" style={{ background: "var(--surface-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-base)" }}>
-          {props.lockedBaseLabel}
-        </div>
-        <form class="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => handleGo(event)}>
+        <Show when={props.lockedBaseLabel}>
+          <div class="shrink-0 rounded-md px-3 py-1.5 text-sm" style={{ background: "var(--surface-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-base)" }}>
+            {props.lockedBaseLabel}
+          </div>
+        </Show>
+        <form class="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => void handleGo(event)}>
           <input
             type="text"
             class="min-w-0 flex-1 rounded-md px-3 py-1.5 text-sm outline-none"
             style={{ background: "var(--surface-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-base)" }}
             value={pathInput()}
+            disabled={navigating()}
             onInput={(event) => setPathInput(event.currentTarget.value)}
             spellcheck={false}
             autocomplete="off"
@@ -276,7 +350,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             autocapitalize="off"
             aria-label={props.labels.path}
           />
-          <button type="submit" class="new-tab-button" title={props.labels.go} aria-label={props.labels.go}>
+          <button type="submit" class="new-tab-button" title={props.labels.go} aria-label={props.labels.go} disabled={navigating()}>
             <ArrowRight class="h-4 w-4" />
           </button>
         </form>
@@ -329,8 +403,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         <Show when={canComment()}>
           <button
             type="button"
-            class="new-tab-button"
-            style={props.commentMode ? { color: "var(--accent-primary)" } : undefined}
+            class="new-tab-button icon-toggle"
             title={props.labels.commentMode}
             aria-label={props.labels.commentMode}
             aria-pressed={props.commentMode ? "true" : "false"}
@@ -357,6 +430,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               margin: viewport().width ? "0 auto" : "0",
             }}
             referrerPolicy="same-origin"
+            sandbox={framePolicy.sandbox}
             onLoad={syncPathInputFromFrame}
           />
         </div>

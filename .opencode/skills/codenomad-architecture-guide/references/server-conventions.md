@@ -1,114 +1,50 @@
 # Server Conventions
 
-## Framework: Fastify
+## Fastify API
 
-- Routes registered in `packages/server/src/server/routes/`
-- Route handlers typed with Fastify generics
-- Dependencies injected via `RouteDeps` interfaces
+- Register CodeNomad control routes in `packages/server/src/server/routes/` under `/api/*`.
+- Keep route dependencies explicit through `RouteDeps`.
+- Define shared response/event types in `packages/server/src/api-types.ts` and check UI consumers.
+- `/workspaces/:id/instance/*` is a guarded OpenCode proxy, not a CodeNomad control route.
 
-### Route Registration Pattern
+## OpenCode Service
 
-```typescript
-// packages/server/src/server/routes/example.ts
-interface RouteDeps {
-  exampleManager: ExampleManager
-}
+- Use `OpenCodeSharedService` in `packages/server/src/workspaces/opencode-service.ts`.
+- Keep one shared-service adapter and one event subscription for all workspaces. Use the selected host or WSL CLI's official status/start/password lifecycle, own no private service state/PID, and never stop the externally owned global daemon on backend shutdown.
+- Model workspaces with native `LocationRef`/directories in `packages/server/src/workspaces/manager.ts`.
+- Never spawn or stop OpenCode per workspace and never add general plugin installation/packaging. Developer Mode's reviewed project-local, execution-gated adapter is the sole exception.
+- Explicit Stop Workspace evicts the location; ordinary UI close never calls workspace deletion. WSL requires localhost forwarding and no cross-namespace PID operations.
+- Leave global service state/database ownership to OpenCode. Pass allowed environment only when starting a missing daemon; leave an existing daemon unchanged and ignore `OPENCODE_DB`/`XDG_STATE_HOME`.
 
-function registerExampleRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get("/api/examples", async () => {
-    return deps.exampleManager.list()
-  })
-}
-```
+## Trust Boundaries
 
-## API Types
-
-- **Shared types:** `packages/server/src/api-types.ts`
-- **Consumed by UI:** `packages/ui/src/types/`
-- **Breaking change rule:** Changing a type requires checking UI for matching interfaces
-- **Preferred approach:** Additive changes (new optional fields) over breaking changes
-
-### Type Sharing Pattern
-
-```typescript
-// Server defines in api-types.ts
-export interface ExampleResponse {
-  id: string
-  name: string
-}
-
-// UI may extend or mirror in packages/ui/src/types/
-export type { ExampleResponse } from "../../../server/src/api-types"
-```
+- Validate every client-supplied directory before proxying.
+- Verify session location ownership for session routes.
+- Keep the OpenCode proxy method/path allowlist explicit; upstream functionality is not inherited automatically.
+- Resolve worktree slugs server-side before filesystem or Git operations.
+- Keep Git path traversal checks and commit validation in CodeNomad.
+- Keep Yolo persistence and automatic permission replies server-side.
 
 ## Configuration
 
-- **Settings service:** `packages/server/src/settings/service.ts`
-- **YAML document store:** `packages/server/src/settings/yaml-doc-store.ts`
-- **Public config sanitization:** `packages/server/src/settings/public-config.ts`
-- **Config location resolution:** `packages/server/src/config/location.ts`
+- Resolution: `packages/server/src/config/location.ts`
+- Settings: `packages/server/src/settings/service.ts`
+- Canonical files: `~/.config/codenomad/config.yaml` and `state.yaml`
+- Legacy migration input only: `~/.config/codenomad/config.json`
 
-### Settings Documents
+## Current Paths
 
-| Document | Purpose | File | Notes |
-|----------|---------|------|-------|
-| Config | User preferences, binaries, models | `~/.config/codenomad/config.yaml` | Canonical format |
-| State | Recent folders, session metadata | `~/.config/codenomad/state.yaml` | Canonical format |
-| Config (legacy) | Migration fallback | `~/.config/codenomad/config.json` | Supported as input fallback |
+- Workspace/location manager: `packages/server/src/workspaces/manager.ts`
+- Shared service: `packages/server/src/workspaces/opencode-service.ts`
+- CLI lifecycle: `packages/server/src/workspaces/opencode-cli-service.ts`
+- Host lifecycle: `packages/server/src/workspaces/host-opencode-service.ts`
+- WSL lifecycle: `packages/server/src/workspaces/wsl-opencode-service.ts`
+- Spawn/path helpers: `packages/server/src/workspaces/spawn.ts`
+- OpenCode event bridge: `packages/server/src/workspaces/instance-events.ts`
+- Instance proxy: `packages/server/src/server/http-server.ts`
+- CodeNomad SSE: `packages/server/src/server/routes/events.ts`
+- Git reads/mutations: `packages/server/src/workspaces/git-status.ts`, `git-mutations.ts`
+- Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Developer Mode: `.opencode/plugins/codenomad-automation.ts`, `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/server/routes/automation-plugin.ts`
 
-## Testing
-
-- **Route tests:** Fastify inject in `__tests__/` subdirectories
-- **Example:** `packages/server/src/server/__tests__/network-addresses.test.ts`
-- **No integration tests** for external services
-
-### Route Test Pattern
-
-```typescript
-// packages/server/src/server/routes/__tests__/example.test.ts
-import { createApp } from "./helpers"
-
-test("GET /api/examples", async () => {
-  const app = createApp()
-  const response = await app.inject({
-    method: "GET",
-    url: "/api/examples"
-  })
-  expect(response.statusCode).toBe(200)
-})
-```
-
-## Background Processes
-
-- **Manager:** `packages/server/src/background-processes/manager.ts`
-- **Spawned via:** `spawn` with persistent output tracking
-- **Output streaming:** SSE events for real-time UI updates
-- **Process lifecycle:** start → running → stop/error
-
-## Workspaces
-
-- **Workspace manager:** `packages/server/src/workspaces/manager.ts`
-- **Runtime:** `packages/server/src/workspaces/runtime.ts`
-- **Git worktrees:** `packages/server/src/workspaces/git-worktrees.ts`
-- **Spawn spec:** `packages/server/src/workspaces/spawn.ts`
-
-### Workspace Lifecycle
-
-1. Create workspace (folder path)
-2. Spawn OpenCode server process
-3. Manage via workspace runtime
-4. Clean up on delete
-
-## Authentication
-
-- **Auth manager:** `packages/server/src/auth/manager.ts`
-- **Session manager:** `packages/server/src/auth/session-manager.ts`
-- **Token manager:** `packages/server/src/auth/token-manager.ts`
-- **Password hashing:** `packages/server/src/auth/password-hash.ts`
-
-### Auth Flow
-
-1. Server generates bootstrap token on startup
-2. UI exchanges token for session cookie
-3. Subsequent requests use session cookie
-4. Credentials stored in auth file (hashed with scrypt)
+Deleted paths such as `packages/server/src/workspaces/runtime.ts`, `packages/server/src/background-processes/`, `packages/server/src/plugins/`, and `packages/opencode-plugin/` are not valid extension points.

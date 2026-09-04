@@ -6,6 +6,7 @@ import { useConfig } from "../../stores/preferences"
 export interface ProviderVisibilityModel {
   id: string
   name: string
+  providerId: string
 }
 
 interface ProviderModelVisibilityManagerProps {
@@ -31,10 +32,10 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
   let searchInput: HTMLInputElement | undefined
 
   const models = createMemo(() => [...props.models].sort(compareModel))
-  const modelIds = createMemo(() => models().map((model) => model.id))
-  const preference = createMemo(() => getProviderModelVisibilityPreference(props.providerId))
-  const hiddenIds = createMemo(() => new Set(preference().hiddenModelIds))
-  const visibleCount = createMemo(() => modelIds().filter((id) => !hiddenIds().has(id)).length)
+  const hiddenIds = createMemo(() => new Set(models()
+    .filter((model) => getProviderModelVisibilityPreference(model.providerId).hiddenModelIds.includes(model.id))
+    .map((model) => `${model.providerId}\0${model.id}`)))
+  const visibleCount = createMemo(() => models().filter((model) => !hiddenIds().has(`${model.providerId}\0${model.id}`)).length)
   const filteredModels = createMemo(() => {
     const value = query().trim().toLocaleLowerCase()
     if (!value) return models()
@@ -46,15 +47,22 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
   createEffect(on(() => props.providerId, () => setQuery("")))
   onMount(() => queueMicrotask(() => searchInput?.focus()))
 
-  const save = (hiddenModelIds: readonly string[]) =>
-    void setProviderModelVisibility(props.providerId, { hiddenModelIds }).catch(() => undefined)
-
-  const toggleModel = (modelId: string, visible: boolean) => {
-    const current = preference().hiddenModelIds
-    save(visible ? current.filter((id) => id !== modelId) : [...current, modelId])
+  const toggleModel = (model: ProviderVisibilityModel, visible: boolean) => {
+    const current = getProviderModelVisibilityPreference(model.providerId).hiddenModelIds
+    void setProviderModelVisibility(model.providerId, {
+      hiddenModelIds: visible ? current.filter((id) => id !== model.id) : [...current, model.id],
+    }).catch(() => undefined)
   }
 
-  const hideAll = () => save([...preference().hiddenModelIds, ...modelIds()])
+  const setAllVisible = (visible: boolean) => {
+    const modelsByProvider = new Map<string, string[]>()
+    for (const model of models()) modelsByProvider.set(model.providerId, [...(modelsByProvider.get(model.providerId) ?? []), model.id])
+    for (const [providerId, ids] of modelsByProvider) {
+      const current = getProviderModelVisibilityPreference(providerId).hiddenModelIds
+      const hiddenModelIds = visible ? current.filter((id) => !ids.includes(id)) : Array.from(new Set([...current, ...ids]))
+      void setProviderModelVisibility(providerId, { hiddenModelIds }).catch(() => undefined)
+    }
+  }
 
   return (
     <section class="provider-model-visibility" aria-labelledby={headingId}>
@@ -85,15 +93,15 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
         <span class="provider-model-visibility-count" role="status">
           {t("settings.providers.modelVisibility.count.visible", { visible: visibleCount(), total: models().length })}
         </span>
-        <button type="button" class="selector-button selector-button-secondary" onClick={() => save([])}>
+        <button type="button" class="selector-button selector-button-secondary" onClick={() => setAllVisible(true)}>
           {t("settings.providers.modelVisibility.actions.showAll")}
         </button>
-        <button type="button" class="selector-button selector-button-secondary" onClick={hideAll}>
+        <button type="button" class="selector-button selector-button-secondary" onClick={() => setAllVisible(false)}>
           {t("settings.providers.modelVisibility.actions.hideAll")}
         </button>
       </div>
 
-      <Show when={providerModelVisibilitySaveFailed(props.providerId)}>
+      <Show when={models().some((model) => providerModelVisibilitySaveFailed(model.providerId))}>
         <p class="settings-error-message" role="alert">{t("settings.providers.modelVisibility.save.failed")}</p>
       </Show>
 
@@ -110,8 +118,8 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
             <label class="provider-model-visibility-item" role="listitem">
               <input
                 type="checkbox"
-                checked={!hiddenIds().has(model.id)}
-                onChange={(event) => toggleModel(model.id, event.currentTarget.checked)}
+                checked={!hiddenIds().has(`${model.providerId}\0${model.id}`)}
+                onChange={(event) => toggleModel(model, event.currentTarget.checked)}
               />
               <span><strong>{model.name || model.id}</strong><small dir="ltr">{model.id}</small></span>
             </label>

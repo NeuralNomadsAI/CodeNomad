@@ -345,6 +345,366 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the cli_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cli-get-status",
+          "markdownDescription": "Enables the cli_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cli_restart command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cli-restart",
+          "markdownDescription": "Enables the cli_restart command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_claim_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-claim-access",
+          "markdownDescription": "Enables the client_state_claim_access command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-clear",
+          "markdownDescription": "Enables the client_state_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_commit_partitions command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-commit-partitions",
+          "markdownDescription": "Enables the client_state_commit_partitions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-load",
+          "markdownDescription": "Enables the client_state_load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_load_partition command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-load-partition",
+          "markdownDescription": "Enables the client_state_load_partition command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_navigation_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-navigation-flushed",
+          "markdownDescription": "Enables the client_state_navigation_flushed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_renderer_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-renderer-flushed",
+          "markdownDescription": "Enables the client_state_renderer_flushed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-save",
+          "markdownDescription": "Enables the client_state_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the client_state_set_restore_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-client-state-set-restore-enabled",
+          "markdownDescription": "Enables the client_state_set_restore_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_launch_acknowledge_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-launch-acknowledge-folder",
+          "markdownDescription": "Enables the desktop_launch_acknowledge_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_launch_next_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-launch-next-folder",
+          "markdownDescription": "Enables the desktop_launch_next_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_launch_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-launch-ready",
+          "markdownDescription": "Enables the desktop_launch_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the developer_mode_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-developer-mode-get",
+          "markdownDescription": "Enables the developer_mode_get command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the developer_mode_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-developer-mode-set",
+          "markdownDescription": "Enables the developer_mode_set command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_stable_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-stable-update",
+          "markdownDescription": "Enables the install_stable_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the needs_local_certificate_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-needs-local-certificate-install",
+          "markdownDescription": "Enables the needs_local_certificate_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_preferences_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-preferences-window",
+          "markdownDescription": "Enables the open_preferences_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_remote_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-remote-window",
+          "markdownDescription": "Enables the open_remote_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_workspace_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-workspace-target",
+          "markdownDescription": "Enables the open_workspace_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the popup_titlebar_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-popup-titlebar-menu",
+          "markdownDescription": "Enables the popup_titlebar_menu command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preferences_accept_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preferences-accept-request",
+          "markdownDescription": "Enables the preferences_accept_request command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preferences_get_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preferences-get-request",
+          "markdownDescription": "Enables the preferences_get_request command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preferences_resolve_transition command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preferences-resolve-transition",
+          "markdownDescription": "Enables the preferences_resolve_transition command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preferences_window_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preferences-window-ready",
+          "markdownDescription": "Enables the preferences_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_workspace_menu_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-workspace-menu-enabled",
+          "markdownDescription": "Enables the set_workspace_menu_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wake_lock_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wake-lock-start",
+          "markdownDescription": "Enables the wake_lock_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the wake_lock_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-wake-lock-stop",
+          "markdownDescription": "Enables the wake_lock_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the window_control command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-window-control",
+          "markdownDescription": "Enables the window_control command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cli_get_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cli-get-status",
+          "markdownDescription": "Denies the cli_get_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cli_restart command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cli-restart",
+          "markdownDescription": "Denies the cli_restart command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_claim_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-claim-access",
+          "markdownDescription": "Denies the client_state_claim_access command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-clear",
+          "markdownDescription": "Denies the client_state_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_commit_partitions command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-commit-partitions",
+          "markdownDescription": "Denies the client_state_commit_partitions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_load command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-load",
+          "markdownDescription": "Denies the client_state_load command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_load_partition command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-load-partition",
+          "markdownDescription": "Denies the client_state_load_partition command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_navigation_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-navigation-flushed",
+          "markdownDescription": "Denies the client_state_navigation_flushed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_renderer_flushed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-renderer-flushed",
+          "markdownDescription": "Denies the client_state_renderer_flushed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-save",
+          "markdownDescription": "Denies the client_state_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the client_state_set_restore_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-client-state-set-restore-enabled",
+          "markdownDescription": "Denies the client_state_set_restore_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_launch_acknowledge_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-launch-acknowledge-folder",
+          "markdownDescription": "Denies the desktop_launch_acknowledge_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_launch_next_folder command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-launch-next-folder",
+          "markdownDescription": "Denies the desktop_launch_next_folder command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_launch_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-launch-ready",
+          "markdownDescription": "Denies the desktop_launch_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the developer_mode_get command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-developer-mode-get",
+          "markdownDescription": "Denies the developer_mode_get command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the developer_mode_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-developer-mode-set",
+          "markdownDescription": "Denies the developer_mode_set command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_stable_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-stable-update",
+          "markdownDescription": "Denies the install_stable_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the needs_local_certificate_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-needs-local-certificate-install",
+          "markdownDescription": "Denies the needs_local_certificate_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_preferences_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-preferences-window",
+          "markdownDescription": "Denies the open_preferences_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_remote_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-remote-window",
+          "markdownDescription": "Denies the open_remote_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_workspace_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-workspace-target",
+          "markdownDescription": "Denies the open_workspace_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the popup_titlebar_menu command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-popup-titlebar-menu",
+          "markdownDescription": "Denies the popup_titlebar_menu command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preferences_accept_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preferences-accept-request",
+          "markdownDescription": "Denies the preferences_accept_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preferences_get_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preferences-get-request",
+          "markdownDescription": "Denies the preferences_get_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preferences_resolve_transition command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preferences-resolve-transition",
+          "markdownDescription": "Denies the preferences_resolve_transition command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preferences_window_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preferences-window-ready",
+          "markdownDescription": "Denies the preferences_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_workspace_menu_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-workspace-menu-enabled",
+          "markdownDescription": "Denies the set_workspace_menu_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wake_lock_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wake-lock-start",
+          "markdownDescription": "Denies the wake_lock_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the wake_lock_stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-wake-lock-stop",
+          "markdownDescription": "Denies the wake_lock_stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the window_control command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-window-control",
+          "markdownDescription": "Denies the window_control command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

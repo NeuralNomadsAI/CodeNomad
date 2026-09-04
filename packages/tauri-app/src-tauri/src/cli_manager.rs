@@ -1,4 +1,3 @@
-use crate::desktop_event_transport::DesktopEventStreamConfig;
 use crate::managed_node::resolve_bundled_node_binary;
 use dirs::home_dir;
 use parking_lot::Mutex;
@@ -23,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{webview::cookie::Cookie, AppHandle, Emitter, Manager, Url};
+use tauri::{webview::cookie::Cookie, AppHandle, Manager, Url};
 
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
@@ -274,6 +273,12 @@ fn wait_for_termination(
     }
 }
 
+fn termination_timeout(default: Duration, deadline: Option<Instant>) -> Duration {
+    deadline
+        .map(|deadline| default.min(deadline.saturating_duration_since(Instant::now())))
+        .unwrap_or(default)
+}
+
 #[derive(Debug)]
 struct TerminationTimeout;
 
@@ -307,6 +312,7 @@ fn process_group_is_gone(pid: u32) -> anyhow::Result<bool> {
 fn stop_child(
     child: &mut Child,
     #[cfg(windows)] job: Option<&WindowsJobObject>,
+    deadline: Option<Instant>,
 ) -> anyhow::Result<()> {
     let pid = child.id();
     #[cfg(windows)]
@@ -314,7 +320,7 @@ fn stop_child(
         if child.try_wait()?.is_none() {
             let _ = child.kill();
             let _ = wait_for_termination(
-                Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                termination_timeout(Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS), deadline),
                 Duration::from_millis(25),
                 || Ok(child.try_wait()?.is_some()),
             );
@@ -347,18 +353,22 @@ fn stop_child(
             None => log_line(&format!("CLI control channel is unavailable pid={pid}")),
         }
     }
-    let graceful = wait_for_termination(graceful_timeout, Duration::from_millis(50), || {
-        let child_exited = child.try_wait()?.is_some();
-        #[cfg(unix)]
-        return Ok(child_exited && process_group_is_gone(pid)?);
-        #[cfg(windows)]
-        return Ok(windows_containment_confirmed(
-            child_exited,
-            job.map(WindowsJobObject::active_processes).transpose()?,
-        ));
-        #[cfg(not(any(unix, windows)))]
-        Ok(child_exited)
-    });
+    let graceful = wait_for_termination(
+        termination_timeout(graceful_timeout, deadline),
+        Duration::from_millis(50),
+        || {
+            let child_exited = child.try_wait()?.is_some();
+            #[cfg(unix)]
+            return Ok(child_exited && process_group_is_gone(pid)?);
+            #[cfg(windows)]
+            return Ok(windows_containment_confirmed(
+                child_exited,
+                job.map(WindowsJobObject::active_processes).transpose()?,
+            ));
+            #[cfg(not(any(unix, windows)))]
+            Ok(child_exited)
+        },
+    );
     match graceful {
         Ok(()) => return Ok(()),
         Err(err) if !err.is::<TerminationTimeout>() => {
@@ -384,7 +394,7 @@ fn stop_child(
     child.kill()?;
 
     wait_for_termination(
-        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+        termination_timeout(Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS), deadline),
         Duration::from_millis(25),
         || {
             let child_exited = child.try_wait()?.is_some();
@@ -402,11 +412,34 @@ fn stop_child(
     .map_err(|err| anyhow::anyhow!("CLI pid={pid} termination was not confirmed: {err}"))
 }
 
+fn discard_unregistered_child(child: &mut Child, #[cfg(windows)] job: &WindowsJobObject) {
+    #[cfg(unix)]
+    let pid = child.id();
+    #[cfg(unix)]
+    unsafe {
+        if libc::kill(-(pid as i32), libc::SIGKILL) != 0 {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = job.terminate();
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, url: &str) {
     if !manager.is_current_generation(generation) {
         return;
     }
-    if app.webview_windows().contains_key("main") {
+    if !app
+        .state::<crate::local_windows::LocalWindows>()
+        .records()
+        .is_empty()
+    {
         let final_url = augment_launch_url(url);
         let mut display = final_url.clone();
         if let Some(hash_index) = display.find('#') {
@@ -416,30 +449,43 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
         if let Ok(parsed) = Url::parse(&final_url) {
             let current = manager.clone();
             let navigate = manager.clone();
-            crate::client_state::before_main_window_navigation_if(
-                app,
-                crate::client_state::NavigationKind::Cli,
-                Some(parsed.clone()),
-                move || current.is_current_generation(generation),
-                move |app| {
-                    navigate
-                        .with_current_generation(generation, || {
-                            let window = app.get_webview_window("main").ok_or_else(|| {
-                                "main window not found for CLI navigation".to_string()
-                            })?;
-                            window.navigate(parsed).map_err(|err| {
-                                format!("failed to navigate main window to CLI URL: {err}")
+            app.state::<crate::local_windows::LocalWindows>()
+                .set_backend_target(Some(final_url));
+            for record in app.state::<crate::local_windows::LocalWindows>().records() {
+                let current = current.clone();
+                let navigate = navigate.clone();
+                let parsed = parsed.clone();
+                let label = record.label.clone();
+                let target_label = label.clone();
+                crate::client_state::before_window_navigation_if(
+                    app,
+                    label,
+                    crate::client_state::NavigationKind::Cli,
+                    Some(parsed.clone()),
+                    move || current.is_current_generation(generation),
+                    move |app| {
+                        navigate
+                            .with_current_generation(generation, || {
+                                app.get_webview_window(&target_label)
+                                    .ok_or_else(|| {
+                                        "local window not found for CLI navigation".to_string()
+                                    })?
+                                    .navigate(parsed)
+                                    .map_err(|err| {
+                                        format!("failed to navigate local window to CLI URL: {err}")
+                                    })
                             })
-                        })
-                        .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
-                },
-            );
+                            .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
+                    },
+                );
+            }
         } else {
             log_line("failed to parse URL for navigation");
         }
     } else {
-        log_line("main window not found for navigation");
+        log_line("local window not found for navigation");
     }
+    crate::preferences_window::navigate_backend(app);
 }
 
 fn augment_launch_url(base_url: &str) -> String {
@@ -478,6 +524,21 @@ fn extract_cookie_value(set_cookie: &str, name: &str) -> Option<String> {
         return None;
     }
     Some(value.to_string())
+}
+
+fn is_loopback_http_url(base_url: &str) -> bool {
+    let Ok(parsed) = Url::parse(base_url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" || !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    match parsed.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(host)) => host.is_loopback(),
+        Some(url::Host::Ipv6(host)) => host.is_loopback(),
+        None => false,
+    }
 }
 
 fn exchange_bootstrap_token(
@@ -532,24 +593,36 @@ fn exchange_bootstrap_token(
     Ok(None)
 }
 
+pub(crate) fn local_session_cookie(
+    base_url: &str,
+    cookie_name: &str,
+    session_id: &str,
+) -> anyhow::Result<Cookie<'static>> {
+    let parsed = Url::parse(base_url)?;
+    let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
+
+    Ok(
+        Cookie::build((cookie_name.to_string(), session_id.to_string()))
+            .domain(domain)
+            .path("/")
+            .http_only(true)
+            .same_site(tauri::webview::cookie::SameSite::Lax)
+            .build(),
+    )
+}
+
 fn set_session_cookie(
     app: &AppHandle,
     base_url: &str,
     cookie_name: &str,
     session_id: &str,
 ) -> anyhow::Result<()> {
-    let parsed = Url::parse(base_url)?;
-    let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
+    let cookie = local_session_cookie(base_url, cookie_name, session_id)?;
 
-    let cookie = Cookie::build((cookie_name.to_string(), session_id.to_string()))
-        .domain(domain)
-        .path("/")
-        .http_only(true)
-        .same_site(tauri::webview::cookie::SameSite::Lax)
-        .build();
-
-    if let Some(win) = app.webview_windows().get("main") {
-        win.set_cookie(cookie)?;
+    for record in app.state::<crate::local_windows::LocalWindows>().records() {
+        if let Some(win) = app.get_webview_window(&record.label) {
+            win.set_cookie(cookie.clone())?;
+        }
     }
 
     Ok(())
@@ -563,15 +636,6 @@ fn generate_auth_cookie_name() -> String {
         .unwrap_or(0);
 
     format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
-}
-
-fn generate_transport_connection_id() -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let tid = std::thread::current().id();
-    format!("tauri-{}-{:?}", ts, tid)
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
@@ -712,6 +776,13 @@ pub struct CliStatus {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalCliAccess {
+    pub(crate) base_url: String,
+    pub(crate) cookie_name: String,
+    pub(crate) session_cookie: String,
+}
+
 impl Default for CliStatus {
     fn default() -> Self {
         Self {
@@ -724,17 +795,30 @@ impl Default for CliStatus {
     }
 }
 
+fn cli_exit_error(status: &CliStatus, exit: &std::process::ExitStatus) -> String {
+    if status.state == CliState::Ready {
+        format!("CLI exited unexpectedly after readiness: {exit}")
+    } else {
+        status
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("CLI exited early: {exit}"))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CliProcessManager {
     status: Arc<Mutex<CliStatus>>,
     child: Arc<Mutex<Option<Child>>>,
+    stdin: Arc<Mutex<Option<std::process::ChildStdin>>>,
     #[cfg(windows)]
     job: Arc<Mutex<Option<WindowsJobObject>>>,
     bootstrap_token: Arc<Mutex<Option<String>>>,
-    session_cookie: Arc<Mutex<Option<String>>>,
-    auth_cookie_name: Arc<Mutex<Option<String>>>,
+    local_access: Arc<Mutex<Option<LocalCliAccess>>>,
     lifecycle: Arc<Mutex<()>>,
+    generation_authority: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
+    accepting_spawns: Arc<AtomicBool>,
 }
 
 impl CliProcessManager {
@@ -742,24 +826,26 @@ impl CliProcessManager {
         Self {
             status: Arc::new(Mutex::new(CliStatus::default())),
             child: Arc::new(Mutex::new(None)),
+            stdin: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             job: Arc::new(Mutex::new(None)),
             bootstrap_token: Arc::new(Mutex::new(None)),
-            session_cookie: Arc::new(Mutex::new(None)),
-            auth_cookie_name: Arc::new(Mutex::new(None)),
+            local_access: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(Mutex::new(())),
+            generation_authority: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
+            accepting_spawns: Arc::new(AtomicBool::new(true)),
         }
     }
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
+        self.accepting_spawns.store(true, Ordering::SeqCst);
         let generation = self.advance_generation();
-        log_line(&format!("start requested (dev={dev})"));
-        self.stop_tracked_child()?;
         *self.bootstrap_token.lock() = None;
-        *self.session_cookie.lock() = None;
-        *self.auth_cookie_name.lock() = None;
+        *self.local_access.lock() = None;
+        log_line(&format!("start requested (dev={dev})"));
+        self.stop_tracked_child(None)?;
         {
             let mut status = self.status.lock();
             status.state = CliState::Starting;
@@ -782,18 +868,72 @@ impl CliProcessManager {
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
+        self.accepting_spawns.store(false, Ordering::SeqCst);
+        let generation = self.advance_generation();
+        *self.bootstrap_token.lock() = None;
+        *self.local_access.lock() = None;
         let _lifecycle = self.lifecycle.lock();
-        self.advance_generation();
-        self.stop_tracked_child()?;
+        if !self.generation_matches(generation) {
+            return Err(anyhow::anyhow!("CLI stop was superseded"));
+        }
+        self.stop_tracked_child(None)?;
+        self.reset_stopped_status();
+        Ok(())
+    }
+
+    pub(crate) fn stop_until(&self, deadline: Instant) -> anyhow::Result<()> {
+        self.accepting_spawns.store(false, Ordering::SeqCst);
+        let Some(generation) = self.advance_generation_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI generation authority"
+            ));
+        };
+        let Some(mut bootstrap_token) = self.bootstrap_token.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI bootstrap token authority"
+            ));
+        };
+        *bootstrap_token = None;
+        drop(bootstrap_token);
+        let Some(mut local_access) = self.local_access.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!(
+                "timed out waiting for CLI local access authority"
+            ));
+        };
+        *local_access = None;
+        drop(local_access);
+        let Some(_lifecycle) = self.lifecycle.try_lock_until(deadline) else {
+            return Err(anyhow::anyhow!("timed out waiting for CLI lifecycle lock"));
+        };
+        if Instant::now() >= deadline {
+            return Err(anyhow::anyhow!("CLI stop deadline elapsed"));
+        }
+        if !self.generation_matches(generation) {
+            return Err(anyhow::anyhow!("CLI stop was superseded"));
+        }
+        self.stop_tracked_child(Some(deadline))?;
         self.reset_stopped_status();
         Ok(())
     }
 
     fn advance_generation(&self) -> u64 {
+        let _authority = self.generation_authority.lock();
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    fn advance_generation_until(&self, deadline: Instant) -> Option<u64> {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        let _authority = self.generation_authority.try_lock_until(deadline)?;
+        (Instant::now() < deadline).then(|| self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
     fn is_current_generation(&self, generation: u64) -> bool {
+        self.accepting_spawns.load(Ordering::SeqCst) && self.generation_matches(generation)
+    }
+
+    fn generation_matches(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
@@ -802,22 +942,31 @@ impl CliProcessManager {
         generation: u64,
         operation: impl FnOnce() -> T,
     ) -> Option<T> {
-        let _lifecycle = self.lock_current_generation(generation)?;
-        Some(operation())
+        let _lifecycle = self.lifecycle.lock();
+        let _authority = self.generation_authority.lock();
+        self.is_current_generation(generation).then(operation)
     }
 
     fn lock_current_generation(&self, generation: u64) -> Option<parking_lot::MutexGuard<'_, ()>> {
         let lifecycle = self.lifecycle.lock();
-        self.is_current_generation(generation).then_some(lifecycle)
+        let current = {
+            let _authority = self.generation_authority.lock();
+            self.is_current_generation(generation)
+        };
+        current.then_some(lifecycle)
     }
 
-    fn stop_tracked_child(&self) -> anyhow::Result<()> {
+    fn stop_tracked_child(&self, deadline: Option<Instant>) -> anyhow::Result<()> {
         let Some(mut child) = self.child.lock().take() else {
+            self.stdin.lock().take();
             #[cfg(windows)]
             if let Some(job) = self.job.lock().take() {
                 let result = job.terminate().and_then(|()| {
                     wait_for_termination(
-                        Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                        termination_timeout(
+                            Duration::from_secs(CLI_FORCE_CONFIRM_GRACE_SECS),
+                            deadline,
+                        ),
                         Duration::from_millis(25),
                         || Ok(job.active_processes()? == 0),
                     )
@@ -829,6 +978,9 @@ impl CliProcessManager {
             }
             return Ok(());
         };
+        if let Some(mut stdin) = self.stdin.try_lock() {
+            child.stdin = stdin.take();
+        }
         #[cfg(windows)]
         let job = self.job.lock().take();
         log_line(&format!("stopping CLI pid={}", child.id()));
@@ -836,6 +988,7 @@ impl CliProcessManager {
             &mut child,
             #[cfg(windows)]
             job.as_ref(),
+            deadline,
         );
         if let Err(err) = result {
             *self.child.lock() = Some(child);
@@ -848,6 +1001,40 @@ impl CliProcessManager {
         Ok(())
     }
 
+    fn register_spawned_child(
+        &self,
+        generation: u64,
+        mut child: Child,
+        #[cfg(windows)] job: WindowsJobObject,
+    ) -> Option<(
+        Option<BufReader<std::process::ChildStdout>>,
+        Option<BufReader<std::process::ChildStderr>>,
+    )> {
+        let authority = self.generation_authority.lock();
+        if !self.is_current_generation(generation) {
+            drop(authority);
+            discard_unregistered_child(
+                &mut child,
+                #[cfg(windows)]
+                &job,
+            );
+            return None;
+        }
+        let pid = child.id();
+        let stdout = child.stdout.take().map(BufReader::new);
+        let stderr = child.stderr.take().map(BufReader::new);
+        let stdin = child.stdin.take();
+        debug_assert!(self.child.lock().is_none());
+        self.status.lock().pid = Some(pid);
+        *self.child.lock() = Some(child);
+        *self.stdin.lock() = stdin;
+        #[cfg(windows)]
+        {
+            *self.job.lock() = Some(job);
+        }
+        Some((stdout, stderr))
+    }
+
     fn reset_stopped_status(&self) {
         let mut status = self.status.lock();
         status.state = CliState::Stopped;
@@ -855,43 +1042,52 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
-        *self.session_cookie.lock() = None;
+        *self.local_access.lock() = None;
+        self.stdin.lock().take();
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
         self.with_current_generation(generation, || {
+            *self.local_access.lock() = None;
             let mut status = self.status.lock();
             status.state = CliState::Error;
             status.error = Some(message.clone());
             let snapshot = status.clone();
             drop(status);
-            let _ = app.emit("cli:error", json!({"message": message}));
-            let _ = app.emit("cli:status", snapshot);
+            crate::local_windows::emit_all(app, "cli:error", json!({"message": message}));
+            crate::local_windows::emit_all(app, "cli:status", snapshot);
         });
+    }
+
+    fn write_native_response(&self, generation: u64, response: &str) {
+        if !self.is_current_generation(generation) {
+            return;
+        }
+        let mut stdin = self.stdin.lock();
+        if !self.is_current_generation(generation) {
+            return;
+        }
+        let Some(stdin) = stdin.as_mut() else {
+            return;
+        };
+        if let Err(error) = stdin
+            .write_all(response.as_bytes())
+            .and_then(|()| stdin.flush())
+        {
+            log_line(&format!("failed to answer native CLI request: {error}"));
+        }
     }
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
     }
 
-    pub fn desktop_event_stream_config(&self) -> Option<DesktopEventStreamConfig> {
-        let base_url = self.status.lock().url.clone()?;
-        let events_url = format!("{}/api/events", base_url.trim_end_matches('/'));
-        let client_id = format!("tauri-{}", std::process::id());
-        let cookie_name = self
-            .auth_cookie_name
-            .lock()
-            .clone()
-            .unwrap_or_else(|| SESSION_COOKIE_NAME_PREFIX.to_string());
-
-        Some(DesktopEventStreamConfig {
-            base_url,
-            events_url,
-            client_id,
-            connection_id: generate_transport_connection_id(),
-            cookie_name,
-            session_cookie: self.session_cookie.lock().clone(),
-        })
+    pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
+        let _lifecycle = self.lifecycle.lock();
+        if self.status.lock().state != CliState::Ready {
+            return None;
+        }
+        self.local_access.lock().clone()
     }
 
     fn spawn_cli(
@@ -956,6 +1152,8 @@ impl CliProcessManager {
                     .env_remove("NPM_CONFIG_PREFIX")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                #[cfg(windows)]
+                c.env("CODENOMAD_NATIVE_PARENT", "1");
                 configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
@@ -985,6 +1183,8 @@ impl CliProcessManager {
                 c.env("ELECTRON_RUN_AS_NODE", "1")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
+                #[cfg(windows)]
+                c.env("CODENOMAD_NATIVE_PARENT", "1");
                 configure_spawn(&mut c);
                 if let Some(ref cwd) = cwd {
                     c.current_dir(cwd);
@@ -1016,6 +1216,13 @@ impl CliProcessManager {
         };
         #[cfg(windows)]
         {
+            let authority = manager.generation_authority.lock();
+            if !manager.is_current_generation(generation) {
+                drop(authority);
+                discard_unregistered_child(&mut child, &job);
+                return Ok(());
+            }
+            drop(authority);
             let gate_result = child
                 .stdin
                 .as_mut()
@@ -1034,16 +1241,14 @@ impl CliProcessManager {
             }
         }
 
-        let stdout = child.stdout.take().map(BufReader::new);
-        let stderr = child.stderr.take().map(BufReader::new);
-        debug_assert!(manager.child.lock().is_none());
-        *manager.auth_cookie_name.lock() = Some(auth_cookie_name.as_str().to_string());
-        manager.status.lock().pid = Some(pid);
-        *manager.child.lock() = Some(child);
-        #[cfg(windows)]
-        {
-            *manager.job.lock() = Some(job);
-        }
+        let Some((stdout, stderr)) = manager.register_spawned_child(
+            generation,
+            child,
+            #[cfg(windows)]
+            job,
+        ) else {
+            return Ok(());
+        };
         Self::emit_status(&app, &manager.status.lock());
         drop(lifecycle);
 
@@ -1095,7 +1300,7 @@ impl CliProcessManager {
                 }
                 manager.advance_generation();
                 log_line("timeout waiting for CLI readiness");
-                let stop_error = manager.stop_tracked_child().err();
+                let stop_error = manager.stop_tracked_child(None).err();
                 let message = stop_error.map_or_else(
                     || "CLI did not start in time".to_string(),
                     |err| format!("CLI did not start in time; cleanup failed: {err}"),
@@ -1105,8 +1310,8 @@ impl CliProcessManager {
                 status.error = Some(message.clone());
                 let snapshot = status.clone();
                 drop(status);
-                let _ = app.emit("cli:error", json!({"message": message}));
-                let _ = app.emit("cli:status", snapshot);
+                crate::local_windows::emit_all(&app, "cli:error", json!({"message": message}));
+                crate::local_windows::emit_all(&app, "cli:status", snapshot);
             });
         }
 
@@ -1167,19 +1372,16 @@ impl CliProcessManager {
                 }
                 Poll::Exited(code) => {
                     manager.with_current_generation(generation, || {
+                        *manager.local_access.lock() = None;
                         let mut status = manager.status.lock();
-                        if status.state != CliState::Ready {
-                            status.state = CliState::Error;
-                            if status.error.is_none() {
-                                status.error = Some(format!("CLI exited early: {code}"));
-                            }
-                            let _ = app.emit(
-                                "cli:error",
-                                json!({"message": status.error.clone().unwrap_or_default()}),
-                            );
-                        } else {
-                            status.state = CliState::Stopped;
-                        }
+                        let message = cli_exit_error(&status, &code);
+                        status.state = CliState::Error;
+                        status.error = Some(message.clone());
+                        crate::local_windows::emit_all(
+                            &app,
+                            "cli:error",
+                            json!({"message": message}),
+                        );
                         Self::emit_status(&app, &status);
                     });
                     return;
@@ -1205,15 +1407,43 @@ impl CliProcessManager {
         let token_prefix = "CODENOMAD_BOOTSTRAP_TOKEN:";
 
         loop {
-            buffer.clear();
-            match reader.read_line(&mut buffer) {
+            match Self::read_bounded_line(&mut reader, &mut buffer) {
                 Ok(0) => break,
+                Ok(size) if size > crate::native_request::MAX_LINE_BYTES => {
+                    log_line(&format!("[cli][{stream}] discarded oversized output line"));
+                    continue;
+                }
                 Ok(_) => {
                     if !manager.is_current_generation(generation) {
                         break;
                     }
                     let line = buffer.trim_end();
                     if !line.is_empty() {
+                        if stream == "stdout"
+                            && line.starts_with(crate::native_request::REQUEST_PREFIX)
+                        {
+                            if let Some(request) = crate::native_request::parse(line) {
+                                let now = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .map(|duration| duration.as_millis() as u64)
+                                    .unwrap_or(u64::MAX);
+                                let result = if now >= request.deadline {
+                                    Err("Native request expired before execution".to_string())
+                                } else {
+                                    crate::handle_native_request(
+                                        app,
+                                        &request.method,
+                                        request.params,
+                                        request.deadline,
+                                    )
+                                };
+                                manager.write_native_response(
+                                    generation,
+                                    &crate::native_request::response(&request.id, result),
+                                );
+                            }
+                            continue;
+                        }
                         if line.starts_with(token_prefix) {
                             let token = line.trim_start_matches(token_prefix).trim();
                             if !token.is_empty() {
@@ -1268,6 +1498,46 @@ impl CliProcessManager {
         }
     }
 
+    fn read_bounded_line<R: BufRead>(
+        reader: &mut R,
+        buffer: &mut String,
+    ) -> std::io::Result<usize> {
+        buffer.clear();
+        let mut total = 0usize;
+        let mut oversized = false;
+        let mut bytes = Vec::new();
+        loop {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                return Ok(total);
+            }
+            let length = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|index| index + 1)
+                .unwrap_or(available.len());
+            let ended = available.get(length - 1) == Some(&b'\n');
+            total = total.saturating_add(length);
+            if !oversized && bytes.len() + length <= crate::native_request::MAX_LINE_BYTES {
+                bytes.extend_from_slice(&available[..length]);
+            } else {
+                oversized = true;
+                bytes.clear();
+            }
+            reader.consume(length);
+            if ended {
+                if !oversized {
+                    *buffer = String::from_utf8_lossy(&bytes).into_owned();
+                }
+                return Ok(if oversized {
+                    crate::native_request::MAX_LINE_BYTES + 1
+                } else {
+                    total
+                });
+            }
+        }
+    }
+
     fn mark_ready(
         manager: &CliProcessManager,
         generation: u64,
@@ -1299,10 +1569,8 @@ impl CliProcessManager {
         log_line(&format!("cli ready on {base_url}"));
 
         if let Some(token) = token {
-            // Token exchange is only implemented for loopback HTTP. If localUrl is HTTPS,
-            // skip the exchange and let the user authenticate normally.
-            let scheme = Url::parse(&base_url).ok().map(|u| u.scheme().to_string());
-            if scheme.as_deref() != Some("http") {
+            // Native credentials are only established against the managed loopback listener.
+            if !is_loopback_http_url(&base_url) {
                 navigate_main(manager, generation, app, &base_url);
             } else {
                 match exchange_bootstrap_token(&base_url, &token, &auth_cookie_name) {
@@ -1318,7 +1586,11 @@ impl CliProcessManager {
                             navigate_main(manager, generation, app, &format!("{base_url}/login"));
                         } else {
                             manager.with_current_generation(generation, || {
-                                *manager.session_cookie.lock() = Some(session_id.clone());
+                                *manager.local_access.lock() = Some(LocalCliAccess {
+                                    base_url: base_url.clone(),
+                                    cookie_name: auth_cookie_name.to_string(),
+                                    session_cookie: session_id,
+                                });
                             });
                             navigate_main(manager, generation, app, &base_url);
                         }
@@ -1338,13 +1610,17 @@ impl CliProcessManager {
         }
         manager.with_current_generation(generation, || {
             let status = manager.status.lock().clone();
-            let _ = app.emit("cli:ready", status.clone());
+            crate::local_windows::emit_all(app, "cli:ready", status.clone());
             Self::emit_status(app, &status);
         });
     }
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
-        let _ = app.emit("cli:status", status.clone());
+        if status.state != CliState::Ready {
+            crate::local_windows::show_loading_all(app);
+            crate::preferences_window::show_loading(app);
+        }
+        crate::local_windows::emit_all(app, "cli:status", status.clone());
     }
 }
 
@@ -1698,6 +1974,38 @@ mod tests {
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     #[test]
+    fn bounded_line_reader_discards_oversized_lines_without_losing_the_next_line() {
+        let mut input = vec![b'x'; crate::native_request::MAX_LINE_BYTES + 5];
+        input.extend_from_slice(b"\nnext\n");
+        let mut reader = std::io::Cursor::new(input);
+        let mut line = String::new();
+
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            crate::native_request::MAX_LINE_BYTES + 1
+        );
+        assert!(line.is_empty());
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            5
+        );
+        assert_eq!(line, "next\n");
+    }
+
+    #[test]
+    fn bounded_line_reader_preserves_utf8_split_across_buffers() {
+        let input = std::io::Cursor::new("éclair\n".as_bytes());
+        let mut reader = std::io::BufReader::with_capacity(1, input);
+        let mut line = String::new();
+
+        assert_eq!(
+            CliProcessManager::read_bounded_line(&mut reader, &mut line).unwrap(),
+            8
+        );
+        assert_eq!(line, "éclair\n");
+    }
+
+    #[test]
     fn prod_entry_candidates_prefer_exe_relative_before_workspace_fallback() {
         let exe_dir = PathBuf::from("/opt/codenomad/bin");
         let workspace = PathBuf::from("/workspace/codenomad");
@@ -1763,7 +2071,93 @@ mod tests {
     }
 
     #[test]
-    fn stop_waits_for_an_authorized_spawn_section() {
+    fn generation_invalidated_exit_cannot_replace_requested_stop_status() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        manager.status.lock().state = CliState::Ready;
+
+        manager.advance_generation();
+        manager.reset_stopped_status();
+
+        assert!(manager
+            .with_current_generation(generation, || {
+                manager.status.lock().state = CliState::Error;
+            })
+            .is_none());
+        assert_eq!(manager.status().state, CliState::Stopped);
+    }
+
+    #[test]
+    fn unexpected_ready_exit_is_an_error_with_the_platform_status() {
+        let status = if cfg!(windows) {
+            Command::new("cmd.exe")
+                .args(["/C", "exit", "23"])
+                .status()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 23"]).status().unwrap()
+        };
+
+        let message = cli_exit_error(
+            &CliStatus {
+                state: CliState::Ready,
+                ..CliStatus::default()
+            },
+            &status,
+        );
+        assert!(
+            message.contains("unexpectedly after readiness"),
+            "{message}"
+        );
+        assert!(message.contains("23"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unexpected_ready_exit_preserves_the_signal() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let status = std::process::ExitStatus::from_raw(9);
+        let message = cli_exit_error(
+            &CliStatus {
+                state: CliState::Ready,
+                ..CliStatus::default()
+            },
+            &status,
+        );
+        assert!(message.contains("signal: 9"), "{message}");
+    }
+
+    #[test]
+    fn local_cli_access_requires_readiness_and_clears_on_stop() {
+        let manager = CliProcessManager::new();
+        let access = LocalCliAccess {
+            base_url: "http://127.0.0.1:3000".into(),
+            cookie_name: "codenomad_session_test".into(),
+            session_cookie: "secret".into(),
+        };
+        *manager.local_access.lock() = Some(access.clone());
+
+        assert_eq!(manager.local_cli_access(), None);
+        manager.status.lock().state = CliState::Ready;
+        assert_eq!(manager.local_cli_access(), Some(access));
+
+        manager.stop().unwrap();
+        assert_eq!(manager.local_cli_access(), None);
+    }
+
+    #[test]
+    fn native_auth_is_limited_to_loopback_http() {
+        assert!(is_loopback_http_url("http://127.0.0.1:3000"));
+        assert!(is_loopback_http_url("http://[::1]:3000"));
+        assert!(is_loopback_http_url("http://localhost:3000"));
+        assert!(!is_loopback_http_url("https://localhost:3000"));
+        assert!(!is_loopback_http_url("http://remote.example:3000"));
+        assert!(!is_loopback_http_url("http://user@localhost:3000"));
+    }
+
+    #[test]
+    fn stop_invalidates_before_waiting_for_an_authorized_spawn_section() {
         let manager = CliProcessManager::new();
         let generation = manager.advance_generation();
         let worker_manager = manager.clone();
@@ -1789,6 +2183,116 @@ mod tests {
         stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         stopping.join().unwrap();
         assert!(!manager.is_current_generation(generation));
+    }
+
+    #[test]
+    fn stop_rejects_an_expired_absolute_deadline_before_locking() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        let _lifecycle = manager.lifecycle.lock();
+
+        let error = manager.stop_until(Instant::now()).unwrap_err().to_string();
+
+        assert!(error.contains("timed out waiting for CLI generation authority"));
+        assert!(!manager.is_current_generation(generation));
+        assert!(manager.generation_matches(generation));
+        assert!(manager.child.lock().is_none());
+    }
+
+    #[test]
+    fn stop_generation_authority_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _authority = manager.generation_authority.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI generation authority"));
+    }
+
+    #[test]
+    fn stop_bootstrap_token_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _token = manager.bootstrap_token.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI bootstrap token authority"));
+    }
+
+    #[test]
+    fn stop_local_access_wait_honors_the_absolute_deadline() {
+        let manager = CliProcessManager::new();
+        let _access = manager.local_access.lock();
+
+        let error = manager
+            .stop_until(Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("timed out waiting for CLI local access authority"));
+    }
+
+    #[test]
+    fn production_spawn_registration_is_rejected_after_timed_stop_returns() {
+        let manager = CliProcessManager::new();
+        let generation = manager.advance_generation();
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping", "-n", "30", "127.0.0.1"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            configure_posix_process_group(&mut command);
+            command
+        };
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_spawn(&mut command);
+        let child = command.spawn().unwrap();
+        #[cfg(windows)]
+        let job = WindowsJobObject::create()
+            .and_then(|job| {
+                job.assign_child(&child)?;
+                Ok(job)
+            })
+            .unwrap();
+
+        assert!(manager.stop_until(Instant::now()).is_err());
+        let registered = manager.register_spawned_child(
+            generation,
+            child,
+            #[cfg(windows)]
+            job,
+        );
+
+        assert!(registered.is_none());
+        assert!(manager.child.lock().is_none());
+    }
+
+    #[test]
+    fn termination_waits_are_clipped_to_the_remaining_absolute_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let timeout = termination_timeout(Duration::from_secs(30), Some(deadline));
+        assert!(timeout <= Duration::from_millis(20));
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            termination_timeout(Duration::from_secs(30), Some(deadline)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            termination_timeout(Duration::from_secs(30), None),
+            Duration::from_secs(30)
+        );
     }
 
     #[cfg(windows)]
@@ -1837,7 +2341,7 @@ mod tests {
         let mut child = command.spawn().unwrap();
         child.wait().unwrap();
 
-        let error = stop_child(&mut child, None).unwrap_err().to_string();
+        let error = stop_child(&mut child, None, None).unwrap_err().to_string();
         assert!(error.contains("cannot be confirmed without a Windows job"));
     }
 

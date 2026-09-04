@@ -81,12 +81,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.versions.outputs.tag }}
+          TARGET: ${{ inputs.ref || github.ref }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
-            args=(--title "$TAG" --generate-notes)
+            args=(--target "$TARGET" --title "$TAG" --generate-notes)
 
             if [ "${IS_PRERELEASE}" = "true" ]; then
               args+=(--prerelease)

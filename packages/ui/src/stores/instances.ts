@@ -1,11 +1,7 @@
 import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
-import type { LspStatus } from "@opencode-ai/sdk/v2"
-import type { PermissionReply, PermissionRequest, PermissionSource } from "../types/permission"
+import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import type { QuestionRequest, QuestionSource } from "../types/question"
-import { getQuestionSessionId } from "../types/question"
-import { requestData } from "../lib/opencode-api"
 import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
@@ -14,10 +10,13 @@ import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } fr
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
+  loadMessages,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
+  clearSessionCatalogState,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
@@ -25,30 +24,37 @@ import {
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
-  ensureWorktreeMapLoaded,
   getWorktrees,
-  reloadWorktreeMap,
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { clearOpenCodeWorkspaceCache, getOpenCodeWorkspaceIdForSession, getOpenCodeWorkspaceIdForWorktree, syncOpenCodeWorkspaces } from "./opencode-workspaces"
+import { buildV2RequestLocations, type RequestLocation } from "./request-locations"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
+import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
+import { ConnectionResyncGate } from "./connection-resync-gate"
 import { serverSettings } from "./preferences"
 import {
   reconcileSessionPendingState,
+  activeSessionId,
+  messagesLoaded,
   sessions,
+  setSessionPendingForm,
   setSessionPendingPermission,
-  setSessionPendingQuestion,
+  invalidateSessionMessageLoad,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { upsertPermissionV2, removePermissionV2, upsertQuestionV2, removeQuestionV2 } from "./message-v2/bridge"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
+import { isLatestWindow } from "./message-v2/message-window"
+import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
   clearRepliedPermissions,
   hasRepliedPermission,
   markPermissionReplied,
   pruneRepliedPermissions,
 } from "./permission-replies"
+import { clearSettledForms, hasSettledForm, markFormSettled, pruneSettledForms } from "./form-settlements"
 import {
   clearPermissionAutoAcceptForInstance,
   isPermissionAutoAcceptEnabled,
@@ -59,13 +65,23 @@ import {
 } from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
-import { mergeInstanceMetadata, clearInstanceMetadata } from "./instance-metadata"
+import { clearInstanceMetadata } from "./instance-metadata"
 import { showWorkspaceLaunchError } from "./launch-errors"
-import { activeSidecarToken } from "./sidecars"
-import { buildV2RequestLocations, type V2Location } from "./request-locations"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
-import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
+import {
+  addFormToQueue,
+  clearFormQueue as clearStoredFormQueue,
+  getFormQueue,
+  formRequestOptions,
+  removeFormFromQueue,
+  type FormAnswer,
+  type FormWithLocation,
+} from "./forms"
+import { invalidateFilesystemCaches } from "../lib/filesystem-events"
+import { detachInstanceTabMembership, requestInstanceTabClose } from "./app-tab-membership"
+import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
@@ -118,18 +134,86 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-// Interruption queues (permissions + questions) per instance
+const COMPACTION_PROJECTION_INTERVAL_MS = 250
+const pendingCompactionProjections = new Map<string, {
+  timeout: ReturnType<typeof setTimeout>
+  project: () => void
+}>()
+
+function compactionProjectionKey(instanceId: string, sessionId: string): string {
+  return `${instanceId}\0${sessionId}`
+}
+
+function scheduleCompactionProjection(instanceId: string, sessionId: string, project: () => void): void {
+  const key = compactionProjectionKey(instanceId, sessionId)
+  const pending = pendingCompactionProjections.get(key)
+  if (pending) {
+    pending.project = project
+    return
+  }
+
+  const next = {
+    project,
+    timeout: setTimeout(() => {
+      pendingCompactionProjections.delete(key)
+      next.project()
+    }, COMPACTION_PROJECTION_INTERVAL_MS),
+  }
+  pendingCompactionProjections.set(key, next)
+}
+
+function cancelCompactionProjection(instanceId: string, sessionId: string): void {
+  const key = compactionProjectionKey(instanceId, sessionId)
+  const pending = pendingCompactionProjections.get(key)
+  if (!pending) return
+  clearTimeout(pending.timeout)
+  pendingCompactionProjections.delete(key)
+}
+
+function clearCompactionProjections(instanceId: string): void {
+  const prefix = `${instanceId}\0`
+  for (const [key, pending] of pendingCompactionProjections) {
+    if (!key.startsWith(prefix)) continue
+    clearTimeout(pending.timeout)
+    pendingCompactionProjections.delete(key)
+  }
+}
+
+// Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
+const permissionRequestLocations = new Map<string, Map<string, string>>()
+const formRequestLocations = new Map<string, Map<string, string>>()
 
-const [questionQueues, setQuestionQueues] = createSignal<Map<string, QuestionRequest[]>>(new Map())
-const [activeQuestionId, setActiveQuestionId] = createSignal<Map<string, string | null>>(new Map())
-class InterruptionRegistry<T extends { id: string }, S extends string> {
+type RequestAuthorityLocation = RequestLocation | { directory: string; workspaceID?: string }
+
+function requestLocationKey(location?: RequestAuthorityLocation | string): string | undefined {
+  if (!location) return undefined
+  if (typeof location === "string") return `${normalizeWorkspacePath(location)}\0`
+  if (!location.directory) return undefined
+  const workspace = (location as { workspace?: string }).workspace
+    ?? (location as { workspaceID?: string }).workspaceID
+  return `${normalizeWorkspacePath(location.directory)}\0${workspace ?? ""}`
+}
+
+function rememberRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
+  const key = requestLocationKey(location)
+  if (!key) return
+  const entries = registry.get(instanceId) ?? new Map<string, string>()
+  entries.set(requestId, key)
+  registry.set(instanceId, entries)
+}
+
+function forgetRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string): void {
+  const entries = registry.get(instanceId)
+  if (!entries) return
+  entries.delete(requestId)
+  if (!entries.size) registry.delete(instanceId)
+}
+
+class InterruptionRegistry<T extends { id: string }> {
   private readonly enqueuedAt = new Map<string, number>()
-  private readonly sources = new Map<string, Map<string, S>>()
   private readonly sessionCounts = new Map<string, Map<string, number>>()
-
-  constructor(private readonly defaultSource: S) {}
 
   ensureEnqueuedAt(request: T): number {
     const existing = this.enqueuedAt.get(request.id)
@@ -143,21 +227,8 @@ class InterruptionRegistry<T extends { id: string }, S extends string> {
     return this.enqueuedAt.get(requestId) ?? Date.now()
   }
 
-  setSource(instanceId: string, requestId: string, source: S): void {
-    const sources = this.sources.get(instanceId) ?? new Map<string, S>()
-    sources.set(requestId, source)
-    this.sources.set(instanceId, sources)
-  }
-
-  getSource(instanceId: string, requestId: string): S {
-    return this.sources.get(instanceId)?.get(requestId) ?? this.defaultSource
-  }
-
-  remove(instanceId: string, requestId: string): void {
+  remove(_instanceId: string, requestId: string): void {
     this.enqueuedAt.delete(requestId)
-    const sources = this.sources.get(instanceId)
-    sources?.delete(requestId)
-    if (sources?.size === 0) this.sources.delete(instanceId)
   }
 
   increment(instanceId: string, sessionId: string): void {
@@ -181,33 +252,17 @@ class InterruptionRegistry<T extends { id: string }, S extends string> {
 
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
     requests.forEach(({ id }) => this.enqueuedAt.delete(id))
-    this.sources.delete(instanceId)
     for (const sessionId of this.sessionCounts.get(instanceId)?.keys() ?? []) clearPending(sessionId)
     this.sessionCounts.delete(instanceId)
   }
 }
 
-const permissionRegistry = new InterruptionRegistry<PermissionRequest, PermissionSource>("v2")
-const questionRegistry = new InterruptionRegistry<QuestionRequest, QuestionSource>("v2")
+const permissionRegistry = new InterruptionRegistry<PermissionRequest>()
+const formRegistry = new InterruptionRegistry<FormWithLocation>()
 
-type InterruptionKind = "permission" | "question"
+type InterruptionKind = "permission" | "form"
 
 type ActiveInterruption = { kind: InterruptionKind; id: string } | null
-
-async function getV2RequestLocations(instanceId: string): Promise<V2Location[]> {
-  const instance = instances().get(instanceId)
-  const worktrees = getWorktrees(instanceId)
-  const workspaceBySlug = new Map<string, string>()
-
-  for (const worktree of worktrees) {
-    if (!worktree.slug || worktree.slug === "root") continue
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(instanceId, worktree.slug)
-    if (!workspace) throw new Error(`Unable to resolve OpenCode workspace for worktree ${worktree.slug}`)
-    workspaceBySlug.set(worktree.slug, workspace)
-  }
-
-  return buildV2RequestLocations(instance?.folder, worktrees, workspaceBySlug)
-}
 
 const [activeInterruption, setActiveInterruption] = createSignal<Map<string, ActiveInterruption>>(new Map())
 
@@ -232,15 +287,58 @@ const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
-const pendingQuestionMutationEpochs = new Map<string, number>()
+const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
 const pendingRequestSyncs = new Map<string, {
   generation: number
   token: { cancelled: boolean }
   promise: Promise<void>
 }>()
+const pendingRequestLiveness = new Map<string, Promise<void>>()
+const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 let nextPendingRequestSyncGeneration = 0
+
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
+  controllers.add(controller)
+  pendingRequestControllers.set(instanceId, controllers)
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+  try {
+    return await run(controller.signal)
+  } finally {
+    clearTimeout(timeout)
+    controllers.delete(controller)
+    if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
+      pendingRequestControllers.delete(instanceId)
+    }
+  }
+}
+
+function abortPendingRequestWork(instanceId: string): void {
+  for (const controller of pendingRequestControllers.get(instanceId) ?? []) controller.abort()
+}
+
+async function allSettledBounded<T, R>(
+  items: readonly T[],
+  isCurrent: () => boolean,
+  run: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R> | undefined>(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+    while (isCurrent() && next < items.length) {
+      const index = next++
+      try {
+        results[index] = { status: "fulfilled", value: await run(items[index]) }
+      } catch (reason) {
+        results[index] = { status: "rejected", reason }
+      }
+    }
+  }))
+  return results.filter((result): result is PromiseSettledResult<R> => result !== undefined)
+}
 
 function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
   epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
@@ -249,7 +347,7 @@ function bumpEpoch(epochs: Map<string, number>, instanceId: string): void {
 function invalidatePendingRequestSync(instanceId: string): void {
   bumpEpoch(pendingRequestSyncEpochs, instanceId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
 }
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
 const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
@@ -278,26 +376,93 @@ const connectionResyncs = new TrailingResyncCoordinator(
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
+    let sessionError: unknown
+    try {
+      await fetchSessions(instanceId, { reset: true })
+    } catch (error) {
+      sessionError = error
+    }
     await Promise.all([
-      fetchSessions(instanceId, { reset: false }),
       syncPendingRequests(instanceId),
+      refreshVolatileInstanceState(instanceId),
+      syncLoadedSessionInboxes(instanceId),
     ])
+    if (sessionError) throw sessionError
+    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
+    for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
+    const activeId = activeSessionId().get(instanceId)
+    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true })
+    reconcilePendingSessionIndicators(instanceId)
   },
   (instanceId, error) => {
     log.warn("Failed to resync sessions after instance connection", { instanceId, error })
   },
 )
+const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
   void connectionResyncs.request(instanceId)
 }
 
+async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return
+  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
+  await Promise.all(Array.from(loaded, async (sessionId) => {
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
+    try {
+      await syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+    } catch (error) {
+      log.warn("Failed to resync session inbox after connection", { instanceId, sessionId, error })
+    }
+  }))
+}
+
+const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
+const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget> }>()
+
+function refreshVolatileInstanceState(
+  instanceId: string,
+  targets: readonly InstanceRefreshTarget[] = allInstanceRefreshTargets,
+): Promise<void> {
+  const existing = volatileInstanceRefreshes.get(instanceId)
+  if (existing) {
+    for (const target of targets) existing.pending.add(target)
+    return existing.promise
+  }
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return Promise.resolve()
+  const client = instance.client
+
+  const state = { promise: Promise.resolve(), pending: new Set(targets) }
+  state.promise = (async () => {
+    do {
+      const current = new Set(state.pending)
+      state.pending.clear()
+      if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
+      const requests: Promise<unknown>[] = []
+      const location = getActiveCatalogLocation(instanceId)
+      if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
+      if (current.has("providers")) requests.push(fetchProviders(instanceId, location, true))
+      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
+      if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
+      await Promise.all(requests)
+    } while (state.pending.size)
+  })().finally(() => {
+    if (volatileInstanceRefreshes.get(instanceId) === state) volatileInstanceRefreshes.delete(instanceId)
+  })
+  volatileInstanceRefreshes.set(instanceId, state)
+  return state.promise
+}
+
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  if (event.type !== "instance.eventStatus") return
+  const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
+  if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
     setDisconnectedInstance(null)
   }
-  resyncConnectedInstance(event.instanceId)
+  if (shouldResync) resyncConnectedInstance(event.instanceId)
 })
 
 function createRestoreCreationRequestId(): string {
@@ -332,7 +497,7 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
   reconcileSessionPendingState(
     instanceId,
     new Set(permissionRegistry.sessionIds(instanceId)),
-    new Set(questionRegistry.sessionIds(instanceId)),
+    new Set(formRegistry.sessionIds(instanceId)),
   )
 }
 
@@ -356,22 +521,6 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   }
 }
 
-function ensureActiveInstanceSelected(): void {
-  if (appSessionRestoreGateActive()) return
-  if (activeSidecarToken()) return
-
-  const current = activeInstanceId()
-  const instanceMap = instances()
-  if (current && instanceMap.has(current)) return
-
-  for (const [id, instance] of instanceMap.entries()) {
-    if (instance.status === "ready") {
-      setActiveInstanceId(id)
-      return
-    }
-  }
-}
-
 function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
   const mapped = workspaceDescriptorToInstance(descriptor, projectName)
   if (instances().has(descriptor.id)) {
@@ -382,9 +531,6 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
 
   if (descriptor.status === "ready") {
     attachClient(descriptor)
-    // If no tab is currently selected (common after UI refresh),
-    // auto-select the first ready instance.
-    ensureActiveInstanceSelected()
     settleInstanceReadyWaiters(descriptor.id)
   } else if (descriptor.status === "error" || descriptor.status === "stopped") {
     settleInstanceReadyWaiters(
@@ -410,6 +556,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
 
   if (instance.client) {
     sdkManager.destroyClientsForInstance(descriptor.id)
+    destroyOpenCodeData(descriptor.id)
   }
 
   const client = sdkManager.createClient(descriptor.id, nextProxyPath)
@@ -429,9 +576,6 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     workspaceMetadataHydration: sessionHydration.workspaceMetadata,
   })
   initialHydrations.set(descriptor.id, hydration)
-  if (sseManager.getStatuses().get(descriptor.id) === "connected") {
-    resyncConnectedInstance(descriptor.id)
-  }
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
   })
@@ -486,8 +630,17 @@ function releaseInstanceResources(instanceId: string) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
-  clearOpenCodeWorkspaceCache(instanceId)
+  destroyOpenCodeData(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
+}
+
+function getPendingRequestLocations(instanceId: string, rootDirectory?: string) {
+  return buildV2RequestLocations(rootDirectory, [
+    getActiveCatalogLocation(instanceId),
+    ...getWorktrees(instanceId),
+    ...Array.from(sessions().get(instanceId)?.values() ?? []).map((session) => session.location),
+    ...getFormQueue(instanceId).flatMap((form) => form.location ? [form.location] : []),
+  ])
 }
 
 async function syncPendingPermissions(
@@ -501,123 +654,132 @@ async function syncPendingPermissions(
 
   try {
     const syncStartedAt = Date.now()
-    const remote: Array<{ request: PermissionRequest; source: PermissionSource }> = []
-    let legacyKnown = true
-    const legacyRemote = await requestData<PermissionRequest[]>(
-      instance.client.permission.list(),
-      "permission.list",
-    ).catch((error) => {
-      log.warn("Failed to list legacy pending permissions", { instanceId, error })
-      legacyKnown = false
-      return []
+    const remote: Array<{ request: PermissionRequest; location: RequestAuthorityLocation; key: string }> = []
+    const locations = getPendingRequestLocations(instanceId, instance.folder)
+    const scannedLocations = new Set<string>()
+    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+      const response = await withPendingRequestTimeout(instanceId, (signal) => (
+        instance.client!.permission.request.list({ location }, { signal })
+      ))
+      return { location, response }
     })
-    for (const permission of legacyRemote) {
-      remote.push({ request: permission, source: "legacy" })
-    }
-
-    for (const location of await getV2RequestLocations(instanceId)) {
-      const response = await requestData<{ location?: unknown; data: PermissionRequest[] }>(
-        instance.client.v2.permission.request.list({ location }),
-        "v2.permission.request.list",
-      )
-      log.info("v2.permission.request.list", { instanceId, location, resolvedLocation: response.location })
-      for (const permission of response.data) {
-        remote.push({ request: permission, source: "v2" })
+    const failures: unknown[] = []
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failures.push(result.reason)
+        continue
       }
+      const { location, response } = result.value
+      log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
+      const authority = {
+        directory: response.location.directory || location.directory,
+        workspaceID: response.location.workspaceID ?? location.workspace,
+      }
+      const key = requestLocationKey(authority)
+      if (!key) continue
+      scannedLocations.add(key)
+      remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
-    const remotePendingIds = new Set(remote.map((item) => item.request.id))
+    const remotePendingIds = new Set(remote.map(({ request }) => request.id))
     if (!isCurrent() || (pendingPermissionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    if (legacyKnown) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+    if (!failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
-    const pendingRemote = remote.filter((item) => !hasRepliedPermission(instanceId, item.request.id))
-    const remoteIds = new Set(pendingRemote.map((item) => item.request.id))
+    const pendingRemote = remote.filter(({ request }) => !hasRepliedPermission(instanceId, request.id))
+    const remoteIds = new Set(pendingRemote.map(({ request }) => request.id))
     const local = getPermissionQueue(instanceId)
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
-      if (!legacyKnown && permissionRegistry.getSource(instanceId, entry.id) === "legacy") continue
-      if (!remoteIds.has(entry.id)) {
+      const key = permissionRequestLocations.get(instanceId)?.get(entry.id)
+        ?? requestLocationKey(sessions().get(instanceId)?.get(getPermissionSessionId(entry) ?? "")?.location)
+      if (!remoteIds.has(entry.id) && key && scannedLocations.has(key)) {
         removePermissionFromQueue(instanceId, entry.id)
         removePermissionV2(instanceId, entry.id)
       }
     }
 
     // Upsert all server-side pending permissions.
-    for (const { request: permission, source } of pendingRemote) {
-      const queuedPermission = addPermissionToQueue(instanceId, permission, source) ?? permission
+    for (const { request, location } of pendingRemote) {
+      const queuedPermission = addPermissionToQueue(instanceId, request, location) ?? request
       upsertPermissionV2(instanceId, queuedPermission)
     }
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) {
+      log.warn("Pending permission scan was partial", { instanceId, failedLocations: failures.length })
+      if (propagateErrors) throw failures[0]
+    }
   } catch (error) {
     log.warn("Failed to sync pending permissions", { instanceId, error })
     if (propagateErrors) throw error
   }
 }
 
-async function syncPendingQuestions(
+async function syncPendingForms(
   instanceId: string,
   propagateErrors = false,
   isCurrent: () => boolean = () => true,
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
-  const mutationEpoch = pendingQuestionMutationEpochs.get(instanceId) ?? 0
+  const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
 
   try {
-    const remote: Array<{ request: QuestionRequest; source: QuestionSource }> = []
-    let legacyKnown = true
-    const legacyRemote = await requestData<QuestionRequest[]>(
-      instance.client.question.list(),
-      "question.list",
-    ).catch((error) => {
-      log.warn("Failed to list legacy pending questions", { instanceId, error })
-      legacyKnown = false
-      return []
+    const syncStartedAt = Date.now()
+    const remote: Array<{ form: FormWithLocation; location: RequestAuthorityLocation; key: string }> = []
+    const locations = getPendingRequestLocations(instanceId, instance.folder)
+    const scannedLocations = new Set<string>()
+    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+      const response = await withPendingRequestTimeout(instanceId, (signal) => (
+        instance.client!.form.request.list({ location }, { signal })
+      ))
+      return { location, response }
     })
-    for (const request of legacyRemote) {
-      remote.push({ request, source: "legacy" })
-    }
-
-    for (const location of await getV2RequestLocations(instanceId)) {
-      const response = await requestData<{ location?: unknown; data: QuestionRequest[] }>(
-        instance.client.v2.question.request.list({ location }),
-        "v2.question.request.list",
-      )
-      log.info("v2.question.request.list", { instanceId, location, resolvedLocation: response.location })
-      for (const request of response.data) {
-        remote.push({ request, source: "v2" })
+    const failures: unknown[] = []
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failures.push(result.reason)
+        continue
       }
+      const { location, response } = result.value
+      const authority = {
+        directory: response.location.directory || location.directory,
+        workspaceID: response.location.workspaceID ?? location.workspace,
+      }
+      const key = requestLocationKey(authority)
+      if (!key) continue
+      scannedLocations.add(key)
+      remote.push(...response.data.map((form) => ({
+        form: form.sessionID === "global" ? { ...form, location: response.location } : form,
+        location: authority,
+        key,
+      })))
     }
-
-    const remoteIds = new Set(remote.map((item) => item.request.id))
-    if (!isCurrent() || (pendingQuestionMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
+    if (!isCurrent() || (pendingFormMutationEpochs.get(instanceId) ?? 0) !== mutationEpoch) {
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    const local = getQuestionQueue(instanceId)
-
-    // Remove any stale local requests missing from server.
-    for (const entry of local) {
-      if (!legacyKnown && questionRegistry.getSource(instanceId, entry.id) === "legacy") continue
-      if (!remoteIds.has(entry.id)) {
-        removeQuestionFromQueue(instanceId, entry.id)
-        removeQuestionV2(instanceId, entry.id)
-      }
+    const remotePendingIds = new Set(remote.map(({ form }) => form.id))
+    if (!failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
+    const pendingRemote = remote.filter(({ form }) => !hasSettledForm(instanceId, form.id))
+    const remoteIds = new Set(pendingRemote.map(({ form }) => form.id))
+    for (const form of getFormQueue(instanceId)) {
+      const key = formRequestLocations.get(instanceId)?.get(form.id)
+        ?? requestLocationKey(form.location)
+        ?? requestLocationKey(sessions().get(instanceId)?.get(form.sessionID)?.location)
+      if (!remoteIds.has(form.id) && key && scannedLocations.has(key)) removePendingForm(instanceId, form.id)
     }
-
-    // Upsert all server-side pending questions.
-    for (const { request, source } of remote) {
-      questionRegistry.ensureEnqueuedAt(request)
-      addQuestionToQueue(instanceId, request, source)
-      upsertQuestionV2(instanceId, request)
-    }
+    for (const { form, location } of pendingRemote) addPendingForm(instanceId, form, location)
     reconcilePendingSessionIndicators(instanceId)
+    if (failures.length) {
+      log.warn("Pending form scan was partial", { instanceId, failedLocations: failures.length })
+      if (propagateErrors) throw failures[0]
+    }
   } catch (error) {
-    log.warn("Failed to sync pending questions", { instanceId, error })
+    log.warn("Failed to sync pending forms", { instanceId, error })
     if (propagateErrors) throw error
   }
 }
@@ -636,7 +798,7 @@ async function runPendingRequestSync(
     try {
       await Promise.all([
         syncPendingPermissions(instanceId, true, isCurrent),
-        syncPendingQuestions(instanceId, true, isCurrent),
+        syncPendingForms(instanceId, true, isCurrent),
       ])
       return
     } catch (error) {
@@ -659,6 +821,7 @@ function syncPendingRequests(
     registerInvalidation?.(() => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
+      abortPendingRequestWork(instanceId)
       invalidatePendingRequestSync(instanceId)
       pendingRequestSyncs.delete(instanceId)
     })
@@ -672,9 +835,47 @@ function syncPendingRequests(
   registerInvalidation?.(() => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
+    abortPendingRequestWork(instanceId)
     invalidatePendingRequestSync(instanceId)
     pendingRequestSyncs.delete(instanceId)
   })
+  return promise
+}
+
+function schedulePendingRequestReconciliation(instanceId: string): void {
+  const current = pendingRequestSyncs.get(instanceId)
+  if (current) current.token.cancelled = true
+  abortPendingRequestWork(instanceId)
+  pendingRequestSyncs.delete(instanceId)
+  invalidatePendingRequestSync(instanceId)
+  void syncPendingRequests(instanceId).catch((error) => {
+    log.warn("Failed to reconcile pending requests after an ambiguous mutation", { instanceId, error })
+  })
+}
+
+async function runPendingRequestLiveness(instanceId: string): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  let sessionError: unknown
+  if (hasRunningSession || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
+    try {
+      await withPendingRequestTimeout(instanceId, (signal) => fetchSessions(instanceId, { reset: true, signal }))
+    } catch (error) {
+      sessionError = error
+    }
+  }
+  await syncPendingRequests(instanceId)
+  reconcilePendingSessionIndicators(instanceId)
+  if (sessionError) throw sessionError
+}
+
+function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+  const existing = pendingRequestLiveness.get(instanceId)
+  if (existing) return existing
+  const promise = runPendingRequestLiveness(instanceId).finally(() => {
+    if (pendingRequestLiveness.get(instanceId) === promise) pendingRequestLiveness.delete(instanceId)
+  })
+  pendingRequestLiveness.set(instanceId, promise)
   return promise
 }
 
@@ -682,20 +883,24 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
-  const worktreeMapHydration = force
-    ? reloadWorktreeMap(instanceId)
-    : ensureWorktreeMapLoaded(instanceId)
   const worktreeHydration = force
     ? reloadWorktrees(instanceId)
     : ensureWorktreesLoaded(instanceId)
-  const sessions = Promise.all([worktreeHydration, worktreeMapHydration]).then(async () => {
+  const workspaceMetadata = worktreeHydration.then(async () => {
+    const instance = instances().get(instanceId)
+    if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
+      log.warn("Failed to load project metadata before session hydration", { instanceId, error })
+    })
+  })
+  void worktreeHydration.then(async () => {
+    const instance = instances().get(instanceId)
+    if (instance?.client) await loadInstanceMetadata(instance, { force })
+  }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
+  const sessions = workspaceMetadata.then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
-  })
-  const workspaceMetadata = worktreeHydration.then(async () => {
-    await Promise.all([worktreeMapHydration, syncOpenCodeWorkspaces(instanceId)])
   })
   return { sessions, workspaceMetadata }
 }
@@ -720,7 +925,7 @@ async function hydrateInstanceData(instanceId: string, options?: {
     await ensureInstanceConfigLoaded(instanceId)
     const instance = instances().get(instanceId)
     if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client)
+    await fetchCommands(instanceId, instance.client, getActiveCatalogLocation(instanceId))
     await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
@@ -770,9 +975,8 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
-  messageStoreBus.clearInstanceScrollSnapshots(instanceId)
   clearPermissionQueue(instanceId)
-  clearQuestionQueue(instanceId)
+  clearPendingFormQueue(instanceId)
 }
 
 async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
@@ -842,7 +1046,6 @@ async function refreshWorkspaceList(): Promise<void> {
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
-    ensureActiveInstanceSelected()
   } finally {
     workspaceListReconciliationFence.complete(requestFence)
   }
@@ -858,25 +1061,48 @@ const initialWorkspaceLoad = (async function initializeWorkspaces(): Promise<{ e
   }
 })()
 let latestWorkspaceLoad = initialWorkspaceLoad
+const workspaceLoadChangeListeners = new Set<() => void>()
+
+function publishLatestWorkspaceLoad(load: Promise<{ error?: unknown }>) {
+  latestWorkspaceLoad = load
+  workspaceLoadChangeListeners.forEach((listener) => listener())
+}
+
+function waitForWorkspaceLoadChange(
+  current: Promise<{ error?: unknown }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (latestWorkspaceLoad !== current) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      workspaceLoadChangeListeners.delete(onChange)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const onChange = () => { cleanup(); resolve() }
+    const onAbort = () => { cleanup(); reject(signal?.reason) }
+    workspaceLoadChangeListeners.add(onChange)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (latestWorkspaceLoad !== current) onChange()
+  })
+}
 
 serverEvents.onOpen(() => {
-  latestWorkspaceLoad = refreshWorkspaceList().then(
+  publishLatestWorkspaceLoad(refreshWorkspaceList().then(
     () => ({}),
     (error) => {
       log.warn("Failed to reconcile workspaces after event reconnect", error)
       return { error }
     },
-  )
+  ))
 })
 
-async function waitForInitialWorkspaceLoad(): Promise<void> {
-  let load = initialWorkspaceLoad
-  while (true) {
-    const result = await load
-    if (result.error !== undefined) throw result.error
-    if (load === latestWorkspaceLoad) return
-    load = latestWorkspaceLoad
-  }
+async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
+  await waitForLatestWorkspaceLoadResult(
+    initialWorkspaceLoad,
+    () => latestWorkspaceLoad,
+    waitForWorkspaceLoadChange,
+    signal,
+  )
 }
 
 
@@ -919,6 +1145,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped":
+      requestInstanceTabClose(event.workspaceId)
       restoreCreatedWorkspaceCleanup.release(event.workspaceId)
       releaseInstanceResources(event.workspaceId)
       removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
@@ -1023,6 +1250,16 @@ function addInstance(instance: Instance) {
 }
 
 function updateInstance(id: string, updates: Partial<Instance>) {
+  const existing = instances().get(id)
+  if (updates.client !== undefined && existing?.client && updates.client !== existing.client) {
+    clearSessionListRequestState(id)
+    clearSessionCatalogState(id)
+    clearCommands(id)
+    clearInstanceMetadata(id)
+    clearCompactionProjections(id)
+    volatileInstanceRefreshes.delete(id)
+    for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
+  }
   setInstances((prev) => {
     const next = new Map(prev)
     const instance = next.get(id)
@@ -1049,6 +1286,8 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       occurrence: removedOccurrence,
     })
   }
+  detachInstanceTabMembership(id)
+  connectionResyncGate.clear(id)
   let nextActiveId: string | null = null
 
   setInstances((prev) => {
@@ -1078,14 +1317,18 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearCommands(id)
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
-  clearQuestionQueue(id)
+  clearSettledForms(id)
+  clearPendingFormQueue(id)
   clearInstanceMetadata(id)
+  clearCompactionProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
   invalidatePendingRequestSync(id)
+  abortPendingRequestWork(id)
+  pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
@@ -1098,6 +1341,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
+  clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
   clearInstanceSessionExpansionState(id)
@@ -1170,15 +1414,13 @@ async function settleRestoreWorkspaceTerminal(
 
 async function createInstance(
   folder: string,
-  binaryPath?: string,
   projectName?: string,
   options?: {
-    activate?: boolean
     signal?: AbortSignal
     shouldCreateCommit?: () => boolean
+    onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
-    forceNew?: boolean
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
@@ -1207,9 +1449,7 @@ async function createInstance(
     const workspace = await serverApi.createWorkspace({
       path: folder,
       name: projectName,
-      binaryPath,
       requestId: restoreRequestId,
-      forceNew: options?.forceNew,
     }, { signal: options?.signal })
     requestResolved = true
     const reused = workspace.reused === true
@@ -1255,9 +1495,9 @@ async function createInstance(
       || options?.shouldCreateCommit?.() === false
     if (!discarded) {
       workspaceListReconciliationFence.markMutation(workspace.id)
+      options?.onBeforeCreateCommit?.(workspace.id)
       upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
       options?.onCreateCommit?.(workspace.id)
-      if (!reused && (options?.activate ?? true)) setActiveInstanceId(workspace.id)
     }
     if (discarded) {
       if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
@@ -1323,47 +1563,31 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
   }
 }
 
-function stopInstance(id: string) {
+const stopInstanceRequests = new Map<string, Promise<void>>()
+
+function stopInstance(id: string): Promise<void> {
   const instance = instances().get(id)
-  if (!instance) return
+  if (!instance) return Promise.resolve()
+  const pending = stopInstanceRequests.get(id)
+  if (pending) return pending
 
-  workspaceListReconciliationFence.markMutation(id)
-  releaseInstanceResources(id)
-  removeInstance(id)
-
-  if (restoreCreatedWorkspaceCleanup.owns(id)) {
-    void restoreCreatedWorkspaceCleanup.discardTracked(id, { retainTombstone: true })
-      .then(() => serverApi.deleteWorkspace(id))
-      .catch((error) => log.error("Failed to stop restore-tracked workspace", error))
-    return
-  }
-
-  void serverApi.deleteWorkspace(id).catch((error) => {
-    log.error("Failed to stop workspace", error)
-    showToastNotification({
-      message: tGlobal("app.stopInstance.toast.error"),
-      variant: "error",
+  const request = serverApi.deleteWorkspace(id)
+    .catch((error) => {
+      log.error("Failed to stop workspace", error)
+      try {
+        showToastNotification({
+          message: tGlobal("app.stopInstance.toast.error"),
+          variant: "error",
+        })
+      } finally {
+        throw error
+      }
     })
-  })
-}
-
-async function fetchLspStatus(instanceId: string): Promise<LspStatus[] | undefined> {
-  const instance = instances().get(instanceId)
-  if (!instance) {
-    log.warn("[LSP] Skipping status fetch; instance not found", { instanceId })
-    return undefined
-  }
-  if (!instance.client) {
-    log.warn("[LSP] Skipping status fetch; client not ready", { instanceId })
-    return undefined
-  }
-  const lsp = instance.client.lsp
-  if (!lsp?.status) {
-    log.warn("[LSP] Skipping status fetch; API unavailable", { instanceId })
-    return undefined
-  }
-  log.info("lsp.status", { instanceId })
-  return await requestData<LspStatus[]>(lsp.status(), "lsp.status")
+    .finally(() => {
+      stopInstanceRequests.delete(id)
+    })
+  stopInstanceRequests.set(id, request)
+  return request
 }
 
 function getActiveInstance(): Instance | null {
@@ -1413,28 +1637,6 @@ function hasPendingPermission(instanceId: string, permissionId: string): boolean
   return getPermissionQueue(instanceId).some((permission) => permission.id === permissionId)
 }
 
-function getQuestionQueue(instanceId: string): QuestionRequest[] {
-  const queue = questionQueues().get(instanceId)
-  if (!queue) {
-    return []
-  }
-  return queue
-}
-
-function getQuestionQueueLength(instanceId: string): number {
-  return getQuestionQueue(instanceId).length
-}
-
-function getQuestionEnqueuedAtForInstance(instanceId: string, requestId: string): number {
-  // Ensure we have a stable timestamp for sorting/ordering.
-  const queue = getQuestionQueue(instanceId)
-  const match = queue.find((q) => q.id === requestId)
-  if (match) {
-    return questionRegistry.ensureEnqueuedAt(match)
-  }
-  return questionRegistry.enqueuedAtFor(requestId)
-}
-
 function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: string): number {
   const queue = getPermissionQueue(instanceId)
   const match = queue.find((permission) => permission.id === permissionId)
@@ -1446,17 +1648,21 @@ function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: st
 
 function computeActiveInterruption(instanceId: string): ActiveInterruption {
   const permissions = getPermissionQueue(instanceId)
-  const questions = getQuestionQueue(instanceId)
-  const firstPermission = permissions[0]
-  const firstQuestion = questions[0]
-  if (!firstPermission && !firstQuestion) return null
-  if (firstPermission && !firstQuestion) return { kind: "permission", id: firstPermission.id }
-  if (firstQuestion && !firstPermission) return { kind: "question", id: firstQuestion.id }
-
-  const permTime = firstPermission ? permissionRegistry.ensureEnqueuedAt(firstPermission) : Number.MAX_SAFE_INTEGER
-  const quesTime = firstQuestion ? questionRegistry.ensureEnqueuedAt(firstQuestion) : Number.MAX_SAFE_INTEGER
-  if (permTime <= quesTime) return { kind: "permission", id: firstPermission.id }
-  return { kind: "question", id: firstQuestion!.id }
+  const forms = getFormQueue(instanceId)
+  const candidates: Array<{ kind: InterruptionKind; id: string; enqueuedAt: number }> = []
+  if (permissions[0]) candidates.push({
+    kind: "permission",
+    id: permissions[0].id,
+    enqueuedAt: permissionRegistry.ensureEnqueuedAt(permissions[0]),
+  })
+  if (forms[0]) candidates.push({
+    kind: "form",
+    id: forms[0].id,
+    enqueuedAt: formRegistry.ensureEnqueuedAt(forms[0]),
+  })
+  candidates.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
+  const first = candidates[0]
+  return first ? { kind: first.kind, id: first.id } : null
 }
 
 function setActiveInterruptionForInstance(instanceId: string, nextActive: ActiveInterruption): void {
@@ -1480,29 +1686,19 @@ function setActiveInterruptionForInstance(instanceId: string, nextActive: Active
     return next
   })
 
-  setActiveQuestionId((prev) => {
-    const next = new Map(prev)
-    if (nextActive?.kind === "question") {
-      next.set(instanceId, nextActive.id)
-    } else {
-      next.set(instanceId, null)
-    }
-    return next
-  })
 }
 
 function recomputeActiveInterruption(instanceId: string): void {
   setActiveInterruptionForInstance(instanceId, computeActiveInterruption(instanceId))
 }
 
-function addPermissionToQueue(instanceId: string, permission: PermissionRequest, source?: PermissionSource): PermissionRequest | undefined {
+function addPermissionToQueue(instanceId: string, permission: PermissionRequest, location?: RequestAuthorityLocation | string): PermissionRequest | undefined {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  rememberRequestLocation(permissionRequestLocations, instanceId, permission.id, location)
   let inserted = false
   let updated = false
   let previousPermission: PermissionRequest | undefined
   let queuedPermission = permission
-  if (source) permissionRegistry.setSource(instanceId, permission.id, source)
-
   setPermissionQueues((prev) => {
     const next = new Map(prev)
     const queue = next.get(instanceId) ?? []
@@ -1551,6 +1747,7 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest,
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  forgetRequestLocation(permissionRequestLocations, instanceId, permissionId)
   let removedPermission: PermissionRequest | null = null
 
   setPermissionQueues((prev) => {
@@ -1644,6 +1841,7 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
 
 function clearPermissionQueue(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  permissionRequestLocations.delete(instanceId)
   permissionRegistry.clear(instanceId, getPermissionQueue(instanceId), (sessionId) => {
     setSessionPendingPermission(instanceId, sessionId, false)
   })
@@ -1660,176 +1858,13 @@ function clearPermissionQueue(instanceId: string): void {
   recomputeActiveInterruption(instanceId)
 }
 
-function addQuestionToQueue(instanceId: string, request: QuestionRequest, source: QuestionSource = "v2"): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  let inserted = false
-  questionRegistry.setSource(instanceId, request.id, source)
-
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
-
-    if (queue.some((q) => q.id === request.id)) {
-      return next
-    }
-
-    questionRegistry.ensureEnqueuedAt(request)
-    const updatedQueue = [...queue, request].sort((a, b) => {
-      return questionRegistry.ensureEnqueuedAt(a) - questionRegistry.ensureEnqueuedAt(b)
-    })
-    next.set(instanceId, updatedQueue)
-    inserted = true
-    return next
-  })
-
-  if (!inserted) {
-    return
-  }
-
-  recomputeActiveInterruption(instanceId)
-
-  const sessionId = getQuestionSessionId(request)
-  if (sessionId) {
-    questionRegistry.increment(instanceId, sessionId)
-    setSessionPendingQuestion(instanceId, sessionId, true)
-
-  }
-}
-
-function removeQuestionFromQueue(instanceId: string, requestId: string): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  const removedSessionId = getQuestionSessionId(getQuestionQueue(instanceId).find((q) => q.id === requestId))
-
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    const queue = next.get(instanceId) ?? ([] as QuestionRequest[])
-    const filtered = queue.filter((item) => item.id !== requestId)
-
-    if (filtered.length > 0) {
-      next.set(instanceId, filtered)
-    } else {
-      next.delete(instanceId)
-    }
-    return next
-  })
-
-  questionRegistry.remove(instanceId, requestId)
-  recomputeActiveInterruption(instanceId)
-
-  if (removedSessionId) {
-    const remaining = questionRegistry.decrement(instanceId, removedSessionId)
-    setSessionPendingQuestion(instanceId, removedSessionId, remaining > 0)
-  }
-}
-
-function clearQuestionQueue(instanceId: string): void {
-  bumpEpoch(pendingQuestionMutationEpochs, instanceId)
-  questionRegistry.clear(instanceId, getQuestionQueue(instanceId), (sessionId) => {
-    setSessionPendingQuestion(instanceId, sessionId, false)
-  })
-  setQuestionQueues((prev) => {
-    const next = new Map(prev)
-    next.delete(instanceId)
-    return next
-  })
-  setActiveQuestionId((prev) => {
-    const next = new Map(prev)
-    next.delete(instanceId)
-    return next
-  })
-  recomputeActiveInterruption(instanceId)
-}
-
 function setActivePermissionIdForInstance(instanceId: string, permissionId: string): void {
   setActiveInterruptionForInstance(instanceId, { kind: "permission", id: permissionId })
 }
 
-function setActiveQuestionIdForInstance(instanceId: string, requestId: string): void {
-  setActiveInterruptionForInstance(instanceId, { kind: "question", id: requestId })
-}
-
-async function sendQuestionReply(
-  instanceId: string,
-  sessionId: string,
-  requestId: string,
-  answers: string[][],
-): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    throw new Error("Instance not ready")
-  }
-
-  try {
-    const client = getRootClient(instanceId)
-    const source = questionRegistry.getSource(instanceId, requestId)
-
-    if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
-      await requestData(
-        client.question.reply({
-          requestID: requestId,
-          ...(workspace ? { workspace } : {}),
-          answers,
-        }),
-        "question.reply",
-      )
-    } else {
-      await requestData(
-        client.v2.session.question.reply({
-          sessionID: sessionId,
-          requestID: requestId,
-          questionV2Reply: { answers },
-        }),
-        "v2.session.question.reply",
-      )
-    }
-
-    removeQuestionFromQueue(instanceId, requestId)
-  } catch (error) {
-    log.error("Failed to send question reply", error)
-    throw error
-  }
-}
-
-async function sendQuestionReject(instanceId: string, sessionId: string, requestId: string): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    throw new Error("Instance not ready")
-  }
-
-  try {
-    const client = getRootClient(instanceId)
-    const source = questionRegistry.getSource(instanceId, requestId)
-
-    if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
-      await requestData(
-        client.question.reject({
-          requestID: requestId,
-          ...(workspace ? { workspace } : {}),
-        }),
-        "question.reject",
-      )
-    } else {
-      await requestData(
-        client.v2.session.question.reject({
-          sessionID: sessionId,
-          requestID: requestId,
-        }),
-        "v2.session.question.reject",
-      )
-    }
-
-    removeQuestionFromQueue(instanceId, requestId)
-  } catch (error) {
-    log.error("Failed to send question reject", error)
-    throw error
-  }
-}
-
 async function sendPermissionResponse(
   instanceId: string,
-  sessionId: string,
+  _sessionId: string,
   requestId: string,
   reply: PermissionReply,
   message?: string,
@@ -1840,31 +1875,14 @@ async function sendPermissionResponse(
   }
 
   try {
-    const client = getRootClient(instanceId)
-    const source = permissionRegistry.getSource(instanceId, requestId)
-
-    if (source === "legacy") {
-      const workspace = sessionId ? await getOpenCodeWorkspaceIdForSession(instanceId, sessionId) : null
-      await requestData(
-        client.permission.reply({
-          requestID: requestId,
-          ...(workspace ? { workspace } : {}),
-          reply,
-          ...(message ? { message } : {}),
-        }),
-        "permission.reply",
-      )
-    } else {
-      await requestData(
-        client.v2.session.permission.reply({
-          sessionID: sessionId,
-          requestID: requestId,
-          reply,
-          ...(message ? { message } : {}),
-        }),
-        "v2.session.permission.reply",
-      )
-    }
+    const permission = getPermissionQueue(instanceId).find((entry) => entry.id === requestId)
+    if (!permission) throw new Error(`Permission request not found: ${requestId}`)
+    await getRootClient(instanceId).permission.reply({
+      sessionID: permission.sessionID,
+      requestID: requestId,
+      reply,
+      ...(message ? { message } : {}),
+    })
 
     markPermissionReplied(instanceId, requestId)
     // Remove from both local queues after successful response; the SSE replied event
@@ -1873,9 +1891,175 @@ async function sendPermissionResponse(
     removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
+    schedulePendingRequestReconciliation(instanceId)
     throw error
   }
 }
+
+async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer): Promise<void> {
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  if (!form) throw new Error(`Form request not found: ${formId}`)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  try {
+    await getRootClient(instanceId).form.reply(
+      { sessionID: form.sessionID, formID: form.id, answer },
+      formRequestOptions(form),
+    )
+    markFormSettled(instanceId, form.id)
+    removePendingForm(instanceId, form.id)
+  } catch (error) {
+    schedulePendingRequestReconciliation(instanceId)
+    throw error
+  }
+}
+
+let pendingFormAddedHandler: ((instanceId: string, form: FormWithLocation) => void) | undefined
+
+function setPendingFormAddedHandler(handler: (instanceId: string, form: FormWithLocation) => void): void {
+  pendingFormAddedHandler = handler
+}
+
+function addPendingForm(instanceId: string, form: FormWithLocation, location?: RequestAuthorityLocation | string): FormWithLocation | undefined {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  rememberRequestLocation(formRequestLocations, instanceId, form.id, location ?? form.location)
+  const previous = getFormQueue(instanceId).find((item) => item.id === form.id)
+  addFormToQueue(instanceId, form)
+  formRegistry.ensureEnqueuedAt(form)
+  if (previous?.sessionID && previous.sessionID !== form.sessionID) {
+    const remaining = formRegistry.decrement(instanceId, previous.sessionID)
+    setSessionPendingForm(instanceId, previous.sessionID, remaining > 0)
+  }
+  if (!previous || previous.sessionID !== form.sessionID) formRegistry.increment(instanceId, form.sessionID)
+  setSessionPendingForm(instanceId, form.sessionID, true)
+  recomputeActiveInterruption(instanceId)
+  if (!previous) pendingFormAddedHandler?.(instanceId, form)
+  return previous ? undefined : form
+}
+
+function removePendingForm(instanceId: string, formId: string): void {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  forgetRequestLocation(formRequestLocations, instanceId, formId)
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  removeFormFromQueue(instanceId, formId)
+  formRegistry.remove(instanceId, formId)
+  if (form) {
+    const remaining = formRegistry.decrement(instanceId, form.sessionID)
+    setSessionPendingForm(instanceId, form.sessionID, remaining > 0)
+  }
+  recomputeActiveInterruption(instanceId)
+}
+
+function clearPendingFormQueue(instanceId: string): void {
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  formRequestLocations.delete(instanceId)
+  formRegistry.clear(instanceId, getFormQueue(instanceId), (sessionId) => {
+    setSessionPendingForm(instanceId, sessionId, false)
+  })
+  clearStoredFormQueue(instanceId)
+  recomputeActiveInterruption(instanceId)
+}
+
+async function sendFormCancel(instanceId: string, formId: string): Promise<void> {
+  const form = getFormQueue(instanceId).find((item) => item.id === formId)
+  if (!form) throw new Error(`Form request not found: ${formId}`)
+  bumpEpoch(pendingFormMutationEpochs, instanceId)
+  try {
+    await getRootClient(instanceId).form.cancel(
+      { sessionID: form.sessionID, formID: form.id },
+      formRequestOptions(form),
+    )
+    markFormSettled(instanceId, form.id)
+    removePendingForm(instanceId, form.id)
+  } catch (error) {
+    schedulePendingRequestReconciliation(instanceId)
+    throw error
+  }
+}
+
+function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return
+  const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
+    ? event.data.sessionID
+    : event.type === "form.created"
+      ? event.data.form.sessionID
+      : undefined
+  const isCompactionDelta = event.type === "session.compaction.delta"
+  if (event.type === "server.connected") clearCompactionProjections(instanceId)
+  if (sessionId && (event.type === "session.compaction.ended" || event.type === "session.compaction.failed")) {
+    cancelCompactionProjection(instanceId, sessionId)
+  }
+  const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
+    if (sessionId && event.type.startsWith("session.")
+      && activeSessionId().get(instanceId) !== sessionId
+      && messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+    if (isCompactionDelta && !force) {
+      if (sessionId) scheduleCompactionProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
+      return
+    }
+    if (sessionId && (force || event.type.startsWith("session.")) && (
+      activeSessionId().get(instanceId) === sessionId
+      && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
+    )) projectOpenCodeMessages(
+      instanceId,
+      sessionId,
+      data,
+      preserveOmitted,
+      force || event.type !== "session.inbox.enqueued",
+    )
+  }
+  const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
+    projectMessages(data, preserveOmitted)
+    if (sessionId && event.type === "session.inbox.cancelled") {
+      removeMessageV2(instanceId, event.data.inboxID, sessionId)
+    }
+    if (sessionId && event.type === "session.revert.committed") {
+      for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
+        if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
+      }
+    }
+  }
+  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, project, (next) => {
+    projectMessages(next, false, true)
+    schedulePendingRequestReconciliation(instanceId)
+  })
+  project(data)
+  if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
+    const current = data.session.permission.list(sessionId) ?? []
+    const remote = (event.type === "permission.asked"
+      ? [event.data, ...current.filter((permission) => permission.id !== event.data.id)]
+      : current).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
+    const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
+    for (const permission of remote) {
+      const queued = addPermissionToQueue(instanceId, permission, location) ?? permission
+      upsertPermissionV2(instanceId, queued)
+    }
+    if (event.type === "permission.replied") {
+      removePermissionFromQueue(instanceId, event.data.requestID)
+      removePermissionV2(instanceId, event.data.requestID)
+    }
+  }
+  if (sessionId && event.type.startsWith("form.")) {
+    const current = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
+    const remote = event.type === "form.created"
+      ? [event.data.form, ...current.filter((form) => form.id !== event.data.form.id)]
+      : current
+    const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
+    for (const form of remote) {
+      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, form, location)
+    }
+    if (event.type === "form.replied" || event.type === "form.cancelled") {
+      markFormSettled(instanceId, event.data.id)
+      removePendingForm(instanceId, event.data.id)
+    }
+  }
+  const targets = getInstanceRefreshTargets(event.type)
+  if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
+}
+
+sseManager.onInvalidation = handleInstanceInvalidation
 
 sseManager.onConnectionLost = (instanceId, reason) => {
   const instance = instances().get(instanceId)
@@ -1888,19 +2072,6 @@ sseManager.onConnectionLost = (instanceId, reason) => {
     folder: instance.folder,
     reason,
   })
-}
-
-sseManager.onLspUpdated = async (instanceId) => {
-  log.info("lsp.updated", { instanceId })
-  try {
-    const lspStatus = await fetchLspStatus(instanceId)
-    if (!lspStatus) {
-      return
-    }
-    mergeInstanceMetadata(instanceId, { lspStatus })
-  } catch (error) {
-    log.error("Failed to refresh LSP status", error)
-  }
 }
 
 sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
@@ -1933,13 +2104,7 @@ async function acknowledgeDisconnectedInstance(): Promise<void> {
     return
   }
 
-  try {
-    stopInstance(pending.id)
-  } catch (error) {
-    log.error("Failed to stop disconnected instance", error)
-  } finally {
-    setDisconnectedInstance(null)
-  }
+  setDisconnectedInstance(null)
 }
 
 export {
@@ -1969,7 +2134,7 @@ export {
   getInstanceLogs,
   isInstanceLogStreaming,
   setInstanceLogStreaming,
-  // Permission + question management
+  // Permission and form management
   permissionQueues,
   activePermissionId,
   getPermissionQueue,
@@ -1983,24 +2148,21 @@ export {
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
-  questionQueues,
-  activeQuestionId,
   activeInterruption,
-  getQuestionQueue,
-  getQuestionQueueLength,
-  getQuestionEnqueuedAtForInstance,
-  addQuestionToQueue,
-  removeQuestionFromQueue,
-  clearQuestionQueue,
-  sendQuestionReply,
-  sendQuestionReject,
-  setActiveQuestionIdForInstance,
+  sendFormReply,
+  sendFormCancel,
+  addPendingForm,
+  removePendingForm,
+  setPendingFormAddedHandler,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
-  fetchLspStatus,
   disposeInstance,
   reconcilePendingSessionIndicators,
+  reconcilePendingRequestLiveness,
   syncPendingRequests,
   invalidatePendingRequestSync,
+  refreshVolatileInstanceState,
+  syncLoadedSessionInboxes,
+  handleInstanceInvalidation,
   clearReloadableInstanceState,
 }

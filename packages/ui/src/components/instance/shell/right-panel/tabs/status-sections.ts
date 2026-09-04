@@ -32,15 +32,9 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     order: 50,
   },
   {
-    id: "lsp",
-    labelKey: "instanceShell.rightPanel.sections.lsp",
-    tooltipKey: "instanceShell.rightPanel.sections.lsp.tooltip",
-    order: 60,
-  },
-  {
     id: "plugins",
     labelKey: "instanceShell.rightPanel.sections.plugins",
     tooltipKey: "instanceShell.rightPanel.sections.plugins.tooltip",
-    order: 70,
+    order: 60,
   },
 ]

@@ -6,6 +6,7 @@
 - When adding new component styles, place them beside their peers in the scoped subdirectory (e.g., `src/styles/messaging/new-part.css`) and import them from the corresponding aggregator file.
 - Prefer smaller, focused style files (≈150 lines or less) over large monoliths. Split by component or feature area if a file grows beyond that size.
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
+- Use the shared `.window-*` primitives from `src/styles/components/window.css` for dialog, popover, and floating-window headers, toolbars, bodies, footers, titles, and actions.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 
@@ -30,7 +31,7 @@ The UI uses a small custom i18n layer (no ICU/messageformat). When building feat
 - **Interpolation:** placeholders are simple `{name}` replacements (word characters only). Avoid placeholders like `{file-name}`.
 - **Pluralization:** handle manually via separate keys like `something.one` / `something.other` and choose in code.
 - **Adding a new language:** add a new `messages/<locale>/` folder + `index.ts`, register it in `packages/ui/src/lib/i18n/index.tsx`, and add it to the language picker in `packages/ui/src/components/folder-selection-view.tsx`.
-- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.json`).
+- **Locale persistence:** the selected locale is stored in app preferences (`locale`) and persisted via the server config (default `~/.config/codenomad/config.yaml`; `config.json` is migration input only).
 - **Avoid English-only paths:** do not import `enMessages` directly in feature code; always go through `t(...)` so locale changes apply.
 
 ## File Length Guidelines (Highlight Only)
@@ -48,6 +49,10 @@ Behavior for agents:
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
+
+## V2 Runtime Launch
+- Launch the release executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
+- Stop the running CodeNomad instance before rebuilding the same release path, then relaunch it from the independent OpenCode TUI.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.

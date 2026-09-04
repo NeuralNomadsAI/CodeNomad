@@ -1,4 +1,6 @@
 @import "./components/buttons.css";
+@import "./components/window.css";
+@import "./components/native-titlebar.css";
 @import "./components/badges.css";
 @import "./components/folder-home.css";
 @import "./components/folder-drop.css";
@@ -9,8 +11,11 @@
 @import "./components/directory-browser.css";
 @import "./components/remote-access.css";
 @import "./components/permission-notification.css";
+@import "./components/form-request.css";
+@import "./components/form-request-options.css";
 @import "./components/toast-history.css";
 @import "./components/settings-screen.css";
+@import "./components/theme-scheme-settings.css";
 @import "./components/settings-info.css";
 @import "./components/config-files-settings.css";
 @import "./components/provider-auth.css";

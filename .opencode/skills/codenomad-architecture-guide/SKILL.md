@@ -1,153 +1,83 @@
 ---
 name: codenomad-architecture-guide
 description: |
-  Comprehensive architecture and SDK navigation guide for the CodeNomad codebase.
-  
-  **When to use:** Load this skill when you need to navigate the CodeNomad monorepo, understand cross-package dependencies, work with the OpenCode SDK V2, or ensure you don't miss related code when implementing features or fixing bugs. This skill covers the 6 functional areas (ServerBackend, UserInterface, DesktopClient, SpeechAndAudio, BuildAndPackaging, CloudflareDeployment), OpenCode SDK V2 integration patterns, critical schema behaviors, and feature traces with decision branches.
-  
-  **Trigger contexts:** Working on CodeNomad features, debugging cross-area issues, integrating OpenCode SDK APIs, adding UI components, implementing server routes, or navigating the monorepo structure.
-  
-  **Permission required:** Agent must explicitly request or be granted permission to load this skill.
+  Architecture and native OpenCode V2 navigation guide for CodeNomad. Use for cross-package changes, OpenCode client calls, server routes, events, workspaces, Git, Yolo, UI, or desktop integration.
 ---
 
-# CodeNomad Architecture & SDK Navigation Skill
+# CodeNomad Architecture Guide
 
-## Quick Start (by contribution frequency)
+## Start Here
 
-- **UI component/feature (60%)** → Read `references/ui-conventions.md` → Check i18n
-- **Server route/feature (25%)** → Read `references/server-conventions.md` → Check `references/feature-traces.md`
-- **Bug fix (10%)** → Use Navigation Guide below → Check `references/feature-traces.md`
-- **Desktop/Plugin (5%)** → Read `references/desktop-conventions.md`
-- **Not covered?** → See "Escape Hatch" at bottom
+- UI: read `references/ui-conventions.md`; use i18n for visible text.
+- Server: read `references/server-conventions.md` and `references/feature-traces.md`.
+- OpenCode: read the three `sdk-*.md` references before changing client calls or service lifecycle.
+- Desktop: read `references/desktop-conventions.md`.
+- Developer Mode: read `../../../dev-docs/DEVELOPER_MODE.md`.
 
-## 1. Architecture Overview
+## Native OpenCode V2 Baseline
 
-CodeNomad is a multi-platform desktop application with a Fastify backend and SolidJS frontend.
+- The only OpenCode client dependency is the experimental `@opencode-ai/client@beta` protocol. Server and UI follow that dependency together; refresh the client lock before API audits or release validation. The runtime CLI is managed independently and startup has no exact version gate. The public `@opencode-ai/sdk` describes an alternative embedded host.
+- Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
+- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The reviewed project-local Developer Mode adapter is the sole narrow exception; see `dev-docs/DEVELOPER_MODE.md`.
+- The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
+- The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
+- OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. Question request/reply/reject routes are compatibility-only; new interruption flows use `client.form.*`. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
+- CodeNomad owns explicit Stop Workspace eviction, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`. Tab/window close only detaches local UI and never evicts.
+- OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only to `service start` for a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
+- Native desktop identity is channel plus config profile: one singleton process/backend per profile and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable/dev/non-default profiles isolate native state; OpenCode sessions/messages are shared while tabs/drafts/views are per-window.
+- Client-state V3 is a per-window envelope over the V2 content-addressed partition graph with atomic publication/migration, ownership-fenced writes, and conservative post-commit GC. Native SideCar/browser previews are sandboxed without same-origin access; DOM comment inspection is web-only.
 
-### 6 Functional Areas (from RPG analysis)
+## Package Map
 
-| Area | Entities | Key Responsibility |
-|------|----------|-------------------|
-| **UserInterface** | 613 | SolidJS components, stores, hooks, i18n, API client |
-| **ServerBackend** | 418 | Fastify routes, auth, workspaces, filesystem, speech |
-| **SpeechAndAudio** | 74 | Speech synthesis, voice mode, conversation mode |
-| **DesktopClient** | 59 | Electron main, Tauri Rust, preload, IPC |
-| **BuildAndPackaging** | 28 | Build scripts, packaging, resource bundling |
-| **CloudflareDeployment** | 3 | Edge deployment, asset serving |
+- `packages/server/`: Fastify control API, shared OpenCode service, locations, auth, filesystem, Git, Yolo, speech.
+- `packages/ui/`: SolidJS application, generated client adapters, stores, components, i18n.
+- `packages/electron-app/`: Electron host.
+- `packages/tauri-app/`: Tauri host.
+- `packages/cloudflare/`: edge deployment.
 
-### Package Map
+## Integration Paths
 
-- `packages/server/` — Fastify backend, workspaces, auth, speech, sidecars
-- `packages/ui/` — SolidJS frontend, stores, components, i18n
-- `packages/electron-app/` — Electron desktop wrapper
-- `packages/tauri-app/` — Tauri desktop wrapper (Rust + webview)
-- `packages/opencode-plugin/` — OpenCode plugin integration
+- Shared service: `packages/server/src/workspaces/opencode-service.ts`
+- Location ownership: `packages/server/src/workspaces/manager.ts`
+- OpenCode proxy: `packages/server/src/server/http-server.ts`
+- CodeNomad API client/events: `packages/ui/src/lib/api-client.ts`
+- OpenCode client cache: `packages/ui/src/lib/sdk-manager.ts`
+- Root client authority: `packages/ui/src/stores/opencode-client.ts`
+- Native session calls: `packages/ui/src/stores/session-api.ts`, `session-actions.ts`
+- Git mutations: `packages/server/src/workspaces/git-mutations.ts`
+- Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
+- Desktop hosts: `packages/electron-app/electron/main/`, `packages/electron-app/electron/preload/index.cjs`, `packages/tauri-app/src-tauri/src/`
+- Developer Mode: `.opencode/plugins/codenomad-automation.ts`, `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/developer-cdp.ts`
 
-### Key Entry Points
+## Rules
 
-- **Server:** `packages/server/src/index.ts` (CLI entry)
-- **UI:** `packages/ui/src/main.tsx` (app bootstrap)
-- **Electron:** `packages/electron-app/electron/main/main.ts`
-- **Tauri:** `packages/tauri-app/src-tauri/src/main.rs`
+- Inspect installed declarations under `node_modules/@opencode-ai/client/dist/promise/`; generated names are the source of truth.
+- Preserve `LocationRef` and explicit directory routing. Never infer workspace ownership from a client-provided path.
+- Send CodeNomad operations through `/api/*`; send OpenCode operations through `/workspaces/:id/instance/api/*`.
+- Consume the multiplexed CodeNomad SSE stream at `/api/events`; do not create one OpenCode process or event stream per workspace. Native events are volatile, so reconnect must reconcile authoritative state.
+- Treat the instance proxy allowlist as an integration boundary. Upstream routes are not exposed automatically.
+- Keep Git mutations and Yolo in CodeNomad. They are policy/security boundaries, not upstream client features.
+- Check `packages/server/src/api-types.ts` and UI consumers together when changing CodeNomad events or responses.
+- Desktop behavior must remain at strict Electron/Tauri parity in the same change; use the shared native abstraction and test both hosts.
 
-## 2. Navigation Guide
+## Anti-Patterns
 
-### Finding Code in the Codebase
+| Avoid | Use |
+|---|---|
+| Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
+| One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
+| Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
+| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; the reviewed project-local Developer Mode adapter only for desktop feedback |
+| OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
+| Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 
-Use grep and file search tools to navigate:
+## References
 
-**Search by intent:**
-- `grep "permission approval" packages/ui/src/components/`
-- `grep "session list" packages/ui/src/stores/`
-- `grep "workspace create" packages/server/src/server/routes/`
-
-**Search by imports:**
-- Find what uses a module: `grep "import.*from.*module-path" packages/`
-- Find exports: `grep "^export" packages/server/src/api-types.ts`
-
-**Cross-reference by feature:**
-- Server API types: `packages/server/src/api-types.ts`
-- UI type mirrors: `packages/ui/src/types/`
-- SDK wrappers: `packages/ui/src/lib/sdk-manager.ts`
-
-## 3. SDK Schema Verification (Mandatory)
-
-**SDK Note:** The OpenCode SDK is an external package (`@opencode-ai/sdk/v2/client`). Its implementation lives outside this repository.
-
-- After `npm install`, you can inspect types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
-- **Fallback:** Read the actual usage patterns in CodeNomad code (see `references/sdk-api-reference.md` for file locations)
-- When in doubt, check how the SDK is imported and used in existing CodeNomad files
-
-This skill provides navigation and patterns, not definitive schemas.
-
-## 4. Anti-Patterns
-
-### Common Mistakes
-
-| Mistake | Correct Approach | Reference |
-|---------|-----------------|-----------|
-| Import `enMessages` directly | Use `t()` or `tGlobal()` | `packages/ui/src/lib/i18n/index.tsx` |
-| Set `metadata: { flag: true }` on assistant parts | Use client-side registry | `packages/ui/src/stores/session-compaction.ts` |
-| Call `client.session.*` directly without worktree routing | Use `getOrCreateWorktreeClient()` | `packages/ui/src/stores/worktrees.ts` |
-| Forget SSE disconnection handling | Add handlers | `packages/ui/src/lib/event-source-handlers.ts` |
-| Add hardcoded strings without i18n | Add to English + all 7 locales | `packages/ui/src/lib/i18n/messages/` |
-| Modify server route without checking UI API client | Trace full feature flow | `references/feature-traces.md` |
-| Change API type without checking UI type matches | Check UI types mirror server types | `packages/ui/src/types/` vs `packages/server/src/api-types.ts` |
-
-## 5. Platform Integration Checklist
-
-### Desktop Platform Rules
-
-- **Existing IPC/handlers (pre-Tauri):** MUST implement in both Electron + Tauri
-- **New features:** Implement in Electron first, Tauri if time permits
-- **Native APIs (dialogs, notifications):** Use `packages/ui/src/lib/native/` abstraction
-
-### Checklist
-
-- [ ] Electron main-process changes? (`packages/electron-app/electron/main/`)
-- [ ] Tauri Rust changes? (`packages/tauri-app/src-tauri/src/`)
-- [ ] Preload API exposure? (`packages/electron-app/electron/preload/`)
-- [ ] Native abstraction? (`packages/ui/src/lib/native/`)
-
-## 6. Implementation Checklist
-
-Before submitting changes:
-
-- [ ] Run impact analysis: `grep "YOUR_EXPORT_NAME" packages/` to find all usages
-- [ ] Check i18n: Search for hardcoded strings in modified files
-- [ ] Verify file length: Check line count (warn >500, reject >800 source; >1000 tests)
-- [ ] Check DesktopClient: Does this need IPC/main-process changes?
-- [ ] Verify SDK compatibility: Check types in `node_modules/@opencode-ai/sdk/v2/client.d.ts`
-- [ ] Cross-area check: If modifying server routes, check UI stores and API clients
-- [ ] Check anti-patterns: Review "Common Mistakes" section above
-- [ ] API compatibility: If changing `api-types.ts`, check UI type matches
-
-## 7. Escape Hatch + Update Criteria
-
-### Not Covered?
-
-If your change involves areas not documented here:
-
-1. Read package entry points and scan directory structure
-2. Ask the user before proceeding with unfamiliar code
-
-### Update This Skill If
-
-- You discover a new SDK gotcha not documented in `references/sdk-critical-behaviors.md`
-- You add a new cross-area feature flow (add to `references/feature-traces.md`)
-- File paths or conventions change significantly
-- You find an anti-pattern occurring repeatedly
-- SDK schemas change and examples become outdated
-
-## Reference Files
-
-| File | Purpose |
-|------|---------|
-| `references/architecture-overview.md` | Package structure, functional areas, entry points |
-| `references/ui-conventions.md` | SolidJS, i18n, stores, components, testing |
-| `references/server-conventions.md` | Fastify, API types, config, testing |
-| `references/desktop-conventions.md` | Electron + Tauri parity, native abstractions |
-| `references/sdk-api-reference.md` | OpenCode SDK V2 categories and signatures |
-| `references/sdk-critical-behaviors.md` | Schema gotchas, limitations, decision matrix |
-| `references/sdk-integration-patterns.md` | Client lifecycle, error handling, optimistic updates |
-| `references/feature-traces.md` | End-to-end flows with decision branches |
+- `references/architecture-overview.md`
+- `references/server-conventions.md`
+- `references/sdk-api-reference.md`
+- `references/sdk-integration-patterns.md`
+- `references/sdk-critical-behaviors.md`
+- `references/feature-traces.md`
+- `references/ui-conventions.md`
+- `references/desktop-conventions.md`
