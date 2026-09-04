@@ -10,6 +10,7 @@ const PROBE_TIMEOUT_MS = 5_000
 const INSPECTION_TIMEOUT_MS = 15_000
 const RECONNECT_INTERVAL_MS = 250
 const MAX_REGISTRATIONS = 64
+const MAX_LOCAL_REGISTRY_FILES = 4096
 const MAX_REGISTRATION_BYTES = 4 * 1024
 const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
@@ -122,9 +123,11 @@ export function createAutomationBridgeRegistration(url: string): AutomationBridg
 
 export async function publishAutomationBridge(registration: AutomationBridgeRegistration): Promise<() => Promise<void>> {
   const directory = automationBridgeDirectory()
-  const target = path.join(directory, `${registration.startedAt}-${registration.pid}-${registration.token.slice(0, 12)}.json`)
   await mkdir(directory, { recursive: true })
-  await writeAtomic(target, `${JSON.stringify(registration)}\n`)
+  await pruneDeadLocalRegistrations(directory)
+  const published = { ...registration, startedAt: Date.now() }
+  const target = path.join(directory, `${published.startedAt}-${published.pid}-${published.token.slice(0, 12)}.json`)
+  await writeAtomic(target, `${JSON.stringify(published)}\n`)
   return () => rm(target, { force: true })
 }
 
@@ -159,6 +162,64 @@ async function writeAtomic(target: string, content: string): Promise<void> {
   await rename(temporary, target)
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+async function readRegistration(target: string): Promise<AutomationBridgeRegistration | undefined> {
+  try {
+    const file = await open(target, "r")
+    const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
+    let bytesRead = 0
+    try {
+      bytesRead = (await file.read(buffer, 0, buffer.length, 0)).bytesRead
+    } finally {
+      await file.close()
+    }
+    if (bytesRead > MAX_REGISTRATION_BYTES) return undefined
+    const value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")) as Partial<AutomationBridgeRegistration>
+    if (value.version !== 1 || typeof value.url !== "string" || typeof value.token !== "string"
+      || !Number.isSafeInteger(value.pid) || value.pid! <= 0
+      || !Number.isSafeInteger(value.startedAt) || value.startedAt! <= 0) return undefined
+    const url = new URL(value.url)
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== AUTOMATION_BRIDGE_PATH) return undefined
+    return value as AutomationBridgeRegistration
+  } catch {
+    return undefined
+  }
+}
+
+async function pruneDeadLocalRegistrations(directory: string): Promise<void> {
+  try {
+    const stream = await opendir(directory)
+    const entries: Array<{ name: string; startedAt: number }> = []
+    for await (const entry of stream) {
+      if (!entry.isFile()) continue
+      const match = REGISTRATION_NAME.exec(entry.name)
+      if (!match) continue
+      entries.push({ name: entry.name, startedAt: Number(match[1]) })
+      if (entries.length > MAX_LOCAL_REGISTRY_FILES * 2) {
+        entries.sort((left, right) => right.startedAt - left.startedAt)
+        entries.length = MAX_LOCAL_REGISTRY_FILES
+      }
+    }
+    entries.sort((left, right) => right.startedAt - left.startedAt)
+    entries.length = Math.min(entries.length, MAX_LOCAL_REGISTRY_FILES)
+    for (const entry of entries) {
+      const target = path.join(directory, entry.name)
+      const registration = await readRegistration(target)
+      if (!registration || !isProcessAlive(registration.pid)) await rm(target, { force: true })
+    }
+  } catch {
+    // Registry cleanup is best effort; publication and discovery still proceed.
+  }
+}
+
 export function parseDeveloperAction(input: unknown): DeveloperAction {
   if (!input || typeof input !== "object") throw new Error("Developer Mode input must be an object")
   const value = input as Record<string, unknown>
@@ -183,6 +244,7 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
   const directories = automationBridgeDirectories()
   for (const [directoryIndex, directory] of directories.entries()) {
     let entries: Array<{ name: string; startedAt: number }> = []
+    const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
       for await (const entry of stream) {
@@ -190,36 +252,26 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
         const match = REGISTRATION_NAME.exec(entry.name)
         if (!match) continue
         entries.push({ name: entry.name, startedAt: Number(match[1]) })
-        entries.sort((left, right) => right.startedAt - left.startedAt)
-        if (entries.length > MAX_REGISTRATIONS) entries.pop()
+        if (entries.length > entryLimit * 2) {
+          entries.sort((left, right) => right.startedAt - left.startedAt)
+          entries.length = entryLimit
+        }
       }
     } catch {
       continue
     }
+    entries.sort((left, right) => right.startedAt - left.startedAt)
+    entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
-      try {
-        const file = await open(path.join(directory, entry.name), "r")
-        const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
-        let bytesRead = 0
-        try {
-          bytesRead = (await file.read(buffer, 0, buffer.length, 0)).bytesRead
-        } finally {
-          await file.close()
-        }
-        if (bytesRead > MAX_REGISTRATION_BYTES) continue
-        const value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")) as Partial<AutomationBridgeRegistration>
-        if (value.version !== 1 || typeof value.url !== "string" || typeof value.token !== "string"
-          || typeof value.pid !== "number" || typeof value.startedAt !== "number") continue
-        const url = new URL(value.url)
-        if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== AUTOMATION_BRIDGE_PATH) continue
-        const registration = value as DiscoveredBridgeRegistration
-        if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) {
-          registration[WINDOWS_INTEROP] = true
-        }
-        found.push(registration)
-      } catch {
-        // Stale or partially-written registrations are ignored.
+      const target = path.join(directory, entry.name)
+      const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
+      if (!registration) continue
+      if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
+        await rm(target, { force: true }).catch(() => undefined)
+        continue
       }
+      if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) registration[WINDOWS_INTEROP] = true
+      found.push(registration)
     }
   }
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
@@ -351,47 +403,74 @@ async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID
   }
 }
 
-async function probeBridges(active: DiscoveredBridgeRegistration[], sessionID: string): Promise<ProbedBridge[]> {
+async function probeBridges(
+  active: DiscoveredBridgeRegistration[],
+  sessionID: string,
+  options: { limit?: number; accept?: (bridge: ProbedBridge) => boolean } = {},
+): Promise<ProbedBridge[]> {
   const found: ProbedBridge[] = []
-  for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
+  const limit = options.limit ?? 2
+  for (let index = 0; index < active.length && found.length < limit; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY)
       .map((registration) => probeBridge(registration, sessionID)))
-    found.push(...batch.filter((value): value is ProbedBridge => Boolean(value)))
+    for (const value of batch) {
+      if (value && (options.accept?.(value) ?? true)) found.push(value)
+    }
   }
-  return found
+  return found.slice(0, limit)
 }
 
-async function executeDeveloperTool(sessionID: string, command: DeveloperAction) {
-  const active = await registrations()
-  const targets = await probeBridges(active, sessionID)
-  if (targets.length === 0) throw new Error("Developer Mode is not active for the visible CodeNomad session")
-  if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose Developer Mode for this session")
-  const target = targets[0]
+async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>, sessionID: string, command: DeveloperAction) {
+  let target = inspectedTargets.get(sessionID)
+  if (command.action === "inspect") {
+    const targets = await probeBridges(await registrations(), sessionID)
+    if (targets.length === 0) throw new Error("Developer Mode is not active for the visible CodeNomad session")
+    if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose Developer Mode for this session")
+    target = targets[0]
+  } else if (!target) {
+    throw new Error("Run codenomad.inspect before acting on or restarting CodeNomad")
+  }
+  const existingTokens = command.action === "restart"
+    ? new Set((await registrations()).map((registration) => registration.token))
+    : undefined
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
   if (response.status !== 200) throw new Error(response.body.error || `Developer Mode failed (${response.status})`)
   if (command.action === "restart") {
-    return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.registration.token)
+    return waitForRestart(inspectedTargets, sessionID, target.nativeIdentity, target.runId, existingTokens!)
   }
+  if (command.action === "inspect") inspectedTargets.set(sessionID, target)
   return formatBridgeResult(response.body.result)
 }
 
-async function waitForRestart(sessionID: string, nativeIdentity: string, previousRunId: string, previousToken: string) {
+async function waitForRestart(
+  inspectedTargets: Map<string, ProbedBridge>,
+  sessionID: string,
+  nativeIdentity: string,
+  previousRunId: string,
+  existingTokens: ReadonlySet<string>,
+) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
   while (Date.now() < deadline) {
     const active = await registrations()
     const candidates = await probeBridges(
-      active.filter((registration) => registration.token !== previousToken),
+      active.filter((registration) => !existingTokens.has(registration.token)),
       sessionID,
+      {
+        limit: 1,
+        accept: (candidate) => candidate.nativeIdentity === nativeIdentity && candidate.runId !== previousRunId,
+      },
     )
     for (const candidate of candidates) {
       try {
-        if (candidate.nativeIdentity !== nativeIdentity || candidate.runId === previousRunId) continue
         const inspection = await callBridge(candidate.registration, {
           mode: "developer-execute",
           sessionID,
           command: { action: "inspect" },
         }, INSPECTION_TIMEOUT_MS)
-        if (inspection.status === 200) return formatBridgeResult(inspection.body.result)
+        if (inspection.status === 200) {
+          inspectedTargets.set(sessionID, candidate)
+          return formatBridgeResult(inspection.body.result)
+        }
       } catch {
         // The desktop backend and renderer become ready at different points during relaunch.
       }
@@ -402,13 +481,14 @@ async function waitForRestart(sessionID: string, nativeIdentity: string, previou
 }
 
 export async function setupAutomationPlugin(context: AutomationPluginContext): Promise<void> {
+  const inspectedTargets = new Map<string, ProbedBridge>()
   await context.tool.transform((draft) => {
     draft.add({
       name: "inspect",
       description: "Inspect the accessibility tree, runtime feedback, and visible session in the CodeNomad build running in Developer Mode.",
       input: { type: "object", properties: {}, additionalProperties: false },
       options: { namespace: "codenomad", codemode: false },
-      execute: (_input, tool) => executeDeveloperTool(tool.sessionID, { action: "inspect" }),
+      execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "inspect" }),
     })
     draft.add({
       name: "act",
@@ -424,14 +504,14 @@ export async function setupAutomationPlugin(context: AutomationPluginContext): P
         additionalProperties: false,
       },
       options: { namespace: "codenomad", codemode: false },
-      execute: (input, tool) => executeDeveloperTool(tool.sessionID, parseDeveloperAction(input)),
+      execute: (input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, parseDeveloperAction(input)),
     })
     draft.add({
       name: "screenshot",
       description: "Capture the visible page of the CodeNomad build running in Developer Mode.",
       input: { type: "object", properties: {}, additionalProperties: false },
       options: { namespace: "codenomad", codemode: false },
-      execute: (_input, tool) => executeDeveloperTool(tool.sessionID, { action: "screenshot" }),
+      execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "screenshot" }),
     })
   })
 }

@@ -2,6 +2,8 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use serde::Deserialize;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct LaunchIntent {
     pub(crate) new_window: bool,
@@ -96,6 +98,39 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     intent
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchUiSettings {
+    focus_existing_window_on_second_launch: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct LaunchUiConfig {
+    settings: Option<LaunchUiSettings>,
+}
+
+#[derive(Deserialize)]
+struct LaunchConfig {
+    ui: Option<LaunchUiConfig>,
+}
+
+pub(crate) fn prepare_second_launch_intent(
+    mut intent: LaunchIntent,
+    config_path: &Path,
+) -> LaunchIntent {
+    let focus_existing = std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|content| serde_yaml::from_str::<LaunchConfig>(&content).ok())
+        .and_then(|config| config.ui)
+        .and_then(|ui| ui.settings)
+        .and_then(|settings| settings.focus_existing_window_on_second_launch)
+        == Some(true);
+    if !focus_existing {
+        intent.new_window = true;
+    }
+    intent
+}
+
 #[derive(Default)]
 pub(crate) struct LaunchQueue {
     pending: Mutex<VecDeque<LaunchIntent>>,
@@ -173,5 +208,24 @@ mod tests {
         )
         .folders
         .is_empty());
+    }
+
+    #[test]
+    fn second_launches_open_a_new_window_unless_the_profile_requests_focus() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.yaml");
+        let intent = LaunchIntent {
+            new_window: false,
+            folders: vec!["workspace".into()],
+        };
+        assert!(prepare_second_launch_intent(intent.clone(), &config).new_window);
+        std::fs::write(
+            &config,
+            "ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n",
+        )
+        .unwrap();
+        assert!(!prepare_second_launch_intent(intent.clone(), &config).new_window);
+        std::fs::write(&config, "ui: [invalid").unwrap();
+        assert!(prepare_second_launch_intent(intent, &config).new_window);
     }
 }

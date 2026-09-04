@@ -118,11 +118,11 @@ const NotificationsSettingsModal: Component<NotificationsSettingsModalProps> = (
         <Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
-            <header class="px-6 py-4 border-b" style={{ "border-color": "var(--border-base)" }}>
-              <Dialog.Title class="text-xl font-semibold text-primary">Notifications</Dialog.Title>
+            <header class="window-header">
+              <Dialog.Title class="window-title">Notifications</Dialog.Title>
             </header>
 
-            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <div class="window-body space-y-6">
               <div class="panel">
                 <div class="panel-header">
                   <h3 class="panel-title">Session Status Notifications</h3>
@@ -217,7 +217,7 @@ const NotificationsSettingsModal: Component<NotificationsSettingsModalProps> = (
               </div>
             </div>
 
-            <div class="px-6 py-4 border-t flex justify-end" style={{ "border-color": "var(--border-base)" }}>
+            <div class="window-footer">
               <button type="button" class="selector-button selector-button-secondary" onClick={props.onClose}>
                 Close
               </button>

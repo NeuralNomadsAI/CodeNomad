@@ -158,7 +158,7 @@ dev-docs/             Development documentation
 
 ### External:
 
-- OpenCode server API: https://opencode.ai/docs/server/
+- OpenCode V2 HTTP API: https://opencode.ai/v2/docs/api/
 - Electron docs: https://electronjs.org/docs
 - SolidJS docs: https://solidjs.com
 - Kobalte UI: https://kobalte.dev

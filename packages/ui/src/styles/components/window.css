@@ -1,0 +1,140 @@
+/* Shared density contract for dialogs, popovers, and floating windows. */
+:is(.modal-surface, .window-shell) {
+  --window-header-height: var(--chrome-height);
+  --window-control-height: var(--control-height-sm);
+  --window-inline-padding: var(--space-md);
+  --window-block-padding: var(--space-sm);
+  font-size: var(--font-size-base);
+}
+
+.window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  gap: var(--space-sm);
+  min-height: var(--window-header-height);
+  padding: var(--space-xs) var(--window-inline-padding);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-chrome);
+}
+
+.window-title,
+.modal-surface h2:not(.sr-only) {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-tight);
+}
+
+.window-leading-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.window-toolbar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--space-xs);
+  min-height: var(--control-height);
+  padding: var(--space-xs) var(--window-inline-padding);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-chrome);
+}
+
+.window-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--window-block-padding) var(--window-inline-padding);
+}
+
+.window-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: var(--space-xs);
+  min-height: var(--window-header-height);
+  padding: var(--space-xs) var(--window-inline-padding);
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-chrome);
+}
+
+.window-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--window-control-height);
+  height: var(--window-control-height);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.window-icon-button:hover {
+  background: var(--surface-interactive-hover);
+  color: var(--text-primary);
+}
+
+.window-icon-button:focus-visible,
+.window-action:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.window-icon-button > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.window-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: var(--window-control-height);
+  padding-inline: var(--space-sm);
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.window-action:hover {
+  background: var(--surface-interactive-hover);
+  color: var(--text-primary);
+}
+
+.modal-surface.p-6 {
+  padding: var(--space-lg);
+}
+
+.modal-surface.gap-6,
+.modal-surface.gap-5,
+.modal-surface.gap-4 {
+  gap: var(--space-md);
+}
+
+.modal-surface > .p-6 {
+  padding: var(--space-md);
+}
+
+.modal-surface > .px-6 {
+  padding-inline: var(--space-md);
+}
+
+.modal-surface > .py-4 {
+  padding-block: var(--space-sm);
+}

@@ -18,7 +18,7 @@ export type BehaviorToggleSetting = {
   titleKey: string
   subtitleKey: string
   get: (preferences: Preferences) => boolean
-  set: (next: boolean) => void
+  set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
 }
 
@@ -39,7 +39,7 @@ export type BehaviorRegistryActions = {
   preferences: Accessor<Preferences>
   useTauriNativeEventTransport?: Accessor<boolean>
   setUseTauriNativeEventTransport?: (next: boolean) => void
-  updatePreferences?: (updates: Partial<Preferences>) => void
+  updatePreferences?: (updates: Partial<Preferences>) => void | Promise<boolean>
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
@@ -300,6 +300,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ keepUnseenSubagentIdleStatus: next })
+        }
+      },
+    },
+    {
+      kind: "toggle",
+      id: "behavior.focusExistingWindowOnSecondLaunch",
+      titleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.title",
+      subtitleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle",
+      get: (p) => p.focusExistingWindowOnSecondLaunch,
+      set: async (next) => {
+        if (await updatePreferences?.({ focusExistingWindowOnSecondLaunch: next }) === false) {
+          throw new Error("Failed to persist second-launch behavior")
         }
       },
     },

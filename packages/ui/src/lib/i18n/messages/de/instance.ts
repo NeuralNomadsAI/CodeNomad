@@ -182,6 +182,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "Keine Datei ausgewählt.",
   "instanceShell.filesShell.listEmpty": "Keine Dateien in diesem Ordner.",
   "instanceShell.filesShell.hideFiles": "Dateien ausblenden",
+  "instanceShell.filesShell.resizeFiles": "Dateiliste skalieren",
   "instanceShell.filesShell.showFiles": "Dateien anzeigen",
   "instanceShell.filesShell.search.placeholder": "Dateien in diesem Ordner filtern",
   "instanceShell.filesShell.search.ariaLabel": "Dateien in diesem Ordner filtern",

@@ -352,9 +352,9 @@ export const taskRenderer: ToolRenderer = {
     const headerMeta = createMemo(() => {
       const agent = agentLabel()
       const model = modelLabel()
-      if (agent && model) return t("toolCall.task.meta.agentModel", { agent, model })
-      if (agent) return t("toolCall.task.meta.agent", { agent })
-      if (model) return t("toolCall.task.meta.model", { model })
+      if (agent && model) return `${agent} \u2022 ${model}`
+      if (agent) return agent
+      if (model) return model
       return null
     })
 

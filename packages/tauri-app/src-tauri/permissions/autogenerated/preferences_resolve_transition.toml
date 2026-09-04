@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preferences-resolve-transition"
+description = "Enables the preferences_resolve_transition command without any pre-configured scope."
+commands.allow = ["preferences_resolve_transition"]
+
+[[permission]]
+identifier = "deny-preferences-resolve-transition"
+description = "Denies the preferences_resolve_transition command without any pre-configured scope."
+commands.deny = ["preferences_resolve_transition"]

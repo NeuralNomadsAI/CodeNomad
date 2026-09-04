@@ -1,5 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
-import { Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
+import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -1176,7 +1176,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
             aria-expanded={expanded(props.summaryTools![0].key)}
             onClick={() => toggle(props.summaryTools![0].key)}
           >
-            <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(props.summaryTools![0].key) ? "▼" : "▶"}</span>
+            <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
             <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
             <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
           </button>
@@ -1222,7 +1222,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 aria-expanded={expanded(key)}
                 onClick={() => toggle(key)}
               >
-                <span class="message-technical-group-disclosure" aria-hidden="true">{expanded(key) ? "▼" : "▶"}</span>
+                <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
                 <Show when={!completed(props.summaryTools ?? segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
                 <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
               </button>
@@ -1321,7 +1321,7 @@ function CompactionCard(props: CompactionCardProps) {
 }
 
 function StepCard(props: StepCardProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [usageExpandedOverride, setUsageExpandedOverride] = createSignal<boolean | null>(null)
   const usageExpanded = () => usageExpandedOverride() ?? props.usageVisibility === "expanded"
   let usagePartId = (props.part as { id?: string }).id
@@ -1334,7 +1334,13 @@ function StepCard(props: StepCardProps) {
   const timestamp = () => {
     const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
     const date = new Date(value)
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    return date.toLocaleString(locale(), {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
   }
 
   const agentIdentifier = () => {
@@ -1443,7 +1449,7 @@ function StepCard(props: StepCardProps) {
           aria-label={`${t(usageExpanded() ? "messageBlock.usage.collapseAriaLabel" : "messageBlock.usage.expandAriaLabel")}. ${usageEntries(usage).map((entry) => `${entry.label}: ${entry.formatter(entry.value)}`).join(", ")}`}
           onClick={() => setUsageExpandedOverride((current) => !(current ?? props.usageVisibility === "expanded"))}
         >
-          <span class="message-step-usage-disclosure" aria-hidden="true">{usageExpanded() ? "▼" : "▶"}</span>
+          <ChevronRight class="message-step-usage-disclosure disclosure-chevron" aria-hidden="true" />
           {renderUsageChips(usage)}
         </button>
       </div>
@@ -1457,8 +1463,10 @@ function StepCard(props: StepCardProps) {
           <div class="message-step-title-left">
             <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
               <span class="message-step-meta-inline">
-                <Show when={agentIdentifier()}>{(value) => <span>{t("messageBlock.step.agentLabel", { agent: value() })}</span>}</Show>
-                <Show when={modelIdentifier()}>{(value) => <span>{t("messageBlock.step.modelLabel", { model: value() })}</span>}</Show>
+                {[
+                  agentIdentifier(),
+                  modelIdentifier(),
+                ].filter(Boolean).join(" • ")}
               </span>
             </Show>
           </div>
@@ -1593,7 +1601,7 @@ function ReasoningGroupCard(props: {
             aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
             onClick={() => setExpanded(!expanded())}
           >
-            <span class="message-technical-group-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+            <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
             <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
             <span class="message-reasoning-type">
               {t(props.completed ? "messageBlock.reasoning.thoughtLabel" : "messageBlock.reasoning.thinkingLabel")}
@@ -1759,8 +1767,8 @@ function ReasoningCard(props: ReasoningCardProps) {
     const parts: string[] = [thoughtDurationTitle()]
     const agent = agentIdentifier()
     const model = modelIdentifier()
-    if (agent) parts.push(t("messageBlock.step.agentLabel", { agent }))
-    if (model) parts.push(t("messageBlock.step.modelLabel", { model }))
+    if (agent) parts.push(agent)
+    if (model) parts.push(model)
     return parts.join("\n")
   }
 
@@ -1815,7 +1823,7 @@ function ReasoningCard(props: ReasoningCardProps) {
           aria-label={expanded() ? t("messageBlock.reasoning.collapseAriaLabel") : t("messageBlock.reasoning.expandAriaLabel")}
         >
           <Show when={reasoningBody()}>
-            <span class="message-reasoning-disclosure" aria-hidden="true">{expanded() ? "▼" : "▶"}</span>
+            <ChevronRight class="message-reasoning-disclosure disclosure-chevron" aria-hidden="true" />
           </Show>
           <span class="message-reasoning-label">
             <span class="message-reasoning-type">{t("messageBlock.reasoning.thinkingLabel")}</span>

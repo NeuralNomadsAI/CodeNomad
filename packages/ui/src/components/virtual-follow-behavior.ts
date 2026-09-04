@@ -52,12 +52,62 @@ export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDe
   return Math.max(0, offset + viewportHeightDelta)
 }
 
+export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boolean {
+  return maxOffset > offset + 1
+}
+
+export interface BottomPinSettlementState {
+  stableFrames: number
+  lastMaxOffset: number | null
+}
+
+export function advanceBottomPinSettlement(
+  state: BottomPinSettlementState,
+  input: { ready: boolean; maxOffset: number | null; requiredStableFrames: number },
+): BottomPinSettlementState & { settled: boolean } {
+  const stableFrames = input.ready && input.maxOffset === state.lastMaxOffset
+    ? state.stableFrames + 1
+    : 0
+  return {
+    stableFrames,
+    lastMaxOffset: input.maxOffset,
+    settled: input.ready && stableFrames >= input.requiredStableFrames,
+  }
+}
+
+export function canScrollInDirection(
+  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  direction: "up" | "down",
+): boolean {
+  if (direction === "up") return metrics.scrollTop > 0
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+}
+
+export function shouldNavigateAtBoundary(input: {
+  atBoundary: boolean
+  restoring: boolean
+  programmatic: boolean
+  hasFreshIntent: boolean
+  intent: "up" | "down" | null
+  direction: "up" | "down"
+}): boolean {
+  return input.atBoundary
+    && !input.restoring
+    && !input.programmatic
+    && input.hasFreshIntent
+    && input.intent === input.direction
+}
+
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])
+  const shiftedStartCount = next.length > 0 ? previous.indexOf(next[0]) : -1
+  const keepsShiftedSuffix = shiftedStartCount > 0
+    && previous.slice(shiftedStartCount).every((key, index) => key === next[index])
   return {
-    resetMeasurements: previous.length > 0 && next.length > 0 && !keepsPrefix,
+    resetMeasurements: previous.length > 0 && (next.length === 0 || (!keepsPrefix && !keepsShiftedSuffix)),
     endChanged: previous.length > 0 && previous.at(-1) !== next.at(-1),
+    shiftedStartCount: keepsShiftedSuffix ? shiftedStartCount : 0,
   }
 }
 

@@ -1,5 +1,5 @@
 import { For, Match, Show, Suspense, Switch, createMemo, createSignal, lazy } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, Copy } from "lucide-solid"
+import { ChevronRight, Copy } from "lucide-solid"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { partHasRenderableText, TextPart, ClientPart } from "../types/message"
@@ -109,7 +109,6 @@ export default function MessagePart(props: MessagePartProps) {
 
   function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
     const [hasExpanded, setHasExpanded] = createSignal(false)
-    const [isOpen, setIsOpen] = createSignal(false)
     const [copied, setCopied] = createSignal(false)
     const lineCount = () => getPastedTextLineCount(disclosureProps.text)
     const lineCountLabel = () =>
@@ -131,7 +130,6 @@ export default function MessagePart(props: MessagePartProps) {
         class="rounded-md border border-base bg-transparent"
         onToggle={(event) => {
           const nextOpen = (event.currentTarget as HTMLDetailsElement).open
-          setIsOpen(nextOpen)
           if (nextOpen) {
             setHasExpanded(true)
           }
@@ -144,9 +142,7 @@ export default function MessagePart(props: MessagePartProps) {
           </span>
           <span class="inline-flex items-center gap-1.5">
             <span class="inline-flex h-6 w-6 items-center justify-center text-secondary/80" aria-hidden="true">
-              <Show when={isOpen()} fallback={<ChevronsUpDown class="h-3.5 w-3.5" aria-hidden="true" />}>
-                <ChevronsDownUp class="h-3.5 w-3.5" aria-hidden="true" />
-              </Show>
+              <ChevronRight class="disclosure-chevron h-3.5 w-3.5" aria-hidden="true" />
             </span>
             <button
               type="button"

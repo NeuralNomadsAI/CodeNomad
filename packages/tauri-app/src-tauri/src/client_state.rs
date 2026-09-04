@@ -298,6 +298,47 @@ impl ClientState {
             .unwrap_or_default()
     }
 
+    pub(crate) fn preferences(&self) -> Option<crate::preferences_window::PreferencesRequest> {
+        if !self.is_primary() {
+            return None;
+        }
+        self.state.lock().ok().and_then(|state| {
+            (!state.unsupported_future_envelope)
+                .then(|| state.preferences.clone())
+                .flatten()
+        })
+    }
+
+    pub(crate) fn set_preferences(
+        &self,
+        request: Option<crate::preferences_window::PreferencesRequest>,
+    ) -> Result<bool, String> {
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if !self.is_primary() {
+            return Ok(false);
+        }
+        let previous = {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            if state.unsupported_future_envelope {
+                return Ok(false);
+            }
+            if state.preferences == request {
+                return Ok(true);
+            }
+            let previous = state.preferences.clone();
+            state.preferences = request;
+            previous
+        };
+        if let Err(error) = self.write_current_state() {
+            self.state
+                .lock()
+                .map_err(|err| err.to_string())?
+                .preferences = previous;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     pub(crate) fn set_active_window(&self, window_id: &str) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !self.is_primary() {

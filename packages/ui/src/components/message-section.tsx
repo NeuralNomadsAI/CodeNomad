@@ -54,10 +54,10 @@ export interface MessageSectionProps {
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
   hasMoreMessages?: boolean
-  onLoadMoreMessages?: () => Promise<void>
-  onLoadNewerMessages?: () => Promise<void>
-  onLoadLatestMessages?: () => Promise<void>
-  onLoadOldestMessages?: () => Promise<void>
+  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<void>
+  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<void>
+  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<void>
+  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<void>
   getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
@@ -367,11 +367,14 @@ export default function MessageSection(props: MessageSectionProps) {
   let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
   let pagingWindow = false
+  let pagingWindowController: AbortController | null = null
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
 
   function registerListApi(api: VirtualFollowListApi) {
     if (listApi() !== api) {
+      pagingWindowController?.abort()
+      pagingWindowController = null
       scrollRestoreGeneration += 1
       restoringScrollSnapshot = false
       setDidRestoreScroll(false)
@@ -393,6 +396,8 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
+        pagingWindowController?.abort()
+        pagingWindowController = null
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
@@ -416,35 +421,42 @@ export default function MessageSection(props: MessageSectionProps) {
           }
           return
         }
+        const wasRestoringScrollSnapshot = restoringScrollSnapshot
+        pagingWindowController?.abort()
+        pagingWindowController = null
         scrollRestoreGeneration += 1
+        retryAnchorRestore = null
+        if (!wasRestoringScrollSnapshot) persistMessageScrollSnapshot({ requireActive: false })
         restoringScrollSnapshot = false
         pagingWindow = false
-        retryAnchorRestore = null
-        persistMessageScrollSnapshot({ requireActive: false })
       },
     ),
   )
+
+  onCleanup(() => pagingWindowController?.abort())
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
     if (!element) return false
     if ((options?.requireActive ?? true) && !isActive()) return false
     if (restoringScrollSnapshot) return false
+    if (pagingWindow) return false
     if (!element.isConnected) return false
     if (element.clientHeight <= 0) return false
     if (typeof getComputedStyle === "function" && getComputedStyle(element).display === "none") return false
     return true
   }
 
-  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
+  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean; snapshot?: VirtualFollowScrollSnapshot }) {
     if (restoringScrollSnapshot) return
+    if (pagingWindow) return
     if (!didRestoreScroll()) return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = overlayWindowOnSnapshot(listApi()?.captureScrollSnapshot())
+      const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
         store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
@@ -567,10 +579,38 @@ export default function MessageSection(props: MessageSectionProps) {
     const snapshot = initialScrollSnapshot()
     if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
     if (!snapshot) {
-      api.setAutoScroll(true)
-      api.scrollToBottom({ immediate: true })
+      const restoreSessionId = props.sessionId
+      const restoreGeneration = ++scrollRestoreGeneration
+      const isCurrentRestore = () => isActive()
+        && api === listApi()
+        && isScrollRestoreGenerationCurrent(
+          restoreSessionId,
+          restoreGeneration,
+          props.sessionId,
+          scrollRestoreGeneration,
+        )
       restoredWithoutSnapshot = true
-      setDidRestoreScroll(true)
+      restoringScrollSnapshot = true
+      api.restoreScrollSnapshot({ scrollTop: 0, atBottom: true, followModeType: "following" }, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
       return
     }
 
@@ -811,28 +851,44 @@ export default function MessageSection(props: MessageSectionProps) {
     if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
     const sessionId = props.sessionId
     const generation = scrollRestoreGeneration
+    const controller = new AbortController()
+    pagingWindowController = controller
     const isCurrent = () => isActive()
       && api === listApi()
+      && pagingWindowController === controller
+      && !controller.signal.aborted
       && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
     pagingWindow = true
     try {
       if (!isCurrent()) return
-      await load()
+      await load(controller.signal)
       if (!isCurrent()) return
       api.setAutoScroll(direction === "latest")
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
       after(api)
-      api.setAutoScroll(direction === "latest")
+      const bottomSettlement = direction === "older" || direction === "latest"
+        ? await api.settleAtBottom()
+        : "settled"
+      if (!isCurrent()) return
+      api.setAutoScroll(direction === "latest" && bottomSettlement !== "cancelled")
       api.notifyContentRendered()
+      await waitTwoFrames()
+      if (!isCurrent()) return
+      pagingWindowController = null
+      pagingWindow = false
+      persistMessageScrollSnapshot({ snapshot: api.captureScrollSnapshot() })
     } catch (error) {
       if (isCurrent()) {
         setOlderMessageLoadFailed(true)
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
-      if (isCurrent()) pagingWindow = false
+      if (pagingWindowController === controller) {
+        pagingWindowController = null
+        pagingWindow = false
+      }
     }
   }
 
@@ -1089,7 +1145,6 @@ export default function MessageSection(props: MessageSectionProps) {
           initialScrollToBottom={() => false}
           initialAutoScroll={initialAutoScroll}
           resetKey={() => props.sessionId}
-          measurementResetKey={messageWindowPageKey}
           followToken={followToken}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
           onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
@@ -1100,9 +1155,9 @@ export default function MessageSection(props: MessageSectionProps) {
             const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"][data-assistant-text-block="true"]`))
             return candidates[candidates.length - 1] ?? null
           }}
-          onScroll={() => {
+          onScroll={(snapshot) => {
             clearQuoteSelection()
-            persistMessageScrollSnapshot()
+            persistMessageScrollSnapshot({ snapshot })
           }}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}

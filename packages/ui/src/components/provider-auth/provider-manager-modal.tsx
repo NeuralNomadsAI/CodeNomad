@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
-import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, ShieldCheck, X } from "lucide-solid"
+import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, X } from "lucide-solid"
 import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode-ai/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
@@ -19,6 +19,7 @@ import {
 import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { toRequestLocation } from "../../stores/request-locations"
+import { getRootClient } from "../../stores/opencode-client"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
@@ -54,6 +55,7 @@ interface ProviderManagerModalProps {
   instanceId: string
   open?: boolean
   embedded?: boolean
+  location?: LocationRef
   onOpenChange?: (open: boolean) => void
 }
 
@@ -86,16 +88,19 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   let authCatalogLocation: LocationRef | null = null
   let loadedInstanceId: string | null = null
   let loadedClient: OpenCodeClient | null = null
+  let loadedCatalogLocationKey: string | null = null
   let oauthCodeInput: HTMLInputElement | undefined
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
   const client = createMemo<OpenCodeClient | null>(() => {
+    if (props.instanceId && props.location) return getRootClient(props.instanceId)
     const current = instance()
     return current?.status === "ready" ? current.client ?? null : null
   })
+  const currentCatalogLocation = () => props.location ? { ...props.location } : { ...getActiveCatalogLocation(props.instanceId) }
   const requestLocation = (location: LocationRef) => toRequestLocation(location)
   const isActiveCatalogLocation = (location: LocationRef) => {
-    const active = getActiveCatalogLocation(props.instanceId)
+    const active = currentCatalogLocation()
     return active.directory === location.directory && active.workspaceID === location.workspaceID
   }
 
@@ -264,6 +269,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     if (!props.embedded && !props.open) {
       loadedInstanceId = null
       loadedClient = null
+      loadedCatalogLocationKey = null
       resetProviderData()
       return
     }
@@ -272,15 +278,17 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     if (!authClient) {
       loadedInstanceId = null
       loadedClient = null
+      loadedCatalogLocationKey = null
       resetProviderData()
       return
     }
-    if (loadedInstanceId !== instanceId || loadedClient !== authClient) {
-      resetProviderData()
-      loadedInstanceId = instanceId
-      loadedClient = authClient
-    }
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
+    const catalogLocationKey = `${catalogLocation.directory}\0${catalogLocation.workspaceID ?? ""}`
+    if (loadedInstanceId === instanceId && loadedClient === authClient && loadedCatalogLocationKey === catalogLocationKey) return
+    resetProviderData()
+    loadedInstanceId = instanceId
+    loadedClient = authClient
+    loadedCatalogLocationKey = catalogLocationKey
     void loadProviderData(authClient, version, catalogLocation)
   })
 
@@ -380,18 +388,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   async function refreshAfterAuth(authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
+    if (!props.location) await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-    await loadProviderData(authClient, ++loadVersion, { ...getActiveCatalogLocation(instanceId) }).catch(() => undefined)
+    await loadProviderData(authClient, ++loadVersion, currentCatalogLocation()).catch(() => undefined)
   }
 
   async function refreshProviderData() {
     const authClient = client()
     const instanceId = props.instanceId
     if (!authClient) return
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     setLoading(true)
-    await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
+    if (!props.location) await fetchProviders(instanceId, catalogLocation, true).catch(() => undefined)
     if (client() !== authClient || props.instanceId !== instanceId) return
     await loadProviderData(authClient, ++loadVersion, catalogLocation)
   }
@@ -496,7 +504,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const authClient = client()
     if (!providerId || !authClient || !canSubmit()) return
     const instanceId = props.instanceId
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     const operationVersion = ++authOperationVersion
     authCatalogLocation = catalogLocation
     setStage("authorizing")
@@ -562,7 +570,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const provider = availableProviders().find((item) => item.id === providerId)
     if (!authClient || !provider) return
     const instanceId = props.instanceId
-    const catalogLocation = { ...getActiveCatalogLocation(instanceId) }
+    const catalogLocation = currentCatalogLocation()
     disposePendingAuth()
     const operationVersion = ++authOperationVersion
     setActionError(null)
@@ -631,27 +639,33 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     return t("settings.providers.method.api")
   }
 
+  function configuredProviderSummary(provider: ListedProvider) {
+    const modelCount = provider.modelCount === 1
+      ? t("settings.providers.models.one", { count: provider.modelCount })
+      : t("settings.providers.models.other", { count: provider.modelCount })
+    return [...new Set([
+      methodSummary(provider.id),
+      describeProviderSource(provider),
+      modelCount,
+    ].filter(Boolean))].join(" • ")
+  }
+
   const content = () => (
     <>
-          <div class="providers-manager-header">
-            <div class="settings-card-heading-with-icon">
-              <PlugZap class="settings-card-heading-icon" />
-              <div>
-                <Show
-                  when={!props.embedded}
-                  fallback={<h2 class="providers-manager-title">{t("settings.providers.title")}</h2>}
-                >
+          <Show when={!props.embedded}>
+            <div class="providers-manager-header">
+              <div class="settings-card-heading-with-icon">
+                <PlugZap class="settings-card-heading-icon" />
+                <div>
                   <Dialog.Title class="providers-manager-title">{t("settings.providers.title")}</Dialog.Title>
-                </Show>
-                <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
+                  <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
+                </div>
               </div>
-            </div>
-            <Show when={!props.embedded}>
               <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
                 <X class="w-4 h-4" />
               </button>
-            </Show>
-          </div>
+            </div>
+          </Show>
 
           <div class="providers-manager-body">
             <Show when={!client()}>
@@ -824,22 +838,27 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                     <div class="providers-grid">
                       <For each={configuredProviders()}>{(provider) => (
-                        <article class="providers-card">
-                          <div class="providers-card-main"><div class="providers-card-mark"><ShieldCheck class="providers-card-mark-icon" /></div><div class="providers-card-copy"><div class="providers-card-title-row"><h4 class="providers-card-title">{provider.name || provider.id}</h4></div><p class="providers-card-meta">{provider.id}</p><p class="providers-card-methods">{methodSummary(provider.id)}</p><p class="providers-card-source">{describeProviderSource(provider)}</p></div></div>
-                          <div class="providers-card-footer">
-                            <span class="providers-model-count">{provider.modelCount === 1 ? t("settings.providers.models.one", { count: provider.modelCount }) : t("settings.providers.models.other", { count: provider.modelCount })}</span>
-                            <div class="provider-model-card-actions">
-                              <button
-                                ref={(element) => manageModelButtons.set(provider.id, element)}
-                                type="button"
-                                class="selector-button selector-button-secondary"
-                                onClick={() => {
-                                  managedProviderTriggerId = provider.id
-                                  setManagedProviderId(provider.id)
-                                }}
-                              >{t("settings.providers.actions.manageModels")}</button>
-                              <Show when={getDisconnectMode(provider) === "credential-remove"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
-                            </div>
+                        <article class="providers-card settings-toggle-row settings-toggle-row-compact">
+                          <div class="providers-card-copy">
+                            <h4 class="providers-card-title">{provider.name || provider.id}</h4>
+                            <p class="providers-card-meta">
+                              <Show when={provider.name && provider.name !== provider.id}>
+                                <bdi dir="ltr">{provider.id}</bdi><span aria-hidden="true"> • </span>
+                              </Show>
+                              {configuredProviderSummary(provider)}
+                            </p>
+                          </div>
+                          <div class="provider-model-card-actions">
+                            <button
+                              ref={(element) => manageModelButtons.set(provider.id, element)}
+                              type="button"
+                              class="selector-button selector-button-secondary"
+                              onClick={() => {
+                                managedProviderTriggerId = provider.id
+                                setManagedProviderId(provider.id)
+                              }}
+                            >{t("settings.providers.actions.manageModels")}</button>
+                            <Show when={getDisconnectMode(provider) === "credential-remove"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
                           </div>
                         </article>
                       )}</For>

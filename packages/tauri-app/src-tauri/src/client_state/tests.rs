@@ -37,6 +37,44 @@ fn legacy_migration_uuids_match_the_cross_host_exact_byte_vectors() {
         assert_eq!(parse_client_state(content).active_window_id, expected);
     }
 }
+
+#[test]
+fn preferences_restoration_survives_final_window_removal_and_clears_explicitly() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let request = crate::preferences_window::PreferencesRequest {
+        section: "providers".into(),
+        instance_id: Some("instance-1".into()),
+        location: Some(crate::preferences_window::PreferencesLocation {
+            directory: "C:\\repo".into(),
+            workspace_id: Some("workspace-1".into()),
+        }),
+    };
+
+    assert!(state.set_preferences(Some(request.clone())).unwrap());
+    assert!(state
+        .remove_window(&state.active_window_id().unwrap())
+        .unwrap());
+    assert_eq!(state.preferences(), Some(request.clone()));
+    let bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
+    let persisted: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(persisted["preferences"]["section"], "providers");
+    assert_eq!(
+        persisted["preferences"]["location"]["workspaceID"],
+        "workspace-1"
+    );
+    assert_eq!(
+        parse_client_state(&bytes).preferences,
+        Some(request.clone())
+    );
+
+    assert!(state.set_preferences(None).unwrap());
+    assert_eq!(state.preferences(), None);
+    let persisted: Value =
+        serde_json::from_slice(&fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap())
+            .unwrap();
+    assert!(persisted.get("preferences").is_none());
+}
 use std::time::Duration;
 use tempfile::TempDir;
 use url::Url;

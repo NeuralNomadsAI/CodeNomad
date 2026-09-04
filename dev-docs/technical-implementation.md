@@ -22,7 +22,7 @@ await client.location.get({ location: { directory } })
 
 ## Native Windows And Restore State
 
-Each channel/config profile has one native singleton process and one backend. A second launch focuses the MRU window unless `--new-window` requests another UUID window; stable, dev, and non-default config profiles use isolated native/browser/client-state scopes.
+Each channel/config profile has one native singleton process and one backend. A second launch opens another UUID window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable, dev, and non-default config profiles use isolated native/browser/client-state scopes.
 
 OpenCode sessions/messages are shared service data. Each window separately persists tab membership, drafts, view state, and native bounds in the client-state V3 envelope. Snapshot V2 is a SHA-256 content-addressed partition graph. Electron and Tauri prepare immutable partitions, fence migration/root replacement on current ownership and renderer authority, atomically publish the envelope, then conservatively sweep partitions no window references.
 

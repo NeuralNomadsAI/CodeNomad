@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron"
+import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron"
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
 
 interface ApplicationMenuActions {
@@ -13,6 +13,8 @@ const workspaceEnabled = new Map<number, boolean>()
 let applicationMenu: Menu | null = null
 let menuInstalled = false
 let actions: ApplicationMenuActions | null = null
+
+export type TitlebarMenu = "file" | "edit" | "view" | "window" | "help"
 
 function target(local: boolean): BrowserWindow | null {
   const window = (local ? actions?.getLocalTarget() : actions?.getWindowTarget()) ?? null
@@ -38,6 +40,13 @@ export function clearWorkspaceMenuWindow(webContentsId: number) {
   updateWorkspaceMenuState()
 }
 
+export function popupTitlebarMenu(window: BrowserWindow, menu: TitlebarMenu, x: number, y: number) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid titlebar menu position")
+  const submenu = applicationMenu?.getMenuItemById(`menu-${menu}`)?.submenu
+  if (!submenu) throw new Error(`Unknown titlebar menu: ${menu}`)
+  submenu.popup({ window, x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) })
+}
+
 export function createApplicationMenu(menuActions: ApplicationMenuActions) {
   actions = menuActions
   if (menuInstalled) return
@@ -55,6 +64,7 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
       { role: "hideOthers" as const }, { role: "unhide" as const }, { type: "separator" as const }, { role: "quit" as const },
     ] }] : []),
     {
+      id: "menu-file",
       label: "File",
       submenu: [
         { id: "open-workspace-folder", label: "Open Project Folder", click: sendCommand("open-workspace-folder") },
@@ -68,12 +78,12 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
         { type: "separator" }, isMac ? { role: "close" } : { role: "quit" },
       ],
     },
-    { label: "Edit", submenu: [
+    { id: "menu-edit", label: "Edit", submenu: [
       { role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" },
       ...(isMac ? [{ role: "pasteAndMatchStyle" as const }, { role: "delete" as const }, { role: "selectAll" as const }]
         : [{ role: "delete" as const }, { type: "separator" as const }, { role: "selectAll" as const }]),
     ] },
-    { label: "View", submenu: [
+    { id: "menu-view", label: "View", submenu: [
       { label: "Reload", accelerator: "CmdOrCtrl+R", click: withTarget((window) => actions?.reload(window)) },
       { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: withTarget((window) => actions?.forceReload(window)) },
       { label: "Toggle Developer Tools", accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I", click: withTarget((window) => window.webContents.toggleDevTools()) },
@@ -84,13 +94,18 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
       { type: "separator" },
       { label: "Toggle Full Screen", accelerator: isMac ? "Ctrl+Command+F" : "F11", click: withTarget((window) => window.setFullScreen(!window.isFullScreen())) },
     ] },
-    { label: "Window", submenu: [
+    { id: "menu-window", label: "Window", submenu: [
       { label: "New Window", accelerator: NEW_WINDOW_ACCELERATOR, click: () => actions?.newWindow() },
       { label: "New Instance", accelerator: "CmdOrCtrl+N", click: sendCommand("new-instance") },
       { label: "Command Palette", accelerator: "CmdOrCtrl+Shift+P", click: sendCommand("open-command-palette") },
       { type: "separator" },
       { label: "Minimize", accelerator: "CmdOrCtrl+M", click: withTarget((window) => window.minimize()) },
       ...(isMac ? [{ role: "front" as const }] : [{ label: "Close", accelerator: "CmdOrCtrl+W", click: withTarget((window) => window.close()) }]),
+    ] },
+    { id: "menu-help", label: "Help", submenu: [
+      { label: "Get Updates...", click: () => { void shell.openExternal("https://github.com/NeuralNomadsAI/CodeNomad/releases").catch(() => {}) } },
+      { type: "separator" },
+      { label: "About CodeNomad", click: () => app.showAboutPanel() },
     ] },
   ]
 

@@ -112,7 +112,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 ### OpenCode V2 Boundaries
 
 - Server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently, and startup must not reject an otherwise compatible service solely for a different version string. Review current OpenCode documentation, installed declarations, and proxy/API parity whenever the client contract changes.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode documentation](https://opencode.ai/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
+- Upgrade references: the published npm `beta` tags, [OpenCode V2 documentation](https://opencode.ai/v2/docs/), [OpenCode V2 HTTP API](https://opencode.ai/v2/docs/api/), and `node_modules/@opencode-ai/client/dist/promise/`. Public GitHub releases may still describe V1 and are not a V2 compatibility authority.
 - `packages/server/src/workspaces/opencode-service.ts` uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. CodeNomad owns no private port, database, registration, or daemon PID and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding and runs the Linux CLI lifecycle inside the distribution; never inspect or signal Linux PIDs from Windows.
 - OpenCode owns the global daemon's standard state and database. Configured allowed environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
@@ -123,7 +123,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - Location-scoped background shells use `client.shell.*` and are listed in the Status panel. The UI refreshes them on Shell events and reconnect, displays native metadata, and supports ownership-checked removal. `client.pty.*` remains reserved for interactive terminals. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored.
 - Native events are volatile. Reconnect handlers must refetch authoritative state instead of assuming missed events will replay.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
-- Native desktop identity is channel plus config profile: one singleton process/backend per profile, multiple UUID windows, focus on second launch by default, and `--new-window` for another window. Stable, dev, and non-default profiles isolate native/browser/client state; OpenCode sessions/messages stay shared while tabs, drafts, and views are per-window.
+- Native desktop identity is channel plus config profile: one singleton process/backend per profile and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable, dev, and non-default profiles isolate native/browser/client state; OpenCode sessions/messages stay shared while tabs, drafts, and views are per-window.
 - Desktop restore uses a V3 per-window envelope over the V2 content-addressed partition graph. Preserve atomic publication/migration, ownership write fencing, and post-commit conservative garbage collection in both Electron and Tauri.
 - Native SideCar/browser previews are sandboxed without same-origin access, so DOM comment inspection is web-only.
 

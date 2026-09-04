@@ -101,7 +101,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   }
 
   const renderEmptyState = (message: string) => (
-    <p class="text-[11px] text-secondary italic" role="status">
+    <p class="right-panel-empty-text" role="status">
       {message}
     </p>
   )

@@ -43,6 +43,7 @@ import {
   type ParsedClientState,
   type PersistedClientState,
 } from "./client-state-envelope"
+import type { PreferencesRequest } from "./preferences-window"
 
 const CLIENT_STATE_FILENAME = "client-state.json"
 const PRIMARY_LOCK_FILENAME = "client-state.primary.lock"
@@ -240,6 +241,18 @@ export class ClientStateManager {
 
   get windowIds(): string[] {
     return [...this.state.windowOrder]
+  }
+
+  get preferences(): PreferencesRequest | undefined {
+    return this.isPrimary && !this.unsupportedFutureEnvelope ? this.state.preferences : undefined
+  }
+
+  setPreferences(request: PreferencesRequest | undefined): Promise<boolean> {
+    return this.mutateWindowListAndPersist((state) => {
+      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (request) state.preferences = request
+      else delete state.preferences
+    })
   }
 
   setActiveWindow(windowId: string): Promise<boolean> {

@@ -182,6 +182,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "Ningún archivo seleccionado.",
   "instanceShell.filesShell.listEmpty": "No hay archivos en esta carpeta.",
   "instanceShell.filesShell.hideFiles": "Ocultar archivos",
+  "instanceShell.filesShell.resizeFiles": "Cambiar el tamaño de la lista de archivos",
   "instanceShell.filesShell.showFiles": "Mostrar archivos",
   "instanceShell.filesShell.search.placeholder": "Filtrar archivos de esta carpeta",
   "instanceShell.filesShell.search.ariaLabel": "Filtrar archivos de esta carpeta",

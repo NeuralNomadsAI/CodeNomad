@@ -48,12 +48,12 @@ interface SessionSidebarProps {
 
 const SessionSidebar: Component<SessionSidebarProps> = (props) => (
     <div class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
-      <div class="flex flex-col gap-2 px-4 py-3 border-b border-base">
+      <div class="panel-header session-sidebar-header border-b border-base">
         <div class="flex items-center justify-between gap-2">
-          <span class="session-sidebar-title text-sm font-semibold uppercase text-primary">
+          <span class="session-sidebar-title">
             {props.t("instanceShell.leftPanel.sessionsTitle")}
           </span>
-          <div class="flex items-center gap-2 text-primary">
+          <div class="panel-header-actions session-sidebar-header-actions">
             <IconButton
               size="small"
               color="inherit"
@@ -66,30 +66,26 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
                 }
               }}
             >
-              <PlusSquare class="w-5 h-5" />
+              <PlusSquare class="w-4 h-4" />
             </IconButton>
             <IconButton
+              class="icon-toggle"
               size="small"
               color="inherit"
               aria-label={props.t("sessionList.filter.ariaLabel")}
               title={props.t("sessionList.filter.ariaLabel")}
               aria-pressed={props.showSearch()}
               onClick={props.onToggleSearch}
-              sx={{
-                color: props.showSearch() ? "var(--text-primary)" : "inherit",
-                backgroundColor: props.showSearch() ? "var(--surface-hover)" : "transparent",
-                "&:hover": {
-                  backgroundColor: "var(--surface-hover)",
-                },
-              }}
             >
-              <Search class="w-5 h-5" />
+              <Search class="w-4 h-4" />
             </IconButton>
             <IconButton
+              class="icon-toggle"
               size="small"
               color="inherit"
               aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
               title={props.t("instanceShell.leftPanel.instanceInfo")}
+              aria-pressed={props.activeSessionId() === "info"}
               onClick={() => props.onSelectSession("info")}
             >
               <InfoOutlinedIcon fontSize="small" />
@@ -136,22 +132,24 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           when={props.activeSession()?.id}
           fallback={
             <Show when={props.draftAgent && props.draftModel && props.onDraftAgentChange && props.onDraftModelChange}>
-              <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-                <AgentSelector
-                  instanceId={props.instanceId}
-                  sessionId="__new_session__"
-                  currentAgent={props.draftAgent?.() ?? ""}
-                  onAgentChange={(agent) => props.onDraftAgentChange!(agent)}
-                />
+              <div class="session-sidebar-controls px-6 border-t border-base">
+                <div class="session-sidebar-selector-group">
+                  <AgentSelector
+                    instanceId={props.instanceId}
+                    sessionId="__new_session__"
+                    currentAgent={props.draftAgent?.() ?? ""}
+                    onAgentChange={(agent) => props.onDraftAgentChange!(agent)}
+                  />
 
-                <ModelSelector
-                  instanceId={props.instanceId}
-                  sessionId="__new_session__"
-                  currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }}
-                  onModelChange={(model) => props.onDraftModelChange!(model)}
-                />
+                  <ModelSelector
+                    instanceId={props.instanceId}
+                    sessionId="__new_session__"
+                    currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }}
+                    onModelChange={(model) => props.onDraftModelChange!(model)}
+                  />
 
-                <ThinkingSelector instanceId={props.instanceId} currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }} />
+                  <ThinkingSelector instanceId={props.instanceId} currentModel={props.draftModel?.() ?? { providerId: "", modelId: "" }} />
+                </div>
 
                 <KeyboardHint
                   class="session-sidebar-selector-hints"
@@ -168,30 +166,32 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             </Show>
           }
         >
-          <div class="session-sidebar-controls px-4 py-4 border-t border-base flex flex-col gap-3">
-            <WorktreeSelector instanceId={props.instanceId} sessionId={props.activeSessionId() ?? ""} />
+          <div class="session-sidebar-controls px-6 border-t border-base">
+            <div class="session-sidebar-selector-group">
+              <WorktreeSelector instanceId={props.instanceId} sessionId={props.activeSessionId() ?? ""} />
 
-            <AgentSelector
-              instanceId={props.instanceId}
-              sessionId={props.activeSessionId() ?? ""}
-              currentAgent={props.activeSession()?.agent ?? ""}
-              onAgentChange={(agent) => {
-                const sessionId = props.activeSessionId()
-                return sessionId ? props.onSidebarAgentChange(sessionId, agent) : Promise.resolve()
-              }}
-            />
+              <AgentSelector
+                instanceId={props.instanceId}
+                sessionId={props.activeSessionId() ?? ""}
+                currentAgent={props.activeSession()?.agent ?? ""}
+                onAgentChange={(agent) => {
+                  const sessionId = props.activeSessionId()
+                  return sessionId ? props.onSidebarAgentChange(sessionId, agent) : Promise.resolve()
+                }}
+              />
 
-            <ModelSelector
-              instanceId={props.instanceId}
-              sessionId={props.activeSessionId() ?? ""}
-              currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }}
-              onModelChange={(model) => {
-                const sessionId = props.activeSessionId()
-                return sessionId ? props.onSidebarModelChange(sessionId, model) : Promise.resolve()
-              }}
-            />
+              <ModelSelector
+                instanceId={props.instanceId}
+                sessionId={props.activeSessionId() ?? ""}
+                currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }}
+                onModelChange={(model) => {
+                  const sessionId = props.activeSessionId()
+                  return sessionId ? props.onSidebarModelChange(sessionId, model) : Promise.resolve()
+                }}
+              />
 
-            <ThinkingSelector instanceId={props.instanceId} currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }} />
+              <ThinkingSelector instanceId={props.instanceId} currentModel={props.activeSession()?.model ?? { providerId: "", modelId: "" }} />
+            </div>
 
             <KeyboardHint
               class="session-sidebar-selector-hints"

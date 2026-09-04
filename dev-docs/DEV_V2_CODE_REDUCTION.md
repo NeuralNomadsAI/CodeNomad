@@ -10,11 +10,11 @@ by mistake.
 Baseline:
 
 - Comparison: `origin/dev...DEV-v2`
-- Reviewed head: `878550ca`
-- Files changed: 537
-- Insertions: 40,703
-- Deletions: 29,371
-- Net change: **+11,332 lines**
+- Reviewed head: `dea20996`
+- Files changed: 655
+- Insertions: 52,866
+- Deletions: 31,380
+- Net change: **+21,486 lines**
 
 These are repository line counts, not estimates from file sizes.
 
@@ -24,34 +24,36 @@ These are repository line counts, not estimates from file sizes.
 
 | Category | Net lines |
 | --- | ---: |
-| Tests | **+9,548** |
-| Production source | +2,955 |
-| Generated Tauri ACL/schema | +735 |
-| Localization | +495 |
-| Styles | +98 |
-| Config and CI metadata | +17 |
-| Build and release scripts | -41 |
-| Lockfiles | -711 |
-| Documentation | -1,764 |
-| **Total** | **+11,332** |
+| Tests | **+11,484** |
+| Production source | +9,320 |
+| Generated Tauri ACL/schema | +1,050 |
+| Localization | +1,137 |
+| Styles | +564 |
+| Config and CI metadata | +64 |
+| Build and release scripts | -32 |
+| Lockfiles | -704 |
+| Documentation | -1,397 |
+| **Total** | **+21,486** |
 
-Tests account for approximately **84% of the net increase**. Everything other
-than tests contributes +1,784 net lines after documentation, lockfile, and
-other reductions are included.
+Tests account for approximately **53% of the net increase**. Everything other
+than tests contributes +10,002 net lines after documentation, lockfile, and
+other reductions are included. The larger production share reflects product
+and desktop work added after the original migration gate, not a restored V1
+runtime.
 
 ### Package contribution
 
 | Path | Added | Deleted | Net |
 | --- | ---: | ---: | ---: |
-| `packages/ui` | 18,681 | 11,872 | **+6,809** |
-| `packages/tauri-app` | 7,126 | 3,214 | **+3,912** |
-| `packages/electron-app` | 3,520 | 1,704 | **+1,816** |
-| Outside `packages` | 2,749 | 2,770 | -21 |
-| `packages/server` | 8,627 | 9,055 | **-428** |
+| `packages/ui` | 24,753 | 13,725 | **+11,028** |
+| `packages/tauri-app` | 9,193 | 3,250 | **+5,943** |
+| `packages/electron-app` | 4,762 | 1,705 | **+3,057** |
+| Outside `packages` | 3,130 | 2,774 | +356 |
+| `packages/server` | 11,028 | 9,170 | **+1,858** |
 | `packages/opencode-plugin` | 0 | 756 | **-756** |
 
-The server and legacy plugin are net negative. The growth is concentrated in
-the UI, desktop hosts, and their tests.
+The legacy plugin remains deleted. Current growth is concentrated in the UI,
+desktop hosts, server automation/preview integration, and their tests.
 
 ## What V2 Actually Removed
 
@@ -74,7 +76,8 @@ migration rather than a hidden V1 fallback.
 ## Where Growth Came From
 
 The following feature clusters overlap and must not be added together. They
-explain the shape of the change, not an exact second accounting table.
+explain the original migration-gate shape at `878550ca`, not an exact second
+accounting table for the current head.
 
 | Feature cluster | Approximate net change |
 | --- | ---: |
@@ -91,9 +94,15 @@ multi-window state, cross-host ownership, content-addressed persistence,
 bounded message history, reconnect reconciliation, and stronger worktree and
 proxy boundaries.
 
+After that gate, `DEV-v2` also added Developer Mode automation, preview and
+composer persistence, standalone preferences windows, desktop title bars and
+menus, theme customization, broader UI harmonization, and the final bounded
+timeline stabilization. Those additions explain why the current accounting
+tables are larger than the historical feature-cluster estimates.
+
 ## Maintainer Position On Tests
 
-The maintainer considers **+9,548 net test lines disproportionate**, even when
+The maintainer considers **+11,484 net test lines disproportionate**, even when
 the tested behavior is valid. Test code has the same reading, maintenance,
 mocking, fixture, and refactoring cost as production code. A migration should
 not require readers to maintain almost ten thousand additional test lines
@@ -132,13 +141,13 @@ Largest test-growth locations to review first:
 
 | Net lines | Path |
 | ---: | --- |
+| +1,214 | `packages/ui/src/stores/session-request-authority.test.ts` |
 | +1,150 | `packages/ui/src/stores/opencode-data.test.ts` |
-| +1,038 | `packages/ui/src/stores/session-request-authority.test.ts` |
 | +847 | `packages/server/src/server/__tests__/instance-proxy.test.ts` |
-| +735 | `packages/tauri-app/src-tauri/src/client_state/tests.rs` |
+| +773 | `packages/tauri-app/src-tauri/src/client_state/tests.rs` |
 | +622 | `packages/ui/src/stores/session-actions.test.ts` |
 | +610 | `packages/server/src/workspaces/instance-events.test.ts` |
-| +450 | `packages/electron-app/electron/main/client-state.test.ts` |
+| +470 | `packages/electron-app/electron/main/client-state.test.ts` |
 | +436 | `packages/server/src/workspaces/manager.test.ts` |
 
 Line count alone is not grounds for deletion. Each review must identify the

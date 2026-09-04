@@ -5,7 +5,9 @@
 }
 
 .modal-surface {
-  @apply rounded-lg shadow-2xl flex flex-col;
+  @apply shadow-2xl flex flex-col;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-primary);
   max-width: min(100%, calc(100vw - 32px));
@@ -15,7 +17,7 @@
 }
 
 .modal-search-container {
-  @apply p-4 border-b;
+  @apply p-3 border-b;
   border-color: var(--border-base);
 }
 
@@ -42,7 +44,7 @@
 }
 
 .modal-item {
-  @apply w-full px-4 py-3 flex items-start gap-3 transition-colors cursor-pointer border-none text-start;
+  @apply w-full px-3 py-2 flex items-start gap-2 transition-colors cursor-pointer border-none text-start;
   color: var(--text-primary);
 }
 
@@ -69,11 +71,11 @@
 }
 
 .modal-item-description {
-  @apply text-sm mt-0.5;
+  @apply text-xs mt-0.5;
   color: var(--text-secondary);
 }
 
 .modal-empty-state {
-  @apply p-8 text-center;
+  @apply p-4 text-center;
   color: var(--text-muted);
 }

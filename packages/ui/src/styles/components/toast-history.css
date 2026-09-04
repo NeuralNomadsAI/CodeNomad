@@ -11,35 +11,27 @@
  * Other layout/spacing/color moved to Tailwind classes in TSX.
  */
 
-/* ==================== Backdrop ==================== */
-
-.toast-history-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: var(--space-lg);
-  background: var(--overlay-scrim);
-  backdrop-filter: blur(4px);
-}
-
 /* ==================== Panel ==================== */
 
 .toast-history-panel {
-  box-shadow: var(--panel-shadow-strong);
-  animation: toast-history-slide-in 0.2s ease-out;
+  position: absolute;
+  top: calc(100% + var(--space-sm));
+  inset-inline-end: 0;
+  z-index: 100;
+  width: min(380px, calc(100vw - var(--space-md) * 2));
+  max-height: calc(100dvh - var(--chrome-height) - var(--space-lg));
+  box-shadow: var(--popover-shadow);
+  animation: toast-history-open 0.15s ease-out;
 }
 
-@keyframes toast-history-slide-in {
+@keyframes toast-history-open {
   from {
     opacity: 0;
-    transform: translateX(20px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0);
   }
 }
 
@@ -50,21 +42,21 @@
 }
 
 .toast-history-action-btn:hover {
-  background: var(--surface-hover);
+  background: var(--surface-interactive-hover);
 }
 
 .toast-history-action-btn:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
 .toast-history-action-btn-danger {
-  color: var(--color-danger);
+  color: var(--status-error);
 }
 
 .toast-history-action-btn-danger:hover {
-  background: color-mix(in srgb, var(--color-danger) 10%, var(--surface-secondary));
-  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--status-error) 10%, var(--surface-secondary));
+  border-color: var(--status-error);
 }
 
 .toast-history-close-btn {
@@ -72,11 +64,12 @@
 }
 
 .toast-history-close-btn:hover {
-  background: var(--surface-hover);
+  background: var(--surface-interactive-hover);
+  color: var(--text-primary);
 }
 
 .toast-history-close-btn:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
@@ -87,45 +80,56 @@
 }
 
 .toast-history-filter-btn:hover {
-  background: var(--surface-hover);
+  background: var(--surface-interactive-hover);
   color: var(--text-primary);
 }
 
 .toast-history-filter-btn:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
 .toast-history-filter-btn-active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-on-primary);
+  background: var(--selection-neutral-strong-bg);
+  border-color: var(--border-divider);
+  color: var(--text-primary);
 }
 
 .toast-history-filter-btn-active:hover {
-  background: color-mix(in srgb, var(--color-primary) 85%, white);
-  color: var(--color-on-primary);
+  background: var(--selection-neutral-strong-bg);
+  color: var(--text-primary);
 }
 
 /* Filter variant colors */
 .toast-history-filter-btn-info.toast-history-filter-btn-active {
-  background: var(--color-info, #0ea5e9);
-  border-color: var(--color-info, #0ea5e9);
+  background: var(--selection-neutral-strong-bg);
+  border-color: var(--border-divider);
 }
 
 .toast-history-filter-btn-success.toast-history-filter-btn-active {
-  background: var(--color-success, #10b981);
-  border-color: var(--color-success, #10b981);
+  background: var(--selection-neutral-strong-bg);
+  border-color: var(--border-divider);
+  color: var(--text-primary);
+}
+
+.toast-history-filter-toolbar {
+  background: var(--surface-subtle);
+}
+
+.toast-history-body {
+  padding: 0;
 }
 
 .toast-history-filter-btn-warning.toast-history-filter-btn-active {
-  background: var(--color-warning, #f59e0b);
-  border-color: var(--color-warning, #f59e0b);
+  background: var(--selection-neutral-strong-bg);
+  border-color: var(--border-divider);
+  color: var(--text-primary);
 }
 
 .toast-history-filter-btn-error.toast-history-filter-btn-active {
-  background: var(--color-error, #ef4444);
-  border-color: var(--color-error, #ef4444);
+  background: var(--selection-neutral-strong-bg);
+  border-color: var(--border-divider);
+  color: var(--text-primary);
 }
 
 /* ==================== Item ==================== */
@@ -135,54 +139,54 @@
 }
 
 .toast-history-item:hover {
-  background: var(--surface-hover);
+  background: var(--surface-interactive-hover);
 }
 
 .toast-history-item:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
 .toast-history-item-unread {
-  background: color-mix(in srgb, var(--color-primary) 8%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--accent-primary) 5%, var(--surface-base));
 }
 
 .toast-history-item-unread:hover {
-  background: color-mix(in srgb, var(--color-primary) 12%, var(--surface-secondary));
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--surface-base));
 }
 
 /* ==================== Indicator ==================== */
 
 .toast-history-indicator-info {
-  background: var(--color-info, #0ea5e9);
+  background: var(--accent-primary);
 }
 
 .toast-history-indicator-success {
-  background: var(--color-success, #10b981);
+  background: var(--status-success);
 }
 
 .toast-history-indicator-warning {
-  background: var(--color-warning, #f59e0b);
+  background: var(--status-warning);
 }
 
 .toast-history-indicator-error {
-  background: var(--color-error, #ef4444);
+  background: var(--status-error);
 }
 
 /* ==================== Item Action ==================== */
 
 .toast-history-item-action {
-  color: var(--color-primary);
+  color: var(--accent-primary);
   transition: color 0.15s ease;
 }
 
 .toast-history-item-action:hover {
-  color: color-mix(in srgb, var(--color-primary) 80%, black);
+  color: var(--accent-hover);
   text-decoration: underline;
 }
 
 .toast-history-item-action:focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
@@ -199,34 +203,33 @@
 }
 
 .toast-history-item-delete:hover {
-  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
-  color: var(--color-danger);
+  background: color-mix(in srgb, var(--status-error) 15%, transparent);
+  color: var(--status-error);
 }
 
 .toast-history-item-delete:focus-visible {
   opacity: 1;
-  outline: 2px solid var(--color-focus-ring);
+  outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
 
 /* ==================== Unread Dot ==================== */
 
 .toast-history-item-unread-dot {
-  background: var(--color-primary);
+  background: var(--accent-primary);
 }
 
 /* ==================== Responsive ==================== */
 
 @media (max-width: 720px) {
-  .toast-history-backdrop {
-    padding: 0;
-    align-items: flex-end;
-  }
-
   .toast-history-panel {
+    position: fixed;
+    inset-inline: 0;
+    top: auto;
+    bottom: 0;
     width: 100vw;
-    max-height: 80vh;
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-height: 80dvh;
+    border-radius: 0;
     animation: toast-history-slide-up 0.2s ease-out;
   }
 

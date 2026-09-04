@@ -63,7 +63,7 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
 }
 
 // Our client-specific Session interface extending SDK Session
-export interface Session extends Omit<SDKSession, "metadata" | "parentID" | "model"> {
+export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   instanceId: string // Client-specific field
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
@@ -81,7 +81,6 @@ export interface Session extends Omit<SDKSession, "metadata" | "parentID" | "mod
   generationRecovery?: GenerationRecoveryState | null // Local recovery state for work interrupted across restarts
   runtimeStatusKnown?: boolean // Whether idle/working came from an authoritative runtime response
   generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
-  metadata?: Record<string, unknown> // CodeNomad-local runtime state, kept separate from native persisted metadata
 }
 
 // Adapter function to convert SDK Session to client Session
@@ -92,9 +91,8 @@ export function createClientSession(
   model: { providerId: string; modelId: string } = { providerId: "", modelId: "" },
   status: SessionStatus = "idle",
 ): Session {
-  const { metadata: _nativeMetadata, ...nativeSession } = sdkSession
   return {
-    ...nativeSession,
+    ...sdkSession,
     instanceId,
     parentId: sdkSession.parentID || null,
     agent,

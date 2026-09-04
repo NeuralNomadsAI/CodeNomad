@@ -46,6 +46,21 @@
   max-height: var(--folder-home-actions-height, none);
 }
 
+.folder-home-list-panel .panel-header {
+  flex-shrink: 0;
+}
+
+.folder-home-list-panel .panel-list--fill {
+  height: auto;
+  min-height: 0;
+}
+
+.folder-home-actions-column .button-primary {
+  min-height: 3rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+}
+
 .folder-home-open-instance-button {
   display: inline-flex;
   flex-shrink: 0;

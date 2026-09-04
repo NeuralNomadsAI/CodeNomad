@@ -182,6 +182,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "कुनै फाइल चयन गरिएको छैन।",
   "instanceShell.filesShell.listEmpty": "यस फोल्डरमा कुनै फाइलहरू छैनन्।",
   "instanceShell.filesShell.hideFiles": "फाइलहरू लुकाउनुहोस्",
+  "instanceShell.filesShell.resizeFiles": "फाइल सूचीको आकार बदल्नुहोस्",
   "instanceShell.filesShell.showFiles": "फाइलहरू देखाउनुहोस्",
   "instanceShell.filesShell.search.placeholder": "यस फोल्डरमा फाइलहरू फिल्टर गर्नुहोस्",
   "instanceShell.filesShell.search.ariaLabel": "यस फोल्डरमा फाइलहरू फिल्टर गर्नुहोस्",

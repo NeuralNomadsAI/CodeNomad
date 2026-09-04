@@ -145,7 +145,7 @@ export const SideCarsSettingsSection: Component = () => {
           </Show>
 
           <div class="flex justify-end">
-            <button type="button" class="selector-button selector-button-primary" disabled={creating()} onClick={() => void handleCreate()}>
+            <button type="button" class="selector-button selector-button-primary w-auto" disabled={creating()} onClick={() => void handleCreate()}>
               <Show when={creating()} fallback={<Plus class="w-4 h-4" />}>
                 <Loader2 class="w-4 h-4 animate-spin" />
               </Show>
@@ -185,7 +185,7 @@ export const SideCarsSettingsSection: Component = () => {
 
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-secondary min-w-[4.5rem] text-right">{t(`sidecars.status.${sidecar.status}`)}</span>
-                      <button type="button" class="selector-button selector-button-secondary" disabled={busyId() === sidecar.id} onClick={() => void handleDelete(sidecar.id)}>
+                      <button type="button" class="selector-button selector-button-secondary w-auto" disabled={busyId() === sidecar.id} onClick={() => void handleDelete(sidecar.id)}>
                         <Trash2 class="w-4 h-4" />
                       </button>
                     </div>

@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI declare `@opencode-ai/client@beta`. The latest published beta is always the source of truth. Refreshing that dependency updates `node_modules` and rewrites `package-lock.json`; the lock is only the generated snapshot of the last dependency resolution, never a compatibility authority. Refresh it before migration audits or builds. It does not constrain the independently managed runtime CLI.
+Server and UI declare `@opencode-ai/client@beta`. The latest published beta is always the source of truth. Refreshing that dependency updates `node_modules` and rewrites `package-lock.json`; the lock is only the generated snapshot of the last dependency resolution, never a compatibility authority. Refresh it before migration audits or builds. It does not constrain the independently managed runtime CLI. The tested 2026-09-04 client and runtime snapshot is `beta-18999`.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -16,10 +16,27 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Use native APIs for projects, sessions, messages, prompts, commands, models, agents, providers, MCP, permissions, Forms, files, VCS, instructions, Shells, and PTYs.
 - Use native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.
 - Use `@opencode-ai/client/solid` `createData` for live message, tool, permission, and Form projection while preserving REST-loaded history and optimistic local sends.
-- Replace the legacy Question request lifecycle with native Forms. Question tool output rendering and reviewed upstream compatibility routes remain where applicable.
+- Replace the legacy Question request lifecycle with native Forms. Question tool output rendering remains. The proxy still contains inert legacy Question allowlist entries, but `beta-18999` declares no Question client API and its runtime does not serve those routes.
 - Replace shell-mode prompts with native `session.shell`.
 - Replace CodeNomad background processes with native `shell.*` resources. The Status UI lists, displays bounded output for, and removes Shells; create/output/timeout routes remain available through the ownership-checked proxy. Interactive `pty.*` terminals remain separate.
 - Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
+- Inherit native durable JSON `SessionMetadata` directly from `SessionInfo`. Do not widen it to arbitrary `unknown` values or maintain a parallel CodeNomad-only metadata contract.
+- Keep the narrow project-local `codenomad.automation` exception on the V2 `setup` and `tool.transform` contract; it remains active under `beta-18999`.
+
+### Published Beta Contract Audit
+
+The authoritative npm artifacts map `beta-18684` to OpenCode `106629aa118086be7def6123241a9bf056ba77b6` and `beta-18999` to `887f319769c55718e3e64f64b32c9aafb13c5d66`. Their generated OpenAPI contracts contain 136 and 140 operations respectively. The only added operations are `plugin.awaitActivation`, `plugin.check`, `plugin.update`, and typed `rpc.call`; no operation was removed, and the session, message, location, worktree, Shell, and PTY route sets are unchanged.
+
+| Reviewed change | CodeNomad impact and decision |
+| --- | --- |
+| Session projection storage and unavailable-location recovery ([#46075](https://github.com/anomalyco/opencode/pull/46075), [#46215](https://github.com/anomalyco/opencode/pull/46215)) | The pagination envelope, ordering, and exclusive cursor contract are unchanged. Unavailable-location recovery is an official-app workflow, not a wire change. CodeNomad keeps its own restore preservation and location-ownership checks rather than weakening source ownership. |
+| Shared event-consumer isolation ([#46393](https://github.com/anomalyco/opencode/pull/46393)) | `OpenCode.make()` now supplies one lazy shared connection with subscriber-local cancellation. CodeNomad adopts this automatically and retains cancellation of superseded `createData` and REST consumers. No custom transport is needed. |
+| Session-aware execution and chained active moves ([#46442](https://github.com/anomalyco/opencode/pull/46442), `6dd1733b`) | Upstream can preserve a running model continuation across native location handoffs. CodeNomad intentionally still blocks active members before a family move and rechecks each member during the transaction; upstream continuation does not replace family locking, complete inventory, verification, or rollback. |
+| PTY socket detach and Shell drain fixes ([#46068](https://github.com/anomalyco/opencode/pull/46068), [#46085](https://github.com/anomalyco/opencode/pull/46085)) | These are server-runtime fixes with no HTTP shape change. CodeNomad inherits them from the shared service. It still has no embedded PTY socket UI and continues to use owned PTY/Shell inventories as worktree-deletion blockers. |
+| Plugin lifecycle, typed RPC, and custom `rpc.*` events ([#46105](https://github.com/anomalyco/opencode/pull/46105)) | Plugin inventory remains read-only. The new plugin mutations and generic RPC call stay outside the workspace proxy allowlist, and raw `/api/event` remains blocked. Custom events have a mandatory native location, so the existing event bridge scopes them to owning logical workspaces; no CodeNomad feature consumes them. |
+| `PluginInfo`, config-update, and provider/model canonical fields | The installed declarations are compatible with current consumers: plugin IDs are narrowed before use, CodeNomad does not consume the renamed update policy, and canonical provider/model fields are additive. |
+
+The earlier `beta-18414` baseline also confirmed durable `SessionInfo.metadata`, `experimental.persistentPty.read`, and `vcs.base`. CodeNomad preserves native JSON session metadata, keeps persistent-PTY reads blocked because it owns no persistent terminal lifecycle, and defers `vcs.base` until the Git Changes UI has a reviewed base-comparison workflow. `Service.stop({ pty })` handoff remains unused because CodeNomad never owns or stops the shared service. Both UI and server resolve `beta-18999`, and the independently managed runtime used for native validation reports the same published beta.
 
 ## Shared Service Model
 
@@ -31,6 +48,7 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 - Pass configured startup environment variables and `NODE_EXTRA_CA_CERTS` only when starting a missing service. Strip legacy `OPENCODE_DB` and `XDG_STATE_HOME` overrides rather than taking ownership of OpenCode storage.
 - Never stop the global daemon during CodeNomad shutdown. Backend shutdown clears only CodeNomad's cached connection and logical workspace state.
 - Run the Linux CLI inside the selected WSL distribution and require Windows localhost forwarding. No cross-namespace PID fallback or process signaling remains.
+- OpenCode PR [#46085](https://github.com/anomalyco/opencode/pull/46085), included since `beta-18721`, bounds post-exit pipe draining so detached Windows GUI descendants no longer leave the parent session permanently running. Late output may be discarded; `session.background` remains a user action rather than a required workaround.
 
 ## Workspace, Location, and Tab Model
 
@@ -46,18 +64,20 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 ## Sessions, Streaming, and Reconciliation
 
 - Query a complete project-scoped session inventory across root and worktree subpaths without one request per parent; native `global` projects remain scoped to the selected workspace directory.
-- Follow native `cursor.next` values for session and message pagination. The proxy decodes session cursors only to validate embedded directory/project scope, strips competing selectors, and forwards the original cursor unchanged.
+- Follow native `cursor.next` values for session and message pagination. Continuation requests carry only the opaque cursor (plus a required path identity such as `sessionID` for messages). The proxy rejects competing session selectors, resolves the page through the authenticated native client, validates every returned location, and returns the native envelope unchanged; it never decodes or synthesizes cursors.
 - Hydrate only missing ancestor chains with `session.get` and fetch active status for later session pages.
 - Load message history lazily into a replace-in-place 200-message resident window. Older, newer, oldest, and latest navigation swaps authoritative pages without accumulating the transcript, while delayed REST responses cannot overwrite newer event state.
 - Route location-scoped events to every owning logical workspace and resolve locationless session, permission, Form, Shell, and PTY events through native ownership.
 - Use one upstream event subscription and browser `EventSource` for web, Electron, and Tauri.
-- Treat events as volatile projections, not durable history. Internal stream generations and browser reconnects trigger targeted authoritative refreshes for workspaces, sessions, active state, pending permissions/Forms, loaded messages, catalogs, and invalidated file/config state.
-- Preserve the Solid projection controller across reconnects and merge live records into REST history rather than clearing usable state.
+- Treat events as volatile projections, not durable history. Browser `EventSource` recovery refreshes the workspace catalog and per-instance authoritative state, reloads the active transcript, and invalidates other loaded transcripts for lazy refresh. Upstream instance-stream recovery performs only the per-instance reconciliation.
+- Preserve Solid projection controllers across browser transport reconnects and merge live records into REST history rather than clearing usable state. A native `server.connected` generation change disposes and recreates those controllers before reconciliation.
 
 ## UI and Memory Optimizations
 
-- Virtualize session lists and message timelines with `virtua` to bound mounted DOM for large histories.
-- Preserve user-controlled scroll position, bottom-follow intent, oversized streaming hold points, and anchor-based restore across live updates.
+- Virtualize session lists and message timelines with `virtua` `0.51.0` to bound mounted DOM for large histories.
+- Preserve user-controlled scroll position, bottom-follow intent, oversized streaming hold points, and anchor-based restore across live updates, pagination, tab changes, and desktop restarts.
+- Shift ordered slides of the capped 200-message window in place. Reordered, paginated, and otherwise non-aligned key changes advance a measurement epoch and remount the virtualizer so stale measurements cannot be reused.
+- Finalize the temporary `200 -> 201 -> 200` shift in a generation-guarded microtask before paint, and compensate followed content growth from a `ResizeObserver` attached to the mounted Virtua content root. Only explicit user scroll intent disables following.
 - Keep native cursors authoritative; do not infer completion from page length.
 - Bound instance logs and validate restore-state counts, IDs, paths, snapshots, string budgets, partition sizes, and graph sizes.
 - Reconcile only affected resources after native events or reconnects instead of periodically reloading full message history.
@@ -89,7 +109,7 @@ Before deleting a Git worktree, CodeNomad now:
 8. Removes the Git worktree inside the same rollback boundary.
 9. Restores moved sessions if verification or deletion fails.
 
-Git status, diff, stage, unstage, commit, worktree creation, and worktree removal remain CodeNomad server operations where V2 does not provide equivalent transactional behavior.
+Git status is hybrid: native `vcs.status` is augmented with CodeNomad server detail data. Selected-file diff, stage, unstage, and commit remain server operations. Although `beta-18866` exposes native worktree creation and removal, CodeNomad retains its server workflow for ownership fencing, session evacuation, verification, and rollback semantics.
 
 ## Proxy and Security Boundaries
 
@@ -104,7 +124,7 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 ## Desktop and Restore Restructuring
 
 - Run one native singleton and one CodeNomad backend per channel/config profile. Stable, development, and non-default config identities use isolated singleton, browser-storage, backend, and client-state scopes.
-- Focus the most-recent local window on a second launch unless `--new-window` is supplied.
+- Open another local window on a second launch by default; an Advanced preference restores most-recent-window focus, while `--new-window` always opens another window.
 - Give each Electron or Tauri window a UUID and independent tab/restore record while sharing the backend and global OpenCode data.
 - Persist one record per window in a V3 envelope over a V2 content-addressed partition graph.
 - Split workspace/session documents and chunk attachments so unrelated state does not rewrite one monolithic snapshot.
@@ -119,9 +139,9 @@ Git status, diff, stage, unstage, commit, worktree creation, and worktree remova
 
 ### Developer Mode Validation
 
-Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once. The native host owns its isolated browser profile, dynamically assigned loopback CDP endpoint, backtraces, and source maps; do not set manual WebView2 or remote-debugging environment variables and do not substitute `tauri dev` for a release build.
+For interactive validation of the native V2 application, use a release build rather than `tauri dev`, which compiles and runs a different debug environment. Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once. The native host owns its derived persistent browser profile, dynamically assigned loopback CDP endpoint, backtraces, and source maps; do not set manual WebView2 or remote-debugging environment variables and do not assume port `9223`.
 
-After rebuilding Electron, use `codenomad.act({ action: "restart" })` so the persistent OpenCode adapter can reconnect this session to the new native process generation. For Windows Tauri, stop and relaunch the release executable manually only when the linker cannot replace the running binary. The shared OpenCode daemon remains alive in both cases. See `dev-docs/DEVELOPER_MODE.md` for the complete contract and trust boundaries.
+After rebuilding Electron, use `codenomad.act({ action: "restart" })` so the persistent OpenCode adapter can reconnect this session to the same pinned host and artifact identity in the new native process generation. For Windows Tauri, stop and relaunch `packages/tauri-app/target/release/codenomad-tauri.exe` manually only when the linker cannot replace the running binary. The shared OpenCode daemon remains alive in both cases. See `dev-docs/DEVELOPER_MODE.md` for the complete contract and trust boundaries.
 
 ## Removed Legacy Architecture
 
@@ -136,14 +156,14 @@ The migration deletes rather than maintains these superseded systems:
 - The V1 message/delta buffer and periodic full-history event reload strategy, replaced by native events plus authoritative reconciliation.
 - The duplicate Rust-native Tauri SSE transport, including batching, coalescing, cookie forwarding, pong handling, reconnect code, commands, managed state, and tests.
 - The desktop native-event adapter made unnecessary by the shared browser `EventSource` path.
-- Message/part deletion controls and compatibility companions for operations not offered by the V2 beta protocol.
+- Arbitrary whole-message deletion and local-only transcript mutation companions for operations not offered by the V2 beta protocol. Technical tool/reasoning cleanup now uses native `session.messageUpdate`.
 - The server and UI dependency on `@opencode-ai/sdk` and the runtime V1 compatibility path.
 
 ## V1-to-V2 Capability Decisions
 
-During stabilization, CodeNomad implements the public native V2 contract and removes V1 behavior that cannot be reproduced authoritatively. It does not use compatibility routes, private APIs, local-only transcript mutations, or a bundled OpenCode fork to simulate parity. Missing protocol capabilities are documented rather than proposed upstream until the V2 migration is complete and stable. The current V2 TUI is the minimum user-facing behavior reference where its workflow can be reproduced through the public contract; CodeNomad may add conveniences and product-specific capabilities beyond that baseline.
+During stabilization, CodeNomad implements the public native V2 contract and removes V1 behavior that cannot be reproduced authoritatively. It does not depend on compatibility routes, private APIs, local-only transcript mutations, or a bundled OpenCode fork to simulate parity; inert legacy Question allowlist entries remain pending cleanup. Missing protocol capabilities are documented rather than proposed upstream until the V2 migration is complete and stable. The current V2 TUI is the minimum user-facing behavior reference where its workflow can be reproduced through the public contract; CodeNomad may add conveniences and product-specific capabilities beyond that baseline.
 
-| Capability | Native V2 availability | CodeNomad `DEV-v2` decision | Revisit or complete when |
+| Capability | Native V2 availability | CodeNomad decision | Revisit or complete when |
 | --- | --- | --- | --- |
 | Assistant content mutation | `session.messageUpdate` authoritatively replaces the text, reasoning, and tool content of a completed assistant message. There is still no generic deletion of a complete delivered message or mutation of user messages. | Restores individual tool/reasoning deletion through the native update route. Arbitrary whole-message deletion remains absent rather than locally simulated. | Add broader deletion only if V2 exposes an authoritative operation for the required message type. |
 | Bulk tool and reasoning cleanup | No native bulk operation, but `session.messageUpdate` can safely compose cleanup one assistant message at a time. | Restores selected-group and full-session technical-part cleanup through authoritative per-message updates. | A native bulk operation is only needed if per-message updates become a measured performance problem. |
@@ -157,8 +177,19 @@ During stabilization, CodeNomad implements the public native V2 contract and rem
 
 This table is release-facing and must remain synchronized with the open migration pull request description whenever a capability is removed, restored, or becomes available in the current V2 client.
 
+## Validation
+
+At the 2026-08-28 migration gate (`878550ca`), UI and server typechecks, 86 focused UI tests, 64 focused server tests, the production UI/server build, Tauri `cargo check`, all 121 Rust tests, and `git diff --check` passed.
+
+At the 2026-09-03 timeline stabilization head (`dea20996`):
+
+- UI TypeScript typecheck passed.
+- All 68 focused timeline, pagination, request-authority, and restore tests passed.
+- The Tauri release build passed against the `beta-18999` lock.
+- Native Developer Mode validation observed in-place capped-window shifts with no remount or empty frame, same-cycle growth compensation, preserved manual escape, and inactive-tab anchor restoration within 0.3125 px.
+
 ## Review Notes
 
-- The generated V2 client remains experimental. Review its current documentation, installed declarations, and proxy/API parity whenever the beta contract changes. The SDK documentation describes an alternative embedded host; CodeNomad uses the network client.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode-ai/client/dist/promise/`.
-- This branch intentionally has no OpenCode V1 fallback or private OpenCode database.
+- The generated V2 client remains experimental. Review its current documentation, installed declarations, proxy/API parity, runtime health, and `/api/plugin` failures whenever the beta contract changes. The SDK documentation describes an alternative embedded host; CodeNomad uses the network client.
+- V1-style global plugins are outside the CodeNomad client migration. Under the reviewed V2 contract through `beta-18999`, the installed After Effects, Blender, Microsoft 365, Resolve, Unreal, Ponytail, and Gemini Auth integrations require independent migrations to a V2 definition with an `id` and `setup` or `effect`.
+- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), `packages/server/node_modules/@opencode-ai/client/dist/promise/`, and `packages/ui/node_modules/@opencode-ai/client/dist/promise/`.

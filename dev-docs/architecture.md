@@ -30,7 +30,7 @@ Workspaces are not OpenCode processes and do not own ports or PIDs. Closing an o
 
 ## Native Profiles, Windows, And Client State
 
-Electron and Tauri run one native singleton process and one CodeNomad backend per channel/config profile. A second launch focuses the most-recent window by default; `--new-window` creates another UUID-backed window. Stable, dev, and non-default config profiles isolate singleton identity, backend/browser storage, and client state.
+Electron and Tauri run one native singleton process and one CodeNomad backend per channel/config profile. A second launch opens another UUID-backed window by default; Advanced settings can restore most-recent-window focus, while `--new-window` always creates another window. Stable, dev, and non-default config profiles isolate singleton identity, backend/browser storage, and client state.
 
 OpenCode sessions and messages remain shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership, and garbage collection runs after publication while retaining every partition referenced by any window.
 

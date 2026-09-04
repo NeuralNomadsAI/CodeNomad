@@ -4,13 +4,17 @@ import { describe, it } from "node:test"
 import {
   ANCHOR_RESTORE_MAX_FRAMES,
   ANCHOR_RESTORE_STABLE_FRAMES,
+  advanceBottomPinSettlement,
   AnchorRestoreStabilizer,
   BOTTOM_FOLLOW_EPSILON_PX,
+  canScrollInDirection,
   classifyVirtualItemKeyChange,
-  getBottomAnchoredViewportOffset,
   getKeyboardScrollIntent,
+  getBottomAnchoredViewportOffset,
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
+  shouldAdvanceBottomPin,
+  shouldNavigateAtBoundary,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
@@ -199,23 +203,89 @@ describe("virtual follow behavior", () => {
     assert.deepEqual(result.effect, { type: "scroll-bottom", immediate: true })
   })
 
-  it("keeps the viewport bottom anchored when its height changes", () => {
+  it("never moves a bottom pin upward while measurements settle", () => {
+    assert.equal(shouldAdvanceBottomPin(2400, 2200), false)
+    assert.equal(shouldAdvanceBottomPin(2400, 2401), false)
+    assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
+  })
+
+  it("restarts bottom settlement when Virtua discovers a later maximum", () => {
+    let state: { stableFrames: number; lastMaxOffset: number | null; settled?: boolean } = {
+      stableFrames: 0,
+      lastMaxOffset: null,
+    }
+    for (let frame = 0; frame < 7; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 24_000, requiredStableFrames: 8 })
+      assert.equal(state.settled, false)
+    }
+
+    state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    assert.deepEqual(state, { stableFrames: 0, lastMaxOffset: 26_000, settled: false })
+    for (let frame = 0; frame < 8; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    }
+    assert.equal(state.settled, true)
+  })
+
+  it("leaves nested scroll ownership with a descendant that can consume it", () => {
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "up"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "down"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 0, scrollHeight: 500, clientHeight: 100 }, "up"), false)
+    assert.equal(canScrollInDirection({ scrollTop: 400, scrollHeight: 500, clientHeight: 100 }, "down"), false)
+  })
+
+  it("requires fresh matching user intent before paging at a virtual boundary", () => {
+    const base = { atBoundary: true, restoring: false, programmatic: false, hasFreshIntent: true, intent: "up" as const, direction: "up" as const }
+    assert.equal(shouldNavigateAtBoundary(base), true)
+    assert.equal(shouldNavigateAtBoundary({ ...base, hasFreshIntent: false }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, restoring: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, programmatic: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, intent: "down" }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, atBoundary: false }), false)
+  })
+
+  it("keeps the timeline viewport bottom anchored when its height changes", () => {
     assert.equal(getBottomAnchoredViewportOffset(2400, 200), 2600)
     assert.equal(getBottomAnchoredViewportOffset(2600, -200), 2400)
     assert.equal(getBottomAnchoredViewportOffset(50, -200), 0)
   })
 
-  it("invalidates measurements and follows when a capped window slides", () => {
+  it("preserves measurements when a capped window slides", () => {
     const previous = Array.from({ length: 200 }, (_, index) => `m${index}`)
     const next = [...previous.slice(1), "compaction"]
 
     assert.deepEqual(classifyVirtualItemKeyChange(previous, next), {
-      resetMeasurements: true,
+      resetMeasurements: false,
       endChanged: true,
+      shiftedStartCount: 1,
     })
     assert.deepEqual(classifyVirtualItemKeyChange(next, next), {
       resetMeasurements: false,
       endChanged: false,
+      shiftedStartCount: 0,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(next, []), {
+      resetMeasurements: true,
+      endChanged: true,
+      shiftedStartCount: 0,
+    })
+  })
+
+  it("only preserves measurements for an ordered suffix shift", () => {
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["b", "c", "d"]), {
+      resetMeasurements: false,
+      endChanged: true,
+      shiftedStartCount: 1,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["b", "x", "d"]), {
+      resetMeasurements: true,
+      endChanged: true,
+      shiftedStartCount: 0,
+    })
+    assert.deepEqual(classifyVirtualItemKeyChange(["a", "b", "c"], ["x", "a", "b", "c"]), {
+      resetMeasurements: true,
+      endChanged: false,
+      shiftedStartCount: 0,
     })
   })
 

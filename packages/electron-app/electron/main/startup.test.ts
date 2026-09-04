@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { mkdirSync, rmSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, resolveUpdateChannel, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, resolveUpdateChannel, startPrimaryInstance } from "./startup"
 
 test("update channel honors the environment, forces unpackaged dev, and only infers packaged versions", () => {
   assert.equal(resolveUpdateChannel("Beta", "1.0.0-dev.2", false), "beta")
@@ -78,6 +78,22 @@ test("launch arguments resolve valid folders relative to launch cwd and ignore u
       newWindow: true,
       folders: [folder],
     })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("second launches open a new window unless the profile requests MRU focus", () => {
+  const root = join(tmpdir(), `codenomad-second-launch-${process.pid}`)
+  const config = join(root, "config.yaml")
+  const intent = { newWindow: false, folders: ["workspace"] }
+  mkdirSync(root, { recursive: true })
+  try {
+    assert.equal(prepareSecondLaunchIntent(intent, config).newWindow, true)
+    writeFileSync(config, "ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n")
+    assert.equal(prepareSecondLaunchIntent(intent, config).newWindow, false)
+    writeFileSync(config, "ui: [invalid")
+    assert.equal(prepareSecondLaunchIntent(intent, config).newWindow, true)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -47,6 +47,38 @@ test("closing the sole local window while a remote remains removes its V3 record
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
 })
 
+test("Preferences does not turn the final local close into a destructive window removal", () => {
+  const calls: string[] = []
+  const local = windowRecord("local", calls)
+  const preferences = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [local], getAllWindows: () => [local.window, preferences as never],
+    isSupportWindow: (window) => window === preferences,
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(local)
+  local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  assert.deepEqual(calls, ["prevent", "quit"])
+})
+
+test("Preferences does not keep the final remote window alive", () => {
+  const calls: string[] = []
+  const remote = windowRecord("remote", calls)
+  const preferences = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [], getAllWindows: () => [remote.window, preferences as never],
+    isSupportWindow: (window) => window === preferences,
+    removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attachRemote(remote.window)
+  remote.events.get("close")?.({ defaultPrevented: false, preventDefault: () => calls.push("prevent") })
+  assert.deepEqual(calls, ["prevent", "quit"])
+})
+
 test("persisted local close waits for confirmed removal and remains retryable", async () => {
   const calls: string[] = []
   const first = windowRecord("one", calls)

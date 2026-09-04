@@ -18,6 +18,7 @@ interface Dependencies {
   cliManager: CliProcessManager
   getLocalWindows(): LifecycleWindow[]
   getAllWindows(): BrowserWindow[]
+  isSupportWindow?(window: BrowserWindow): boolean
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
@@ -47,7 +48,8 @@ export class MultiwindowLifecycle {
       event.preventDefault()
       if (closing || this.shutdown) return
       const otherLocal = this.dependencies.getLocalWindows().some((candidate) => candidate.id !== record.id && !candidate.window.isDestroyed())
-      const otherWindow = this.dependencies.getAllWindows().some((candidate) => candidate !== record.window && !candidate.isDestroyed())
+      const otherWindow = this.dependencies.getAllWindows().some((candidate) => candidate !== record.window
+        && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))
       if (!otherLocal && !otherWindow) {
         this.dependencies.app.quit()
         return
@@ -71,11 +73,16 @@ export class MultiwindowLifecycle {
 
   attachRemote(window: BrowserWindow): void {
     window.on("close", (event) => {
-      if (this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window && !candidate.isDestroyed())) return
+      if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
+        && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))) return
       event.preventDefault()
       if (!this.shutdown) this.dependencies.app.quit()
     })
     this.attachSessionEnd(window)
+  }
+
+  isExitAllowed(): boolean {
+    return this.exitAllowed
   }
 
   attachSessionEnd(window: BrowserWindow): void {

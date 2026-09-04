@@ -657,7 +657,7 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("blocks global routes through a workspace", async () => {
+  it("blocks global and unreviewed extension routes through a workspace", async () => {
     const { app, requestCount } = await harness()
     for (const route of ["global/dispose", "global/config", "global/upgrade"]) {
       const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/${route}` })
@@ -665,6 +665,10 @@ describe("instance proxy location enforcement", () => {
     }
     for (const route of ["event", "debug/location"]) {
       const response = await app.inject({ method: "GET", url: `/workspaces/workspace/instance/api/${route}` })
+      assert.equal(response.statusCode, 403)
+    }
+    for (const route of ["plugin/await-activation", "plugin/check", "plugin/update", "rpc/example/run"]) {
+      const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}` })
       assert.equal(response.statusCode, 403)
     }
     assert.equal((await app.inject({

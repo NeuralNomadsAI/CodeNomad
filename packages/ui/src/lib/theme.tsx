@@ -2,6 +2,11 @@ import { createContext, createEffect, createMemo, createSignal, onMount, useCont
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
+import {
+  applyColorScheme,
+  normalizeColorScheme,
+  type NormalizedColorScheme,
+} from "./theme-scheme"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -10,18 +15,11 @@ interface ThemeContextValue {
   themeMode: () => ThemeMode
   setThemeMode: (mode: ThemeMode) => void
   cycleThemeMode: () => void
+  colorScheme: () => NormalizedColorScheme
+  setColorScheme: (scheme: NormalizedColorScheme) => void
 }
 
 const ThemeContext = createContext<ThemeContextValue>()
-
-function applyThemeMode(mode: ThemeMode) {
-  if (typeof document === "undefined") return
-  if (mode === "system") {
-    document.documentElement.removeAttribute("data-theme")
-    return
-  }
-  document.documentElement.setAttribute("data-theme", mode)
-}
 
 interface ResolvedPaletteColors {
   backgroundDefault: string
@@ -69,7 +67,7 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
     backgroundDefault: readCssVar("--surface-base", fallbackSet.backgroundDefault, rootStyle),
     backgroundPaper: readCssVar("--surface-secondary", fallbackSet.backgroundPaper, rootStyle),
     primary: readCssVar("--accent-primary", fallbackSet.primary, rootStyle),
-    primaryContrast: readCssVar("--text-inverted", fallbackSet.primaryContrast, rootStyle),
+    primaryContrast: readCssVar("--text-on-accent", fallbackSet.primaryContrast, rootStyle),
     textPrimary: readCssVar("--text-primary", fallbackSet.textPrimary, rootStyle),
     textSecondary: readCssVar("--text-secondary", fallbackSet.textSecondary, rootStyle),
     divider: readCssVar("--border-base", fallbackSet.divider, rootStyle),
@@ -78,27 +76,23 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
-  const { themePreference, setThemePreference } = useConfig()
+  const { colorSchemePreference, setColorSchemePreference } = useConfig()
+  const [selectedColorScheme, setSelectedColorScheme] = createSignal(colorSchemePreference())
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
 
-  const themeMode = () => themePreference() as ThemeMode
+  const colorScheme = () => selectedColorScheme()
+  const themeMode = (): ThemeMode => colorScheme().appearance
+  let latestWrite: Promise<void> | null = null
 
-  const resolveDarkTheme = () => {
-    const mode = themeMode()
-    if (mode === "dark") return true
-    if (mode === "light") return false
-    return mediaQuery?.matches ?? false
-  }
+  createEffect(() => {
+    const preference = colorSchemePreference()
+    if (latestWrite) return
+    setSelectedColorScheme(preference)
+  })
 
   const applyResolvedTheme = () => {
-    const mode = themeMode()
-    const dark = resolveDarkTheme()
-    if (mode === "system") {
-      applyThemeMode("system")
-    } else {
-      applyThemeMode(mode)
-    }
+    const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches })
     setIsDarkSignal(dark)
     if (typeof window !== "undefined") {
       requestAnimationFrame(() => setThemeRevision((v) => v + 1))
@@ -124,8 +118,27 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     }
   })
 
+  const setColorScheme = (scheme: NormalizedColorScheme) => {
+    const normalized = normalizeColorScheme(scheme)
+    setSelectedColorScheme(normalized)
+    const write = setColorSchemePreference(normalized)
+    latestWrite = write
+    void write.then(
+      () => {
+        if (latestWrite !== write) return
+        latestWrite = null
+        setSelectedColorScheme(colorSchemePreference())
+      },
+      () => {
+        if (latestWrite !== write) return
+        latestWrite = null
+        setSelectedColorScheme(colorSchemePreference())
+      },
+    )
+  }
+
   const setThemeMode = (mode: ThemeMode) => {
-    setThemePreference(mode)
+    setColorScheme(normalizeColorScheme(mode === "dark" ? "classic" : mode))
   }
 
   const cycleThemeMode = () => {
@@ -161,13 +174,15 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         fontFamily: "var(--font-family-sans)",
       },
       shape: {
-        borderRadius: 8,
+        borderRadius: 0,
       },
       components: {
         MuiIconButton: {
           styleOverrides: {
             root: {
               color: "inherit",
+              borderRadius: 0,
+              padding: "6px",
               "&.Mui-disabled": {
                 color: "var(--text-muted)",
                 opacity: 0.55,
@@ -197,7 +212,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         MuiToolbar: {
           styleOverrides: {
             root: {
-              minHeight: "56px",
+              minHeight: "40px",
             },
           },
         },
@@ -206,7 +221,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   return (
-    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode }}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme }}>
       <MuiThemeProvider theme={muiTheme()}>
         <CssBaseline />
         {props.children}

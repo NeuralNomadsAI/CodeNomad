@@ -485,6 +485,7 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
     } else {
         log_line("local window not found for navigation");
     }
+    crate::preferences_window::navigate_backend(app);
 }
 
 fn augment_launch_url(base_url: &str) -> String {
@@ -592,21 +593,31 @@ fn exchange_bootstrap_token(
     Ok(None)
 }
 
+pub(crate) fn local_session_cookie(
+    base_url: &str,
+    cookie_name: &str,
+    session_id: &str,
+) -> anyhow::Result<Cookie<'static>> {
+    let parsed = Url::parse(base_url)?;
+    let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
+
+    Ok(
+        Cookie::build((cookie_name.to_string(), session_id.to_string()))
+            .domain(domain)
+            .path("/")
+            .http_only(true)
+            .same_site(tauri::webview::cookie::SameSite::Lax)
+            .build(),
+    )
+}
+
 fn set_session_cookie(
     app: &AppHandle,
     base_url: &str,
     cookie_name: &str,
     session_id: &str,
 ) -> anyhow::Result<()> {
-    let parsed = Url::parse(base_url)?;
-    let domain = parsed.host_str().unwrap_or("127.0.0.1").to_string();
-
-    let cookie = Cookie::build((cookie_name.to_string(), session_id.to_string()))
-        .domain(domain)
-        .path("/")
-        .http_only(true)
-        .same_site(tauri::webview::cookie::SameSite::Lax)
-        .build();
+    let cookie = local_session_cookie(base_url, cookie_name, session_id)?;
 
     for record in app.state::<crate::local_windows::LocalWindows>().records() {
         if let Some(win) = app.get_webview_window(&record.label) {
@@ -1607,6 +1618,7 @@ impl CliProcessManager {
     fn emit_status(app: &AppHandle, status: &CliStatus) {
         if status.state != CliState::Ready {
             crate::local_windows::show_loading_all(app);
+            crate::preferences_window::show_loading(app);
         }
         crate::local_windows::emit_all(app, "cli:status", status.clone());
     }

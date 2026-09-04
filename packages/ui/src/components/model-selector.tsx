@@ -58,6 +58,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const [explicitFavorites, setExplicitFavorites] = createSignal(false)
   const [autoFavoritesEligibleAtOpen, setAutoFavoritesEligibleAtOpen] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
+  const [openComboboxValue, setOpenComboboxValue] = createSignal<FlatModel | undefined>()
   const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
   let searchInputRef!: HTMLInputElement
   let listboxRef!: HTMLUListElement
@@ -144,8 +145,10 @@ export default function ModelSelector(props: ModelSelectorProps) {
     return `${current.providerId}/${current.modelId}`
   })
 
+  const currentModelName = () => currentModelValue()?.name ?? t("modelSelector.none")
+
   const currentModelLabel = createMemo(() =>
-    t("modelSelector.trigger.primary", { model: currentModelValue()?.name ?? t("modelSelector.none") }),
+    t("modelSelector.trigger.primary", { model: currentModelName() }),
   )
 
   const searchActive = createMemo(() => isOpen()
@@ -299,11 +302,13 @@ export default function ModelSelector(props: ModelSelectorProps) {
   return (
     <div class="sidebar-selector">
       <Combobox<PickerOption>
+        gutter={0}
         open={isOpen()}
-        value={comboboxValue()}
+        value={isOpen() ? openComboboxValue() : comboboxValue()}
         onChange={handleChange}
         onOpenChange={(next, triggerMode) => {
           if (!next && suppressNextClose) return
+          if (next) setOpenComboboxValue(comboboxValue())
           setIsOpen(next)
           if (!next) restoreSelectedInput()
           else if (triggerMode !== "input") setInputValue("")
@@ -401,13 +406,9 @@ export default function ModelSelector(props: ModelSelectorProps) {
           <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                {currentModelLabel()}
+                <span class="session-sidebar-selector-prefix">{t("modelSelector.trigger.primary", { model: "" }).trim()}</span>{" "}
+                {currentModelName()}
               </span>
-              {currentModelValue() && (
-                <span class="selector-trigger-secondary" dir="ltr">
-                  {currentModelValue()!.providerId}/{currentModelValue()!.id}
-                </span>
-              )}
             </div>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
@@ -416,7 +417,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content class="selector-popover session-sidebar-selector-popover">
             <div class="selector-search-container">
               <div class="selector-input-group">
                 <Combobox.Input

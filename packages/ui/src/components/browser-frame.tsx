@@ -403,8 +403,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         <Show when={canComment()}>
           <button
             type="button"
-            class="new-tab-button"
-            style={props.commentMode ? { color: "var(--accent-primary)" } : undefined}
+            class="new-tab-button icon-toggle"
             title={props.labels.commentMode}
             aria-label={props.labels.commentMode}
             aria-pressed={props.commentMode ? "true" : "false"}

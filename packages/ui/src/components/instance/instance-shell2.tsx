@@ -581,9 +581,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const renderPreviewToggleButton = () => (
     <Show when={!showingInfoView()}>
       <IconButton
+        class="icon-toggle"
         color="inherit"
         onClick={handlePreviewButtonClick}
         aria-label={previewToggleLabel()}
+        aria-pressed={activeSessionPreview()?.mode === "preview"}
         title={previewToggleLabel()}
         size="small"
       >
@@ -873,7 +875,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const renderHeaderLeftSlot = () => (
     <Show when={showHeaderLeftSlot() && leftDrawerState() === "floating-closed"}>
-      <span class="session-header-drawer-toggle session-header-drawer-toggle--left">
+      <span class="panel-header-actions session-header-drawer-toggle session-header-drawer-toggle--left">
         <IconButton
           ref={setLeftToggleButtonEl}
           color="inherit"
@@ -1031,7 +1033,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       >
         <Show when={!mobileFullscreen()}>
           <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
-            <Toolbar ref={(element) => { sessionToolbarEl = element }} variant="dense" class="session-toolbar flex items-center gap-2 py-0 min-h-[40px]">
+            <Toolbar ref={(element) => { sessionToolbarEl = element }} variant="dense" class="panel-header session-toolbar flex items-center gap-2 py-0">
               {renderHeaderLeftSlot()}
 
               <div ref={(element) => { headerLeftEl = element }} class="session-toolbar-left flex-1 flex items-center gap-3 min-w-0">
@@ -1056,7 +1058,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <div class="ms-auto flex items-center gap-3">
                   <div class="connection-status-meta flex items-center gap-3">
                     <div class="session-header-actions-slot">
-                      <div class="session-header-expanded-actions flex items-center gap-3">
+                      <div class="panel-header-actions session-header-expanded-actions">
                         <IconButton
                           color="inherit"
                           onClick={handleCommandPaletteClick}
@@ -1108,7 +1110,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               </div>
 
               <Show when={rightDrawerState() === "floating-closed"}>
-                <span class="session-header-drawer-toggle session-header-drawer-toggle--right">
+                <span class="panel-header-actions session-header-drawer-toggle session-header-drawer-toggle--right">
                   <IconButton
                     ref={setRightToggleButtonEl}
                     color="inherit"

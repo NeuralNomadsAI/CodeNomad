@@ -58,15 +58,15 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
     setModelThinkingSelection(props.currentModel, value.value)
   }
 
-  const triggerPrimary = createMemo(() => {
+  const triggerValue = createMemo(() => {
     const selected = currentValue()?.value
-    const variant = selected ?? t("thinkingSelector.variant.default")
-    return t("thinkingSelector.label", { variant })
+    return selected ?? t("thinkingSelector.variant.default")
   })
 
   return (
     <div class="sidebar-selector">
       <Combobox<ThinkingOption>
+        gutter={0}
         value={currentValue()}
         onChange={handleChange}
         options={options()}
@@ -90,7 +90,10 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
           <Combobox.Input class="sr-only" data-thinking-selector />
           <Combobox.Trigger class="selector-trigger">
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
-              <span class="selector-trigger-primary selector-trigger-primary--align-left">{triggerPrimary()}</span>
+              <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                <span class="session-sidebar-selector-prefix">{t("thinkingSelector.label", { variant: "" }).trim()}</span>{" "}
+                {triggerValue()}
+              </span>
             </div>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
@@ -99,7 +102,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content class="selector-popover session-sidebar-selector-popover">
             <Combobox.Listbox class="selector-listbox" />
           </Combobox.Content>
         </Combobox.Portal>

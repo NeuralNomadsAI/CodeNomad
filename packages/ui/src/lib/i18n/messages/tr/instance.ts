@@ -155,6 +155,7 @@ export const instanceMessages = {
   "instanceShell.filesShell.viewerEmpty": "Seçili dosya yok.",
   "instanceShell.filesShell.listEmpty": "Bu klasörde dosya yok.",
   "instanceShell.filesShell.hideFiles": "Dosyaları gizle",
+  "instanceShell.filesShell.resizeFiles": "Dosya listesini yeniden boyutlandır",
   "instanceShell.filesShell.showFiles": "Dosyaları göster",
   "instanceShell.filesShell.search.placeholder": "Bu klasördeki dosyaları filtrele",
   "instanceShell.filesShell.search.ariaLabel": "Bu klasördeki dosyaları filtrele",

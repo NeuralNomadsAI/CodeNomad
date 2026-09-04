@@ -11,6 +11,18 @@ import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import {
+  normalizeColorScheme,
+  validateColorSchemeColors,
+  type ColorSchemeColors,
+  type NormalizedColorScheme,
+} from "../lib/theme-scheme"
+import {
+  createColorSchemePresetId,
+  MAX_COLOR_SCHEME_PRESETS,
+  normalizeColorSchemePresets,
+  type UserColorSchemePresets,
+} from "../lib/color-scheme-presets"
+import {
   normalizeModelVisibilityPreference,
   normalizeModelVisibilityPreferences,
   type ModelVisibilityPreference,
@@ -108,6 +120,7 @@ export interface UiSettings {
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
 
   // OS notifications
@@ -137,6 +150,8 @@ export type ThemePreference = "light" | "dark" | "system"
 
 interface UiConfigBucket {
   theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
   settings?: Partial<UiSettings>
 }
 
@@ -150,6 +165,11 @@ interface ServerConfigBucket {
 }
 
 interface UiStateBucket {
+  theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
+  colorSchemePresets?: unknown
+  activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
@@ -201,6 +221,7 @@ const defaultUiSettings: UiSettings = {
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
+  focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
 
   osNotificationsEnabled: false,
@@ -314,6 +335,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
@@ -560,7 +582,24 @@ const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
-const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
+const themePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
+const colorSchemePreference = createMemo(() => normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, themePreference()))
+const customColorSchemePreference = createMemo(() => {
+  const state = uiStateBucket()
+  const config = uiConfigBucket()
+  const custom = state.customColorScheme
+    ?? config.customColorScheme
+    ?? (colorSchemePreference().id === "custom" ? state.colorScheme ?? config.colorScheme : undefined)
+  const value = typeof custom === "object" && custom !== null && !Array.isArray(custom)
+    ? { ...(custom as Record<string, unknown>), id: "custom" }
+    : { id: "custom" }
+  return normalizeColorScheme(value)
+})
+const colorSchemePresets = createMemo<UserColorSchemePresets>(() => normalizeColorSchemePresets(uiStateBucket().colorSchemePresets))
+const activeColorSchemePresetId = createMemo(() => {
+  const id = uiStateBucket().activeColorSchemePresetId
+  return typeof id === "string" && colorSchemePresets()[id] ? id : undefined
+})
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
 const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
 
@@ -612,7 +651,7 @@ async function patchStateOwner(owner: string, patch: unknown) {
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
-function updateUiSettings(updates: Partial<UiSettings>) {
+function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
   const current = uiConfigBucket()
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
   const patch = {
@@ -620,11 +659,17 @@ function updateUiSettings(updates: Partial<UiSettings>) {
       Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
     ),
   }
-  void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
+  return patchConfigOwner("ui", patch).then(
+    () => true,
+    (error) => {
+      log.error("Failed to patch ui settings", error)
+      return false
+    },
+  )
 }
 
-function updatePreferences(updates: Partial<UiSettings>): void {
-  updateUiSettings(updates)
+function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  return updateUiSettings(updates)
 }
 
 const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
@@ -689,8 +734,57 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
 }
 
 function setThemePreference(preference: ThemePreference): void {
-  if (themePreference() === preference) return
-  void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
+  void setColorSchemePreference(normalizeColorScheme(preference === "dark" ? "classic" : preference))
+}
+
+let colorSchemeWriteQueue = Promise.resolve()
+
+function setColorSchemePreference(preference: NormalizedColorScheme): Promise<void> {
+  const normalized = normalizeColorScheme(preference)
+  const legacyTheme: ThemePreference = normalized.appearance === "system" ? "system" : normalized.appearance
+  const patch = {
+    theme: legacyTheme,
+    colorScheme: normalized,
+    ...(normalized.id === "custom" ? { customColorScheme: normalized } : {}),
+    activeColorSchemePresetId: null,
+  }
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", patch))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined).catch((error) => {
+    log.error("Failed to set color scheme", error)
+    throw error
+  })
+}
+
+function selectColorSchemePreset(id: string): Promise<void> {
+  const preset = colorSchemePresets()[id]
+  if (!preset) return Promise.resolve()
+  const scheme = normalizeColorScheme({ id: "custom", appearance: preset.appearance, colors: preset.colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: preset.appearance,
+    colorScheme: scheme,
+    customColorScheme: scheme,
+    activeColorSchemePresetId: id,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<string> {
+  const trimmedName = name.trim().slice(0, 80)
+  if (!trimmedName || !validateColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
+  if (Object.keys(colorSchemePresets()).length >= MAX_COLOR_SCHEME_PRESETS) return Promise.reject(new Error("Color scheme preset limit reached"))
+  const id = createColorSchemePresetId()
+  const scheme = normalizeColorScheme({ id: "custom", appearance, colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    theme: appearance,
+    colorScheme: scheme,
+    customColorScheme: scheme,
+    colorSchemePresets: { [id]: { name: trimmedName, appearance, colors: { ...colors } } },
+    activeColorSchemePresetId: id,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => id)
 }
 
  async function setListeningMode(mode: ListeningMode): Promise<void> {
@@ -1007,6 +1101,13 @@ interface ConfigContextValue {
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
+  colorSchemePreference: typeof colorSchemePreference
+  customColorSchemePreference: typeof customColorSchemePreference
+  colorSchemePresets: typeof colorSchemePresets
+  activeColorSchemePresetId: typeof activeColorSchemePresetId
+  setColorSchemePreference: typeof setColorSchemePreference
+  selectColorSchemePreset: typeof selectColorSchemePreset
+  saveColorSchemePreset: typeof saveColorSchemePreset
 
   // server-owned stable config
   serverSettings: typeof serverSettings
@@ -1071,6 +1172,13 @@ const configContextValue: ConfigContextValue = {
   providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  customColorSchemePreference,
+  colorSchemePresets,
+  activeColorSchemePresetId,
+  setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemePreset,
   serverSettings,
   setListeningMode,
   updateEnvironmentVariables,
@@ -1163,6 +1271,13 @@ export {
   opencodeBinaries,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  customColorSchemePreference,
+  colorSchemePresets,
+  activeColorSchemePresetId,
+  setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemePreset,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,

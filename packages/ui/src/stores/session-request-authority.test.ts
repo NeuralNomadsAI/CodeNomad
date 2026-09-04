@@ -403,6 +403,154 @@ describe("session request authority", () => {
     }
   })
 
+  it("does not publish a message page after its caller aborts", async () => {
+    const instanceId = "aborted-message-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const olderPage = deferred<any>()
+    ;(client as any).message = { list: (input: any) => input.cursor
+      ? olderPage.promise
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older-page" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const controller = new AbortController()
+      const request = loadMoreMessages(instanceId, sessionId, controller.signal)
+      controller.abort()
+      olderPage.resolve({ data: [apiMessage("stale-older")], cursor: {} })
+      await request
+
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["latest"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps a shared message page authoritative while another caller still needs it", async () => {
+    const instanceId = "shared-message-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const olderPage = deferred<any>()
+    let olderCalls = 0
+    ;(client as any).message = { list: (input: any) => {
+      if (!input.cursor) return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older-page" } })
+      olderCalls += 1
+      return olderPage.promise
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const controller = new AbortController()
+      const cancelledCaller = loadMoreMessages(instanceId, sessionId, controller.signal)
+      const currentCaller = loadMoreMessages(instanceId, sessionId)
+      controller.abort()
+      await cancelledCaller
+      olderPage.resolve({ data: [apiMessage("older")], cursor: {} })
+      await currentCaller
+
+      assert.equal(olderCalls, 1)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["older"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("starts a fresh message page after the last consumer aborts", async () => {
+    const instanceId = "retry-aborted-message-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const stalePage = deferred<any>()
+    const freshPage = deferred<any>()
+    let olderCalls = 0
+    ;(client as any).message = { list: (input: any) => {
+      if (!input.cursor) return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older-page" } })
+      olderCalls += 1
+      return olderCalls === 1 ? stalePage.promise : freshPage.promise
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const controller = new AbortController()
+      const cancelledRequest = loadMoreMessages(instanceId, sessionId, controller.signal)
+      controller.abort()
+      await cancelledRequest
+      const retry = loadMoreMessages(instanceId, sessionId)
+      freshPage.resolve({ data: [apiMessage("fresh-older")], cursor: {} })
+      await retry
+      stalePage.resolve({ data: [apiMessage("stale-older")], cursor: {} })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      assert.equal(olderCalls, 2)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["fresh-older"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("commits safe boundary coordinates before a paged window is positioned", async () => {
+    const instanceId = "message-page-boundary", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client as any).message = { list: (input: any) => input.cursor
+      ? Promise.resolve({ data: [apiMessage("older")], cursor: {} })
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older-page" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      store.setScrollSnapshot(sessionId, "message-stream", {
+        scrollTop: 400,
+        atBottom: false,
+        anchorKey: "latest",
+        anchorOffset: 40,
+        followModeType: "escaped",
+      })
+      await loadMoreMessages(instanceId, sessionId)
+
+      const snapshot = store.getScrollSnapshot(sessionId, "message-stream")
+      assert.equal(snapshot?.scrollTop, 0)
+      assert.equal(snapshot?.atBottom, true)
+      assert.equal(snapshot?.anchorKey, undefined)
+      assert.equal(snapshot?.anchorOffset, undefined)
+      assert.equal(snapshot?.followModeType, "escaped")
+      assert.equal(snapshot?.windowIsLatest, false)
+      assert.equal(snapshot?.windowCursor, "older-page")
+      assert.deepEqual(snapshot?.newerCursors, [null])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("clears latest-page loading when its caller aborts", async () => {
+    const instanceId = "aborted-latest-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const latestPage = deferred<any>()
+    let calls = 0
+    ;(client as any).message = { list: () => {
+      calls += 1
+      return calls === 1
+        ? Promise.resolve({ data: [apiMessage("older")], cursor: {} })
+        : latestPage.promise
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+
+    try {
+      await loadMessages(instanceId, sessionId)
+      const controller = new AbortController()
+      const request = loadLatestMessageWindow(instanceId, sessionId, controller.signal)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), true)
+      controller.abort()
+      latestPage.resolve({ data: [apiMessage("stale-latest")], cursor: {} })
+      await request
+
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["older"])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("retries a latest-window response raced by a native message event", async () => {
     const instanceId = "latest-window-race", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
@@ -1113,9 +1261,11 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("root"), true)
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
-      assert.equal(requests[0].project, "project")
-      assert.equal("directory" in requests[0], false)
+      assert.equal(requests[0].directory, "/work")
+      assert.equal("project" in requests[0], false)
       assert.equal(requests[0].parentID, null)
+      assert.equal(requests[1].project, "project")
+      assert.equal("directory" in requests[1], false)
       assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
       assert.deepEqual(requests[2], { cursor: "inventory-page-2" })
 
@@ -1197,6 +1347,32 @@ describe("session request authority", () => {
       await staleExhaustion
       assert.equal(getSessionListIds(instanceId).includes("fresh-2"), true)
       assert.equal(getSessionListIds(instanceId).includes("stale-2"), false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps migrated global roots from the current project directory", async () => {
+    const instanceId = "migrated-global-roots"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.parentID === null) {
+        return { data: [{ ...apiSession("legacy"), projectID: "global" }, apiSession("current")], cursor: {} }
+      }
+      return { data: [apiSession("current")], cursor: {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+
+      assert.equal(requests[0].directory, "/work")
+      assert.equal("project" in requests[0], false)
+      assert.equal(requests[1].project, "project")
+      assert.deepEqual(getSessionListIds(instanceId), ["legacy", "current"])
+      assert.equal(sessions().get(instanceId)?.get("legacy")?.projectID, "global")
     } finally {
       cleanup()
     }

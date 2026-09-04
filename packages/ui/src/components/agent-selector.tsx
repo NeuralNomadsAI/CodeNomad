@@ -58,6 +58,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
   return (
     <div class="sidebar-selector">
       <Combobox<Agent>
+        gutter={0}
         open={isOpen()}
         onOpenChange={setIsOpen}
         value={selectedAgent()}
@@ -98,7 +99,8 @@ export default function AgentSelector(props: AgentSelectorProps) {
             <div class="flex-1 min-w-0">
               <div class="selector-trigger-label selector-trigger-label--stacked">
                 <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                  {t("agentSelector.trigger.primary", { agent: selectedAgent()?.name || t("agentSelector.none") })}
+                  <span class="session-sidebar-selector-prefix">{t("agentSelector.trigger.primary", { agent: "" }).trim()}</span>{" "}
+                  {selectedAgent()?.name || t("agentSelector.none")}
                 </span>
               </div>
             </div>
@@ -109,7 +111,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content class="selector-popover session-sidebar-selector-popover">
             <div class="selector-search-container">
               <Combobox.Input
                 ref={searchInputRef}

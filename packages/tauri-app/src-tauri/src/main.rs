@@ -12,6 +12,7 @@ mod linux_tls;
 mod local_windows;
 mod managed_node;
 mod native_request;
+mod preferences_window;
 mod shutdown;
 mod windows_update;
 mod workspace_open;
@@ -205,6 +206,24 @@ pub(crate) fn require_local_app_window(
     }
 }
 
+pub(crate) fn require_preferences_or_local_app_window(
+    window: &tauri::WebviewWindow,
+    state: &AppState,
+) -> Result<Url, String> {
+    if window.label() != preferences_window::LABEL {
+        return require_local_app_window(window, state);
+    }
+    let current = window.url().map_err(|error| error.to_string())?;
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref())
+        || preferences_window::is_trusted_renderer_origin(window, &current)
+    {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted preferences renderer origin".into())
+    }
+}
+
 pub(crate) fn handle_native_request(
     app: &AppHandle,
     method: &str,
@@ -323,6 +342,74 @@ fn developer_mode_set(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn window_control(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    action: String,
+) -> Result<(), String> {
+    require_preferences_or_local_app_window(&window, &state)?;
+    match action.as_str() {
+        "minimize" => window.minimize(),
+        "maximize" => {
+            if window.is_maximized().unwrap_or(false) {
+                window.unmaximize()
+            } else {
+                window.maximize()
+            }
+        }
+        "drag" => window.start_dragging(),
+        "close" => {
+            if window.label() == preferences_window::LABEL {
+                preferences_window::approve_close(&app)?;
+            }
+            window.close()
+        }
+        _ => return Err("Invalid window control action".to_string()),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
+    match menu {
+        "file" => Some("menu-file"),
+        "edit" => Some("menu-edit"),
+        "view" => Some("menu-view"),
+        "window" => Some("menu-window"),
+        "help" => Some("menu-help"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+async fn popup_titlebar_menu(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    menu: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    require_local_app_window(&window, &state)?;
+    if !x.is_finite() || !y.is_finite() {
+        return Err("Invalid titlebar menu position".into());
+    }
+    let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
+    let app_menu = window
+        .app_handle()
+        .menu()
+        .ok_or_else(|| "Application menu is unavailable".to_string())?;
+    let item = app_menu
+        .get(id)
+        .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+    let submenu = item
+        .as_submenu()
+        .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+    window
+        .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+        .map_err(|error| error.to_string())
+}
+
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
     if let Ok(mut claims) = app.state::<AppState>().remote_proxy_cleanup_claims.lock() {
         claims.remove(session_id);
@@ -431,7 +518,7 @@ fn cli_get_status(
     window: tauri::WebviewWindow,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     Ok(state.manager.status())
 }
 
@@ -441,7 +528,7 @@ fn cli_restart(
     app: AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     shutdown::with_navigation_authority(&app, || {
         let dev_mode = is_dev_mode();
         state
@@ -515,7 +602,8 @@ fn should_allow_window_origin<R: Runtime>(
     url: &Url,
 ) -> bool {
     let state = app_handle.state::<AppState>();
-    if identity::local_window_id(window_label).is_ok() {
+    if identity::local_window_id(window_label).is_ok() || window_label == preferences_window::LABEL
+    {
         let status = state.manager.status();
         return is_allowed_local_origin(url, status.url.as_deref());
     }
@@ -1003,7 +1091,7 @@ fn needs_local_certificate_install(
     window: tauri::WebviewWindow,
     state: tauri::State<AppState>,
 ) -> Result<bool, String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
@@ -1027,7 +1115,7 @@ async fn open_remote_window(
     state: tauri::State<'_, AppState>,
     payload: RemoteWindowPayload,
 ) -> Result<(), String> {
-    require_local_app_window(&window, &state)?;
+    require_preferences_or_local_app_window(&window, &state)?;
     #[cfg(not(target_os = "linux"))]
     {
         let entry_url = payload
@@ -1170,11 +1258,7 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
         let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
         let _ = window.set_fullscreen(next_fullscreen);
         if cfg!(not(target_os = "macos")) {
-            if next_fullscreen {
-                let _ = window.hide_menu();
-            } else {
-                let _ = window.show_menu();
-            }
+            let _ = window.hide_menu();
         }
     }
 }
@@ -1321,6 +1405,13 @@ fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     });
 }
 
+fn is_final_application_window<'a>(
+    closing_label: &str,
+    mut labels: impl Iterator<Item = &'a str>,
+) -> bool {
+    !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1346,9 +1437,17 @@ fn main() {
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope, developer_mode_active)
             .expect("configure Developer Mode browser profile");
+    let executable = std::env::current_exe()
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+        .unwrap_or_default();
+    let developer_identity =
+        Sha256::digest(format!("{}\0{}", scope.identifier, executable.display()).as_bytes())[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
     let developer_mode = developer_mode::DeveloperMode::new(
         developer_mode_active,
-        format!("tauri:{}", scope.identifier),
+        format!("tauri:{developer_identity}"),
         devtools_active_port,
         developer_marker_path,
     );
@@ -1359,6 +1458,7 @@ fn main() {
         &cwd,
     ));
     let singleton_queue = Arc::clone(&launch_queue);
+    let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
         let cwd = std::path::PathBuf::from(callback_cwd);
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
@@ -1366,7 +1466,10 @@ fn main() {
         let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
         #[cfg(not(windows))]
         let intent = launch::parse_launch_intent(&arguments, &cwd);
-        singleton_queue.enqueue(intent);
+        singleton_queue.enqueue(launch::prepare_second_launch_intent(
+            intent,
+            &second_launch_config,
+        ));
         schedule_launch_drain(app.clone(), Arc::clone(&singleton_queue));
     });
 
@@ -1399,6 +1502,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
             developer_mode,
@@ -1445,6 +1549,11 @@ fn main() {
             ) {
                 apply_remote_window_title(&webview.app_handle(), webview.label());
             }
+            if webview.label() == preferences_window::LABEL
+                && payload.event() == PageLoadEvent::Finished
+            {
+                preferences_window::emit_section(&webview.app_handle());
+            }
         })
         .setup(move |app| {
             set_windows_app_user_model_id(&setup_scope.identifier);
@@ -1480,6 +1589,13 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             needs_local_certificate_install,
+            preferences_window::open_preferences_window,
+            preferences_window::preferences_window_ready,
+            preferences_window::preferences_get_request,
+            preferences_window::preferences_accept_request,
+            preferences_window::preferences_resolve_transition,
+            window_control,
+            popup_titlebar_menu,
             open_remote_window,
             client_state::client_state_claim_access,
             client_state::client_state_load,
@@ -1578,7 +1694,7 @@ fn main() {
                     }
                 }
 
-                "get_updates" => {
+                "get_updates" | "help_get_updates" => {
                     #[cfg(windows)]
                     {
                         let app_handle = app_handle.clone();
@@ -1660,6 +1776,23 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
+                if label == preferences_window::LABEL {
+                    if shutdown::exit_allowed(&app_handle) {
+                        return;
+                    }
+                    if preferences_window::intercept_close(&app_handle) {
+                        api.prevent_close();
+                        return;
+                    }
+                    if let Err(error) = app_handle
+                        .state::<client_state::ClientState>()
+                        .set_preferences(None)
+                    {
+                        eprintln!("[client-state] failed to close Preferences: {error}");
+                        api.prevent_close();
+                    }
+                    return;
+                }
                 if shutdown::exit_allowed(&app_handle) {
                     return;
                 }
@@ -1674,7 +1807,9 @@ fn main() {
                         None => {}
                     }
                 }
-                let final_window = app_handle.webview_windows().len() == 1;
+                let windows = app_handle.webview_windows();
+                let final_window =
+                    is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
                     api.prevent_close();
                     shutdown::request(app_handle.clone());
@@ -1812,7 +1947,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let file_menu = if is_mac {
-        SubmenuBuilder::new(app, "File")
+        SubmenuBuilder::with_id(app, "menu-file", "File")
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1820,7 +1955,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .close_window()
             .build()?
     } else {
-        SubmenuBuilder::new(app, "File")
+        SubmenuBuilder::with_id(app, "menu-file", "File")
             .item(&open_folder_item)
             .item(&open_terminal_item)
             .item(&open_editor_menu)
@@ -1891,7 +2026,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     // Edit menu with predefined items for standard functionality
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
+    let edit_menu = SubmenuBuilder::with_id(app, "menu-edit", "Edit")
         .undo()
         .redo()
         .separator()
@@ -1904,7 +2039,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     submenus.push(edit_menu);
 
     // View menu
-    let view_menu = SubmenuBuilder::new(app, "View")
+    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View")
         .item(&reload_item)
         .item(&force_reload_item)
         .item(&toggle_devtools_item)
@@ -1919,7 +2054,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
 
     // Window menu
     let window_menu = if is_linux {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -1930,7 +2065,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .item(&close_window_item)
             .build()?
     } else if is_mac {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -1939,7 +2074,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             .maximize()
             .build()?
     } else {
-        SubmenuBuilder::new(app, "Window")
+        SubmenuBuilder::with_id(app, "menu-window", "Window")
             .item(&new_window_item)
             .item(&new_instance_item)
             .item(&command_palette_item)
@@ -1952,14 +2087,35 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
     submenus.push(window_menu);
 
-    if !is_mac {
-        let help_menu = SubmenuBuilder::new(app, "Help")
+    let help_menu = if is_mac {
+        let help_updates_item = MenuItem::with_id(
+            app,
+            "help_get_updates",
+            "Get Updates...",
+            true,
+            None::<&str>,
+        )?;
+        let help_about_item = PredefinedMenuItem::about(
+            app,
+            Some("About CodeNomad"),
+            Some(build_about_metadata(
+                &app.package_info().version.to_string(),
+                false,
+            )),
+        )?;
+        SubmenuBuilder::with_id(app, "menu-help", "Help")
+            .item(&help_updates_item)
+            .separator()
+            .item(&help_about_item)
+            .build()?
+    } else {
+        SubmenuBuilder::with_id(app, "menu-help", "Help")
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
-            .build()?;
-        submenus.push(help_menu);
-    }
+            .build()?
+    };
+    submenus.push(help_menu);
 
     // Build the main menu with all submenus
     let submenu_refs: Vec<&dyn tauri::menu::IsMenuItem<_>> = submenus
@@ -2006,14 +2162,38 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
-        is_allowed_local_origin, require_http_url, rollback_remote_window_metadata,
-        run_update_with_fallback, should_allow_registered_origin, should_open_external_url,
-        should_recreate_remote_window, RemoteProfileIdentity, RemoteWindowMetadata,
-        RemoteWindowOperationLocks, WakeLockState, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        is_allowed_local_origin, is_final_application_window, require_http_url,
+        rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
+        should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
+        RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
+        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
+
+    #[test]
+    fn preferences_does_not_keep_the_last_application_window_alive() {
+        assert!(is_final_application_window(
+            "local-a",
+            ["local-a", "preferences"].into_iter(),
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "preferences", "local-b"].into_iter(),
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "preferences", "remote-a"].into_iter(),
+        ));
+    }
+
+    #[test]
+    fn titlebar_menu_ids_are_restricted_to_application_submenus() {
+        assert_eq!(titlebar_menu_id("file"), Some("menu-file"));
+        assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
+        assert_eq!(titlebar_menu_id("preferences"), None);
+    }
 
     #[test]
     fn failed_update_uses_release_fallback() {
