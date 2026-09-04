@@ -546,7 +546,11 @@ async function moveSession(instanceId: string, sessionId: string, directory: str
 }
 
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
-  await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  await admitSessionAction(instanceId, sessionId, async () => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  })
 }
 
 function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {

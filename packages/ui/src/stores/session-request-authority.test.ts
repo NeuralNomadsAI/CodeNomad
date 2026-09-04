@@ -1332,7 +1332,7 @@ describe("session request authority", () => {
         return { data: [apiSession("grandchild", "child")], cursor: {} }
       }
       if (input.parentID === null) return {
-        data: [apiSession("root")],
+        data: [{ ...apiSession("root"), metadata: { owner: "native" } }],
         cursor: { next: "root-page-2" },
       }
       return {
@@ -1344,6 +1344,7 @@ describe("session request authority", () => {
     try {
       await fetchSessions(instanceId)
       assert.equal(sessions().get(instanceId)?.has("root"), true)
+      assert.deepEqual(sessions().get(instanceId)?.get("root")?.metadata, { owner: "native" })
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
       assert.equal(requests[0].directory, "/work")

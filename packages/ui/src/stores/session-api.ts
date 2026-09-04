@@ -786,6 +786,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     location: apiSession.location,
     projectID: apiSession.projectID,
     subpath: apiSession.subpath,
+    metadata: apiSession.metadata ?? existingSession?.metadata,
     time: {
       ...apiSession.time,
     },

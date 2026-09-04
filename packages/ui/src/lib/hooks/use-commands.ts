@@ -22,7 +22,7 @@ import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
-import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion } from "../../stores/session-actions"
+import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion } from "../../stores/session-actions"
 
 const log = getLogger("actions")
 
@@ -327,7 +327,7 @@ export function useCommands(options: UseCommandsOptions) {
         if (!session) return
 
         try {
-          await instance.client.session.compact({ sessionID: sessionId })
+          await compactSession(instance.id, sessionId)
         } catch (error) {
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")

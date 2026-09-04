@@ -7,6 +7,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
+  compactSession,
   deleteMessagePart,
   deleteMessageTechnicalParts,
   deleteTechnicalPartGroup,
@@ -473,6 +474,33 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("admits compaction after an in-flight prompt", async () => {
+    const admissions: string[] = []
+    let releasePrompt!: () => void
+    const promptPending = new Promise<void>((resolve) => { releasePrompt = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        admissions.push("prompt")
+        await promptPending
+        return { id: input.id }
+      },
+      compact: async () => { admissions.push("compact") },
+    } })
+
+    const prompt = sendMessage(instanceId, sessionId, "first")
+    await new Promise((resolve) => setImmediate(resolve))
+    const compact = compactSession(instanceId, sessionId)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(admissions, ["prompt"])
+
+    releasePrompt()
+    await Promise.all([prompt, compact])
+    assert.deepEqual(admissions, ["prompt", "compact"])
+  })
+
   it("admits concurrent prompts in submission order", async () => {
     const prompts: string[] = []
     let releaseFirst!: () => void
