@@ -1,4 +1,5 @@
-import type { MissionActor, MissionMap, MissionReportOutcome, MissionTemplateId } from "./model"
+import type { SessionMetadata } from "@opencode-ai/client"
+import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, MissionTemplateId } from "./model"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 
 export interface NativeMissionSession {
@@ -15,13 +16,13 @@ export interface MissionSessionAdapter {
     id: string
     title: string
     location: { directory: string; workspaceID?: string }
-    metadata: Record<string, unknown>
+    metadata: SessionMetadata
   }): Promise<NativeMissionSession>
   prompt(input: {
     sessionID: string
     id: string
     text: string
-    metadata: Record<string, unknown>
+    metadata: SessionMetadata
     delivery: "queue" | "steer"
     resume: true
   }): Promise<unknown>
@@ -30,7 +31,7 @@ export interface MissionSessionAdapter {
     id: string
     text: string
     description: string
-    metadata: Record<string, unknown>
+    metadata: SessionMetadata
     delivery: "queue"
     resume: true
   }): Promise<unknown>
@@ -71,6 +72,7 @@ export interface MissionReportInput {
   summary: string
   evidence: string[]
   next: string[]
+  artifact?: MissionJsonValue
   final: boolean
 }
 

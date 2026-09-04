@@ -25,6 +25,7 @@ test("validates the compact mission tool contracts", () => {
     summary: "Green",
     evidence: [],
     next: [],
+    artifact: undefined,
     final: false,
   })
   assert.throws(() => parseDelegateInput({ taskKey: "Bad Key", title: "x", brief: "x", role: "x" }), /lowercase/)
@@ -34,7 +35,7 @@ test("validates the compact mission tool contracts", () => {
 test("registers three tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
-  let contextHook: ((event: { sessionID: string; system: Array<{ text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
+  let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
   let snapshotHandler: (() => Promise<unknown>) | undefined
   const emitted: unknown[] = []
   const registration = () => ({ dispose: async () => {} })
@@ -79,12 +80,14 @@ test("registers three tools, typed snapshot RPC, and role context", async () => 
   await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},
   })
-  const snapshot = await snapshotHandler!() as { missions: unknown[] }
+  const snapshot = await snapshotHandler!() as { missions: Array<Record<string, unknown>> }
   assert.equal(snapshot.missions.length, 1)
+  assert.equal("notes" in snapshot.missions[0], false)
   assert.equal(emitted.length, 1)
 
-  const event = { sessionID: "ses_coordinator", system: [] as Array<{ text: string }>, tools: { mission_delegate: {} } }
+  const event = { sessionID: "ses_coordinator", system: [] as Array<{ type: "text"; text: string }>, tools: { mission_delegate: {} } }
   await contextHook!(event)
+  assert.equal(event.system[0]?.type, "text")
   assert.match(event.system[0]?.text ?? "", /Only this coordinator session/)
   assert.ok(event.tools.mission_delegate)
   await cleanup()

@@ -26,6 +26,7 @@ const report = {
     summary: { type: "string" },
     evidence: stringArray,
     next: stringArray,
+    artifact: {},
     createdAt: { type: "number" },
   },
   required: ["id", "taskKey", "sessionId", "outcome", "summary", "evidence", "next", "createdAt"],

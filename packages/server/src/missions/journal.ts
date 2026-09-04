@@ -5,6 +5,7 @@ import {
   MISSION_SCHEMA_VERSION,
   reduceMissionEvents,
   type MissionEvent,
+  type MissionJsonValue,
   type MissionLocation,
   type MissionReport,
   type MissionSnapshot,
@@ -17,10 +18,10 @@ const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
 
 export interface MissionStorage {
-  get(key: string): Promise<unknown | undefined>
-  set(key: string, value: unknown): Promise<void>
+  get(key: string): Promise<MissionJsonValue | undefined>
+  set(key: string, value: MissionJsonValue): Promise<void>
   scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
-    entries: readonly { key: string; value: unknown }[]
+    entries: readonly { key: string; value: MissionJsonValue }[]
     next?: string
   }>
 }
@@ -62,13 +63,17 @@ export class MissionJournal {
 
   async append(event: MissionEvent): Promise<void> {
     if (event.projectID !== this.projectID) throw new Error("Mission event belongs to another project")
+    const normalized = JSON.parse(JSON.stringify(event)) as unknown
+    const parsed = parseMissionEvent(normalized)
+    if (!parsed) throw new Error("Mission event is not durable JSON")
+    const stored = JSON.parse(JSON.stringify(parsed)) as MissionJsonValue
     const key = `${this.prefix()}/${safeKey(event.missionID)}/${safeKey(event.id)}`
     const existing = await this.storage.get(key)
     if (existing !== undefined) {
-      if (JSON.stringify(existing) !== JSON.stringify(event)) throw new Error("Mission event identity collision")
+      if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    await this.storage.set(key, event)
+    await this.storage.set(key, stored)
   }
 
   private prefix(): string {
@@ -165,7 +170,8 @@ function parseReport(input: unknown): MissionReport | undefined {
     || !text(input.sessionId, MAX_SHORT_TEXT) || !text(input.summary, MAX_TEXT)
     || !["completed", "blocked", "failed"].includes(String(input.outcome))
     || !stringArray(input.evidence, 12, 2_000) || !stringArray(input.next, 12, 2_000)
-    || !Number.isSafeInteger(input.createdAt) || Number(input.createdAt) <= 0) return undefined
+    || !Number.isSafeInteger(input.createdAt) || Number(input.createdAt) <= 0
+    || (input.artifact !== undefined && !isJsonValue(input.artifact))) return undefined
   return {
     id: input.id,
     taskKey: input.taskKey,
@@ -174,6 +180,7 @@ function parseReport(input: unknown): MissionReport | undefined {
     summary: input.summary,
     evidence: input.evidence,
     next: input.next,
+    artifact: input.artifact,
     createdAt: Number(input.createdAt),
   }
 }
@@ -217,4 +224,13 @@ function text(value: unknown, maxLength: number): value is string {
 
 function record(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isJsonValue(value: unknown, depth = 0): value is MissionJsonValue {
+  if (value === undefined) return false
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (depth >= 20) return false
+  if (Array.isArray(value)) return value.every((item) => isJsonValue(item, depth + 1))
+  return record(value) && Object.values(value).every((item) => isJsonValue(item, depth + 1))
 }

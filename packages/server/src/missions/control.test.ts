@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { MissionJsonValue } from "./model"
 
 import {
   MissionControl,
@@ -12,13 +13,13 @@ import type {
 import { MissionJournal, parseMissionEvent, type MissionStorage } from "./journal"
 
 class MemoryStorage implements MissionStorage {
-  readonly values = new Map<string, unknown>()
+  readonly values = new Map<string, MissionJsonValue>()
 
   async get(key: string) {
     return this.values.get(key)
   }
 
-  async set(key: string, value: unknown) {
+  async set(key: string, value: MissionJsonValue) {
     this.values.set(key, structuredClone(value))
   }
 
@@ -28,7 +29,7 @@ class MemoryStorage implements MissionStorage {
     const offset = start < 0 ? keys.length : start
     const selected = keys.slice(offset, offset + (options.limit ?? 100))
     return {
-      entries: selected.map((key) => ({ key, value: this.values.get(key) })),
+      entries: selected.map((key) => ({ key, value: this.values.get(key)! })),
       next: offset + selected.length < keys.length ? selected.at(-1) : undefined,
     }
   }
@@ -119,6 +120,14 @@ test("delegates between root sessions, queues reports, and restores the durable 
     summary: "The cache key omits the workspace identity.",
     evidence: ["Focused test fails before the fix."],
     next: ["Add workspace identity to the cache key."],
+    artifact: {
+      kind: "diagnosis",
+      feedbackLoop: { command: "npm test -- cache", redOutput: "expected workspace-a, got workspace-b" },
+      minimizedRepro: "Two workspaces use the same relative cache key.",
+      confirmedHypothesis: "The cache key omits workspace identity.",
+      evidence: "Adding workspace identity separates both entries.",
+      rejectedHypotheses: ["stale filesystem metadata"],
+    },
     final: false,
   })
   assert.equal(reported.mission.tasks[0]?.status, "completed")
@@ -247,3 +256,162 @@ test("bounds and validates persisted journal records", async () => {
   const snapshot = await journal.snapshot()
   assert.equal(snapshot.missions.length, 0)
 })
+
+test("runs the Pocock evidence gates dynamically while reusing the implementer for resolution", async () => {
+  const { create } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", {
+    start: { objective: "Fix save isolation without publishing", template: "pocock-fix-bug" },
+  }, "pocock-full")
+
+  const diagnosis = await control.delegate("ses_coordinator", {
+    taskKey: "diagnose", title: "Diagnose save isolation", brief: "Confirm the cause.",
+    role: "diagnostician", blockedBy: [], delivery: "queue",
+  })
+  const diagnostician = actorFor(diagnosis.mission, "diagnostician")
+  await reportCompleted(control, diagnostician, "diagnose", pocockArtifact("diagnostician"))
+
+  const implementation = await control.delegate("ses_coordinator", {
+    taskKey: "implement", title: "Implement the regression fix", brief: "Use the confirmed diagnosis.",
+    role: "implementer", blockedBy: ["diagnose"], delivery: "queue",
+  })
+  const implementer = actorFor(implementation.mission, "implementer")
+  await reportCompleted(control, implementer, "implement", pocockArtifact("implementer"))
+
+  const standards = await control.delegate("ses_coordinator", {
+    taskKey: "review-standards", title: "Review repository standards", brief: "Review the fixed diff only.",
+    role: "review-standards", blockedBy: ["implement"], delivery: "queue",
+  })
+  const specification = await control.delegate("ses_coordinator", {
+    taskKey: "review-spec", title: "Review reported behavior", brief: "Review the fixed diff only.",
+    role: "review-spec", blockedBy: ["implement"], delivery: "queue",
+  })
+  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "review-standards", pocockArtifact("review-standards"))
+  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "review-spec", pocockArtifact("review-spec"))
+
+  const resolution = await control.delegate("ses_coordinator", {
+    taskKey: "resolve", title: "Resolve both reviews", brief: "Address all correct hard findings.",
+    role: "resolver", blockedBy: ["review-standards", "review-spec"], targetSessionID: implementer, delivery: "queue",
+  })
+  assert.equal(actorFor(resolution.mission, "resolver"), implementer)
+  await reportCompleted(control, implementer, "resolve", pocockArtifact("resolver"))
+
+  const validation = await control.delegate("ses_coordinator", {
+    taskKey: "validate", title: "Validate the complete fix", brief: "Run every configured gate read-only.",
+    role: "validator", blockedBy: ["resolve"], delivery: "queue",
+  })
+  await reportCompleted(control, actorFor(validation.mission, "validator"), "validate", pocockArtifact("validator"))
+  const finished = await control.report("ses_coordinator", {
+    outcome: "completed", summary: "Diagnosis, fix, both reviews, resolution, and validation are green.",
+    evidence: [], next: [], final: true,
+  })
+  assert.equal(finished.mission.status, "completed")
+  assert.equal(finished.mission.tasks.length, 6)
+  assert.equal(finished.mission.actors.length, 6)
+})
+
+test("charts a Wayfinder frontier breadth-first without auto-dispatching work in the fog", async () => {
+  const { create } = harness()
+  const control = create()
+  const started = await control.inspect("ses_coordinator", {
+    start: {
+      objective: "Choose a safe persistence boundary",
+      template: "wayfinder",
+      notes: "Fog: deployment ownership cannot be phrased until storage and audience constraints are known.",
+    },
+  }, "wayfinder-full")
+  assert.equal(started.mission?.tasks.length, 0)
+  assert.match(started.mission?.notes ?? "", /Fog:/)
+
+  const storage = await control.delegate("ses_coordinator", {
+    taskKey: "storage-facts", title: "Map storage constraints", brief: "Return facts only.",
+    role: "research", blockedBy: [], delivery: "queue",
+  })
+  const audience = await control.delegate("ses_coordinator", {
+    taskKey: "audience-facts", title: "Map audience constraints", brief: "Return facts only.",
+    role: "research", blockedBy: [], delivery: "queue",
+  })
+  const blocked = await control.delegate("ses_coordinator", {
+    taskKey: "choose-boundary", title: "Choose the persistence boundary", brief: "Decide from both fact reports.",
+    role: "decision", blockedBy: ["storage-facts", "audience-facts"], delivery: "queue",
+  })
+  assert.equal(blocked.disposition, "blocked")
+  assert.deepEqual(blocked.mission.claims, ["storage-facts", "audience-facts"])
+  assert.deepEqual(blocked.mission.frontier, [])
+  assert.equal(blocked.mission.actors.length, 3)
+
+  await control.report(actorFor(storage.mission, "research"), {
+    taskKey: "storage-facts", outcome: "completed", summary: "Project storage is location scoped.",
+    evidence: ["Storage contract"], next: [], final: false,
+  })
+  const audienceActor = audience.mission.tasks.find((task) => task.key === "audience-facts")?.actorSessionId
+  assert.ok(audienceActor)
+  const secondReport = await control.report(audienceActor, {
+    taskKey: "audience-facts", outcome: "completed", summary: "Only same-project actors consume the map.",
+    evidence: ["Ownership fence"], next: ["Choose the boundary"], final: false,
+  })
+  assert.deepEqual(secondReport.mission.frontier, ["choose-boundary"])
+  assert.deepEqual(secondReport.mission.claims, [])
+
+  const decision = await control.delegate("ses_coordinator", {
+    taskKey: "choose-boundary", title: "Choose the persistence boundary", brief: "Decide from both fact reports.",
+    role: "decision", blockedBy: ["storage-facts", "audience-facts"], delivery: "queue",
+  })
+  assert.equal(decision.disposition, "dispatched")
+  await control.report(actorFor(decision.mission, "decision"), {
+    taskKey: "choose-boundary", outcome: "completed", summary: "Use the project-local append-only journal.",
+    evidence: ["Both blockers resolved"], next: [], final: false,
+  })
+  const finished = await control.report("ses_coordinator", {
+    outcome: "completed", summary: "The route is clear; implementation remains outside this planning mission.",
+    evidence: [], next: [], final: true,
+  })
+  assert.equal(finished.mission.status, "completed")
+  assert.equal(finished.mission.tasks.every((task) => task.status === "completed"), true)
+})
+
+function actorFor(mission: Awaited<ReturnType<MissionControl["snapshot"]>>["missions"][number], role: string): string {
+  const actor = mission.actors.find((candidate) => candidate.roles.includes(role))
+  assert.ok(actor, `actor for ${role}`)
+  return actor.sessionId
+}
+
+async function reportCompleted(control: MissionControl, sessionID: string, taskKey: string, artifact: any): Promise<void> {
+  await control.report(sessionID, {
+    taskKey, outcome: "completed", summary: `${taskKey} complete`, evidence: ["verified"], next: [], artifact, final: false,
+  })
+}
+
+function pocockArtifact(role: string): any {
+  if (role === "diagnostician") return {
+    kind: "diagnosis",
+    feedbackLoop: { command: "npm test -- save", redOutput: "cross-workspace value observed" },
+    minimizedRepro: "Two workspaces save the same key.",
+    confirmedHypothesis: "The key omits workspace identity.",
+    evidence: "Including identity isolates the values.",
+    rejectedHypotheses: [],
+  }
+  if (role === "implementer") return {
+    kind: "fix",
+    changedFiles: ["src/cache.ts", "src/cache.test.ts"],
+    regressionTest: { seam: "present", path: "src/cache.test.ts", command: "npm test -- save", redObserved: true, greenObserved: true },
+    originalLoopGreen: true,
+    debugInstrumentationRemoved: true,
+    prevention: "Workspace identity is part of the public cache key.",
+  }
+  if (role === "review-standards" || role === "review-spec") return {
+    kind: "review", axis: role === "review-standards" ? "standards" : "spec", verdict: "pass", findings: [],
+  }
+  if (role === "resolver") return { kind: "resolution", addressed: [], deferred: [], focusedChecks: [] }
+  return {
+    kind: "validation",
+    checks: [
+      { kind: "typecheck", command: "npm run typecheck", status: "passed", summary: "green" },
+      { kind: "lint", command: "", status: "not-configured", summary: "not configured" },
+      { kind: "test", command: "npm test", status: "passed", summary: "green" },
+      { kind: "build", command: "npm run build", status: "passed", summary: "green" },
+    ],
+    focusedRegression: { command: "npm test -- save", status: "passed", summary: "green" },
+    verdict: "green",
+  }
+}

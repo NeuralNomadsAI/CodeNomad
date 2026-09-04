@@ -7,7 +7,7 @@ import type {
   MissionReportInput,
   MissionSessionAdapter,
 } from "../missions/control-types"
-import { MISSION_SCHEMA_VERSION, type MissionTemplateId } from "../missions/model"
+import { MISSION_SCHEMA_VERSION, type MissionJsonValue, type MissionTemplateId } from "../missions/model"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 
 interface Registration {
@@ -39,18 +39,18 @@ interface MissionsPluginContext {
     project: { id: string; canonical: string }
   }
   storage: {
-    get(key: string): Promise<unknown | undefined>
-    set(key: string, value: unknown): Promise<void>
+    get(key: string): Promise<MissionJsonValue | undefined>
+    set(key: string, value: MissionJsonValue): Promise<void>
     remove(key: string): Promise<void>
     scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
-      entries: readonly { key: string; value: unknown }[]
+      entries: readonly { key: string; value: MissionJsonValue }[]
       next?: string
     }>
   }
   session: MissionSessionAdapter & {
     hook(name: "context", callback: (event: {
       sessionID: string
-      system: Array<{ text: string }>
+      system: Array<{ type: "text"; text: string }>
       tools: Record<string, unknown>
     }) => Promise<void> | void): Promise<Registration>
   }
@@ -79,7 +79,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext): Promi
   })
 
   rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
-    snapshot: async () => control.snapshot(),
+    snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
   })
 
   const tools = await context.tool.transform((draft) => {
@@ -124,7 +124,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext): Promi
     try {
       const instruction = await control.contextFor(event.sessionID)
       if (!instruction) return
-      event.system.push({ text: instruction })
+      event.system.push({ type: "text", text: instruction })
       const snapshot = await control.snapshot()
       const mission = snapshot.missions.find((candidate) => candidate.status === "active"
         && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
@@ -182,6 +182,7 @@ const reportSchema = {
     summary: { type: "string", minLength: 1, maxLength: 20_000 },
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
+    artifact: { description: "Optional structured playbook evidence. Required for completed Pocock tasks." },
     final: { type: "boolean", description: "Coordinator-only terminal mission report." },
   },
   required: ["outcome", "summary"],
@@ -232,6 +233,7 @@ export function parseReportInput(input: unknown): MissionReportInput {
     summary: requiredText(value.summary, "summary", 20_000),
     evidence: stringList(value.evidence, "evidence", 12, 2_000),
     next: stringList(value.next, "next", 12, 2_000),
+    artifact: optionalJson(value.artifact),
     final: value.final === true,
   }
 }
@@ -273,6 +275,13 @@ function delivery(value: unknown): "queue" | "steer" {
 
 function isTemplate(value: string): value is MissionTemplateId {
   return value === "custom" || value === "pocock-fix-bug" || value === "wayfinder"
+}
+
+function optionalJson(value: unknown): MissionJsonValue | undefined {
+  if (value === undefined) return undefined
+  const encoded = JSON.stringify(value)
+  if (encoded === undefined || encoded.length > 50_000) throw new Error("artifact must be JSON smaller than 50000 characters")
+  return JSON.parse(encoded) as MissionJsonValue
 }
 
 export default {

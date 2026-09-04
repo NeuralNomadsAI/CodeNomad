@@ -1,4 +1,5 @@
 import path from "node:path"
+import type { JsonValue, SessionMetadata } from "@opencode-ai/client"
 
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
 import {
@@ -12,6 +13,7 @@ import {
   type MissionSnapshot,
 } from "./model"
 import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
+import { validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 import type {
   MissionDelegateInput,
   MissionInspectInput,
@@ -94,6 +96,16 @@ export class MissionControl {
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
     this.assertCoordinator(mission, sessionID)
     if (mission.status !== "active") throw new MissionControlError("The mission is already finished", "mission-finished")
+    try {
+      validateMissionDelegationPolicy({
+        template: mission.template,
+        role: input.role,
+        targetSessionID: input.targetSessionID,
+        actors: mission.actors,
+      })
+    } catch (error) {
+      throw new MissionControlError(error instanceof Error ? error.message : "Mission role policy failed", "invalid-role-policy")
+    }
 
     let task = mission.tasks.find((candidate) => candidate.key === input.taskKey)
     if (!task) {
@@ -194,6 +206,17 @@ export class MissionControl {
       throw new MissionControlError("The assigned task has not been dispatched", "task-not-dispatched")
     }
 
+    let artifact
+    try {
+      artifact = validateMissionReportArtifact({
+        template: mission.template,
+        role: task.role,
+        outcome: input.outcome,
+        artifact: input.artifact,
+      })
+    } catch (error) {
+      throw new MissionControlError(error instanceof Error ? error.message : "Mission report contract failed", "invalid-report-contract")
+    }
     const report: MissionReport = {
       id: `rpt_${stableToken(`${mission.id}\0${task.key}`, 24)}`,
       taskKey: task.key,
@@ -202,6 +225,7 @@ export class MissionControl {
       summary: input.summary,
       evidence: input.evidence,
       next: input.next,
+      artifact,
       createdAt: this.timestamp(snapshot),
     }
     await this.journal.append({
@@ -422,7 +446,7 @@ export class MissionControl {
     return this.lastTimestamp
   }
 
-  private metadata(missionID: string, kind: string, extra: Record<string, unknown>): Record<string, unknown> {
+  private metadata(missionID: string, kind: string, extra: Record<string, JsonValue>): SessionMetadata {
     return { "codenomad.mission": { version: MISSION_SCHEMA_VERSION, missionID, kind, ...extra } }
   }
 

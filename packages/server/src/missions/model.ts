@@ -4,6 +4,10 @@ export const MISSION_MAX_EVENTS = 2_000
 export const MISSION_MAX_MISSIONS = 20
 export const MISSION_MAX_TASKS = 96
 
+export type MissionJsonValue = null | boolean | number | string | readonly MissionJsonValue[] | {
+  readonly [key: string]: MissionJsonValue
+}
+
 export type MissionTemplateId = "custom" | "pocock-fix-bug" | "wayfinder"
 export type MissionStatus = "active" | "completed" | "failed"
 export type MissionTaskStatus =
@@ -41,6 +45,7 @@ export interface MissionReport {
   summary: string
   evidence: string[]
   next: string[]
+  artifact?: MissionJsonValue
   createdAt: number
 }
 

@@ -35,7 +35,7 @@ function manager(options: {
               location: { directory: "/owned/repo", project: { id: options.projectID ?? "project-1" } },
               data: plugin === "missing" ? [] : [{
                 id: "codenomad.missions",
-                features: { rpc: true },
+                features: { server: true },
                 state: plugin === "active" ? { status: "active" } : { status: "failed", error: "broken" },
               }],
             }

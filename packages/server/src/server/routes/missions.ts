@@ -28,7 +28,9 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       await client.plugin.awaitActivation({ location })
       const inventory = await client.plugin.list({ location })
       const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
-      if (!plugin || plugin.state.status !== "active" || !plugin.features.rpc) {
+      // Local V2 plugins currently advertise `server` but do not set `features.rpc`
+      // after registration. The reviewed typed call below is the RPC capability check.
+      if (!plugin || plugin.state.status !== "active") {
         return unavailable("plugin-unavailable")
       }
 

@@ -31,7 +31,9 @@ Snapshots are authoritative reconstructions of the journal. RPC events are only 
 
 ## Included playbooks
 
-- **Pocock Bug Expedition** preserves evidence-first diagnosis, behavioral TDD, independent Standards and Spec reviews, resolution, and a read-only green gate. The coordinator chooses each transition from reports; no fixed state machine was ported.
+- **Pocock Bug Expedition** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator still chooses each transition; no fixed state machine was ported.
 - **Wayfinder Map** adapts destination, map, frontier, claims, and fog-of-war planning to visible sessions. It remains planning-first and uses native Forms for human decisions.
 
-The project-local entrypoint is `.opencode/plugins/codenomad-missions.ts`. `.opencode/package.json` pins the V2 plugin contract to the same `beta-18999` snapshot used by the CodeNomad client. Projects without that reviewed plugin remain fully functional; Mission Control reports the capability as unavailable.
+The project-local entrypoint is `.opencode/plugins/codenomad-missions.ts`. It re-exports the in-repository definition and has no runtime SDK import, so a normal repository dependency install is sufficient for activation. `.opencode/package.json` pins the V2 plugin package only for the compile-time contract check in `.opencode/checks/`. Projects without that reviewed plugin remain fully functional; Mission Control reports the capability as unavailable. CodeNomad never writes plugin code or configuration into an unrelated project and never installs a global shim.
+
+The native runtime findings and recovery matrix are recorded in [`MISSIONS_RUNTIME_SPIKE.md`](MISSIONS_RUNTIME_SPIKE.md).
