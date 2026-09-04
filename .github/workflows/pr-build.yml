@@ -124,6 +124,7 @@ jobs:
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts
           packages/ui/src/lib/launch-errors.test.ts
+          packages/ui/src/lib/i18n/messages/missions.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
           packages/ui/src/lib/runtime-env.test.ts
@@ -144,6 +145,7 @@ jobs:
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
+          packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
