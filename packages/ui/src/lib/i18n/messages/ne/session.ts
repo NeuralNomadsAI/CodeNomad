@@ -96,6 +96,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "वेब पूर्वावलोकन खोल्नुहोस्",
   "sessionPreview.open.prompt": "यस सत्रमा पूर्वावलोकन गर्न विश्वासिलो स्थानीय वा स्टेजिंग URL प्रविष्ट गर्नुहोस्।",
   "sessionPreview.open.label": "पूर्वावलोकन URL",
+  "sessionPreview.open.invalidUrl": "मान्य HTTP वा HTTPS URL प्रविष्ट गर्नुहोस्।",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "पूर्वावलोकन खोल्नुहोस्",
   "sessionPreview.open.cancel": "रद्द गर्नुहोस्",

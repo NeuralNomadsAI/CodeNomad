@@ -4,7 +4,7 @@ import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import type { NativeParent } from "../../native-parent"
-import { AUTOMATION_BRIDGE_PATH, parseDeveloperAction } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
 
 interface AutomationPluginRouteDeps {
@@ -43,7 +43,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
-    if (!body || !["developer-probe", "developer-execute"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
@@ -58,6 +58,30 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       deps.workspaceManager.ownsLocation(workspace.id, location),
     ))).some(Boolean)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+
+    if (body.mode === "browser-claim") return reply.send({ result: { available: true } })
+    if (body.mode === "browser-probe") {
+      try {
+        const result = await deps.nativeParent.request<{ available: boolean }>("browser.probe", { sessionID: body.sessionID })
+        return result.available ? reply.send({ result }) : reply.code(404).send({ error: "No visible browser target" })
+      } catch (error) {
+        return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    if (body.mode === "browser-execute") {
+      let command
+      try {
+        command = parseBrowserAction(body.command)
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+      try {
+        const result = await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
+        return reply.send({ result })
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
 
     let native: DeveloperNativeStatus
     try {

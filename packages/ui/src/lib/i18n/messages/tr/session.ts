@@ -91,6 +91,7 @@ export const sessionMessages = {
   "sessionPreview.open.title": "Web önizlemesini aç",
   "sessionPreview.open.prompt": "Bu session'da önizlemek için güvenilir bir yerel veya staging URL'si girin.",
   "sessionPreview.open.label": "Önizleme URL'si",
+  "sessionPreview.open.invalidUrl": "Geçerli bir HTTP veya HTTPS URL'si girin.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Önizlemeyi aç",
   "sessionPreview.open.cancel": "İptal",

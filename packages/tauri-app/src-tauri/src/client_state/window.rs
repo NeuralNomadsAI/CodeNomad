@@ -199,9 +199,10 @@ fn capture_window_in_memory(app: &AppHandle, window_label: &str, window_id: &str
     {
         return;
     }
-    let Some(window) = app.get_webview_window(window_label) else {
+    let Some(webview) = app.get_webview(window_label) else {
         return;
     };
+    let window = webview.window();
 
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
@@ -426,11 +427,11 @@ pub fn setup_local_window(
 }
 
 pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64) {
-    let Some(window) = app.get_webview_window(window_label) else {
+    let Some(webview) = app.get_webview(window_label) else {
         return;
     };
     let normalized = normalize_zoom_level(Some(next_zoom));
-    if window.set_zoom(normalized).is_err() {
+    if webview.set_zoom(normalized).is_err() {
         return;
     }
     let Some(client_state) = app.try_state::<ClientState>() else {

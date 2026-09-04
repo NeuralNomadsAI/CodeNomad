@@ -8,6 +8,7 @@ import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectories,
   createAutomationBridgeRegistration,
+  parseBrowserAction,
   parseDeveloperAction,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
@@ -60,13 +61,27 @@ test("validates Developer Mode actions", () => {
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
 })
 
+test("validates browser actions", () => {
+  assert.deepEqual(parseBrowserAction({ action: "open", url: "https://example.com" }), {
+    action: "open",
+    url: "https://example.com",
+  })
+  assert.deepEqual(parseBrowserAction({ action: "type", ref: "e2", text: "hello", clear: false }), {
+    action: "type",
+    ref: "e2",
+    text: "hello",
+    clear: false,
+  })
+  assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
+})
+
 test("registers developer tools while execution remains session-gated", async () => {
   const tools: string[] = []
   await setupAutomationPlugin({
     tool: { transform: async (callback) => callback({ add: (value) => tools.push(value.name) }) },
   })
 
-  assert.deepEqual(tools, ["inspect", "act", "screenshot"])
+  assert.deepEqual(tools, ["inspect", "act", "screenshot", "browser"])
 })
 
 test("discovers the Windows bridge registry from a WSL plugin", () => {
@@ -229,7 +244,11 @@ test("pins parallel sessions to their independently inspected bridges", async ()
 test("prunes stale registry pressure before limiting discovery", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-stale-"))
   const previousLocalAppData = process.env.LOCALAPPDATA
+  const previousXdgRuntimeDir = process.env.XDG_RUNTIME_DIR
+  const previousWslDistroName = process.env.WSL_DISTRO_NAME
   process.env.LOCALAPPDATA = root
+  process.env.XDG_RUNTIME_DIR = root
+  delete process.env.WSL_DISTRO_NAME
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
@@ -238,7 +257,8 @@ test("prunes stale registry pressure before limiting discovery", async () => {
       : { result: { target: { id: "live", title: "Live", url: "http://app.test" }, nodes: [], diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
-    const directory = path.join(root, "CodeNomad", "automation-bridges")
+    const directory = automationBridgeDirectories()[0]
+    assert.equal(path.dirname(path.dirname(directory)), root)
     const base = Date.now() + 10_000
     for (let index = 0; index < 70; index += 1) {
       const startedAt = base + index
@@ -259,6 +279,10 @@ test("prunes stale registry pressure before limiting discovery", async () => {
     await closeServer(server)
     if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
     else process.env.LOCALAPPDATA = previousLocalAppData
+    if (previousXdgRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR
+    else process.env.XDG_RUNTIME_DIR = previousXdgRuntimeDir
+    if (previousWslDistroName === undefined) delete process.env.WSL_DISTRO_NAME
+    else process.env.WSL_DISTRO_NAME = previousWslDistroName
     await rm(root, { recursive: true, force: true })
   }
 })

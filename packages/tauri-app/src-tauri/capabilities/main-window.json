@@ -48,6 +48,12 @@
     "allow-open-workspace-target",
     "allow-set-workspace-menu-enabled",
     "allow-developer-mode-get",
-    "allow-developer-mode-set"
+    "allow-developer-mode-set",
+    "allow-browser-target-register",
+    "allow-browser-target-update",
+    "allow-browser-target-action",
+    "allow-browser-target-unregister",
+    "allow-browser-target-claim-open",
+    "allow-browser-target-release-open"
   ]
 }

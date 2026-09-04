@@ -28,6 +28,10 @@ Measured DEV-v2 growth analysis, maintainer position on test volume, ranked redu
 
 Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
 
+### [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)
+
+Autonomous native browser previews, shared automation bridge routing, host security, and focused validation.
+
 ---
 
 ## Specification Documents

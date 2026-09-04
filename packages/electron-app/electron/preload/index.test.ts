@@ -27,6 +27,7 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
   for (const [subscribe, channel] of [
     ["onCliStatus", "cli:status"],
     ["onCliError", "cli:error"],
+    ["onBrowserOpenRequest", "browser-target:open"],
   ] as const) {
     const calls: string[] = []
     const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
