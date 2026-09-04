@@ -206,6 +206,38 @@ describe("BrowserController", () => {
     assert.equal(inputEvents, 0)
   })
 
+  it("selects all through Chromium before replacing field text", async () => {
+    const harness = createHarness()
+    const commands: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const { guest } = createGuest({
+      id: 17,
+      owner: harness.owner,
+      sendCommand: async (method, params) => {
+        commands.push({ method, params })
+        if (method === "Accessibility.getFullAXTree") {
+          return { nodes: [{ backendDOMNodeId: 42, role: { value: "textbox" }, name: { value: "Message" } }] }
+        }
+        if (method === "DOM.getBoxModel") {
+          return { model: { content: [0, 0, 10, 0, 10, 10, 0, 10] } }
+        }
+        return {}
+      },
+    })
+    harness.add(guest, "one")
+    await harness.controller.execute("session", { action: "snapshot" })
+    commands.length = 0
+
+    await harness.controller.execute("session", { action: "type", ref: "e1", text: "replacement" })
+
+    const keyEvents = commands.filter((command) => command.method === "Input.dispatchKeyEvent")
+    assert.equal(keyEvents.length, 4)
+    assert.equal(keyEvents[0].params?.type, "rawKeyDown")
+    assert.ok(Number(keyEvents[0].params?.windowsVirtualKeyCode) > 0)
+    assert.deepEqual(keyEvents[1].params?.commands, ["selectAll"])
+    assert.equal(keyEvents[1].params?.windowsVirtualKeyCode, 65)
+    assert.deepEqual(commands.at(-1), { method: "Input.insertText", params: { text: "replacement" } })
+  })
+
   it("reports ambiguity while waiting for a renderer target", async () => {
     let controller!: BrowserController
     const owner = { id: 1, isDestroyed: () => false } as WebContents

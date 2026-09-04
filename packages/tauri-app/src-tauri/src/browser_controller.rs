@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,7 +96,7 @@ impl BrowserController {
     #[cfg(windows)]
     pub(crate) fn register(
         &self,
-        window: &WebviewWindow,
+        window: &Window,
         input: BrowserTargetRegistration,
     ) -> Result<(), String> {
         use tauri::webview::{NewWindowResponse, WebviewBuilder};
@@ -144,8 +144,6 @@ impl BrowserController {
                 }
             });
         let webview = window
-            .as_ref()
-            .window()
             .add_child(
                 builder,
                 PhysicalPosition::new(input.bounds.x, input.bounds.y),
@@ -213,7 +211,7 @@ impl BrowserController {
     #[cfg(not(windows))]
     pub(crate) fn register(
         &self,
-        _window: &WebviewWindow,
+        _window: &Window,
         _input: BrowserTargetRegistration,
     ) -> Result<(), String> {
         Err(unsupported())
@@ -607,8 +605,8 @@ impl BrowserController {
 
     fn emit_open_request(app: &AppHandle, request_id: &str, claim: &OpenClaim) {
         for record in app.state::<crate::local_windows::LocalWindows>().records() {
-            if let Some(window) = app.get_webview_window(&record.label) {
-                let _ = window.emit(
+            if let Some(webview) = app.get_webview(&record.label) {
+                let _ = webview.emit(
                     "browser-target:open",
                     json!({ "sessionID": claim.session_id, "url": claim.url, "requestID": request_id }),
                 );
@@ -1099,13 +1097,18 @@ fn ax_string(value: Option<&Value>) -> String {
 }
 
 #[cfg(windows)]
+fn select_all_key_events() -> [Value; 4] {
+    [
+        json!({ "type": "rawKeyDown", "key": "Control", "code": "ControlLeft", "modifiers": 2, "windowsVirtualKeyCode": 17 }),
+        json!({ "type": "rawKeyDown", "key": "a", "code": "KeyA", "modifiers": 2, "windowsVirtualKeyCode": 65, "commands": ["selectAll"] }),
+        json!({ "type": "keyUp", "key": "a", "code": "KeyA", "modifiers": 2, "windowsVirtualKeyCode": 65 }),
+        json!({ "type": "keyUp", "key": "Control", "code": "ControlLeft", "windowsVirtualKeyCode": 17 }),
+    ]
+}
+
+#[cfg(windows)]
 fn clear_focused_field(webview: &tauri::Webview, deadline: Instant) -> Result<(), String> {
-    for params in [
-        json!({ "type": "keyDown", "key": "Control", "code": "ControlLeft", "modifiers": 2 }),
-        json!({ "type": "keyDown", "key": "a", "code": "KeyA", "modifiers": 2 }),
-        json!({ "type": "keyUp", "key": "a", "code": "KeyA", "modifiers": 2 }),
-        json!({ "type": "keyUp", "key": "Control", "code": "ControlLeft" }),
-    ] {
+    for params in select_all_key_events() {
         cdp(webview, "Input.dispatchKeyEvent", params, deadline)?;
     }
     Ok(())
@@ -1199,8 +1202,8 @@ fn install_webview2_handlers(
                     unsafe { core.Source(&mut raw)? };
                     let url = CoTaskMemPWSTR::from(raw).to_string();
                     controller.clear_refs_for_generation(&registration_id, generation);
-                    if let Some(window) = app.get_webview_window(&window_label) {
-                        let _ = window.emit(
+                    if let Some(webview) = app.get_webview(&window_label) {
+                        let _ = webview.emit(
                             "browser-target:navigated",
                             json!({ "registrationId": registration_id, "url": url }),
                         );
@@ -1432,5 +1435,16 @@ mod tests {
                 Instant::now() + Duration::from_secs(1),
             )
             .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clear_shortcut_uses_chromium_editing_command_and_virtual_keys() {
+        let events = select_all_key_events();
+        assert_eq!(events[0]["type"], "rawKeyDown");
+        assert_eq!(events[0]["windowsVirtualKeyCode"], 17);
+        assert_eq!(events[1]["type"], "rawKeyDown");
+        assert_eq!(events[1]["windowsVirtualKeyCode"], 65);
+        assert_eq!(events[1]["commands"], json!(["selectAll"]));
     }
 }

@@ -845,7 +845,7 @@ impl ClientState {
         if require_claim && !self.renderer_access.is_claimed_for(window_id) {
             return;
         }
-        let Some(window) = app.get_webview_window(window_label) else {
+        let Some(webview) = app.get_webview(window_label) else {
             return;
         };
         let generation = {
@@ -858,7 +858,7 @@ impl ClientState {
             state.0 += 1;
             state.0
         };
-        if let Err(err) = window.emit(
+        if let Err(err) = webview.emit(
             "client-state:navigation-flush-requested",
             RendererFlushRequest { generation },
         ) {

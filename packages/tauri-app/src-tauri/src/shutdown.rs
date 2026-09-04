@@ -399,8 +399,8 @@ impl ShutdownCoordinator {
 }
 
 fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
-    app.get_webview_window(label).is_some_and(|window| {
-        window
+    app.get_webview(label).is_some_and(|webview| {
+        webview
             .emit(
                 "client-state:flush-requested",
                 client_state::RendererFlushRequest { generation },
@@ -410,8 +410,8 @@ fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
 }
 
 fn emit_flush_cancelled(app: &AppHandle, label: &str, generation: u64) {
-    if let Some(window) = app.get_webview_window(label) {
-        let _ = window.emit(
+    if let Some(webview) = app.get_webview(label) {
+        let _ = webview.emit(
             FLUSH_CANCELLED_EVENT,
             client_state::RendererFlushRequest { generation },
         );
@@ -470,8 +470,8 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
         if app
             .run_on_main_thread(move || {
                 let dispatched = close_app
-                    .get_webview_window(&close_label)
-                    .is_some_and(|window| window.close().is_ok());
+                    .get_webview(&close_label)
+                    .is_some_and(|webview| webview.window().close().is_ok());
                 if !dispatched {
                     close_app
                         .state::<ShutdownCoordinator>()
