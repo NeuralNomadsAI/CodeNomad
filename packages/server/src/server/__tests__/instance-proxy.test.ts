@@ -3,15 +3,13 @@ import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { LocationRef, OpenCodeClient, SessionInfo } from "@opencode-ai/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
-
-const cursor = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url")
 
 function logger(): Logger {
   const value = { debug() {}, trace() {}, error() {}, isLevelEnabled() { return false } }
@@ -21,13 +19,14 @@ function logger(): Logger {
 async function harness(
   sessionDirectory = "/repo/worktree",
   activeSessions: Record<string, { type: "running" }> = {},
-  sessionLocations: Record<string, string | Error> = {},
+  sessionLocations: Record<string, string | LocationRef | Error> = {},
   workspacePath = "/repo",
   serviceDirectory = workspacePath,
   pathMappings: Record<string, string> = {},
   ptyDirectories: Record<string, string | Error> = {},
   shellDirectories: Record<string, string | Error> = {},
   directoryMappings: Record<string, string> = {},
+  sessionListLocation: LocationRef = { directory: sessionDirectory, workspaceID: "worktree-location" },
 ) {
   const upstream = Fastify()
   apps.push(upstream)
@@ -84,9 +83,13 @@ async function harness(
         sessionGets.push(sessionID)
         const location = sessionLocations[sessionID] ?? sessionDirectory
         if (location instanceof Error) throw location
-        return { id: sessionID, location: { directory: location } } as SessionInfo
+        return { id: sessionID, location: typeof location === "string" ? { directory: location } : location } as SessionInfo
       },
       active: async () => activeSessions,
+      list: async () => ({
+        data: [{ id: "listed", projectID: "owned-project", location: sessionListLocation, time: { created: 1, updated: 1 } } as SessionInfo],
+        cursor: { next: null },
+      }),
     },
     pty: {
       list: async () => ({
@@ -121,6 +124,7 @@ async function harness(
     invalidateSharedServiceConnection: () => { invalidations += 1 },
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getServiceDirectory: () => serviceDirectory,
+    getServiceLocation: () => ({ directory: serviceDirectory, workspaceID: "owned-location" }),
     getServiceDirectoryForPath: async (_id, directory) => directory === workspacePath
       ? serviceDirectory
       : owned.has(directory) ? directoryMappings[directory] ?? directory : undefined,
@@ -390,7 +394,7 @@ describe("instance proxy location enforcement", () => {
       url: "/workspaces/workspace/instance/api/session?project=owned-project",
     })
     assert.equal(response.statusCode, 200)
-    assert.equal(JSON.parse(response.body).url, "/api/session?project=owned-project")
+    assert.equal(JSON.parse(response.body).url, "/api/session?project=owned-project&workspace=owned-location")
 
     const foreign = await app.inject({
       method: "GET",
@@ -399,41 +403,25 @@ describe("instance proxy location enforcement", () => {
     assert.equal(foreign.statusCode, 403)
   })
 
-  it("uses the cursor scope and rejects malformed or forged session-list cursors", async () => {
+  it("treats session-list cursors as opaque and validates the returned locations", async () => {
     const { app, requestCount } = await harness()
-    const ownedCursor = cursor({ directory: "/repo/worktree", anchor: { id: "session-1", time: 1, direction: "next" } })
     const response = await app.inject({
       method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother&workspace=foreign-location`,
+      url: "/workspaces/workspace/instance/api/session?cursor=opaque.native-cursor",
     })
     assert.equal(response.statusCode, 200)
-    const upstreamUrl = JSON.parse(response.body).url as string
-    assert.match(upstreamUrl, new RegExp(`cursor=${ownedCursor}`))
-    assert.doesNotMatch(upstreamUrl, /directory=/)
-    assert.doesNotMatch(upstreamUrl, /workspace=/)
+    assert.deepEqual(JSON.parse(response.body).data.map((session: SessionInfo) => session.id), ["listed"])
+    assert.equal((await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/session?cursor=opaque&directory=%2Frepo",
+    })).statusCode, 400)
+    assert.equal(requestCount(), 0)
 
-    const forgedCursor = cursor({ directory: "/other", anchor: { id: "session-1", time: 1, direction: "next" } })
-    assert.equal((await app.inject({
+    const foreign = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {}, {}, {}, {}, { directory: "/other" })
+    assert.equal((await foreign.app.inject({
       method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${forgedCursor}&directory=%2Frepo`,
+      url: "/workspaces/workspace/instance/api/session?cursor=opaque",
     })).statusCode, 403)
-    assert.equal((await app.inject({
-      method: "GET",
-      url: "/workspaces/workspace/instance/api/session?cursor=not-json",
-    })).statusCode, 400)
-    assert.equal((await app.inject({
-      method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ directory: "/repo" })}`,
-    })).statusCode, 400)
-    assert.equal((await app.inject({
-      method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "foreign-location", directory: "/repo", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
-    })).statusCode, 403)
-    assert.equal((await app.inject({
-      method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "owned-location", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
-    })).statusCode, 200)
-    assert.equal(requestCount(), 2)
   })
 
   it("filters PTYs and rejects foreign PTY access", async () => {
@@ -659,7 +647,7 @@ describe("instance proxy location enforcement", () => {
   it("filters active sessions to the workspace without failing on stale ids", async () => {
     const active = { owned: { type: "running" as const }, foreign: { type: "running" as const }, stale: { type: "running" as const } }
     const { app, sessionGets, requestCount } = await harness("/repo/worktree", active, {
-      foreign: "/other",
+      foreign: { directory: "/repo/worktree", workspaceID: "foreign-location" },
       stale: new Error("missing"),
     })
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/active" })
@@ -669,7 +657,7 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
-  it("blocks global routes through a workspace", async () => {
+  it("blocks global and unreviewed extension routes through a workspace", async () => {
     const { app, requestCount } = await harness()
     for (const route of ["global/dispose", "global/config", "global/upgrade"]) {
       const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/${route}` })
@@ -677,6 +665,10 @@ describe("instance proxy location enforcement", () => {
     }
     for (const route of ["event", "debug/location"]) {
       const response = await app.inject({ method: "GET", url: `/workspaces/workspace/instance/api/${route}` })
+      assert.equal(response.statusCode, 403)
+    }
+    for (const route of ["plugin/await-activation", "plugin/check", "plugin/update", "rpc/example/run"]) {
+      const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}` })
       assert.equal(response.statusCode, 403)
     }
     assert.equal((await app.inject({

@@ -11,8 +11,10 @@ import {
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
+  projectSessionFamilies,
   sortSessionIdsDeepestFirst,
 } from "./session-tree"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 function session(id: string, parentId: string | null, updated: number): Session {
   return { id, parentId, time: { created: updated, updated } } as Session
@@ -23,6 +25,14 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("preserves case in the Linux portion of WSL UNC paths", () => {
+    assert.equal(
+      normalizeSessionDirectory("\\\\WSL.localhost\\Ubuntu\\Repo\\Feature"),
+      "//wsl.localhost/ubuntu/Repo/Feature",
+    )
+    assert.equal(normalizeSessionDirectory("\\\\wsl$\\Ubuntu\\Repo\\Feature"), "//wsl$/ubuntu/Repo/Feature")
+  })
+
   it("preserves nesting and sorts siblings by descendant activity", () => {
     const sessions = sessionMap([
       ["root", null, 100],
@@ -176,5 +186,19 @@ describe("session tree", () => {
       sortSessionIdsDeepestFirst(sessions, ["root", "child", "grandchild"]),
       ["grandchild", "child", "root"],
     )
+  })
+
+  it("keeps a complete family when a descendant matches", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["matching-child", "root", 500],
+      ["sibling", "root", 200],
+    ])
+    const matched = projectSessionFamilies(buildSessionThreadsFromMap(sessions, ["root"]), {
+      sort: "activity",
+      matchesSession: (item) => item.id === "matching-child",
+      getWorktreeLabel: () => "root",
+    })
+    assert.deepEqual(collectSessionThreadIds(matched), ["root", "matching-child", "sibling"])
   })
 })

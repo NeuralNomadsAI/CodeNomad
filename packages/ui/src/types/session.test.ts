@@ -9,18 +9,20 @@ const hiddenPrimary: Agent = { id: "build", name: "Build", description: "", mode
 const hiddenSubagent: Agent = { id: "debug", name: "Debug", description: "", mode: "subagent", hidden: true }
 
 describe("agent selectability", () => {
-  it("keeps native session location authoritative", () => {
+  it("keeps native session location and metadata authoritative", () => {
     const session = createClientSession({
       id: "session",
       projectID: "project",
       title: "Session",
       location: { directory: "D:/repo/worktree", workspaceID: "workspace" },
+      metadata: { persisted: true },
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: 1, updated: 1 },
     }, "instance")
 
     assert.deepEqual(session.location, { directory: "D:/repo/worktree", workspaceID: "workspace" })
+    assert.deepEqual(session.metadata, { persisted: true })
   })
 
   it("matches primary-session selector rules", () => {

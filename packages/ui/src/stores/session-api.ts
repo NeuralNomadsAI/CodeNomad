@@ -50,6 +50,7 @@ import {
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
+  getSessionHasMore,
   getSessionNextCursor,
   getSessionListIds,
 } from "./session-state"
@@ -78,6 +79,8 @@ import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
 } from "./session-list-options"
+
+const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
@@ -93,6 +96,8 @@ const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
+const sessionExhaustionRequests = new Map<string, Promise<void>>()
+const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
 interface MessagePageRequest {
   controller: AbortController
   consumers: Set<symbol>
@@ -172,6 +177,8 @@ async function refreshSessionCatalog(instanceId: string): Promise<void> {
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
+  sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
   sessionListRequestIds.set(instanceId, requestId)
   return requestId
 }
@@ -183,6 +190,8 @@ function isLatestSessionListRequest(instanceId: string, requestId: number): bool
 function clearSessionListRequestState(instanceId: string): void {
   sessionListRequestIds.delete(instanceId)
   sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
+  sessionPageTraversals.delete(instanceId)
   setSessionListError(instanceId, null)
   setLoading((prev) => {
     if (!prev.fetchingSessions.has(instanceId)) return prev
@@ -296,11 +305,13 @@ async function fetchCompleteProjectSessionInventory(
   if (!project) return []
   const inventory = new Map<string, SDKSession>()
   const seenCursors = new Set<string>()
+  let pageCount = 1
   let response = await fetchV2Sessions(instanceId, { project, order: "desc" }, signal)
   while (true) {
     if (!isCurrent()) return []
     for (const session of response.data) inventory.set(session.id, session)
     if (!response.nextCursor) break
+    if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session inventory exceeded the page limit")
     if (seenCursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
     seenCursors.add(response.nextCursor)
     response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
@@ -504,9 +515,13 @@ async function fetchSessions(instanceId: string, options?: {
       inventoryComplete = hasProjectInventory && response.complete
     } catch (error) {
       if (options?.signal?.aborted) throw error
+      if (options?.strictStatus) throw error
       log.warn("Failed to enrich the session list with project descendants", { instanceId, error })
     }
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
     const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
     const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
     const sessionMap = new Map<string, Session>()
@@ -535,7 +550,10 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
 
     if (inventoryComplete || (!hasProjectInventory && response.complete)) {
       const authoritativeSessions = inventoryComplete ? apiSessions : rootApiSessions
@@ -590,6 +608,10 @@ async function fetchSessions(instanceId: string, options?: {
     }
 
     setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    sessionPageTraversals.set(instanceId, {
+      cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
+      pages: 1,
+    })
     for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
 
     reconcilePendingSessionIndicators(instanceId)
@@ -636,6 +658,33 @@ async function loadMoreSessions(instanceId: string): Promise<void> {
   return request
 }
 
+async function loadAllSessions(instanceId: string): Promise<void> {
+  const pending = sessionExhaustionRequests.get(instanceId)
+  if (pending) return pending
+  const listRequestId = sessionListRequestIds.get(instanceId)
+  const request = (async () => {
+    setSessionListError(instanceId, null)
+    try {
+      while (getSessionHasMore(instanceId)) {
+        const cursor = getSessionNextCursor(instanceId)
+        await loadMoreSessions(instanceId)
+        if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+        if (getSessionHasMore(instanceId) && getSessionNextCursor(instanceId) === cursor) {
+          throw new Error("Session pagination was interrupted")
+        }
+      }
+    } catch (error) {
+      if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+      setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
+      throw error
+    }
+  })().finally(() => {
+    if (sessionExhaustionRequests.get(instanceId) === request) sessionExhaustionRequests.delete(instanceId)
+  })
+  sessionExhaustionRequests.set(instanceId, request)
+  return request
+}
+
 async function loadNextSessionPage(instanceId: string): Promise<void> {
   const cursor = getSessionNextCursor(instanceId)
   if (!cursor) return
@@ -655,6 +704,14 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     }),
   ])
   if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
+  const traversal = sessionPageTraversals.get(instanceId) ?? { cursors: new Set([cursor]), pages: 1 }
+  if (traversal.pages >= MAX_SESSION_LIST_PAGES) throw new Error("Session pagination exceeded the page limit")
+  if (response.nextCursor && traversal.cursors.has(response.nextCursor)) {
+    throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+  }
+  traversal.pages += 1
+  if (response.nextCursor) traversal.cursors.add(response.nextCursor)
+  sessionPageTraversals.set(instanceId, traversal)
   const pageSessions = response.data
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   setSessions((previous) => {
@@ -700,13 +757,23 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    const response = await fetchV2Sessions(instanceId, {
+    let response = await fetchV2Sessions(instanceId, {
       search: trimmedQuery,
       directory: instance.folder,
     })
-    if (!isCurrent()) return
-
-    const searchResults = getV2SessionItems(response)
+    const results = new Map<string, SDKSession>()
+    const cursors = new Set<string>()
+    let pageCount = 1
+    while (true) {
+      if (!isCurrent()) return
+      for (const session of getV2SessionItems(response)) results.set(session.id, session)
+      if (!response.nextCursor) break
+      if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
+      if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+      cursors.add(response.nextCursor)
+      response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+    }
+    const searchResults = Array.from(results.values())
 
     if (searchResults.length === 0) {
       setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
@@ -1596,6 +1663,7 @@ export {
   fetchSessions,
   hydrateRestoredSessionChain,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,

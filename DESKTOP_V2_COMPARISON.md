@@ -4,9 +4,9 @@
 
 This review compares:
 
-- CodeNomad `DEV-v2` at `dea20996` (2026-09-03).
-- Official OpenCode Desktop V2 from `anomalyco/opencode` branch `upstream/beta` at `eb1ac54d73` (2026-08-25).
-- CodeNomad declares `@opencode-ai/client@beta`; UI and server resolve `beta-18999`, while the runtime CLI version is managed independently.
+- CodeNomad `DEV-v2` at `44a1816b` (2026-09-04), merged with the worktree-session changes reviewed here.
+- Published OpenCode V2 `beta-18999` at `887f319769c55718e3e64f64b32c9aafb13c5d66`, including an operation-by-operation and generated-declaration comparison from `beta-18684` at `106629aa118086be7def6123241a9bf056ba77b6`.
+- CodeNomad declares `@opencode-ai/client@beta`; UI and server resolve `beta-18999`, the independently managed runtime CLI reports `beta-18999`, and the official V2 documentation is rooted at <https://opencode.ai/v2/docs/>.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. Older `v2`, `opencode-2-0`, and intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -17,6 +17,17 @@ This is an incremental review. It does not repeat issues already closed by CodeN
 CodeNomad implements the important V2 architecture rather than emulating the V1 desktop model. It uses the native client contract, locations, shared service, sessions, messages, Forms, permissions, providers, Shells, worktrees, and event stream. Its multi-window and cross-host restore implementation is broader than the official Electron-only desktop implementation.
 
 The comparison and subsequent beta-contract audit found concrete CodeNomad defects in pagination, navigation, model projection, inbox delivery, follow behavior, background control, location selectors, and proxy route coverage. Those defects are fixed in the commits accompanying this document. The remaining differences are scoped workflow defects, release hardening, or optional Desktop features. None requires restoring V1 code or replacing native V2 cursors.
+
+## Published Beta 18684 to 18999 Impact
+
+The generated OpenAPI surface grows from 136 to 140 operations. It adds only `plugin.awaitActivation`, `plugin.check`, `plugin.update`, and `rpc.call`; it removes nothing and does not change the session, message, location, worktree, Shell, or PTY operation sets. Session pages retain the `{ data, cursor }` envelope, exclusive opaque cursors, and native ordering semantics.
+
+- **Pagination:** all session continuations now send only the returned cursor. This includes UI inventory, worktree family transactions, proxy validation, and server-side Yolo restoration. Repeated-cursor and bounded-inventory checks remain where destructive worktree operations require a complete snapshot.
+- **Locations:** OpenCode's unavailable-location change is official-app recovery UI, not an API change. CodeNomad preserves unavailable restored tabs and native session locations but does not weaken logical-workspace ownership to recover a session whose source is outside every owned root/worktree.
+- **Moves:** session-aware execution and chained-move continuation improve the native server. CodeNomad still refuses worktree family moves while any member is active, serializes the project transaction, rechecks before each move, verifies the complete inventory, and rolls back on failure.
+- **Events:** the client now isolates cancellation among consumers of its lazy shared stream, which CodeNomad inherits through `OpenCode.make()`. Typed `rpc.*` events require a native location and are routed only to owning logical workspaces. Raw `/api/event`, generic RPC calls, and plugin lifecycle mutations remain blocked by the workspace proxy.
+- **PTY and Shell:** socket detach, post-exit drain, and fast-output fixes are runtime-only. CodeNomad inherits them without changing its HTTP proxy or introducing an embedded terminal; owned running PTYs, persistent PTYs, and Shells continue to block unsafe worktree deletion.
+- **Generated types:** the new plugin state shape is safe because plugin IDs are narrowed before projection. The config update-policy rename is unused, provider/model canonical fields are additive, and native `SessionInfo.location`, `workspaceID`, and durable JSON `metadata` remain preserved.
 
 ## Closed Findings
 

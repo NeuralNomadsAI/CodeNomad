@@ -51,8 +51,8 @@ Behavior for agents:
 - Use the `write` tool only when creating new files from scratch.
 
 ## V2 Runtime Launch
-- Launch the release executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
-- Stop the running CodeNomad instance before rebuilding the same release path, then relaunch it from the independent OpenCode TUI.
+- Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once; do not configure a fixed CDP port or a manual WebView2 profile.
+- Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.

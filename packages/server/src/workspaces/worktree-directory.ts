@@ -6,7 +6,7 @@ import { listWorktrees, resolveRepoRoot } from "./git-worktrees"
 type WorktreeCacheEntry = {
   expiresAt: number
   repoRoot: string
-  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string }>
+  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string }>
   resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string }>
 }
 
@@ -45,6 +45,7 @@ async function getCachedWorktrees(params: { workspaceId: string; workspacePath: 
           slug: wt.slug,
           directory: wt.directory,
           normalizedDirectory: await normalizeDirectoryPath(wt.directory),
+          worktreeDirectory: await normalizeDirectoryPath(wt.registeredDirectory ?? wt.directory),
         })),
       ),
       resolvedDirectories: new Map(),
@@ -177,7 +178,7 @@ export async function resolveOwnedWorktreePath(params: {
     entry = await getCachedWorktrees(params)
     match = find(entry.worktrees)
   }
-  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.normalizedDirectory } : null
+  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
   if (resolved) entry.resolvedDirectories.set(target, resolved)
   return resolved
 }

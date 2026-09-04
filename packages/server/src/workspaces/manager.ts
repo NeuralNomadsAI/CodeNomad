@@ -159,6 +159,7 @@ export interface WorkspaceCreateOptions {
 type CreationRequestState = "owner" | "cancelled" | "released"
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly deletingWorktreeRoots = new Set<string>()
   private readonly cancelledCreationRequests = new Set<string>()
   private readonly pendingCreationRequests = new Set<string>()
   private readonly activeLocationCreations = new Set<Promise<void>>()
@@ -192,6 +193,12 @@ export class WorkspaceManager {
     return record?.[WORKSPACE_STATE].published ? record.location?.directory ?? record.path : undefined
   }
 
+  getServiceLocation(id: string): LocationRef | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    return record.location ?? { directory: record.path }
+  }
+
   async getSharedServiceEndpoint(id: string): Promise<Endpoint | undefined> {
     if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
     try {
@@ -206,6 +213,21 @@ export class WorkspaceManager {
 
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  async reserveWorktreeDeletion(directory: string): Promise<() => void> {
+    const submitted = path.isAbsolute(directory) ? directory : path.resolve(this.options.rootDir, directory)
+    const target = canonicalWorktreeIdentity(await realpath(submitted).catch(() => path.normalize(submitted)), this.options.platform)
+    if (Array.from(this.deletingWorktreeRoots).some((root) => pathsOverlap(root, target))) {
+      throw new Error("Worktree deletion is already in progress")
+    }
+    if (Array.from(this.workspaces.values()).some((workspace) => (
+      pathContains(target, canonicalWorktreeIdentity(workspace.path, this.options.platform))
+    ))) {
+      throw new Error("Worktree is open as another workspace")
+    }
+    this.deletingWorktreeRoots.add(target)
+    return () => this.deletingWorktreeRoots.delete(target)
   }
 
   invalidateSharedServiceConnection(): void {
@@ -404,6 +426,10 @@ export class WorkspaceManager {
         launchDeadlineAt,
         launchTimeoutMs,
       )
+      const workspaceIdentity = canonicalWorktreeIdentity(workspacePath, this.options.platform)
+      if (Array.from(this.deletingWorktreeRoots).some((root) => pathContains(root, workspaceIdentity))) {
+        throw new Error("Workspace directory is being removed")
+      }
       if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
         throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
       }
@@ -1035,4 +1061,25 @@ export class WorkspaceManager {
 
     return candidates[0] ?? ""
   }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const left = parseWorktreeIdentity(parent)
+  const right = parseWorktreeIdentity(child)
+  if (left || right) {
+    if (!left || !right || left.distro !== right.distro) return false
+    const relative = path.posix.relative(left.linuxPath, right.linuxPath)
+    return relative === "" || (relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative))
+  }
+  const relative = path.relative(parent, child)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return pathContains(left, right) || pathContains(right, left)
+}
+
+function parseWorktreeIdentity(identity: string): { distro: string; linuxPath: string } | undefined {
+  const match = /^wsl:([^:]+):(\/.*)$/.exec(identity)
+  return match ? { distro: match[1]!, linuxPath: match[2]! } : undefined
 }

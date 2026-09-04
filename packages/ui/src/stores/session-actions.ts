@@ -535,14 +535,6 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
-async function moveSession(instanceId: string, sessionId: string, directory: string): Promise<void> {
-  if (!directory.trim()) throw new Error("Session directory is required")
-  await getRootClient(instanceId).session.move({ sessionID: sessionId, directory })
-  withSession(instanceId, sessionId, (session) => {
-    session.location = { directory }
-  })
-}
-
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
   await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
@@ -714,7 +706,6 @@ export {
   executeSessionTechnicalPartDeletion,
   planSessionTechnicalPartDeletion,
   renameSession,
-  moveSession,
   runShellCommand,
   sendMessage,
   updateSessionAgent,

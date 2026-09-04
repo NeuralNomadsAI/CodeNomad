@@ -148,6 +148,7 @@ jobs:
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
+          packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
           packages/ui/src/types/session.test.ts
@@ -171,6 +172,8 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/session-status.test.ts
+          packages/ui/src/stores/worktree-ready.test.ts
+          packages/ui/src/stores/worktrees-delete.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

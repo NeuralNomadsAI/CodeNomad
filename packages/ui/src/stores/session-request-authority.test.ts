@@ -6,7 +6,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision } from "./opencode-data.ts"
@@ -1267,14 +1267,86 @@ describe("session request authority", () => {
       assert.equal(requests[1].project, "project")
       assert.equal("directory" in requests[1], false)
       assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
-      assert.deepEqual(requests[2], { cursor: "inventory-page-2", limit: 200 })
+      assert.deepEqual(requests[2], { cursor: "inventory-page-2" })
 
       await loadMoreSessions(instanceId)
-      assert.deepEqual(requests[3], { cursor: "root-page-2", limit: 200 })
-      assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
+      assert.deepEqual(requests[3], { cursor: "root-page-2" })
+      assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).join(",") === "cursor"), true)
       assert.equal(requests.length, 4)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects a repeated incremental session cursor", async () => {
+    const instanceId = "repeated-root-cursor"
+    const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      if (input.cursor === "repeat") return { data: [], cursor: { next: "repeat" } }
+      if (input.parentID === null) return { data: [apiSession("root")], cursor: { next: "repeat" } }
+      return { data: [apiSession("root")], cursor: {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await assert.rejects(loadMoreSessions(instanceId), /Repeated session cursor/)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads every root page for global sorting", async () => {
+    const instanceId = "global-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const cursors: string[] = []
+    ;(client.session as any).list = async (input: any) => {
+      if (!input.cursor) return { data: [apiSession("root-1")], cursor: { next: "page-2" } }
+      cursors.push(input.cursor)
+      const page = Number(input.cursor.slice("page-".length))
+      return { data: [apiSession(`root-${page}`)], cursor: page < 5 ? { next: `page-${page + 1}` } : {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await Promise.all([loadAllSessions(instanceId), loadAllSessions(instanceId)])
+      assert.deepEqual(cursors, ["page-2", "page-3", "page-4", "page-5"])
+      assert.deepEqual(getSessionListIds(instanceId), ["root-1", "root-2", "root-3", "root-4", "root-5"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("starts a fresh sort exhaustion when the session list is superseded", async () => {
+    const instanceId = "superseded-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const stalePage = deferred<any>()
+    const stalePageStarted = deferred<void>()
+    let refreshed = false
+    ;(client.session as any).list = async (input: any) => {
+      if (input.cursor === "stale-page") {
+        stalePageStarted.resolve()
+        return stalePage.promise
+      }
+      if (input.cursor === "fresh-page") return { data: [apiSession("fresh-2")], cursor: {} }
+      return refreshed
+        ? { data: [apiSession("fresh-1")], cursor: { next: "fresh-page" } }
+        : { data: [apiSession("stale-1")], cursor: { next: "stale-page" } }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      const staleExhaustion = loadAllSessions(instanceId)
+      await stalePageStarted.promise
+      refreshed = true
+      await fetchSessions(instanceId)
+      await loadAllSessions(instanceId)
+      stalePage.resolve({ data: [apiSession("stale-2")], cursor: {} })
+      await staleExhaustion
+      assert.equal(getSessionListIds(instanceId).includes("fresh-2"), true)
+      assert.equal(getSessionListIds(instanceId).includes("stale-2"), false)
     } finally {
       cleanup()
     }
@@ -1313,8 +1385,9 @@ describe("session request authority", () => {
     setInstanceMetadata(instanceId, { project: { id: "global", directory: "/", canonical: "/" } as any })
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
+      if (input.cursor === "search-next") return { data: [apiSession("search-result")], cursor: {} }
       if (input.cursor) return { data: [], cursor: {} }
-      if (input.search) return { data: [], cursor: {} }
+      if (input.search) return { data: [], cursor: { next: "search-next" } }
       return { data: [], cursor: { next: input.parentID === null ? "root-next" : "inventory-next" } }
     }
 
@@ -1323,11 +1396,12 @@ describe("session request authority", () => {
       await loadMoreSessions(instanceId)
       await searchSessions(instanceId, "needle")
 
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, 6)
+      assert.deepEqual(requests.at(-1), { cursor: "search-next" })
       assert.equal(requests.filter((request) => !request.cursor).every((request) => request.directory === "/work"), true)
       assert.equal(requests.every((request) => !("project" in request)), true)
       assert.equal(requests.filter((request) => request.cursor)
-        .every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
+        .every((request) => Object.keys(request).join(",") === "cursor"), true)
     } finally {
       cleanup()
     }

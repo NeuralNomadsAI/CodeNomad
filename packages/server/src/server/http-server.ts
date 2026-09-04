@@ -410,6 +410,7 @@ export interface InstanceProxyWorkspaceManager {
   invalidateSharedServiceConnection?(): void
   getInstanceAuthorizationHeader(id: string): string | undefined
   getServiceDirectory?(id: string): string | undefined
+  getServiceLocation?(id: string): LocationRef | undefined
   getServiceDirectoryForPath?(id: string, directory: string): Promise<string | undefined>
   getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
@@ -667,7 +668,7 @@ async function proxyWorkspaceRequest(args: {
     const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
       try {
         const session = await client.session.get({ sessionID: sessionId })
-        return await workspaceManager.ownsDirectory(workspaceId, session.location.directory) ? [sessionId, status] as const : null
+        return await workspaceManager.ownsLocation(workspaceId, session.location) ? [sessionId, status] as const : null
       } catch {
         return null
       }
@@ -690,9 +691,27 @@ async function proxyWorkspaceRequest(args: {
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
     && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project") || targetUrl.searchParams.has("workspace"))
+  if (request.method === "GET"
+    && pathname.replace(/\/+$/, "") === "/api/session"
+    && !targetUrl.searchParams.has("cursor")
+    && !targetUrl.searchParams.has("workspace")) {
+    const workspaceID = workspaceManager.getServiceLocation?.(workspaceId)?.workspaceID
+    if (workspaceID) targetUrl.searchParams.set("workspace", workspaceID)
+  }
   const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
+    return
+  }
+  const sessionCursor = targetUrl.searchParams.get("cursor")
+  if (sessionCursor) {
+    const page = await (await workspaceManager.getSharedServiceClient()).session.list({ cursor: sessionCursor })
+    const ownership = await Promise.all(page.data.map((session) => workspaceManager.ownsLocation(workspaceId, session.location)))
+    if (ownership.some((owned) => !owned)) {
+      reply.code(403).send({ error: "Session list does not belong to workspace" })
+      return
+    }
+    reply.send(page)
     return
   }
   const serviceDirectory = workspaceManager.getServiceDirectory?.(workspaceId) ?? workspace.path
@@ -856,7 +875,7 @@ async function proxyWorkspaceRequest(args: {
       }
       throw error
     }
-    if (!(await workspaceManager.ownsDirectory(workspaceId, session.location.directory))) {
+    if (!(await workspaceManager.ownsLocation(workspaceId, session.location))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
@@ -1106,12 +1125,7 @@ async function authorizeSessionList(
   const cursors = targetUrl.searchParams.getAll("cursor")
   if (cursors.length > 1) return "invalid"
   if (cursors.length === 1) {
-    const scope = decodeSessionListCursor(cursors[0])
-    if (!scope) return "invalid"
-    for (const key of ["directory", "workspace", "location[directory]", "location[workspace]", "project", "subpath"]) {
-      targetUrl.searchParams.delete(key)
-    }
-    return ownsSessionListScope(manager, workspaceId, scope)
+    return cursors[0] && [...targetUrl.searchParams.keys()].every((key) => key === "cursor") ? "allowed" : "invalid"
   }
 
   const projects = targetUrl.searchParams.getAll("project")
@@ -1139,39 +1153,6 @@ type SessionListScope = {
   directory?: string
   project?: string
   subpath?: string
-}
-
-function decodeSessionListCursor(cursor: string): SessionListScope | null {
-  if (!cursor || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null
-    const anchor = value.anchor as Record<string, unknown> | undefined
-    if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)
-      || typeof anchor.id !== "string" || !anchor.id
-      || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
-      || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
-    if (value.workspace !== undefined && (typeof value.workspace !== "string" || !value.workspace.trim())) return null
-    if (value.search !== undefined && typeof value.search !== "string") return null
-    if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
-    if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
-      return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), directory: value.directory }
-    }
-    if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
-      if (value.subpath === undefined) {
-        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project }
-      }
-      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) {
-        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project, subpath: value.subpath }
-      }
-    }
-    if (typeof value.workspace === "string" && value.directory === undefined && value.project === undefined && value.subpath === undefined) {
-      return { workspace: value.workspace }
-    }
-    return null
-  } catch {
-    return null
-  }
 }
 
 function isSafeRelativePath(value: string): boolean {

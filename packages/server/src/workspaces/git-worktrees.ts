@@ -49,7 +49,7 @@ export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise
     logger?.debug?.({ folder, err: result.error }, "Folder is not a Git repository; using workspace folder as root")
     return { repoRoot: folder, isGitRepo: false }
   }
-  const repoRoot = result.stdout.trim()
+  const repoRoot = result.stdout.replace(/\r?\n$/, "")
   if (!repoRoot) {
     return { repoRoot: folder, isGitRepo: false }
   }
@@ -61,27 +61,30 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
   return result.ok || !isGitUnavailableResult(result)
 }
 
-function parseWorktreePorcelain(output: string): Array<{ worktree: string; branch?: string; head?: string; detached?: boolean }> {
-  const records: Array<{ worktree: string; branch?: string; head?: string; detached?: boolean }> = []
-  const lines = output.split(/\r?\n/)
-  let current: { worktree?: string; branch?: string; head?: string; detached?: boolean } = {}
+function parseWorktreePorcelain(output: string): Array<{ worktree: string; branch?: string; head?: string; detached?: boolean; prunable?: boolean }> {
+  const records: Array<{ worktree: string; branch?: string; head?: string; detached?: boolean; prunable?: boolean }> = []
+  let current: { worktree?: string; branch?: string; head?: string; detached?: boolean; prunable?: boolean } = {}
 
   const flush = () => {
     if (current.worktree) {
-      records.push({ worktree: current.worktree, branch: current.branch })
+      records.push({
+        worktree: current.worktree,
+        branch: current.branch,
+        head: current.head,
+        detached: current.detached,
+        prunable: current.prunable,
+      })
     }
     current = {}
   }
 
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) {
-      flush()
-      continue
-    }
-    const [key, ...rest] = trimmed.split(" ")
-    const value = rest.join(" ").trim()
+  for (const field of output.split("\0")) {
+    if (!field) continue
+    const separator = field.indexOf(" ")
+    const key = separator === -1 ? field : field.slice(0, separator)
+    const value = separator === -1 ? "" : field.slice(separator + 1)
     if (key === "worktree") {
+      flush()
       current.worktree = value
     } else if (key === "branch") {
       // branch is like refs/heads/foo
@@ -90,6 +93,8 @@ function parseWorktreePorcelain(output: string): Array<{ worktree: string; branc
       current.head = value
     } else if (key === "detached") {
       current.detached = true
+    } else if (key === "prunable") {
+      current.prunable = true
     }
   }
   flush()
@@ -100,27 +105,39 @@ export async function listWorktrees(params: {
   repoRoot: string
   workspaceFolder: string
   logger?: LogLike
+  failClosed?: boolean
 }): Promise<WorktreeDescriptor[]> {
   const { repoRoot, workspaceFolder, logger } = params
 
-  const result = await runGit(["worktree", "list", "--porcelain"], workspaceFolder)
+  const result = await runGit(["worktree", "list", "--porcelain", "-z"], workspaceFolder)
   if (!result.ok) {
+    if (params.failClosed) throw result.error
     const rootDescriptor: WorktreeDescriptor = { slug: "root", directory: workspaceFolder, kind: "root" }
     logger?.debug?.({ repoRoot, err: result.error }, "Failed to list git worktrees; returning root only")
     return [rootDescriptor]
   }
 
   const records = parseWorktreePorcelain(result.stdout)
+  if (params.failClosed && records.some((record) => record.prunable)) {
+    throw new Error("Git worktree inventory contains a prunable entry")
+  }
   const rootRecord = records.find((record) => path.resolve(record.worktree) === path.resolve(repoRoot))
+  if (params.failClosed && !rootRecord) throw new Error("Git worktree inventory is missing the repository root")
   const rootDescriptor: WorktreeDescriptor = {
     slug: "root",
     directory: workspaceFolder,
+    registeredDirectory: rootRecord?.worktree,
     kind: "root",
     branch: rootRecord?.branch,
+    head: rootRecord?.head,
   }
 
   const worktrees: WorktreeDescriptor[] = [rootDescriptor]
   const seen = new Set<string>(["root"])
+  const relativeWorkspacePath = path.relative(repoRoot, workspaceFolder)
+  if (params.failClosed && (path.isAbsolute(relativeWorkspacePath) || relativeWorkspacePath.startsWith(`..${path.sep}`) || relativeWorkspacePath === "..")) {
+    throw new Error("Workspace folder is outside the repository root")
+  }
 
   const normalizeSlug = (record: { branch?: string; head?: string; detached?: boolean; worktree: string }): string => {
     const branch = (record.branch ?? "").trim()
@@ -151,10 +168,18 @@ export async function listWorktrees(params: {
       continue
     }
     if (seen.has(slug)) {
+      if (params.failClosed) throw new Error(`Git worktree inventory contains duplicate slug: ${slug}`)
       continue
     }
     seen.add(slug)
-    worktrees.push({ slug, directory: abs, kind: "worktree", branch: record.branch })
+    worktrees.push({
+      slug,
+      directory: relativeWorkspacePath ? path.join(abs, relativeWorkspacePath) : abs,
+      registeredDirectory: abs,
+      kind: "worktree",
+      branch: record.branch,
+      head: record.head,
+    })
   }
 
   return worktrees
@@ -238,7 +263,7 @@ export async function removeWorktree(params: {
   logger?: LogLike
 }): Promise<void> {
   const { workspaceFolder, logger } = params
-  const directory = (params.directory ?? "").trim()
+  const directory = params.directory ?? ""
   if (!directory) {
     throw new Error("Invalid worktree directory")
   }

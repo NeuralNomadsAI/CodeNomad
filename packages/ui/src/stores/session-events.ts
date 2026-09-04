@@ -5,6 +5,7 @@ import type {
   SessionCreated,
   SessionExecutionFailed,
   SessionIdle,
+  SessionMoved,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
@@ -40,13 +41,14 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
-import { fetchSessions, loadMessages, removeSessionRuntimeState } from "./session-api"
+import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getWorktrees } from "./worktrees"
+import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -60,6 +62,7 @@ const pendingSessionFetches = new Map<string, {
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 let activeRetryToast: ToastHandle | null = null
+const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -110,7 +113,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       })
       return
     case "session.moved":
-      handleSessionMoved(instanceId, event.data.sessionID, event.data.location.directory)
+      handleSessionMoved(instanceId, event.data)
       return
     case "session.forked":
       void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -197,51 +200,42 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   speakCompletedAssistantText(instanceId, sessionId)
 }
 
-function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
-  const normalized = directory.replace(/\\/g, "/").toLowerCase()
-  const targetInstanceId = Array.from(instances().values()).find((instance) => {
-    const directories = [instance.folder, ...getWorktrees(instance.id).map((worktree) => worktree.directory)]
-    return directories.some((candidate) => candidate.replace(/\\/g, "/").toLowerCase() === normalized)
-  })?.id
+function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
+  const { sessionID: sessionId, location } = data
+  const normalized = normalizeSessionDirectory(location.directory)
+  const targetInstanceIds = Array.from(instances().values()).flatMap((instance) => {
+    const directories = [
+      instance.folder,
+      ...getWorktrees(instance.id).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
+    ]
+    return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized) ? [instance.id] : []
+  })
 
-  if (!targetInstanceId || targetInstanceId === sourceInstanceId) {
-    void fetchSessions(sourceInstanceId, { reset: true })
-    return
+  if (targetInstanceIds.length === 1 && targetInstanceIds[0] === sourceInstanceId) {
+    withSession(sourceInstanceId, sessionId, (session) => {
+      session.location = location
+      session.projectID = data.projectID
+      session.subpath = data.subpath
+    })
+    if (activeSessionId().get(sourceInstanceId) === sessionId) {
+      void refreshSessionCatalog(sourceInstanceId).catch((error) => {
+        log.warn("Failed to refresh moved session catalog", { instanceId: sourceInstanceId, sessionId, error })
+      })
+    }
   }
 
-  const moved = sessions().get(sourceInstanceId)?.get(sessionId)
-  setSessions((previous) => {
-    const next = new Map(previous)
-    const source = new Map(next.get(sourceInstanceId) ?? [])
-    source.delete(sessionId)
-    if (source.size) next.set(sourceInstanceId, source)
-    else next.delete(sourceInstanceId)
-    if (moved) {
-      const target = new Map(next.get(targetInstanceId) ?? [])
-      target.set(sessionId, { ...moved, instanceId: targetInstanceId, location: { directory } })
-      next.set(targetInstanceId, target)
-    }
-    return next
-  })
-  removeSessionListId(sourceInstanceId, sessionId)
-  if (moved && !moved.parentId) prependSessionListId(targetInstanceId, sessionId)
-  messageStoreBus.getOrCreate(sourceInstanceId).clearSession(sessionId)
-  void Promise.allSettled([
-    fetchSessions(sourceInstanceId, { reset: true }),
-    fetchSessions(targetInstanceId, { reset: true }),
-  ]).then(() => {
-    setSessions((previous) => {
-      const current = previous.get(sourceInstanceId)
-      if (!current?.has(sessionId)) return previous
-      const next = new Map(previous)
-      const source = new Map(current)
-      source.delete(sessionId)
-      if (source.size) next.set(sourceInstanceId, source)
-      else next.delete(sourceInstanceId)
-      return next
-    })
-    removeSessionListId(sourceInstanceId, sessionId)
-  })
+  for (const instanceId of new Set([sourceInstanceId, ...targetInstanceIds])) {
+    const pending = movedSessionRefreshTimers.get(instanceId)
+    if (pending) clearTimeout(pending)
+    movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
+      movedSessionRefreshTimers.delete(instanceId)
+      void fetchSessions(instanceId, { reset: true }).then(() => (
+        activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
+      )).catch((error) => {
+        log.warn("Failed to reconcile moved sessions", { instanceId, error })
+      })
+    }, 100))
+  }
 }
 
 function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
