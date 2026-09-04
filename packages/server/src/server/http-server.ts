@@ -31,6 +31,7 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerMissionRoutes } from "./routes/missions"
 import { ServerMeta } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -329,6 +330,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app)
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {

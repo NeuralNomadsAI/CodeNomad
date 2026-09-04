@@ -8,6 +8,22 @@ import type {
 } from "./config/schema"
 import type { OpenCodeEvent } from "@opencode-ai/client"
 
+export type {
+  MissionActor,
+  MissionActorRuntimeStatus,
+  MissionListAvailableResponse,
+  MissionListResponse,
+  MissionListUnavailableResponse,
+  MissionMap,
+  MissionReport,
+  MissionReportOutcome,
+  MissionSnapshot,
+  MissionStatus,
+  MissionTask,
+  MissionTaskStatus,
+  MissionTemplateId,
+} from "./missions/model"
+
 /**
  * Canonical HTTP/SSE contract for the CLI server.
  * These types are consumed by both the CLI implementation and any UI clients.
