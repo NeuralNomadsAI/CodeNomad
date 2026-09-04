@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count}件の未読",
   "toastHistory.viewSettings": "設定",
   "toastHistory.close": "閉じる",
+  "toastHistory.openLinkError": "リンクを開けませんでした",
   "toastHistory.deleteItem": "通知を削除",
 
   // Info Section

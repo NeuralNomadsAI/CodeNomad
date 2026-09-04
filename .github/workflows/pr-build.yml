@@ -127,6 +127,7 @@ jobs:
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
           packages/ui/src/lib/runtime-env.test.ts
+          packages/ui/src/lib/theme-scheme.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
@@ -138,12 +139,14 @@ jobs:
           packages/ui/src/stores/client-state-partitions.test.ts
           packages/ui/src/stores/client-state.test.ts
           packages/ui/src/stores/form-settlements.test.ts
+          packages/ui/src/stores/instance-invalidation.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
+          packages/ui/src/stores/plugin-activation.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts

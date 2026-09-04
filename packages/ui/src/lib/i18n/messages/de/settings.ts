@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} ungelesen",
   "toastHistory.viewSettings": "Einstellungen",
   "toastHistory.close": "Schließen",
+  "toastHistory.openLinkError": "Link konnte nicht geöffnet werden",
   "toastHistory.deleteItem": "Benachrichtigung löschen",
 
   "settings.section.info.title": "Über",

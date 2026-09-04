@@ -414,6 +414,16 @@ export function normalizeColorScheme(value: unknown, legacyTheme?: unknown): Nor
   return selectionFor("system")
 }
 
+export function toColorSchemeMergePatch(preference: NormalizedColorScheme): Omit<NormalizedColorScheme, "colors"> & {
+  colors: ColorSchemeColors | null
+} {
+  const normalized = normalizeColorScheme(preference)
+  return {
+    ...normalized,
+    colors: normalized.colors ? { ...normalized.colors } : null,
+  }
+}
+
 const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16)
 
 const luminance = (color: string) => {
@@ -592,9 +602,9 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--status-starting-fg": colors.statusWarning,
     "--status-starting-bg": alpha(colors.statusWarning, 0.16),
     "--status-error-fg": colors.statusError,
-    "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.1 : 0.12),
+    "--message-user-bg": colors.surfaceSecondary,
     "--message-user-border": colors.userAccent,
-    "--message-assistant-bg": mix(colors.surfaceMuted, colors.surfaceBase, dark ? 0.55 : 0.45),
+    "--message-assistant-bg": colors.surfaceBase,
     "--message-assistant-border": colors.agentAccent,
     "--message-tool-bg": mix(colors.surfaceMuted, colors.surfaceBase, dark ? 0.55 : 0.45),
     "--message-tool-border": mix(colors.textMuted, colors.borderBase, 0.28),

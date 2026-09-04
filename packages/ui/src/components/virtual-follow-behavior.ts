@@ -56,6 +56,48 @@ export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boole
   return maxOffset > offset + 1
 }
 
+export interface BottomPinSettlementState {
+  stableFrames: number
+  lastMaxOffset: number | null
+}
+
+export function advanceBottomPinSettlement(
+  state: BottomPinSettlementState,
+  input: { ready: boolean; maxOffset: number | null; requiredStableFrames: number },
+): BottomPinSettlementState & { settled: boolean } {
+  const stableFrames = input.ready && input.maxOffset === state.lastMaxOffset
+    ? state.stableFrames + 1
+    : 0
+  return {
+    stableFrames,
+    lastMaxOffset: input.maxOffset,
+    settled: input.ready && stableFrames >= input.requiredStableFrames,
+  }
+}
+
+export function canScrollInDirection(
+  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  direction: "up" | "down",
+): boolean {
+  if (direction === "up") return metrics.scrollTop > 0
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+}
+
+export function shouldNavigateAtBoundary(input: {
+  atBoundary: boolean
+  restoring: boolean
+  programmatic: boolean
+  hasFreshIntent: boolean
+  intent: "up" | "down" | null
+  direction: "up" | "down"
+}): boolean {
+  return input.atBoundary
+    && !input.restoring
+    && !input.programmatic
+    && input.hasFreshIntent
+    && input.intent === input.direction
+}
+
 export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
   const sharedLength = Math.min(previous.length, next.length)
   const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])

@@ -476,7 +476,7 @@
   top: 50%;
   display: block;
   background-color: currentColor;
-  border-radius: 999px;
+  border-radius: 0;
   transform: translate(-50%, -50%);
 }
 

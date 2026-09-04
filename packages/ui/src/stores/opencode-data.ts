@@ -7,6 +7,9 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
+import { getLogger } from "../lib/logger"
+
+const log = getLogger("session")
 
 type DataEntry = {
   data: Data
@@ -129,6 +132,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       connection: {
         status: () => sseManager.getStatuses().get(instanceId) === "connected" ? "connected" : "reconnecting",
       },
+      onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })
     const emit = (details: OpenCodeEvent) => {
       for (const listener of listeners) listener({ name: details.type, details })

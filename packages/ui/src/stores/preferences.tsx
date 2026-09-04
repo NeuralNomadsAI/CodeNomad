@@ -13,6 +13,7 @@ import { buildSpeechPatch } from "../lib/speech-patch"
 import {
   isColorSchemeColors,
   normalizeColorScheme,
+  toColorSchemeMergePatch,
   type ColorSchemeColors,
   type ColorSchemeId,
   type NormalizedColorScheme,
@@ -753,7 +754,7 @@ function setColorSchemePreference(preference: NormalizedColorScheme): Promise<vo
   const legacyTheme: ThemePreference = normalized.appearance === "system" ? "system" : normalized.appearance
   const patch = {
     theme: legacyTheme,
-    colorScheme: normalized,
+    colorScheme: toColorSchemeMergePatch(normalized),
     ...(normalized.id === "custom" ? { customColorScheme: normalized } : {}),
     activeColorSchemePresetId: null,
   }
@@ -797,7 +798,7 @@ function resetColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">): Promise
   const legacyTheme: ThemePreference = scheme.appearance === "system" ? "system" : scheme.appearance
   const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
     theme: legacyTheme,
-    colorScheme: scheme,
+    colorScheme: toColorSchemeMergePatch(scheme),
     colorSchemeOverrides: { [id]: null },
     activeColorSchemePresetId: null,
   }))

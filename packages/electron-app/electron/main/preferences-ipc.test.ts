@@ -60,7 +60,7 @@ test("Preferences IPC separates local open authority and controls registered app
   assert.deepEqual(h.handlers.get("preferences:minimize")!(h.event(h.localContents)), { ok: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: true })
   assert.deepEqual(h.handlers.get("preferences:toggleMaximize")!(h.event(h.preferencesContents)), { maximized: false })
-  assert.deepEqual(h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
+  assert.deepEqual(await h.handlers.get("preferences:close")!(h.event(h.preferencesContents)), { ok: true })
   assert.deepEqual(h.calls, ["open:speech:workspace-1:true", "ready", "accept:providers", "transition:3:false", "minimize", "local:minimize", "maximize", "unmaximize", "approve", "close"])
 })
 

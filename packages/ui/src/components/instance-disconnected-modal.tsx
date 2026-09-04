@@ -27,7 +27,7 @@ export default function InstanceDisconnectedModal(props: InstanceDisconnectedMod
               </Dialog.Description>
             </div>
 
-            <div class="rounded-lg border border-base bg-surface-secondary p-4 text-sm text-secondary">
+            <div class="border border-base bg-surface-secondary p-4 text-sm text-secondary">
               <p class="font-medium text-primary">{t("instanceDisconnected.details.title")}</p>
               <p class="mt-2 text-secondary">{reasonLabel()}</p>
               {props.folder && (

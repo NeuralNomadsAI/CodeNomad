@@ -8,6 +8,7 @@ import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -60,6 +61,34 @@ describe("OpenCode data projection", () => {
         data: { form: { id: "form", sessionID: "session", title: "Input", fields: [] } },
       } as any)
       assert.equal(formData.session.form.list("session")?.[0]?.id, "form")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("projects streamed-step timing and authoritative assistant content replacements", () => {
+    const instanceId = "opencode-data-content-update"
+    const sessionId = "session"
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created: number) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.text.started", base, 2)
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "draft" }, 3)
+      apply("session.step.streamed", base, 4)
+      const data = apply("session.message.content.updated", {
+        sessionID: sessionId,
+        messageID: "assistant",
+        content: [{ type: "text", text: "edited" }],
+      }, 5)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "edited")
+      assert.equal(store.getMessageInfo("assistant")?.time?.streamed, 4)
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -925,6 +954,7 @@ describe("OpenCode data projection", () => {
   it("processes a rotation-boundary side-effect event exactly once", async () => {
     const instanceId = "opencode-data-single-side-effect"
     const sessionId = "session"
+    sseManager.seedStatus(instanceId, "connected")
     const client = getRootClient(instanceId)
     let reads = 0
     ;(client.session as any).message = async ({ messageID }: { messageID: string }) => {

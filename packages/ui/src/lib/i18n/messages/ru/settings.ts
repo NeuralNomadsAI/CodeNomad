@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} непрочитанных",
   "toastHistory.viewSettings": "Настройки",
   "toastHistory.close": "Закрыть",
+  "toastHistory.openLinkError": "Не удалось открыть ссылку",
   "toastHistory.deleteItem": "Удалить уведомление",
 
   // Info Section

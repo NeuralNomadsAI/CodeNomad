@@ -10,6 +10,7 @@ import {
   contrastRatio,
   normalizeColorScheme,
   textOnColor,
+  toColorSchemeMergePatch,
   validateColorSchemeColors,
   type ColorSchemeTarget,
 } from "./theme-scheme.ts"
@@ -68,6 +69,21 @@ describe("normalizeColorScheme", () => {
       appearance: "light",
       colors,
     })
+  })
+})
+
+describe("toColorSchemeMergePatch", () => {
+  it("clears stale colors when returning to the system palette", () => {
+    assert.deepEqual(toColorSchemeMergePatch(normalizeColorScheme("system")), {
+      id: "system",
+      appearance: "system",
+      colors: null,
+    })
+  })
+
+  it("keeps all colors for explicit palettes", () => {
+    const classic = normalizeColorScheme("classic")
+    assert.deepEqual(toColorSchemeMergePatch(classic), classic)
   })
 })
 
@@ -188,8 +204,9 @@ describe("applyColorScheme", () => {
       assert.equal(root.properties.get("--tab-active-bg"), scheme.colors?.surfaceBase, id)
       assert.equal(root.properties.get("--tab-inactive-bg"), scheme.colors?.surfaceSecondary, id)
       assert.equal(root.properties.get("--message-user-border"), scheme.colors?.userAccent, id)
+      assert.equal(root.properties.get("--message-user-bg"), scheme.colors?.surfaceSecondary, id)
       assert.equal(root.properties.get("--message-assistant-border"), scheme.colors?.agentAccent, id)
-      assert.notEqual(root.properties.get("--message-assistant-bg"), "#212529", id)
+      assert.equal(root.properties.get("--message-assistant-bg"), scheme.colors?.surfaceBase, id)
     }
   })
 })

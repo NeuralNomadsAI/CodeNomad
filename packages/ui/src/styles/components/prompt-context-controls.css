@@ -1,0 +1,68 @@
+.prompt-context-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.35fr) minmax(0, 1fr);
+  min-width: 0;
+  width: 100%;
+}
+
+.prompt-context-controls .sidebar-selector,
+.prompt-context-controls .selector-trigger,
+.prompt-context-controls [data-model-selector-control],
+.prompt-context-controls [data-thinking-selector-control] {
+  min-width: 0;
+  width: 100%;
+}
+
+.prompt-context-controls .selector-trigger {
+  min-height: 28px;
+  padding-inline: var(--space-sm);
+  border: 0;
+  border-inline-end: 1px solid var(--border-divider);
+  background-color: transparent;
+}
+
+.prompt-context-controls .sidebar-selector:last-child .selector-trigger {
+  border-inline-end: 0;
+}
+
+.prompt-context-controls .selector-trigger:hover {
+  background-color: var(--surface-interactive-hover);
+}
+
+.prompt-context-controls .selector-trigger:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.prompt-context-controls .selector-trigger-primary {
+  font-size: var(--font-size-xs);
+}
+
+.prompt-context-controls .selector-trigger-icon {
+  margin-inline-start: auto;
+}
+
+@container prompt-composer (max-width: 480px) {
+  .prompt-context-controls .session-sidebar-selector-prefix {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@container prompt-composer (max-width: 360px) {
+  .prompt-context-controls .selector-trigger {
+    padding-inline: var(--space-xs);
+  }
+}
+
+@media (pointer: coarse) {
+  .prompt-context-controls .selector-trigger {
+    min-height: var(--touch-target-size);
+  }
+}

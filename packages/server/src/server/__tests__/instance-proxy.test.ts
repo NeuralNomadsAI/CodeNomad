@@ -130,7 +130,7 @@ async function harness(
       return canonical.includes("/worktree") ? "workspace:worktree" : "workspace:root"
     },
     getServicePathForPath: async (_id, candidate) => {
-      assert.ok(pathOwnershipChecks.includes(candidate), "prompt path must be ownership-checked before translation")
+      assert.ok(pathOwnershipChecks.includes(candidate), "path must be ownership-checked before translation")
       servicePathCalls.push(candidate)
       return pathMappings[candidate] ?? candidate
     },
@@ -187,8 +187,13 @@ describe("instance proxy location enforcement", () => {
       method: "GET",
       url: "/workspaces/workspace/instance/api/session?directory=%2Fother",
     })
+    const activationResponse = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/plugin/await-activation?location%5Bdirectory%5D=%2Fother",
+    })
     assert.equal(bodyResponse.statusCode, 403)
     assert.equal(queryResponse.statusCode, 403)
+    assert.equal(activationResponse.statusCode, 403)
     assert.equal(requestCount(), 0)
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
   })
@@ -686,6 +691,9 @@ describe("instance proxy location enforcement", () => {
     })).statusCode, 403)
     assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/permission/saved" })).statusCode, 403)
     assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/permission/saved/global-rule" })).statusCode, 403)
+    for (const route of ["plugin/check", "plugin/update", "rpc/plugin/method"]) {
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}` })).statusCode, 403)
+    }
     assert.equal(requestCount(), 0)
   })
 
@@ -701,6 +709,7 @@ describe("instance proxy location enforcement", () => {
       ["GET", "/workspaces/workspace/instance/api/reference"],
       ["GET", "/workspaces/workspace/instance/api/mcp/resource"],
       ["GET", "/workspaces/workspace/instance/api/websearch/provider"],
+      ["POST", "/workspaces/workspace/instance/api/plugin/await-activation"],
       ["DELETE", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/steer"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/queue"],
@@ -771,6 +780,59 @@ describe("instance proxy location enforcement", () => {
     ])
     assert.deepEqual(servicePathCalls, Object.keys(mappings))
     assert.equal(requestCount(), 1)
+  })
+
+  it("bounds filesystem list targets to owned worktrees before translating them", async () => {
+    const mappings = {
+      "/repo/sibling": "/home/dev/repo/sibling",
+      "/repo/worktree/src": "/home/dev/worktree/src",
+    }
+    const { app, servicePathCalls, requestCount } = await harness(
+      "/repo/worktree",
+      {},
+      {},
+      "/repo",
+      "/repo",
+      mappings,
+    )
+
+    const owned = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/fs/list?location%5Bdirectory%5D=%2Frepo%2Fworktree&path=src",
+    })
+    assert.equal(owned.statusCode, 200)
+    const upstreamUrl = new URL(JSON.parse(owned.body).url, "http://upstream")
+    assert.equal(upstreamUrl.pathname, "/api/fs/list")
+    assert.equal(upstreamUrl.searchParams.get("location[directory]"), "/repo/worktree")
+    assert.equal(upstreamUrl.searchParams.get("path"), "/home/dev/worktree/src")
+    assert.deepEqual(servicePathCalls, ["/repo/worktree/src"])
+    assert.equal(requestCount(), 1)
+
+    const sibling = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/fs/list?location%5Bdirectory%5D=%2Frepo%2Fworktree&path=..%2Fsibling",
+    })
+    assert.equal(sibling.statusCode, 200)
+    assert.equal(new URL(JSON.parse(sibling.body).url, "http://upstream").searchParams.get("path"), "/home/dev/repo/sibling")
+
+    for (const pathValue of ["../../../other", "/other"]) {
+      const foreign = await app.inject({
+        method: "GET",
+        url: `/workspaces/workspace/instance/api/fs/list?path=${encodeURIComponent(pathValue)}`,
+      })
+      assert.equal(foreign.statusCode, 403)
+    }
+    const duplicate = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/fs/list?path=src&path=test",
+    })
+    assert.equal(duplicate.statusCode, 400)
+    const nul = await app.inject({
+      method: "GET",
+      url: "/workspaces/workspace/instance/api/fs/list?path=src%00secret",
+    })
+    assert.equal(nul.statusCode, 400)
+    assert.equal(requestCount(), 2)
   })
 
   it("defaults and validates only schema-defined imported session locations", async () => {

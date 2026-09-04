@@ -6,7 +6,7 @@
   align-items: center;
   gap: 0.25rem;
   padding: 0.25rem 0.5rem;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid var(--session-status-permission-fg);
   background-color: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);
@@ -86,7 +86,7 @@
   min-width: 1.5rem;
   height: 1.5rem;
   padding: 0 0.4rem;
-  border-radius: 9999px;
+  border-radius: 0;
   background: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);
   border: 1px solid var(--session-status-permission-fg);
@@ -169,7 +169,7 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   padding: 0.1rem 0.4rem;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid var(--session-status-permission-fg);
   background: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);

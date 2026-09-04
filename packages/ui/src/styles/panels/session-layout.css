@@ -345,17 +345,6 @@
   @apply flex flex-col gap-1 w-full;
 }
 
-.session-sidebar-selector-hints {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-evenly;
-  width: 100%;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
 .session-toolbar .session-header-hints {
   min-width: 0;
   flex-shrink: 1;

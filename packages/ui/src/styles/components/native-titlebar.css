@@ -119,3 +119,9 @@
     width: 40px;
   }
 }
+
+@media (max-width: 360px) {
+  .native-titlebar-menu-button {
+    padding-inline: 2px;
+  }
+}

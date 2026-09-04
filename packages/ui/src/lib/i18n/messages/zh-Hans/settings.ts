@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} 条未读",
   "toastHistory.viewSettings": "设置",
   "toastHistory.close": "关闭",
+  "toastHistory.openLinkError": "无法打开链接",
   "toastHistory.deleteItem": "删除通知",
 
   // Info Section

@@ -428,7 +428,10 @@ function runPrimary(firstIntent: LaunchIntent) {
       preferencesWindows.current()?.close()
       return
     }
-    if (preferencesWindows.reuse(request)) return
+    if (preferencesWindows.reuse(request)) {
+      await clientState.setPreferences(request)
+      return
+    }
     if (!backendTargetUrl) throw new Error("Local CodeNomad server is unavailable")
     const window = new BrowserWindow({
       width: 1100, height: 760, minWidth: 760, minHeight: 560,

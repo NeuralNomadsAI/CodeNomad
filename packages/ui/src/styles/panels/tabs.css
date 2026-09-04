@@ -302,7 +302,8 @@
   @apply inline-flex items-center gap-2 px-3 py-1.5 max-w-[150px] transition-colors text-sm;
   font-family: var(--font-family-sans);
   outline: none;
-  border-bottom: 2px solid transparent;
+  border: 0;
+  border-inline-end: 1px solid var(--border-divider);
 }
 
 .session-tab-base:focus-visible {
@@ -313,7 +314,6 @@
 
 .session-tab-active {
   background-color: var(--session-tab-active-bg);
-  border-bottom-color: var(--accent-primary);
   color: var(--session-tab-active-text);
   font-weight: var(--font-weight-medium);
 }

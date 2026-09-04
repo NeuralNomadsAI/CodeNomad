@@ -112,6 +112,8 @@ describe("voice instruction sync", () => {
       text: "",
       delivery: "steer",
     })
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.generationRecovery, undefined)
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
   })
 
   it("removes a stale instruction before a shell command", async () => {

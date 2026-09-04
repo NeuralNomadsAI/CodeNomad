@@ -10,7 +10,7 @@ interface ContextUsagePanelProps {
   class?: string
 }
 
-const chipClass = "inline-flex items-center gap-1 rounded-full border border-base px-2 py-0.5 text-xs text-primary"
+const chipClass = "inline-flex items-center gap-1 border border-base px-2 py-0.5 text-xs text-primary"
 const chipLabelClass = "uppercase text-[10px] tracking-wide text-muted"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {

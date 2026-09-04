@@ -14,6 +14,7 @@ import {
   getPrimaryPointerDragDirection,
   ScrollRestoreTokenGuard,
   shouldAdvanceBottomPin,
+  shouldNavigateAtBoundary,
   VirtualScrollController,
   isAtBottom,
   isAutoFollowing,
@@ -206,6 +207,41 @@ describe("virtual follow behavior", () => {
     assert.equal(shouldAdvanceBottomPin(2400, 2200), false)
     assert.equal(shouldAdvanceBottomPin(2400, 2401), false)
     assert.equal(shouldAdvanceBottomPin(2400, 2500), true)
+  })
+
+  it("restarts bottom settlement when Virtua discovers a later maximum", () => {
+    let state: { stableFrames: number; lastMaxOffset: number | null; settled?: boolean } = {
+      stableFrames: 0,
+      lastMaxOffset: null,
+    }
+    for (let frame = 0; frame < 7; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 24_000, requiredStableFrames: 8 })
+      assert.equal(state.settled, false)
+    }
+
+    state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    assert.deepEqual(state, { stableFrames: 0, lastMaxOffset: 26_000, settled: false })
+    for (let frame = 0; frame < 8; frame += 1) {
+      state = advanceBottomPinSettlement(state, { ready: true, maxOffset: 26_000, requiredStableFrames: 8 })
+    }
+    assert.equal(state.settled, true)
+  })
+
+  it("leaves nested scroll ownership with a descendant that can consume it", () => {
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "up"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 20, scrollHeight: 500, clientHeight: 100 }, "down"), true)
+    assert.equal(canScrollInDirection({ scrollTop: 0, scrollHeight: 500, clientHeight: 100 }, "up"), false)
+    assert.equal(canScrollInDirection({ scrollTop: 400, scrollHeight: 500, clientHeight: 100 }, "down"), false)
+  })
+
+  it("requires fresh matching user intent before paging at a virtual boundary", () => {
+    const base = { atBoundary: true, restoring: false, programmatic: false, hasFreshIntent: true, intent: "up" as const, direction: "up" as const }
+    assert.equal(shouldNavigateAtBoundary(base), true)
+    assert.equal(shouldNavigateAtBoundary({ ...base, hasFreshIntent: false }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, restoring: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, programmatic: true }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, intent: "down" }), false)
+    assert.equal(shouldNavigateAtBoundary({ ...base, atBoundary: false }), false)
   })
 
   it("keeps the timeline viewport bottom anchored when its height changes", () => {

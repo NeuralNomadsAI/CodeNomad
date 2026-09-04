@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} לא נקראו",
   "toastHistory.viewSettings": "הגדרות",
   "toastHistory.close": "סגור",
+  "toastHistory.openLinkError": "לא ניתן לפתוח את הקישור",
   "toastHistory.deleteItem": "מחק התראה",
 
   // Info Section

@@ -12,7 +12,7 @@
 }
 
 .message-layout--with-timeline {
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 28px;
 }
 
 .session-center-column[data-session-header-density="4"] .message-layout--with-timeline {
@@ -37,7 +37,7 @@
 }
 
 .message-timeline-sidebar {
-  width: 40px;
+  width: 28px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -68,7 +68,7 @@
 
 .message-timeline-segment {
   width: 100%;
-  min-height: 1.5rem;
+  min-height: 1.25rem;
   border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
@@ -76,7 +76,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
+  font-size: 0.625rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -112,15 +112,15 @@
 
 .message-timeline-segment-active {
   opacity: 1;
-  border-color: var(--accent-primary);
-  background-color: color-mix(in oklab, var(--accent-primary) 14%, var(--surface-secondary));
+  border-color: var(--border-strong);
+  background-color: var(--selection-neutral-strong-bg);
 }
 
 .message-timeline-segment:hover,
 .message-timeline-segment:focus-visible,
 .message-timeline-segment:active {
   opacity: 1;
-  transform: translateY(-1px);
+  transform: none;
   outline: none;
 }
 
@@ -183,8 +183,8 @@
 }
 
 .message-timeline-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 12px;
+  height: 12px;
 }
 
 .message-timeline-tooltip {
@@ -198,7 +198,7 @@
   width: 360px;
   max-height: 420px;
   overflow: auto;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow-strong);
@@ -234,4 +234,18 @@
   color: #111827 !important;
   box-shadow: 0 0 0 2px #ca8a04, 0 0 0 4px color-mix(in oklab, #facc15 34%, transparent) !important;
   transform: none !important;
+}
+
+@media (pointer: coarse) {
+  .message-layout--with-timeline {
+    grid-template-columns: minmax(0, 1fr) var(--touch-target-size);
+  }
+
+  .message-timeline-sidebar {
+    width: var(--touch-target-size);
+  }
+
+  .message-timeline-segment {
+    min-height: var(--touch-target-size);
+  }
 }

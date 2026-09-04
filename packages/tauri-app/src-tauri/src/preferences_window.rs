@@ -212,7 +212,13 @@ pub(crate) async fn open_preferences_window(
     toggle: Option<bool>,
 ) -> Result<(), String> {
     crate::require_local_app_window(&window, &app_state)?;
-    open_preferences(&app, &app_state, &preferences, request)
+    open_preferences(
+        &app,
+        &app_state,
+        &preferences,
+        request,
+        toggle.unwrap_or(false),
+    )
 }
 
 fn open_preferences(
@@ -220,6 +226,7 @@ fn open_preferences(
     app_state: &AppState,
     preferences: &PreferencesWindow,
     request: PreferencesRequest,
+    toggle: bool,
 ) -> Result<(), String> {
     let request = validate_request(request)?;
     let _operation = preferences
@@ -227,10 +234,12 @@ fn open_preferences(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if let Some(existing) = app.get_webview_window(LABEL) {
-        if toggle.unwrap_or(false) {
+        if toggle {
             existing.close().map_err(|error| error.to_string())?;
             return Ok(());
         }
+        app.state::<crate::client_state::ClientState>()
+            .set_preferences(Some(request.clone()))?;
         let renderer_ready = preferences
             .state
             .lock()
@@ -315,7 +324,7 @@ pub(crate) fn navigate_backend(app: &AppHandle) {
         {
             let app_state = app.state::<AppState>();
             let preferences = app.state::<PreferencesWindow>();
-            if let Err(error) = open_preferences(app, &app_state, &preferences, request) {
+            if let Err(error) = open_preferences(app, &app_state, &preferences, request, false) {
                 eprintln!("[tauri] failed to restore preferences window: {error}");
             }
         }

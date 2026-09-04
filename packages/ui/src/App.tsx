@@ -698,13 +698,13 @@ const App: Component = () => {
                </div>
 
                <div class={`flex flex-col gap-4 ${launchErrorMessage() ? "flex-1 min-h-0" : ""}`}>
-                 <div class="rounded-lg border border-base bg-surface-secondary p-4 flex-shrink-0">
+                 <div class="border border-base bg-surface-secondary p-4 flex-shrink-0">
                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                    <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
                  </div>
 
                  <Show when={launchErrorMessage()}>
-                   <div class="rounded-lg border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
+                   <div class="border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
                      <p class="text-xs font-medium text-muted uppercase tracking-wide">{t("app.launchError.errorOutputLabel")}</p>
                      <pre class="text-sm font-mono text-primary whitespace-pre-wrap break-words overflow-auto flex-1 min-h-0">{launchErrorMessage()}</pre>
                    </div>

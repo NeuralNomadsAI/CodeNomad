@@ -37,6 +37,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overf
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
+import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
 import { activeInterruption, getPermissionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
@@ -644,20 +645,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
 
-   const keyboardShortcuts = createMemo(() =>
-     [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
-       (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
-     ),
-   )
+  const keyboardShortcuts = createMemo(() =>
+    [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
+      (shortcut): shortcut is KeyboardShortcut => Boolean(shortcut),
+    ),
+  )
 
-   useSessionSidebarRequests({
-     instanceId: () => props.instance.id,
-     sidebarContentEl: leftDrawerContentEl,
-     leftPinned,
-     leftOpen,
-     setLeftOpen,
-     measureDrawerHost,
-   })
+  useSessionSidebarRequests({
+    instanceId: () => props.instance.id,
+    activeSessionId: activeSessionIdForInstance,
+    sidebarContentEl: leftDrawerContentEl,
+    selectorContentEl: sessionCenterEl,
+    leftPinned,
+    leftOpen,
+    setLeftOpen,
+    measureDrawerHost,
+  })
 
   const { cachedSessionIds } = useSessionCache({
     instanceId: () => props.instance.id,
@@ -722,19 +725,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instanceId={props.instance.id}
             threads={sessionThreads}
             activeSessionId={activeSessionIdForInstance}
-            activeSession={activeSessionForInstance}
-            draftAgent={draftAgent}
-            draftModel={draftModel}
             showSearch={showSessionSearch}
             onToggleSearch={() => setShowSessionSearch((current) => !current)}
             keyboardShortcuts={keyboardShortcuts}
             drawerState={leftDrawerState}
             onSelectSession={handleSidebarSessionSelect}
             onNewSession={props.onNewSession}
-            onSidebarAgentChange={props.handleSidebarAgentChange}
-            onSidebarModelChange={props.handleSidebarModelChange}
-            onDraftAgentChange={handleDraftAgentChange}
-            onDraftModelChange={handleDraftModelChange}
             onCloseLeftDrawer={closeLeftDrawer}
             setContentEl={setLeftDrawerContentEl}
           />
@@ -757,19 +753,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instanceId={props.instance.id}
           threads={sessionThreads}
           activeSessionId={activeSessionIdForInstance}
-          activeSession={activeSessionForInstance}
-          draftAgent={draftAgent}
-          draftModel={draftModel}
           showSearch={showSessionSearch}
           onToggleSearch={() => setShowSessionSearch((current) => !current)}
           keyboardShortcuts={keyboardShortcuts}
           drawerState={leftDrawerState}
           onSelectSession={handleSidebarSessionSelect}
           onNewSession={props.onNewSession}
-          onSidebarAgentChange={props.handleSidebarAgentChange}
-          onSidebarModelChange={props.handleSidebarModelChange}
-          onDraftAgentChange={handleDraftAgentChange}
-          onDraftModelChange={handleDraftModelChange}
           onCloseLeftDrawer={closeLeftDrawer}
           setContentEl={setLeftDrawerContentEl}
         />
@@ -1177,6 +1166,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onCommand={handleFirstPromptCommand}
                       onRunShell={handleFirstPromptShell}
                       escapeInDebounce={props.escapeInDebounce}
+                      footerControls={
+                        <PromptContextControls
+                          instanceId={props.instance.id}
+                          sessionId={NO_SESSION_DRAFT_SESSION_ID}
+                          currentAgent={draftAgent()}
+                          currentModel={draftModel()}
+                          onAgentChange={handleDraftAgentChange}
+                          onModelChange={handleDraftModelChange}
+                        />
+                      }
                       registerPromptInputApi={registerDraftPromptInputApi}
                     />
                   </div>
@@ -1212,6 +1211,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             onSidebarToggle={() => setLeftOpen(true)}
                             forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                             isActive={isActive()}
+                            onAgentChange={(agent) => props.handleSidebarAgentChange(sessionId, agent)}
+                            onModelChange={(model) => props.handleSidebarModelChange(sessionId, model)}
                           />
                         </Show>
                       </div>

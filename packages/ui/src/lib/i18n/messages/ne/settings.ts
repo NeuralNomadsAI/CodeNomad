@@ -533,6 +533,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} नपढिएको",
   "toastHistory.viewSettings": "सेटिङहरू",
   "toastHistory.close": "बन्द गर्नुहोस्",
+  "toastHistory.openLinkError": "लिङ्क खोल्न सकिएन",
   "toastHistory.deleteItem": "सूचना मेटाउनुहोस्",
 
   "settings.section.info.title": "बारेमा",

@@ -254,11 +254,40 @@
 
 .tool-call-header-status {
   @apply inline-flex items-center justify-center;
-  font-size: 0.95rem;
+  gap: var(--space-xs);
+  margin-inline-start: auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
-  width: 1.25rem;
-  height: 1.25rem;
+  min-height: 1.25rem;
   flex: 0 0 auto;
+}
+
+.tool-call-header-status-icon {
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-call-header-status-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tool-call-header-status-label {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tool-call-header-status[data-status="completed"] {
+  color: var(--status-success);
+}
+
+.tool-call-header-status[data-status="running"] {
+  color: var(--status-warning);
+}
+
+.tool-call-header-status[data-status="error"] {
+  color: var(--status-error);
 }
 
 .tool-call-header-action {
@@ -551,7 +580,7 @@
   width: 1.6rem;
   height: 1.6rem;
   border: none;
-  border-radius: 0.25rem;
+  border-radius: 0;
   background-color: transparent;
   color: var(--text-secondary);
 }
@@ -567,7 +596,7 @@
 }
 
 .tool-call-diff-mode-button {
-  @apply border text-xs font-semibold px-3 py-1 rounded transition-all duration-150;
+  @apply border text-xs font-semibold px-3 py-1 transition-all duration-150;
   border-color: var(--tool-call-border-color, var(--border-base));
   background-color: transparent;
   color: var(--text-secondary);
@@ -632,7 +661,7 @@
   font-family: var(--font-family-mono);
   font-size: 12px;
   padding: 2px 6px;
-  border-radius: 0.375rem;
+  border-radius: 0;
   border: 1px solid var(--tool-call-border-color, var(--border-base));
   background-color: var(--surface-code);
   color: var(--text-primary);
@@ -644,7 +673,7 @@
   color: var(--text-primary);
   background-color: var(--surface-code);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
-  border-radius: 0.5rem;
+  border-radius: 0;
   padding: 0.5rem 0.75rem;
   word-break: break-word;
 }
@@ -663,7 +692,7 @@
   border: 1px solid var(--status-warning);
   color: var(--text-secondary);
   padding: 0.4rem 1.05rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
   font-size: 0.8rem;
   font-weight: var(--font-weight-medium);
   line-height: 1.15;
@@ -708,7 +737,7 @@
   resize: vertical;
   background-color: var(--surface-code);
   border: 1px solid var(--tool-call-border-color, var(--border-base));
-  border-radius: 0.5rem;
+  border-radius: 0;
   color: var(--text-primary);
   padding: 0.6rem 0.75rem;
   font-size: 0.85rem;
@@ -863,7 +892,7 @@
   justify-content: center;
   gap: 0;
   border: none;
-  border-radius: 0.25rem;
+  border-radius: 0;
   color: var(--text-secondary);
 }
 
@@ -931,7 +960,7 @@
 
 .tool-call-markdown::-webkit-scrollbar-thumb {
   background-color: var(--border-base);
-  border-radius: 4px;
+  border-radius: 0;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -1140,7 +1169,7 @@
 }
 
 .tool-call-action-button {
-  @apply border text-xs font-semibold px-3 py-1 rounded transition-colors h-8 flex items-center;
+  @apply border text-xs font-semibold px-3 py-1 transition-colors h-8 flex items-center;
   border-color: var(--tool-call-border-color, var(--border-base));
   color: var(--text-secondary);
   background-color: transparent;
@@ -1187,7 +1216,7 @@
   border-inline-start: 3px solid var(--status-error);
   padding: 12px;
   margin: 8px 0;
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--status-error);
   font-size: var(--font-size-xs);
 }

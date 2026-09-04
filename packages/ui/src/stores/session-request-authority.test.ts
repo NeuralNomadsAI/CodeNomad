@@ -5,7 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { getCommands } from "./commands.ts"
+import { fetchCommands, getCommands } from "./commands.ts"
 import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
@@ -71,6 +71,69 @@ function setup(instanceId: string) {
 }
 
 describe("session request authority", () => {
+  it("waits for plugin activation before loading every location catalog", async () => {
+    const instanceId = "catalog-plugin-activation"
+    const { client, cleanup } = setup(instanceId)
+    const activation = deferred<void>()
+    const calls = { activation: 0, agents: 0, providers: 0, models: 0, defaults: 0, commands: 0 }
+    ;(client as any).plugin = {
+      awaitActivation: async ({ location }: any) => {
+        calls.activation += 1
+        assert.deepEqual(location, { directory: "/work" })
+        await activation.promise
+      },
+    }
+    ;(client as any).agent = {
+      list: async () => {
+        calls.agents += 1
+        return { data: [
+          { id: "build", name: "Build", mode: "primary" },
+          { id: "plan", name: "Plan", mode: "primary" },
+        ] }
+      },
+    }
+    ;(client as any).provider = {
+      list: async () => {
+        calls.providers += 1
+        return { data: [{ id: "provider", name: "Provider" }] }
+      },
+    }
+    ;(client as any).model = {
+      list: async () => {
+        calls.models += 1
+        return { data: [{ id: "model", providerID: "provider", name: "Model", cost: [{}], limit: {}, variants: [] }] }
+      },
+      default: async () => {
+        calls.defaults += 1
+        return { data: null }
+      },
+    }
+    ;(client as any).command = {
+      list: async () => {
+        calls.commands += 1
+        return { data: [] }
+      },
+    }
+
+    try {
+      const location = { directory: "/work" }
+      const requests = [
+        fetchAgents(instanceId, location),
+        fetchProviders(instanceId, location),
+        fetchCommands(instanceId, client, location),
+      ]
+      await Promise.resolve()
+      assert.deepEqual(calls, { activation: 1, agents: 0, providers: 0, models: 0, defaults: 0, commands: 0 })
+
+      activation.resolve()
+      assert.deepEqual(await Promise.all(requests), [true, true, true])
+      assert.deepEqual(calls, { activation: 1, agents: 1, providers: 1, models: 1, defaults: 1, commands: 1 })
+    } finally {
+      activation.resolve()
+      cleanup()
+    }
+  })
+
   it("does not restore deleted search results or their parent chain", async () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)
@@ -1026,6 +1089,7 @@ describe("session request authority", () => {
     try {
       const first = fetchProviders(instanceId)
       const second = fetchProviders(instanceId)
+      await Promise.resolve()
       assert.deepEqual(calls, { provider: 1, model: 1, default: 1 })
       response.resolve()
       assert.deepEqual(await Promise.all([first, second]), [true, true])
@@ -1220,6 +1284,7 @@ describe("session request authority", () => {
       const firstRoot = fetchProviders(instanceId, { directory: "/work" })
       const otherLocation = fetchProviders(instanceId, { directory: "/other" })
       const returnedRoot = fetchProviders(instanceId, { directory: "/work" })
+      await Promise.resolve()
       assert.equal(calls, 2)
       other.resolve()
       assert.equal(await otherLocation, false)

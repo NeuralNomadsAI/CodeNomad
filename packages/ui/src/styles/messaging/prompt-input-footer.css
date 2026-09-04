@@ -1,0 +1,71 @@
+.prompt-input-footer {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 29px;
+  border-top: 1px solid var(--border-divider);
+  background-color: var(--surface-chrome);
+}
+
+.prompt-input-footer-context {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prompt-input-footer-context:empty {
+  display: none;
+}
+
+.prompt-input-footer-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding-inline: 2px;
+  border-inline-start: 1px solid var(--border-divider);
+}
+
+.prompt-input-footer .prompt-actions-menu,
+.prompt-input-footer .prompt-input-primary-actions {
+  position: static;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+}
+
+.prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
+.prompt-input-footer .stop-button,
+.prompt-input-footer .send-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 0;
+}
+
+@container prompt-composer (max-width: 360px) {
+  .prompt-input-footer {
+    flex-wrap: wrap;
+  }
+
+  .prompt-input-footer-context {
+    flex-basis: 100%;
+    border-bottom: 1px solid var(--border-divider);
+  }
+
+  .prompt-input-footer-actions {
+    width: 100%;
+    justify-content: flex-end;
+    border-inline-start: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
+  .prompt-input-footer .stop-button,
+  .prompt-input-footer .send-button {
+    width: var(--touch-target-size);
+    height: var(--touch-target-size);
+    min-width: var(--touch-target-size);
+  }
+}

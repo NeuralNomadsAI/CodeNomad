@@ -147,6 +147,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
   if (
     event.type === "session.execution.started" ||
     event.type === "session.step.started" ||
+    event.type === "session.step.streamed" ||
     event.type.startsWith("session.text.") ||
     event.type.startsWith("session.reasoning.") ||
     event.type.startsWith("session.tool.")
@@ -439,6 +440,7 @@ function handleSessionUpdate(
       idleSince: null,
       version: info.version || "0",
       projectID: (info as any).projectID ?? "",
+      metadata: info.metadata,
       cost: (info as any).cost ?? 0,
       tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       location: (info as any).location ?? { directory: instances().get(instanceId)?.folder ?? "" },
@@ -476,6 +478,7 @@ function handleSessionUpdate(
       ...existingSession,
       title: info.title || existingSession.title,
       parentId: info.parentID ?? existingSession.parentId,
+      metadata: info.metadata ?? existingSession.metadata,
       status: existingSession.status ?? "idle",
       retry: existingSession.retry ?? null,
       time: mergedTime,

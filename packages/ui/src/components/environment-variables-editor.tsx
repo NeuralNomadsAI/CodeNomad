@@ -84,7 +84,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     type="text"
                     value={key}
                     disabled={props.disabled}
-                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base rounded text-muted cursor-not-allowed"
+                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base text-muted cursor-not-allowed"
                     placeholder={t("envEditor.fields.name.placeholder")}
                     title={t("envEditor.fields.name.readOnlyTitle")}
                   />
@@ -93,7 +93,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     value={value}
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
-                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder={t("envEditor.fields.value.placeholder")}
                     autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
                     spellcheck={isSecureEnvVar(key) ? false : undefined}
@@ -103,7 +103,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                 <button
                   onClick={() => handleSecureToggle(key)}
                   disabled={props.disabled}
-                  class={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  class={`p-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     isSecureEnvVar(key)
                       ? "icon-accent-hover text-accent"
                       : "icon-muted icon-accent-hover"
@@ -136,7 +136,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewKey(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
@@ -145,7 +145,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewValue(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-base border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.value.placeholder")}
             autocomplete="new-password"
           />
@@ -153,7 +153,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
         <button
           onClick={() => setNewVarSecure(!newVarSecure())}
           disabled={props.disabled}
-          class={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+          class={`p-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
             newVarSecure()
               ? "icon-accent-hover text-accent"
               : "icon-muted icon-accent-hover"

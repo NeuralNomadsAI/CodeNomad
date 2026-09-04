@@ -43,10 +43,12 @@
 
 .prompt-input-wrapper {
   position: relative;
-  display: block;
+  display: flex;
+  flex-direction: column;
   min-height: 104px;
   padding: 0;
   background-color: var(--surface-base);
+  container: prompt-composer / inline-size;
 }
 
 .prompt-input-main {
@@ -64,24 +66,6 @@
 
 .prompt-input-wrapper[data-compact-auto="true"] .prompt-input-field-container {
   height: auto;
-}
-
-.prompt-input-primary-actions {
-  position: absolute;
-  inset-inline-end: calc(0.375rem + var(--scrollbar-size));
-  bottom: 0.375rem;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.prompt-actions-menu {
-  position: absolute;
-  top: 0.375rem;
-  inset-inline-end: calc(0.375rem + var(--scrollbar-size));
-  z-index: 5;
 }
 
 .prompt-actions-menu-trigger.action-overflow-trigger {
@@ -120,7 +104,7 @@
 .prompt-input {
   @apply w-full pt-2.5 text-sm resize-none outline-none transition-colors;
   padding-inline-start: 0.75rem;
-  padding-inline-end: calc(2.75rem + var(--scrollbar-size));
+  padding-inline-end: calc(0.75rem + var(--scrollbar-size));
   font-family: inherit;
   background-color: var(--surface-base);
   color: var(--text-primary);
@@ -147,7 +131,7 @@
   position: absolute;
   bottom: 0.5rem;
   inset-inline-start: 0.75rem;
-  inset-inline-end: calc(2.75rem + var(--scrollbar-size));
+  inset-inline-end: calc(0.75rem + var(--scrollbar-size));
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -279,10 +263,10 @@
 }
 
 .hint kbd {
-  @apply inline-block px-1.5 py-0.5 text-xs font-mono rounded mx-0.5;
+  @apply inline-block px-1.5 py-0.5 text-xs font-mono mx-0.5;
   background-color: var(--surface-secondary);
   border: 1px solid var(--border-base);
-  border-radius: 3px;
+  border-radius: 0;
 }
 
 .attachment-chip {
@@ -304,7 +288,7 @@
   padding: 8px;
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
-  border-radius: 10px;
+  border-radius: 0;
   box-shadow: var(--popover-shadow);
   z-index: 20;
 }
@@ -313,7 +297,7 @@
   display: block;
   max-width: 320px;
   max-height: 320px;
-  border-radius: 8px;
+  border-radius: 0;
   object-fit: contain;
 }
 
@@ -324,7 +308,7 @@
 .attachment-remove,
 .attachment-download,
 .attachment-expand {
-  @apply ml-0.5 flex h-4 w-4 items-center justify-center rounded transition-colors;
+  @apply ml-0.5 flex h-4 w-4 items-center justify-center transition-colors;
 }
 
 .attachment-remove:hover,
@@ -349,7 +333,7 @@
   .prompt-input {
     min-height: 0;
     padding: 0.5rem 0.75rem;
-    padding-inline-end: calc(2.75rem + var(--scrollbar-size));
+    padding-inline-end: calc(0.75rem + var(--scrollbar-size));
     padding-bottom: 0.75rem;
   }
 

@@ -509,6 +509,7 @@ export const settingsMessages = {
   "toastHistory.unread": "{count} okunmamış",
   "toastHistory.viewSettings": "Ayarlar",
   "toastHistory.close": "Kapat",
+  "toastHistory.openLinkError": "Bağlantı açılamadı",
   "toastHistory.deleteItem": "Bildirimi sil",
   "settings.section.info.title": "Hakkında",
   "settings.section.info.subtitle": "Sürümü ve çalışma zamanını görüntüleyin, tanılama bilgisi toplayın.",
