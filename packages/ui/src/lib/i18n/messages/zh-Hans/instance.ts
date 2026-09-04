@@ -262,6 +262,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "选择 OpenCode 可执行文件",
   "opencodeBinarySelector.dialog.description": "浏览 CLI 服务器暴露的文件。",
   "opencodeBinarySelector.validation.invalidBinary": "无效的 OpenCode 可执行文件",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad 需要 OpenCode V2。请安装并选择 opencode2 可执行文件。",
   "opencodeBinarySelector.validation.alreadyValidating": "正在验证中",
   "opencodeBinarySelector.display.systemPath": "{name}（系统 PATH）",
   "opencodeBinarySelector.versionLabel": "v{version}",

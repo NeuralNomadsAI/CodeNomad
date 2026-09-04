@@ -9,10 +9,18 @@ import {
   buildServiceLaunchSpec,
   buildWindowsSpawnSpec,
   parseWslUncPath,
+  probeOpenCodeBinary,
   resolveWslHostDirectory,
   resolveWslServiceDirectory,
   resolveWslWorkingDirectory,
 } from "../spawn"
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../../api-types"
+
+const legacyOpenCodeHelp = `\x1b[31mCommands:\x1b[0m
+  opencode completion          generate shell completion script
+  opencode [project]           start opencode tui [default]
+  opencode attach <url>        attach to a running opencode server
+`
 
 describe("parseWslUncPath", () => {
   it("parses WSL UNC paths into distro and linux path", () => {
@@ -257,6 +265,33 @@ describe("buildServiceLaunchSpec", () => {
 
     assert.deepEqual(launch, { kind: "wsl", distro: "Ubuntu", binary: "/home/dev/opencode" })
     assert.equal("binary" in launch, true)
+  })
+})
+
+describe("probeOpenCodeBinary", () => {
+  it("rejects a V1 binary whose root help exits successfully without a service command", () => {
+    const calls: string[][] = []
+    const result = probeOpenCodeBinary(process.execPath, (spec) => {
+      calls.push(spec.args)
+      return spec.args[0] === "--version"
+        ? { status: 0, stdout: "1.18.25\n", stderr: "" }
+        : { status: 0, stdout: "", stderr: legacyOpenCodeHelp }
+    })
+
+    assert.deepEqual(calls, [["--version"], ["service", "--help"]])
+    assert.deepEqual(result, {
+      valid: false,
+      version: "1.18.25",
+      errorCode: OPENCODE_V2_REQUIRED_ERROR_CODE,
+    })
+  })
+
+  it("accepts a binary that supports the service lifecycle", () => {
+    const result = probeOpenCodeBinary(process.execPath, (spec) => spec.args[0] === "--version"
+      ? { status: 0, stdout: "opencode2 v0.0.0-beta-18999\n", stderr: "" }
+      : { status: 0, stdout: "stopped\n", stderr: "" })
+
+    assert.deepEqual(result, { valid: true, version: "0.0.0-beta-18999" })
   })
 })
 

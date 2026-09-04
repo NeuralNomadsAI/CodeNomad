@@ -262,6 +262,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "OpenCode バイナリを選択",
   "opencodeBinarySelector.dialog.description": "CLI サーバーから公開されているファイルを参照します。",
   "opencodeBinarySelector.validation.invalidBinary": "OpenCode バイナリが無効です",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad には OpenCode V2 が必要です。opencode2 バイナリをインストールして選択してください。",
   "opencodeBinarySelector.validation.alreadyValidating": "すでに検証中です",
   "opencodeBinarySelector.display.systemPath": "{name} (システム PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",

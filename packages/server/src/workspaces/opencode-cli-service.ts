@@ -1,7 +1,9 @@
 import { execFile as nodeExecFile } from "node:child_process"
 import { Service, type Endpoint } from "@opencode-ai/client/service"
 
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../api-types"
 import { assertLoopbackServiceUrl } from "./service-state"
+import { isOpenCodeServiceCommandUnavailable } from "./opencode-cli-compatibility"
 import type { OpenCodeServiceLifecycle } from "./opencode-service"
 import type { SpawnSpec } from "./spawn"
 
@@ -95,6 +97,12 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       )
       return result.stdout
     } catch (error) {
+      const output = error && typeof error === "object"
+        ? error as { stdout?: unknown; stderr?: unknown }
+        : {}
+      if (isOpenCodeServiceCommandUnavailable(output.stdout, output.stderr)) {
+        throw new Error(`${OPENCODE_V2_REQUIRED_ERROR_CODE}: ${this.options.label} binary does not support the OpenCode V2 service lifecycle`)
+      }
       if (start || commandLabel === "service get password") {
         const operation = start ? "start" : "password retrieval"
         const code = safeNumericExecCode(error)

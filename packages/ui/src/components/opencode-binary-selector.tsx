@@ -1,13 +1,14 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { FolderOpen, Trash2, Check, AlertCircle, Loader2, Plus } from "lucide-solid"
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../../../server/src/api-types"
 import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-const log = getLogger("actions")
 
+const log = getLogger("actions")
 
 interface BinaryOption {
   path: string
@@ -111,7 +112,10 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       setValidating(true)
       setValidationError(null)
 
-      const result = await serverApi.validateBinary(path)
+      const response = await serverApi.validateBinary(path)
+      const result = response.errorCode === OPENCODE_V2_REQUIRED_ERROR_CODE
+        ? { ...response, error: t("opencodeBinarySelector.validation.v2Required") }
+        : response
 
       if (result.valid && result.version) {
         const updatedVersionInfo = new Map(versionInfo())
