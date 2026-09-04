@@ -109,7 +109,7 @@ Before deleting a Git worktree, CodeNomad now:
 8. Removes the Git worktree inside the same rollback boundary.
 9. Restores moved sessions if verification or deletion fails.
 
-Git status is hybrid: native `vcs.status` is augmented with CodeNomad server detail data. Selected-file diff, stage, unstage, and commit remain server operations. Although `beta-18866` exposes native worktree creation and removal, CodeNomad retains its server workflow for ownership fencing, session evacuation, verification, and rollback semantics.
+Git status is hybrid: native `vcs.status` is augmented with CodeNomad server detail data. Selected-file diff, stage, unstage, and commit remain server operations. Although `beta-18999` exposes native worktree creation and removal, CodeNomad retains its server workflow for ownership fencing, session evacuation, verification, and rollback semantics.
 
 ## Proxy and Security Boundaries
 
@@ -192,4 +192,4 @@ At the 2026-09-03 timeline stabilization head (`dea20996`):
 
 - The generated V2 client remains experimental. Review its current documentation, installed declarations, proxy/API parity, runtime health, and `/api/plugin` failures whenever the beta contract changes. The SDK documentation describes an alternative embedded host; CodeNomad uses the network client.
 - V1-style global plugins are outside the CodeNomad client migration. Under the reviewed V2 contract through `beta-18999`, the installed After Effects, Blender, Microsoft 365, Resolve, Unreal, Ponytail, and Gemini Auth integrations require independent migrations to a V2 definition with an `id` and `setup` or `effect`.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), `packages/server/node_modules/@opencode-ai/client/dist/promise/`, and `packages/ui/node_modules/@opencode-ai/client/dist/promise/`.
+- Upgrade references: the published npm `beta` artifacts, [OpenCode V2 documentation](https://opencode.ai/v2/docs/), [OpenCode V2 HTTP API](https://opencode.ai/v2/docs/api/), `packages/server/node_modules/@opencode-ai/client/dist/promise/`, and `packages/ui/node_modules/@opencode-ai/client/dist/promise/`. Public GitHub releases may still describe V1 and are not a V2 compatibility authority.
