@@ -16,7 +16,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -199,12 +199,13 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const groups = Array.from(new Set(record.partIds.flatMap((partId) => {
+    const displayPartIds = getRecordDisplayPartIds(record)
+    const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
     }))).join(";")
     const pendingForms = pendingFormToolTargets()
-    const tools = record.partIds.flatMap((partId) => {
+    const tools = displayPartIds.flatMap((partId) => {
       const part = record.parts[partId]?.data
       if (part?.type !== "tool") return []
       const pending = Boolean(

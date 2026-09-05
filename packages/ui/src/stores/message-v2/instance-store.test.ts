@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
-import { buildRecordDisplayData, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
+import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
 
 it("keeps the beginning and final response when bounding message parts", () => {
@@ -17,6 +17,15 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(data.orderedParts[0]?.id, "part-0")
   assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
   assert.equal(data.truncated, true)
+
+  const displayPartIds = getRecordDisplayPartIds({
+    id: "message", sessionId: "session", role: "assistant", status: "complete",
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: {},
+  })
+  assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
+  assert.equal(displayPartIds[0], "part-0")
+  assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
 })
 
 describe("message-v2 permission state", () => {

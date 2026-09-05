@@ -21,6 +21,15 @@ function makeCacheKey(instanceId: string, messageId: string) {
   return `${instanceId}:${messageId}`
 }
 
+export function getRecordDisplayPartIds(record: MessageRecord): readonly string[] {
+  if (record.partIds.length <= MESSAGE_PART_DISPLAY_LIMIT) return record.partIds
+  const headCount = Math.floor(MESSAGE_PART_DISPLAY_LIMIT / 2)
+  return [
+    ...record.partIds.slice(0, headCount),
+    ...record.partIds.slice(-(MESSAGE_PART_DISPLAY_LIMIT - headCount)),
+  ]
+}
+
 export function buildRecordDisplayData(instanceId: string, record: MessageRecord): RecordDisplayData {
   const cacheKey = makeCacheKey(instanceId, record.id)
   const cached = recordDisplayCache.get(cacheKey)
@@ -29,10 +38,7 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
   }
 
   const orderedParts: ClientPartWithRevision[] = []
-  const headCount = Math.floor(MESSAGE_PART_DISPLAY_LIMIT / 2)
-  const partIds = record.partIds.length > MESSAGE_PART_DISPLAY_LIMIT
-    ? [...record.partIds.slice(0, headCount), ...record.partIds.slice(-(MESSAGE_PART_DISPLAY_LIMIT - headCount))]
-    : record.partIds
+  const partIds = getRecordDisplayPartIds(record)
 
   for (const partId of partIds) {
     const entry = record.parts[partId]
