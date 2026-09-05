@@ -10,7 +10,6 @@ import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
 import KeyboardHint from "../../keyboard-hint"
-import WorktreeSelector from "../../worktree-selector"
 import { getLogger } from "../../../lib/logger"
 import { shouldMountSessionList } from "../../session-list-visibility"
 
@@ -116,14 +115,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
           />
         </Show>
 
-        <div class="session-sidebar-separator" />
-        <Show when={props.activeSessionId() && props.activeSessionId() !== "info"}>
-          <div class="session-sidebar-controls px-6 border-t border-base">
-            <div class="session-sidebar-selector-group">
-              <WorktreeSelector instanceId={props.instanceId} sessionId={props.activeSessionId() ?? ""} />
-            </div>
-          </div>
-        </Show>
       </div>
     </div>
   )
