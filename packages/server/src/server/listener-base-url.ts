@@ -13,6 +13,12 @@ export interface ResolvePluginBaseUrlInput {
   remoteUrl?: string
 }
 
+export function resolvePreferredRemoteListener(
+  input: Pick<ResolvePluginBaseUrlInput, "httpStart" | "httpsStart">,
+): StartedListenerBaseUrlInput | null {
+  return input.httpsStart ?? input.httpStart ?? null
+}
+
 export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
   const loopbackListener = [input.httpStart, input.httpsStart].find((listener) => listener && acceptsLoopback(listener.bindHost))
   if (loopbackListener) {

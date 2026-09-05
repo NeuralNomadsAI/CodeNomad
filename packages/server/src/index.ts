@@ -23,7 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
@@ -547,23 +547,24 @@ async function main() {
     throw new Error("No listeners started")
   }
 
-  const remoteStart = httpsStart ?? httpStart
-  const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
+  const httpListener = httpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: httpStart.port } : null
+  const httpsListener = httpsStart ? { protocol: "https" as const, bindHost: httpsBindHost, port: httpsStart.port } : null
+  const remoteListener = resolvePreferredRemoteListener({ httpStart: httpListener, httpsStart: httpsListener })
 
   let remoteUrl: string | undefined
   let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
-  if (remoteStart) {
-    let remoteHost = options.host
-    if (isWildcardHost(options.host)) {
-      const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+  if (remoteListener) {
+    let remoteHost = remoteListener.bindHost
+    if (isWildcardHost(remoteListener.bindHost)) {
+      const resolved = resolveRemoteAddresses({ host: remoteListener.bindHost, protocol: remoteListener.protocol, port: remoteListener.port })
       remoteAddresses = resolved.userVisible
-      const loopbackHost = options.host === "0.0.0.0" ? "127.0.0.1" : "::1"
-      remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://${formatHostForUrl(loopbackHost)}:${remoteStart.port}`
-    } else if (options.host === "127.0.0.1") {
+      const loopbackHost = remoteListener.bindHost === "0.0.0.0" ? "127.0.0.1" : "::1"
+      remoteUrl = resolved.primaryRemoteUrl ?? `${remoteListener.protocol}://${formatHostForUrl(loopbackHost)}:${remoteListener.port}`
+    } else if (remoteListener.bindHost === "127.0.0.1") {
       remoteHost = "localhost"
     }
     if (!remoteUrl) {
-      remoteUrl = `${remoteProtocol}://${formatHostForUrl(remoteHost)}:${remoteStart.port}`
+      remoteUrl = `${remoteListener.protocol}://${formatHostForUrl(remoteHost)}:${remoteListener.port}`
     }
   }
 
@@ -571,17 +572,17 @@ async function main() {
   // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
   // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
-    httpStart: visibleHttpStart ? { protocol: "http", bindHost: httpBindHost, port: visibleHttpStart.port } : null,
-    httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    httpStart: options.http ? httpListener : null,
+    httpsStart: httpsListener,
     remoteUrl,
   })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port
   serverMeta.remoteUrl = remoteUrl
-  serverMeta.remotePort = remoteStart?.port
-  serverMeta.host = options.host
-  serverMeta.listeningMode = isWildcardHost(options.host) || !isLoopbackHost(options.host) ? "all" : "local"
+  serverMeta.remotePort = remoteListener?.port
+  serverMeta.host = remoteListener?.bindHost ?? options.host
+  serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
   if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
@@ -600,7 +601,7 @@ async function main() {
   if (serverMeta.remotePort && remoteUrl) {
     serverMeta.addresses = remoteAddresses.length
       ? remoteAddresses
-      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+      : resolveNetworkAddresses({ host: serverMeta.host, protocol: remoteListener?.protocol ?? "http", port: serverMeta.remotePort })
   } else {
     serverMeta.addresses = []
   }

@@ -1,7 +1,17 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "../listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "../listener-base-url"
+
+describe("resolvePreferredRemoteListener", () => {
+  it("keeps the effective bind host paired with the preferred listener", () => {
+    const httpStart = { protocol: "http" as const, bindHost: "127.0.0.1", port: 9899 }
+    const httpsStart = { protocol: "https" as const, bindHost: "0.0.0.0", port: 9898 }
+
+    assert.deepEqual(resolvePreferredRemoteListener({ httpStart, httpsStart }), httpsStart)
+    assert.deepEqual(resolvePreferredRemoteListener({ httpStart, httpsStart: null }), httpStart)
+  })
+})
 
 describe("resolvePluginBaseUrl", () => {
   it("keeps loopback URLs for default local listeners", () => {
