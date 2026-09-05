@@ -1,4 +1,13 @@
 /* Button component styles */
+.MuiTouchRipple-root,
+.MuiTouchRipple-ripple,
+.MuiTouchRipple-child,
+.MuiSwitch-switchBase,
+.MuiSwitch-thumb,
+.MuiSwitch-track {
+  border-radius: 0 !important;
+}
+
 .button-primary,
 button.button-primary {
   @apply px-3 text-sm;

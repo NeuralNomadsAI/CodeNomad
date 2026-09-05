@@ -105,6 +105,9 @@
 
 .session-sidebar-header {
   @apply flex flex-col w-full;
+  flex: 0 0 var(--panel-header-height);
+  height: var(--panel-header-height);
+  min-height: var(--panel-header-height);
   gap: 6px;
   justify-content: center;
   padding: var(--space-sm) var(--space-md);
@@ -259,7 +262,7 @@
   flex-shrink: 0;
   gap: var(--space-sm);
   padding-block: calc(var(--space-xl) + var(--space-sm));
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-shade-light);
 }
 
 .session-sidebar-controls > * {
@@ -340,17 +343,6 @@
 
 .sidebar-selector {
   @apply flex flex-col gap-1 w-full;
-}
-
-.session-sidebar-selector-hints {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-evenly;
-  width: 100%;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
 }
 
 .session-toolbar .session-header-hints {
@@ -683,6 +675,7 @@
 .session-list-footer {
   @apply border-t;
   border-color: var(--border-base);
+  background-color: var(--surface-shade-light);
 }
 
 .session-new-button {

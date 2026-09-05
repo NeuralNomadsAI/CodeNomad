@@ -744,7 +744,7 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 rounded object-cover" />
+                      <img src={attachment.url} alt={name} class="h-5 w-5 object-cover" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <Show when={!attachment.url?.startsWith("file://")}>

@@ -83,11 +83,12 @@ import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery
 import { fetchCommands } from "./commands"
 import { toRequestLocation } from "./request-locations"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
+import { waitForPluginActivation } from "./plugin-activation"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
 const catalogLocations = new Map<string, string>()
-const catalogRefreshes = new Map<string, { key: string; promise: Promise<void> }>()
+const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
@@ -147,27 +148,40 @@ function catalogLocationKey(location: LocationRef): string {
   return `${location.directory}\0${location.workspaceID ?? ""}`
 }
 
-async function refreshSessionCatalog(instanceId: string): Promise<void> {
+async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  const client = instance.client
   const location = getActiveCatalogLocation(instanceId)
   const key = catalogLocationKey(location)
-  if (catalogLocations.get(instanceId) === key) return
+  if (!force && catalogLocations.get(instanceId) === key) return
   const existing = catalogRefreshes.get(instanceId)
-  if (existing?.key === key) return existing.promise
-  const promise = Promise.all([
-    fetchAgents(instanceId, location),
-    fetchProviders(instanceId, location),
-    fetchCommands(instanceId, instance.client, location),
-  ]).then((successes) => {
-    if (successes.every(Boolean) && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key) {
-      catalogLocations.set(instanceId, key)
-    }
-  }).finally(() => {
-    if (catalogRefreshes.get(instanceId)?.promise === promise) catalogRefreshes.delete(instanceId)
+  if (existing?.key === key) {
+    if (force) existing.pending = true
+    return existing.promise
+  }
+  const state = { key, promise: Promise.resolve(), pending: false }
+  state.promise = (async () => {
+    let refresh = force
+    do {
+      state.pending = false
+      const successes = await Promise.all([
+        fetchAgents(instanceId, location, refresh),
+        fetchProviders(instanceId, location, refresh),
+        fetchCommands(instanceId, client, location),
+      ])
+      if (successes.every(Boolean) && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key) {
+        catalogLocations.set(instanceId, key)
+      }
+      refresh = true
+    } while (state.pending
+      && catalogRefreshes.get(instanceId) === state
+      && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key)
+  })().finally(() => {
+    if (catalogRefreshes.get(instanceId) === state) catalogRefreshes.delete(instanceId)
   })
-  catalogRefreshes.set(instanceId, { key, promise })
-  return promise
+  catalogRefreshes.set(instanceId, state)
+  return state.promise
 }
 
 function beginSessionListRequest(instanceId: string): number {
@@ -779,6 +793,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     location: apiSession.location,
     projectID: apiSession.projectID,
     subpath: apiSession.subpath,
+    metadata: apiSession.metadata ?? existingSession?.metadata,
     time: {
       ...apiSession.time,
     },
@@ -1089,6 +1104,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
+    await waitForPluginActivation(rootClient, location)
     const response = await rootClient.agent.list({ location: requestLocation })
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
@@ -1163,6 +1179,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
     const request = { location: toRequestLocation(location) }
+    await waitForPluginActivation(rootClient, location)
     const [response, models, defaultModel] = await Promise.all([
       rootClient.provider.list(request),
       rootClient.model.list(request),

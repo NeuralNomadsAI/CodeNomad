@@ -924,7 +924,7 @@ fn process_start_identity(pid: u32) -> Option<String> {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &format!("(Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" -ErrorAction Stop).CreationDate.ToUniversalTime().Ticks"),
+            &format!("(Get-Process -Id {pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks"),
         ],
     )
     .map(|value| format!("win32:{value}"))

@@ -761,6 +761,25 @@ async function proxyWorkspaceRequest(args: {
     }
     translatedDirectories.set(directory, translated)
   }
+  const fileListPath = readFileListPath(targetUrl, request.method, requestLocations.directories[0] ?? workspace.path)
+  if (fileListPath.invalid) {
+    reply.code(400).send({ error: "Invalid filesystem path" })
+    return
+  }
+  if (fileListPath.candidate) {
+    if (!(await workspaceManager.ownsPath(workspaceId, fileListPath.candidate))) {
+      reply.code(403).send({ error: "Filesystem path does not belong to workspace" })
+      return
+    }
+    const translated = workspaceManager.getServicePathForPath
+      ? await workspaceManager.getServicePathForPath(workspaceId, fileListPath.candidate)
+      : fileListPath.candidate
+    if (!translated) {
+      reply.code(403).send({ error: "Filesystem path does not belong to workspace" })
+      return
+    }
+    targetUrl.searchParams.set("path", translated)
+  }
   const mutationIdentities = new Set<string>()
   if (request.method !== "GET" && request.method !== "HEAD") {
     for (const directory of requestLocations.directories) {
@@ -1012,6 +1031,30 @@ function readNativeCwd(
   else locations.invalid = true
 }
 
+function readFileListPath(
+  targetUrl: URL,
+  method: string,
+  defaultDirectory: string,
+): { candidate?: string; invalid: boolean } {
+  if (method !== "GET" || targetUrl.pathname.replace(/\/+$/, "") !== "/api/fs/list") {
+    return { invalid: false }
+  }
+  const values = targetUrl.searchParams.getAll("path")
+  if (values.length > 1) return { invalid: true }
+  const requested = values[0]?.trim() || "."
+  if (requested.includes("\0")) return { invalid: true }
+  const windowsBase = /^[A-Za-z]:[\\/]/.test(defaultDirectory) || /^[\\/]{2}[^\\/]/.test(defaultDirectory)
+  if (!windowsBase && path.win32.isAbsolute(requested) && !path.posix.isAbsolute(requested)) {
+    return { candidate: path.win32.normalize(requested), invalid: false }
+  }
+  return {
+    candidate: windowsBase
+      ? path.win32.resolve(defaultDirectory, requested)
+      : path.posix.resolve(defaultDirectory, requested),
+    invalid: false,
+  }
+}
+
 function sanitizeInstanceProxyRequestHeaders(
   headers: Record<string, string | string[] | undefined>,
   authorization: string | undefined,
@@ -1243,6 +1286,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
     ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider|reference|skill)$/],
+    ["POST", /^\/api\/plugin\/await-activation$/],
     ["GET", /^\/api\/(?:mcp\/resource|websearch\/provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],

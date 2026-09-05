@@ -138,7 +138,7 @@
     font-size: var(--font-size-sm);
     background-color: var(--surface-muted);
     border: 1px solid var(--border-base);
-    border-radius: 4px;
+    border-radius: 0;
     padding: 0.15em 0.35em;
   }
 
@@ -155,7 +155,7 @@
     background-color: var(--surface-code);
     color: var(--text-primary);
     border: 1px solid var(--border-base);
-    border-radius: 8px;
+    border-radius: 0;
     padding: 0.75rem;
     margin: 1rem 0;
     direction: ltr;
@@ -172,8 +172,8 @@
     background-color: var(--surface-muted);
     padding: 0.5rem 1rem;
     border-start-start-radius: 0;
-    border-start-end-radius: 8px;
-    border-end-end-radius: 8px;
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
     border-end-start-radius: 0;
   }
 

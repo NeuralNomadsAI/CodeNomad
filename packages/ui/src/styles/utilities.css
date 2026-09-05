@@ -176,6 +176,14 @@
   font-size: var(--icon-size);
 }
 
+@media (pointer: coarse) {
+  .panel-header-actions > button {
+    width: var(--touch-target-size);
+    height: var(--touch-target-size);
+    min-width: var(--touch-target-size);
+  }
+}
+
 .disclosure-chevron {
   flex: 0 0 auto;
   transition: transform 150ms ease;

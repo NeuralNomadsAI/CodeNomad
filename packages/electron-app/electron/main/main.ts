@@ -423,7 +423,11 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false): Promise<void> {
+    if (toggle && preferencesWindows.current()) {
+      preferencesWindows.current()?.close()
+      return
+    }
     if (preferencesWindows.reuse(request)) {
       await clientState.setPreferences(request)
       return

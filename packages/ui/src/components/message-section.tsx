@@ -1,5 +1,5 @@
 import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { ArrowUpDown, ChevronDown, ChevronUp, Pause, Search, X } from "lucide-solid"
+import { ChevronDown, ChevronUp, Search, X } from "lucide-solid"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
@@ -71,7 +71,7 @@ export interface MessageSectionProps {
 }
 
 export default function MessageSection(props: MessageSectionProps) {
-  const { preferences, updatePreferences } = useConfig()
+  const { preferences } = useConfig()
   const { locale, t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
@@ -345,14 +345,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const isActive = createMemo(() => props.isActive !== false)
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
-  const [scrollControlsOpen, setScrollControlsOpen] = createSignal(false)
-  const [scrollControlsHoverSuppressed, setScrollControlsHoverSuppressed] = createSignal(false)
   const scrollButtonsCount = createMemo(() => listState()?.scrollButtonsCount() ?? 0)
 
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
-  let scrollControlsRef: HTMLDivElement | undefined
-
   // Only preferences should force a follow-token re-anchor. Message/session
   // revision churn at the end of a turn (terminal updates, session idle, etc.)
   // should not trigger an immediate scroll-to-bottom.
@@ -498,44 +494,6 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!holdLongAssistantRepliesEnabled()) return null
     if (!streamingActive()) return null
     return streamingAssistantTextMessageId()
-  })
-
-  function toggleHoldLongAssistantReplies() {
-    updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
-  }
-
-  function closeScrollControls() {
-    setScrollControlsOpen(false)
-  }
-
-  function openScrollControlsFromTrigger(event: MouseEvent) {
-    event.preventDefault()
-    event.stopPropagation()
-    if (scrollControlsOpen()) return
-    setScrollControlsHoverSuppressed(false)
-    setScrollControlsOpen(true)
-  }
-
-  function runScrollControlAction(event: PointerEvent, action: () => void) {
-    event.preventDefault()
-    event.stopPropagation()
-    action()
-    setScrollControlsHoverSuppressed(false)
-    closeScrollControls()
-  }
-
-  createEffect(() => {
-    if (!scrollControlsOpen()) return
-    if (typeof document === "undefined") return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (target && scrollControlsRef?.contains(target)) return
-      closeScrollControls()
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown)
-    onCleanup(() => document.removeEventListener("pointerdown", handlePointerDown))
   })
 
   function isStreamingAssistantTextMessage(messageId: string | null | undefined) {
@@ -1183,77 +1141,30 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={registerListApi}
           registerState={(state) => setListState(state)}
-          renderControls={(state, api) => (
-            <div
-              ref={(el) => {
-                scrollControlsRef = el
-              }}
-              class="message-scroll-controls"
-              data-open={scrollControlsOpen() ? "true" : "false"}
-              data-hover-suppressed={scrollControlsHoverSuppressed() ? "true" : "false"}
-              onPointerLeave={(event) => {
-                if (event.pointerType === "mouse") setScrollControlsHoverSuppressed(false)
-              }}
-            >
-              <button
-                type="button"
-                class="message-scroll-button message-scroll-controls-trigger"
-                onClick={openScrollControlsFromTrigger}
-                aria-label={t("messageSection.scroll.showControlsAriaLabel")}
-                title={t("messageSection.scroll.showControlsAriaLabel")}
-              >
-                <ArrowUpDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
-              </button>
-
-              <div class="message-scroll-controls-expanded">
+          renderControls={(state) => (
+            <div class="message-scroll-controls">
+              <Show when={state.showScrollTopButton()}>
                 <button
                   type="button"
                   class="message-scroll-button"
-                  data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
-                  onPointerUp={(event) => runScrollControlAction(event, toggleHoldLongAssistantReplies)}
-                  aria-pressed={holdLongAssistantRepliesEnabled()}
-                  aria-label={
-                    holdLongAssistantRepliesEnabled()
-                      ? t("messageSection.scroll.disableHoldAriaLabel")
-                      : t("messageSection.scroll.enableHoldAriaLabel")
-                  }
-                  title={
-                    holdLongAssistantRepliesEnabled()
-                      ? t("messageSection.scroll.disableHoldAriaLabel")
-                      : t("messageSection.scroll.enableHoldAriaLabel")
-                  }
+                  onClick={() => void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true }))}
+                  aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                  title={t("messageSection.scroll.toFirstAriaLabel")}
                 >
-                  <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
+                  <ChevronUp class="message-scroll-icon w-4 h-4" aria-hidden="true" />
                 </button>
-                <Show when={state.showScrollTopButton()}>
-                  <button
-                    type="button"
-                    class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => {
-                      void pageWindow("oldest", (next) => next.scrollToTop({ immediate: true }))
-                    })}
-                    aria-label={t("messageSection.scroll.toFirstAriaLabel")}
-                  >
-                    <span class="message-scroll-icon" aria-hidden="true">
-                      ↑
-                    </span>
-                  </button>
-                </Show>
-                <Show when={state.showScrollBottomButton()}>
-                  <button
-                    type="button"
-                    class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => {
-                      void pageWindow("latest", (next) => next.scrollToBottom({ immediate: true }))
-                    })}
-                    aria-label={t("messageSection.scroll.toLatestAriaLabel")}
-                  >
-                    <span class="message-scroll-icon" aria-hidden="true">
-                      ↓
-                    </span>
-                  </button>
-                </Show>
-              </div>
+              </Show>
+              <Show when={state.showScrollBottomButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true }))}
+                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                  title={t("messageSection.scroll.toLatestAriaLabel")}
+                >
+                  <ChevronDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
+                </button>
+              </Show>
             </div>
           )}
           renderBeforeItems={() => (

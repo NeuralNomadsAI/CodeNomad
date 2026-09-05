@@ -62,6 +62,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
     const selected = currentValue()?.value
     return selected ?? t("thinkingSelector.variant.default")
   })
+  const accessibleLabel = () => t("thinkingSelector.label", { variant: triggerValue() })
 
   return (
     <div class="sidebar-selector">
@@ -87,8 +88,8 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
         )}
       >
         <Combobox.Control class="relative w-full" data-thinking-selector-control>
-          <Combobox.Input class="sr-only" data-thinking-selector />
-          <Combobox.Trigger class="selector-trigger">
+          <Combobox.Input class="sr-only" data-thinking-selector aria-label={accessibleLabel()} />
+          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={accessibleLabel()}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 <span class="session-sidebar-selector-prefix">{t("thinkingSelector.label", { variant: "" }).trim()}</span>{" "}

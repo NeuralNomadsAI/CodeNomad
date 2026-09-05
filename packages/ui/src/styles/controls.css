@@ -20,3 +20,4 @@
 @import "./components/config-files-settings.css";
 @import "./components/provider-auth.css";
 @import "./components/provider-model-visibility.css";
+@import "./components/prompt-context-controls.css";

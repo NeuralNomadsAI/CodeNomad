@@ -50,7 +50,7 @@
 }
 
 .session-sidebar-menu-button {
-  @apply inline-flex items-center justify-center border rounded-md px-2 py-1 text-sm font-medium;
+  @apply inline-flex items-center justify-center border px-2 py-1 text-sm font-medium;
   border-color: var(--border-base);
   background-color: transparent;
   color: var(--text-primary);
@@ -124,7 +124,7 @@
 }
 
 .connection-status-button {
-  @apply inline-flex items-center gap-2 px-3 py-1 text-sm font-medium border rounded-md transition-colors;
+  @apply inline-flex items-center gap-2 px-3 py-1 text-sm font-medium border transition-colors;
   border-color: var(--border-base);
   background-color: var(--surface-base);
   color: var(--text-primary);
@@ -216,39 +216,16 @@
 }
 
 .message-scroll-controls {
-  position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  width: 1.75rem;
-  min-height: 1.75rem;
-}
-
-.message-scroll-controls-expanded {
-  position: absolute;
-  inset-inline-end: 0;
-  bottom: 0;
-  display: none;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.25rem;
-  align-items: flex-end;
-}
-
-.message-scroll-controls:not([data-hover-suppressed="true"]):hover .message-scroll-controls-trigger,
-.message-scroll-controls[data-open="true"] .message-scroll-controls-trigger {
-  display: none;
-}
-
-.message-scroll-controls:not([data-hover-suppressed="true"]):hover .message-scroll-controls-expanded,
-.message-scroll-controls[data-open="true"] .message-scroll-controls-expanded {
-  display: flex;
 }
 
 .message-scroll-button {
   @apply inline-flex items-center justify-center;
   width: 1.75rem;
   height: 1.75rem;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: transparent;
   color: var(--text-primary);
@@ -271,10 +248,6 @@
   color: var(--accent-primary);
 }
 
-.message-scroll-button[data-active="false"] .message-scroll-icon--toggle {
-  color: var(--text-secondary);
-}
-
 .message-quote-popover {
   position: absolute;
   z-index: 5;
@@ -287,7 +260,7 @@
 .message-quote-button-group {
   pointer-events: auto;
   display: inline-flex;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid var(--list-item-highlight-border);
   background-color: var(--list-item-highlight-bg-solid);
   box-shadow: var(--panel-shadow);
@@ -353,7 +326,7 @@
 }
 
 .message-search-button {
-  @apply inline-flex items-center justify-center rounded-md border transition-colors;
+  @apply inline-flex items-center justify-center border transition-colors;
   width: 2rem;
   height: 2rem;
   border-color: var(--border-base);
@@ -382,7 +355,7 @@
 }
 
 .message-stream-block[data-search-result="true"] {
-  border-radius: 0.75rem;
+  border-radius: 0;
 }
 
 .message-stream-block[data-search-active="true"] {
@@ -390,7 +363,7 @@
 }
 
 .session-search-match {
-  border-radius: 0.2em;
+  border-radius: 0;
   background-color: color-mix(in oklab, #fde047 58%, transparent);
   box-shadow: 0 0 0 1px color-mix(in oklab, #eab308 62%, transparent);
   color: inherit;

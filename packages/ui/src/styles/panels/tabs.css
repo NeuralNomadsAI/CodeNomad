@@ -21,12 +21,25 @@
   overflow-x: auto;
   touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
+  transform: scaleY(-1);
 }
 
 .tab-bar-instance .tab-scroll {
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
+  overflow-y: hidden;
+  padding-top: 1px;
+  margin-bottom: -1px;
+}
+
+.tab-bar-instance .tab-container {
+  padding-top: calc(var(--space-xs) + var(--scrollbar-size));
+  padding-bottom: 0;
+}
+
+.tab-scroll .tab-strip {
+  transform: scaleY(-1);
 }
 
 .tab-bar-actions {
@@ -50,7 +63,7 @@
 }
 
 .tab-strip-tabs {
-  @apply flex items-center gap-1 flex-shrink-0;
+  @apply flex items-center flex-shrink-0;
 }
 
 .tab-draggable {
@@ -93,9 +106,13 @@
 }
 
 .tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-2 rounded-t-md max-w-[200px] transition-colors text-sm font-normal;
+  @apply inline-flex items-center gap-2 px-3 py-2 max-w-[200px] transition-colors text-sm font-normal;
   font-family: var(--font-family-sans);
   outline: none;
+  border: 0;
+  border-inline-end: 1px solid var(--tab-border);
+  border-bottom: 1px solid var(--tab-border);
+  border-radius: 0;
 }
 
 .tab-base:focus-visible {
@@ -107,13 +124,42 @@
 .tab-active {
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
-  border-bottom: 2px solid var(--accent-primary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom: 0;
+}
+
+.tab-bar-instance .tab-active,
+.tab-bar-instance .tab-active:hover {
+  background-color: var(--surface-shade-light);
+  border-bottom-color: var(--surface-shade-light);
+}
+
+.tab-bar-instance .tab-active {
+  position: relative;
+}
+
+.tab-bar-instance .tab-draggable:first-child :is(.tab-active, .tab-pill-active) {
+  border-inline-start: 1px solid var(--tab-border);
+}
+
+.tab-bar-instance .tab-active::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background: inherit;
 }
 
 .tab-inactive {
   background-color: var(--tab-inactive-bg);
-  color: color-mix(in oklab, var(--tab-inactive-text) 62%, transparent);
-  border-bottom: 2px solid var(--tab-active-bg);
+  border-inline-end-color: var(--tab-border);
+  border-bottom-color: transparent;
+  color: var(--tab-inactive-text);
+}
+
+.tab-bar-instance .tab-inactive {
+  background-color: var(--surface-secondary);
 }
 
 .tab-inactive:hover {
@@ -130,7 +176,7 @@
 }
 
 .tab-close {
-  @apply opacity-100 hover:bg-red-500 hover:text-white rounded p-0.5 transition-all cursor-pointer;
+  @apply opacity-100 hover:bg-red-500 hover:text-white p-0.5 transition-all cursor-pointer;
 }
 
 .tab-close:focus-visible {
@@ -189,7 +235,7 @@
 }
 
 .new-tab-button {
-  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-md transition-colors;
+  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 transition-colors;
   background-color: var(--new-tab-bg);
   color: var(--new-tab-text);
 }
@@ -216,10 +262,13 @@
 }
 
 .tab-pill {
-  @apply inline-flex items-center gap-1 px-3 py-2 rounded-t-md max-w-[220px] text-sm;
+  @apply inline-flex items-center gap-1 px-3 py-2 max-w-[220px] text-sm;
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
-  border-bottom: 2px solid var(--tab-active-bg);
+  border: 0;
+  border-inline-end: 1px solid var(--tab-border);
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
   outline: none;
 }
 
@@ -232,7 +281,8 @@
 .tab-pill-active {
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
-  border-bottom-color: var(--accent-primary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom: 0;
 }
 
 .tab-pill-button {
@@ -240,7 +290,7 @@
 }
 
 .tab-pill-close {
-  @apply inline-flex items-center justify-center rounded w-5 h-5 text-xs;
+  @apply inline-flex items-center justify-center w-5 h-5 text-xs;
 }
 
 .tab-pill-close:hover {
@@ -249,10 +299,11 @@
 
 /* Session tabs */
 .session-tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md max-w-[150px] transition-colors text-sm;
+  @apply inline-flex items-center gap-2 px-3 py-1.5 max-w-[150px] transition-colors text-sm;
   font-family: var(--font-family-sans);
   outline: none;
-  border-bottom: 2px solid transparent;
+  border: 0;
+  border-inline-end: 1px solid var(--border-divider);
 }
 
 .session-tab-base:focus-visible {
@@ -263,7 +314,6 @@
 
 .session-tab-active {
   background-color: var(--session-tab-active-bg);
-  border-bottom-color: var(--accent-primary);
   color: var(--session-tab-active-text);
   font-weight: var(--font-weight-medium);
 }

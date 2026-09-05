@@ -403,7 +403,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         <ComboboxInputValue value={inputValue()} />
         <Combobox.Control class="relative w-full" data-model-selector-control>
           <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelAccessibleLabel()} />
-          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()}>
+          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()} title={currentModelAccessibleLabel()}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 <span class="session-sidebar-selector-prefix">{t("modelSelector.trigger.primary", { model: "" }).trim()}</span>{" "}

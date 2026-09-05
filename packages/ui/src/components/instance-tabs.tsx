@@ -24,7 +24,7 @@ import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getUnreadToastCountSignal, showToastNotification } from "../lib/notifications"
 import { useConfig } from "../stores/preferences"
-import { openSettings } from "../stores/settings-screen"
+import { openSettings, toggleSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
 
 interface InstanceTabsProps {
@@ -305,7 +305,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
             <button
               class="new-tab-button"
-              onClick={() => openSettings("general")}
+              onClick={() => toggleSettings("general")}
               title={t("settings.open.title")}
               aria-label={t("settings.open.ariaLabel")}
             >

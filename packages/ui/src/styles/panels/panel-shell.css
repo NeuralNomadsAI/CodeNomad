@@ -16,7 +16,7 @@
 .panel-header {
   @apply px-3 py-2 border-b;
   border-color: var(--border-base);
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-shade-light);
 }
 
 .panel-title {

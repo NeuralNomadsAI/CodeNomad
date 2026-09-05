@@ -277,14 +277,14 @@
 
 
 .message-queued-badge {
-  @apply inline-block font-bold px-3 py-1 rounded mb-3 text-xs tracking-wide;
+  @apply inline-block font-bold px-3 py-1 mb-3 text-xs tracking-wide;
   border-radius: 0;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
 }
 
 .message-error-block {
-  @apply text-sm p-3 rounded border-s-[3px] my-2;
+  @apply text-sm p-3 border-s-[3px] my-2;
   border-radius: 0;
   color: var(--status-error);
   background-color: var(--message-error-bg);
@@ -370,7 +370,7 @@
 }
 
 .message-reasoning {
-  @apply my-2 border rounded;
+  @apply my-2 border;
   border-radius: 0;
   --reasoning-border-color: var(--border-strong, var(--border-base));
   border-color: var(--reasoning-border-color);
@@ -549,7 +549,7 @@
 }
 
 .message-reasoning-header:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--message-part-hover);
 }
 
 .message-reasoning-toggle {
@@ -671,7 +671,7 @@
   height: 1.5rem;
   padding: 0 0.75rem;
   border: 1px solid var(--reasoning-border-color, var(--border-base));
-  border-radius: 0.375rem;
+  border-radius: 0;
   background-color: transparent;
   color: var(--text-muted);
   font-weight: var(--font-weight-semibold);

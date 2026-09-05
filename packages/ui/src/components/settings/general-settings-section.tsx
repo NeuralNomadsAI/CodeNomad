@@ -1,6 +1,6 @@
 import { createMemo, lazy, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { getBehaviorSettings, type BehaviorSetting } from "../../lib/settings/behavior-registry"
+import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
 import { useConfig } from "../../stores/preferences"
 import { LocaleSelector } from "../locale-selector"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
@@ -15,9 +15,8 @@ interface GeneralSettingsSectionProps {
 export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (props) => {
   const { t } = useI18n()
   const config = useConfig()
-  const { updatePreferences } = config
-  const generalSettings = createMemo<BehaviorSetting[]>(() => [
-    ...getBehaviorSettings(config).filter(
+  const generalSettings = createMemo(() =>
+    getBehaviorSettings(config).filter(
       (setting) =>
         setting.id === "behavior.keyboardShortcutHints" ||
         setting.id === "behavior.messageTimeline" ||
@@ -26,15 +25,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         setting.id === "behavior.followUpBehavior" ||
         setting.id === "behavior.promptSubmitOnEnter",
     ),
-    {
-      kind: "toggle",
-      id: "behavior.holdLongAssistantReplies",
-      titleKey: "settings.behavior.holdLongAssistantReplies.title",
-      subtitleKey: "settings.behavior.holdLongAssistantReplies.subtitle",
-      get: (current) => Boolean(current.holdLongAssistantReplies ?? true),
-      set: (next) => updatePreferences({ holdLongAssistantReplies: next }),
-    },
-  ])
+  )
 
   return (
     <div class="settings-section-stack">

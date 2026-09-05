@@ -14,6 +14,7 @@ import {
   fetchAgents,
   fetchProviders,
   getActiveCatalogLocation,
+  refreshSessionCatalog,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
   clearSessionCatalogState,
@@ -444,8 +445,10 @@ function refreshVolatileInstanceState(
       const location = getActiveCatalogLocation(instanceId)
       if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
       if (current.has("providers")) requests.push(fetchProviders(instanceId, location, true))
-      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
-      if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
+      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, location))
+      if (current.has("metadata")) {
+        requests.push(loadInstanceMetadata(instance, { force: true, location }))
+      }
       await Promise.all(requests)
     } while (state.pending.size)
   })().finally(() => {
@@ -894,7 +897,9 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   })
   void worktreeHydration.then(async () => {
     const instance = instances().get(instanceId)
-    if (instance?.client) await loadInstanceMetadata(instance, { force })
+    if (instance?.client) {
+      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
+    }
   }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   const sessions = workspaceMetadata.then(async () => {
     resetSessionPagination(instanceId)
@@ -920,12 +925,8 @@ async function hydrateInstanceData(instanceId: string, options?: {
       : startInstanceSessionHydration(instanceId, options?.force)
     await hydration.sessions
     await hydration.workspaceMetadata
-    await fetchAgents(instanceId)
-    await fetchProviders(instanceId)
+    await refreshSessionCatalog(instanceId, options?.force)
     await ensureInstanceConfigLoaded(instanceId)
-    const instance = instances().get(instanceId)
-    if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client, getActiveCatalogLocation(instanceId))
     await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)

@@ -50,7 +50,7 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
   }
 
   const containerClass =
-    `context-meter-values inline-flex items-center gap-2 rounded-full border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
+    `context-meter-values inline-flex items-center gap-2 border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
 
   function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
     const rad = (angleDeg * Math.PI) / 180

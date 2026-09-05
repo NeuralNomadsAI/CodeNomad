@@ -61,7 +61,7 @@ button {
   width: 100%;
   max-width: 420px;
   padding: 22px;
-  border-radius: 18px;
+  border-radius: 0;
   background: var(--surface-secondary, #f5f5f5);
   border: 1px solid var(--border-base, #e0e0e0);
   box-shadow: var(--panel-shadow-strong, 0 25px 60px rgba(0, 0, 0, 0.16));

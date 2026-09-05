@@ -1,7 +1,8 @@
 import {
+  COLOR_SCHEME_IDS,
   isColorSchemeColors,
-  validateColorSchemeColors,
   type ColorSchemeColors,
+  type ColorSchemeId,
 } from "./theme-scheme.ts"
 
 export interface UserColorSchemePreset {
@@ -11,6 +12,7 @@ export interface UserColorSchemePreset {
 }
 
 export type UserColorSchemePresets = Record<string, UserColorSchemePreset>
+export type BuiltInColorSchemeOverrides = Partial<Record<Exclude<ColorSchemeId, "custom">, ColorSchemeColors>>
 export const MAX_COLOR_SCHEME_PRESETS = 50
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -23,10 +25,20 @@ export function normalizeColorSchemePresets(value: unknown): UserColorSchemePres
     if (!id || id.length > 128 || !isRecord(candidate)) continue
     const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : ""
     const appearance = candidate.appearance === "light" ? "light" : candidate.appearance === "dark" ? "dark" : undefined
-    if (!name || !appearance || !isColorSchemeColors(candidate.colors) || !validateColorSchemeColors(candidate.colors)) continue
+    if (!name || !appearance || !isColorSchemeColors(candidate.colors)) continue
     presets[id] = { name, appearance, colors: { ...candidate.colors } }
   }
   return presets
+}
+
+export function normalizeColorSchemeOverrides(value: unknown): BuiltInColorSchemeOverrides {
+  if (!isRecord(value)) return {}
+  const overrides: BuiltInColorSchemeOverrides = {}
+  for (const [id, colors] of Object.entries(value)) {
+    if (id === "custom" || !COLOR_SCHEME_IDS.includes(id as ColorSchemeId) || !isColorSchemeColors(colors)) continue
+    overrides[id as Exclude<ColorSchemeId, "custom">] = { ...colors }
+  }
+  return overrides
 }
 
 export function nextColorSchemePresetName(sourceName: string, existingNames: readonly string[]): string {
