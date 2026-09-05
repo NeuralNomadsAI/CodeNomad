@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import type { MissionActor, MissionJsonValue, MissionReportOutcome, MissionTemplateId } from "./model"
+import type { MissionActor, MissionJsonValue, MissionReportOutcome, MissionTask, MissionTemplateId } from "./model"
 
 const DiagnosisArtifact = z.object({
   kind: z.literal("diagnosis"),
@@ -85,11 +85,21 @@ const pocockContracts: Record<string, z.ZodTypeAny> = {
   validator: ValidationArtifact,
 }
 
+const pocockPrerequisites: Record<string, string[]> = {
+  diagnostician: [],
+  implementer: ["diagnostician"],
+  "review-standards": ["implementer"],
+  "review-spec": ["implementer"],
+  resolver: ["review-standards", "review-spec"],
+  validator: ["resolver"],
+}
+
 export function validateMissionDelegationPolicy(input: {
   template: MissionTemplateId
   role: string
   targetSessionID?: string
   actors: readonly MissionActor[]
+  tasks: readonly Pick<MissionTask, "role" | "status">[]
 }): void {
   if (input.template === "custom") return
   const roles = input.template === "pocock-fix-bug"
@@ -100,11 +110,27 @@ export function validateMissionDelegationPolicy(input: {
   if (["review-standards", "review-spec", "validator"].includes(input.role) && input.targetSessionID) {
     throw new Error(`The Pocock ${input.role} role requires a fresh root session`)
   }
-  if (input.role !== "resolver") return
-  const implementer = input.actors.find((actor) => actor.roles.includes("implementer"))
-  if (!input.targetSessionID || input.targetSessionID !== implementer?.sessionId) {
-    throw new Error("The Pocock resolver must reuse the implementer root session")
+  if (input.role === "resolver") {
+    const implementer = input.actors.find((actor) => actor.roles.includes("implementer"))
+    if (!input.targetSessionID || input.targetSessionID !== implementer?.sessionId) {
+      throw new Error("The Pocock resolver must reuse the implementer root session")
+    }
   }
+  const missing = pocockPrerequisites[input.role]?.find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
+  if (missing) {
+    throw new Error(`The Pocock ${input.role} role requires completed ${missing} evidence`)
+  }
+}
+
+export function validateMissionCompletionPolicy(input: {
+  template: MissionTemplateId
+  outcome: "completed" | "failed"
+  tasks: readonly Pick<MissionTask, "role" | "status">[]
+}): void {
+  if (input.template !== "pocock-fix-bug" || input.outcome !== "completed") return
+  const missing = Object.keys(pocockContracts)
+    .find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
+  if (missing) throw new Error(`A green Pocock mission requires completed ${missing} evidence`)
 }
 
 export function validateMissionReportArtifact(input: {

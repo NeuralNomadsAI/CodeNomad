@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { MissionJsonValue } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
 
 import {
   MissionControl,
@@ -195,6 +195,47 @@ test("keeps task and admission identities idempotent across retries", async () =
   assert.equal((await control.snapshot()).missions[0]?.reports.length, 1)
 })
 
+test("serializes project mutations so concurrent task contracts cannot overwrite journal history", async () => {
+  const { create, sessions } = harness()
+  const first = create()
+  const second = create()
+  await first.inspect("ses_coordinator", { start: { objective: "Review safely", template: "custom" } }, "concurrent-task")
+
+  const results = await Promise.allSettled([
+    first.delegate("ses_coordinator", {
+      taskKey: "review", title: "Review A", brief: "Review contract A.", role: "specialist",
+      blockedBy: [], delivery: "queue",
+    }),
+    second.delegate("ses_coordinator", {
+      taskKey: "review", title: "Review B", brief: "Review contract B.", role: "specialist",
+      blockedBy: [], delivery: "queue",
+    }),
+  ])
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1)
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+  assert.ok(rejected)
+  assert.equal(rejected.reason instanceof MissionControlError && rejected.reason.code, "task-conflict")
+  assert.equal((await first.snapshot()).missions[0]?.tasks.length, 1)
+  assert.equal(sessions.prompts.length, 1)
+})
+
+test("admits only one concurrent active mission for a coordinator", async () => {
+  const { create } = harness()
+  const first = create()
+  const second = create()
+  const results = await Promise.allSettled([
+    first.inspect("ses_coordinator", { start: { objective: "First", template: "custom" } }, "concurrent-first"),
+    second.inspect("ses_coordinator", { start: { objective: "Second", template: "custom" } }, "concurrent-second"),
+  ])
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1)
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+  assert.ok(rejected)
+  assert.equal(rejected.reason instanceof MissionControlError && rejected.reason.code, "already-member")
+  assert.equal((await first.snapshot()).missions.filter((mission) => mission.status === "active").length, 1)
+})
+
 test("rejects child, foreign, and non-coordinator topology changes", async () => {
   const { create, sessions } = harness()
   const control = create()
@@ -258,6 +299,28 @@ test("bounds and validates persisted journal records", async () => {
   assert.equal(snapshot.missions.length, 0)
 })
 
+test("rejects a new event before the durable journal can exceed its safety limit", async () => {
+  const storage = new MemoryStorage()
+  const journal = new MissionJournal(storage, "project-1", "/repo", () => 100)
+  for (let index = 0; index < MISSION_MAX_EVENTS; index += 1) {
+    storage.values.set(`codenomad-missions/v1/${journal.projectToken}/seed/${index.toString().padStart(4, "0")}`, { seed: index })
+  }
+
+  await assert.rejects(journal.append({
+    version: 1,
+    id: "evt_capacity",
+    type: "mission.created",
+    missionID: "msn_capacity",
+    projectID: "project-1",
+    projectCanonical: "/repo",
+    objective: "Do not overflow",
+    template: "custom",
+    coordinator: { sessionID: "ses_coordinator", title: "Coordinator", location: { directory: "/repo" } },
+    createdAt: 100,
+  }), /2000-event safety limit/)
+  assert.equal(storage.values.size, MISSION_MAX_EVENTS)
+})
+
 test("runs the Pocock evidence gates dynamically while reusing the implementer for resolution", async () => {
   const { create } = harness()
   const control = create()
@@ -309,6 +372,23 @@ test("runs the Pocock evidence gates dynamically while reusing the implementer f
   assert.equal(finished.mission.status, "completed")
   assert.equal(finished.mission.tasks.length, 6)
   assert.equal(finished.mission.actors.length, 6)
+})
+
+test("enforces Pocock evidence gates even when the coordinator omits dependency keys", async () => {
+  const { create } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", {
+    start: { objective: "Fix only after proving the bug", template: "pocock-fix-bug" },
+  }, "pocock-policy")
+
+  await assert.rejects(control.delegate("ses_coordinator", {
+    taskKey: "implement", title: "Implement too early", brief: "Skip diagnosis.",
+    role: "implementer", blockedBy: [], delivery: "queue",
+  }), (error: unknown) => error instanceof MissionControlError && error.code === "invalid-role-policy")
+
+  await assert.rejects(control.report("ses_coordinator", {
+    outcome: "completed", summary: "Skip every evidence gate", evidence: [], next: [], final: true,
+  }), (error: unknown) => error instanceof MissionControlError && error.code === "invalid-role-policy")
 })
 
 test("charts a Wayfinder frontier breadth-first without auto-dispatching work in the fog", async () => {

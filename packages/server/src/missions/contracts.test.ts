@@ -55,7 +55,7 @@ test("requires structured evidence only for completed Pocock roles", () => {
   }), undefined)
 })
 
-test("fences fresh Pocock reviewers and implementer-session resolution without fixing the sequence", () => {
+test("fences fresh Pocock reviewers and implementer-session resolution without fixed task keys", () => {
   const actors = [{
     sessionId: "ses_fix",
     kind: "specialist" as const,
@@ -67,14 +67,16 @@ test("fences fresh Pocock reviewers and implementer-session resolution without f
   }]
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
     template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_fix", actors,
+    tasks: [{ role: "review-standards", status: "completed" }, { role: "review-spec", status: "completed" }],
   }))
   assert.throws(() => validateMissionDelegationPolicy({
     template: "pocock-fix-bug", role: "resolver", actors,
+    tasks: [{ role: "review-standards", status: "completed" }, { role: "review-spec", status: "completed" }],
   }), /reuse the implementer/)
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "review-spec", targetSessionID: "ses_fix", actors,
+    template: "pocock-fix-bug", role: "review-spec", targetSessionID: "ses_fix", actors, tasks: [],
   }), /fresh root session/)
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "wayfinder", role: "implementer", actors,
+    template: "wayfinder", role: "implementer", actors, tasks: [],
   }), /not a wayfinder/)
 })

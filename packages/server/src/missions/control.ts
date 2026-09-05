@@ -13,7 +13,8 @@ import {
   type MissionSnapshot,
 } from "./model"
 import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
-import { validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
+import { validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
+import { runMissionExclusive } from "./exclusive"
 import type {
   MissionDelegateInput,
   MissionInspectInput,
@@ -49,7 +50,12 @@ export class MissionControl {
     return this.journal.snapshot()
   }
 
-  async inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+  inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+    if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
+    return this.mutate(() => this.inspectCurrent(sessionID, input, operationID))
+  }
+
+  private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
     const caller = await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
     if (input.start) {
@@ -89,7 +95,11 @@ export class MissionControl {
     }
   }
 
-  async delegate(sessionID: string, input: MissionDelegateInput): Promise<{ disposition: "blocked" | "dispatched" | "existing"; mission: MissionMap }> {
+  delegate(sessionID: string, input: MissionDelegateInput): Promise<{ disposition: "blocked" | "dispatched" | "existing"; mission: MissionMap }> {
+    return this.mutate(() => this.delegateCurrent(sessionID, input))
+  }
+
+  private async delegateCurrent(sessionID: string, input: MissionDelegateInput): Promise<{ disposition: "blocked" | "dispatched" | "existing"; mission: MissionMap }> {
     await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
     let mission = this.selectMission(snapshot, sessionID, input.missionID)
@@ -102,6 +112,7 @@ export class MissionControl {
         role: input.role,
         targetSessionID: input.targetSessionID,
         actors: mission.actors,
+        tasks: mission.tasks,
       })
     } catch (error) {
       throw new MissionControlError(error instanceof Error ? error.message : "Mission role policy failed", "invalid-role-policy")
@@ -168,7 +179,11 @@ export class MissionControl {
     return { disposition: "dispatched", mission }
   }
 
-  async report(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
+  report(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
+    return this.mutate(() => this.reportCurrent(sessionID, input))
+  }
+
+  private async reportCurrent(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
     await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
     let mission = this.selectMission(snapshot, sessionID, input.missionID)
@@ -180,6 +195,11 @@ export class MissionControl {
       if (input.outcome === "blocked") throw new MissionControlError("A final mission outcome must be completed or failed", "invalid-final-outcome")
       if (input.outcome === "completed" && mission.tasks.some((task) => task.status !== "completed")) {
         throw new MissionControlError("Every mission task must be complete before a green finish", "open-tasks")
+      }
+      try {
+        validateMissionCompletionPolicy({ template: mission.template, outcome: input.outcome, tasks: mission.tasks })
+      } catch (error) {
+        throw new MissionControlError(error instanceof Error ? error.message : "Mission completion policy failed", "invalid-role-policy")
       }
       await this.journal.append({
         version: MISSION_SCHEMA_VERSION,
@@ -453,6 +473,10 @@ export class MissionControl {
   private async emitChanged(missionID: string, snapshot: MissionSnapshot): Promise<void> {
     const revision = snapshot.missions.find((mission) => mission.id === missionID)?.revision ?? 0
     await this.options.changed?.(missionID, revision).catch(() => undefined)
+  }
+
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    return runMissionExclusive(`mutation:${this.journal.projectToken}`, operation)
   }
 }
 

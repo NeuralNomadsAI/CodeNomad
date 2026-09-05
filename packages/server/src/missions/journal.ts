@@ -11,6 +11,7 @@ import {
   type MissionSnapshot,
   type MissionTemplateId,
 } from "./model"
+import { runMissionExclusive } from "./exclusive"
 
 const STORAGE_PREFIX = "codenomad-missions/v1"
 const PAGE_SIZE = 100
@@ -61,7 +62,11 @@ export class MissionJournal {
     return snapshot
   }
 
-  async append(event: MissionEvent): Promise<void> {
+  append(event: MissionEvent): Promise<void> {
+    return runMissionExclusive(`append:${this.projectToken}`, () => this.appendUnlocked(event))
+  }
+
+  private async appendUnlocked(event: MissionEvent): Promise<void> {
     if (event.projectID !== this.projectID) throw new Error("Mission event belongs to another project")
     const normalized = JSON.parse(JSON.stringify(event)) as unknown
     const parsed = parseMissionEvent(normalized)
@@ -73,7 +78,22 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
+    if (await this.storedEventCount() >= MISSION_MAX_EVENTS) {
+      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
+    }
     await this.storage.set(key, stored)
+  }
+
+  private async storedEventCount(): Promise<number> {
+    let count = 0
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
+      count += page.entries.length
+      if (count >= MISSION_MAX_EVENTS) return count
+      after = page.next
+    } while (after)
+    return count
   }
 
   private prefix(): string {
