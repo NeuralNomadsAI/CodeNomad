@@ -4,6 +4,7 @@ import type { JsonValue, SessionMetadata } from "@opencode-ai/client"
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
 import {
   MISSION_MAX_ACTORS,
+  MISSION_MAX_MISSIONS,
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   type MissionActor,
@@ -64,6 +65,9 @@ export class MissionControl {
       if (replay) return this.inspection(replay, sessionID)
       const active = this.membership(snapshot, sessionID)
       if (active?.status === "active") throw new MissionControlError("This session already belongs to an active mission", "already-member")
+      if (snapshot.missions.length >= MISSION_MAX_MISSIONS) {
+        throw new MissionControlError("Project mission limit reached", "mission-limit")
+      }
       const event: MissionEvent = {
         version: MISSION_SCHEMA_VERSION,
         id: this.eventID(missionID, "created"),
@@ -314,6 +318,9 @@ export class MissionControl {
     if (targetSessionID === coordinatorID) throw new MissionControlError("The coordinator cannot delegate a task to itself", "invalid-target")
     if (targetSessionID) {
       const target = await this.ownedRootSession(targetSessionID)
+      if (mission.actors.length >= MISSION_MAX_ACTORS && !mission.actors.some((actor) => actor.sessionId === targetSessionID)) {
+        throw new MissionControlError("Mission actor limit reached", "actor-limit")
+      }
       const foreignMission = snapshot.missions.find((candidate) => candidate.status === "active"
         && candidate.id !== mission.id && candidate.actors.some((actor) => actor.sessionId === targetSessionID))
       if (foreignMission) throw new MissionControlError("Target session already belongs to another active mission", "target-claimed")
