@@ -6,6 +6,9 @@ mod navigation;
 mod partitions;
 mod process;
 mod window;
+mod window_flush;
+#[cfg(test)]
+mod window_flush_tests;
 
 #[doc(hidden)]
 pub use commands::{
@@ -35,7 +38,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -72,7 +74,7 @@ pub struct ClientState {
     state: Mutex<PersistedClientState>,
     zoom_levels: Mutex<HashMap<String, f64>>,
     write_lock: Mutex<()>,
-    save_generation: AtomicU64,
+    window_flush: window_flush::WindowFlushScheduler,
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
@@ -205,7 +207,7 @@ impl ClientState {
             state: Mutex::new(state),
             zoom_levels: Mutex::new(zoom_levels),
             write_lock: Mutex::new(()),
-            save_generation: AtomicU64::new(0),
+            window_flush: window_flush::WindowFlushScheduler::default(),
             renderer_access: access::RendererAccess::default(),
             ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
@@ -704,6 +706,12 @@ impl ClientState {
         Ok(())
     }
 
+    fn schedule_window_flush(&self, app: &AppHandle) {
+        if let Err(error) = self.window_flush.schedule(app) {
+            eprintln!("[client-state] failed to schedule window-state flush: {error}");
+        }
+    }
+
     fn normal_writes_suppressed(&self, window_id: &str) -> Result<bool, String> {
         let state = self.state.lock().map_err(|err| err.to_string())?;
         Ok(state.unsupported_future_envelope || !state.record(window_id)?.writes_enabled)
@@ -822,6 +830,7 @@ impl ClientState {
     }
 
     fn release_locks(&self) {
+        self.window_flush.stop();
         // Lock order fences takeover until root publication and partition GC leave write_lock.
         let _write = self
             .write_lock
