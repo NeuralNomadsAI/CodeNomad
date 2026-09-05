@@ -2,7 +2,9 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import { createRequire } from "module"
+import { isIP } from "node:net"
 import type { Logger } from "../logger"
+import { isWildcardHost, normalizeNetworkHost, stripIPv6Zone } from "./network-host"
 
 const require = createRequire(import.meta.url)
 
@@ -69,11 +71,11 @@ function ensureGeneratedTls(args: ResolveHttpsOptionsArgs): ResolvedHttpsOptions
     try {
       if (!fs.existsSync(certPath)) return true
       const pem = fs.readFileSync(certPath, "utf-8")
-      const x509 = new crypto.X509Certificate(pem)
-      const validToMs = Date.parse(x509.validTo)
+      const certificate = new crypto.X509Certificate(pem)
+      const validToMs = Date.parse(certificate.validTo)
       if (!Number.isFinite(validToMs)) return true
       const rotateAt = validToMs - ROTATE_IF_EXPIRES_WITHIN_DAYS * 24 * 60 * 60 * 1000
-      return Date.now() >= rotateAt
+      return Date.now() >= rotateAt || !certificateCoversRequiredSans(certificate, args.host, args.tlsSANs)
     } catch {
       return true
     }
@@ -219,49 +221,81 @@ function generateServerCertificate(args: {
 }
 
 function pickCommonName(host: string): string {
-  if (!host || host === "0.0.0.0") {
+  const normalizedHost = normalizeCertificateHost(host)
+  if (!normalizedHost || isWildcardHost(normalizedHost)) {
     return "localhost"
   }
-  if (host === "127.0.0.1") {
+  if (normalizedHost === "127.0.0.1") {
     return "localhost"
   }
-  return host
+  return normalizedHost
 }
 
 function buildSubjectAltNames(host: string, tlsSANs?: string): Array<{ type: number; value?: string; ip?: string }> {
+  const { dns, ips } = resolveRequiredSubjectAltNames(host, tlsSANs)
+  const altNames: Array<{ type: number; value?: string; ip?: string }> = []
+
+  // 2 = DNS, 7 = IP
+  for (const name of dns) {
+    altNames.push({ type: 2, value: name })
+  }
+  for (const ip of ips) {
+    altNames.push({ type: 7, ip })
+  }
+
+  return altNames
+}
+
+function resolveRequiredSubjectAltNames(host: string, tlsSANs?: string): { dns: Set<string>; ips: Set<string> } {
   const dns = new Set<string>()
   const ips = new Set<string>()
 
   dns.add("localhost")
   ips.add("127.0.0.1")
 
-  if (host && host !== "0.0.0.0") {
-    if (isIPv4(host)) {
-      ips.add(host)
+  const normalizedHost = normalizeCertificateHost(host)
+  if (isWildcardHost(normalizedHost) && isIP(normalizedHost) === 6) {
+    ips.add("::1")
+  } else if (normalizedHost) {
+    if (isIP(normalizedHost)) {
+      ips.add(normalizedHost)
     } else {
-      dns.add(host)
+      dns.add(normalizedHost)
     }
   }
 
   for (const token of splitList(tlsSANs)) {
-    if (isIPv4(token)) {
-      ips.add(token)
-    } else if (token) {
-      dns.add(token)
+    const normalizedToken = normalizeCertificateHost(token)
+    if (isIP(normalizedToken)) {
+      ips.add(normalizedToken)
+    } else if (normalizedToken) {
+      dns.add(normalizedToken)
     }
   }
 
-  const altNames: Array<{ type: number; value?: string; ip?: string }> = []
+  return { dns, ips }
+}
 
-  // 2 = DNS, 7 = IP
-  for (const name of Array.from(dns)) {
-    altNames.push({ type: 2, value: name })
-  }
-  for (const ip of Array.from(ips)) {
-    altNames.push({ type: 7, ip })
-  }
+function normalizeCertificateHost(host: string): string {
+  return normalizeNetworkHost(stripIPv6Zone(host))
+}
 
-  return altNames
+function certificateCoversRequiredSans(certificate: crypto.X509Certificate, host: string, tlsSANs?: string): boolean {
+  const { dns, ips } = resolveRequiredSubjectAltNames(host, tlsSANs)
+  const existingDns = new Set(
+    (certificate.subjectAltName ?? "")
+      .split(/,\s*/)
+      .filter((entry) => entry.startsWith("DNS:"))
+      .map((entry) => entry.slice(4).toLowerCase()),
+  )
+
+  for (const name of dns) {
+    if (!existingDns.has(name.toLowerCase())) return false
+  }
+  for (const ip of ips) {
+    if (!certificate.checkIP(ip)) return false
+  }
+  return true
 }
 
 function splitList(input: string | undefined): string[] {
@@ -270,14 +304,4 @@ function splitList(input: string | undefined): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-}
-
-function isIPv4(value: string): boolean {
-  const parts = value.split(".")
-  if (parts.length !== 4) return false
-  return parts.every((part) => {
-    if (!/^[0-9]+$/.test(part)) return false
-    const num = Number(part)
-    return Number.isInteger(num) && num >= 0 && num <= 255
-  })
 }

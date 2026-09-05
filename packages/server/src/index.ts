@@ -23,7 +23,8 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
+import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
@@ -269,19 +270,20 @@ function parsePort(input: string): number {
   return value
 }
 
-function resolveHost(input: string | undefined): string {
+export function resolveHost(input: string | undefined): string {
   const trimmed = input?.trim()
   if (!trimmed) return DEFAULT_HOST
 
-  if (trimmed === "0.0.0.0") {
-    return "0.0.0.0"
+  if (hasIPv6Zone(trimmed)) {
+    throw new InvalidArgumentError("IPv6 zone identifiers are not supported in --host")
   }
 
-  if (trimmed === "localhost") {
+  const normalized = normalizeNetworkHost(trimmed)
+  if (normalized === "localhost") {
     return DEFAULT_HOST
   }
 
-  return trimmed
+  return normalized
 }
 
 export function programHasArg(argv: string[], flag: string): boolean {
@@ -315,8 +317,6 @@ async function main() {
   }
 
   const eventBus = new EventBus(eventLogger)
-
-  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
@@ -458,8 +458,6 @@ async function main() {
       })
     : null
 
-  const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
-
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
     authManager,
@@ -473,10 +471,9 @@ async function main() {
   const httpBindPort = httpPortExplicit ? options.httpPort : 0
 
   // Listener binding rules:
-  // - Remote access enabled: HTTP listens on loopback, HTTPS on all IPs (host=0.0.0.0 / LAN IP).
-  // - Remote access disabled: both listen on loopback.
-  // - HTTP-only mode: respect --host (used for dev/testing).
-  const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
+  // - Native desktop HTTP and dual-listener HTTP stay on loopback.
+  // - HTTPS and non-native HTTP-only modes respect --host.
+  const httpsBindHost = options.host
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
@@ -550,25 +547,24 @@ async function main() {
     throw new Error("No listeners started")
   }
 
-  const remoteStart = httpsStart ?? httpStart
-  const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
+  const httpListener = httpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: httpStart.port } : null
+  const httpsListener = httpsStart ? { protocol: "https" as const, bindHost: httpsBindHost, port: httpsStart.port } : null
+  const remoteListener = resolvePreferredRemoteListener({ httpStart: httpListener, httpsStart: httpsListener })
 
   let remoteUrl: string | undefined
   let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
-  if (remoteStart) {
-    const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
-    let remoteHost = options.host
-    if (wantsAll) {
-      if (options.host === "0.0.0.0") {
-        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteAddresses = resolved.userVisible
-        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
-      }
-    } else {
+  if (remoteListener) {
+    let remoteHost = remoteListener.bindHost
+    if (isWildcardHost(remoteListener.bindHost)) {
+      const resolved = resolveRemoteAddresses({ host: remoteListener.bindHost, protocol: remoteListener.protocol, port: remoteListener.port })
+      remoteAddresses = resolved.userVisible
+      const loopbackHost = remoteListener.bindHost === "0.0.0.0" ? "127.0.0.1" : "::1"
+      remoteUrl = resolved.primaryRemoteUrl ?? `${remoteListener.protocol}://${formatHostForUrl(loopbackHost)}:${remoteListener.port}`
+    } else if (remoteListener.bindHost === "127.0.0.1") {
       remoteHost = "localhost"
     }
     if (!remoteUrl) {
-      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+      remoteUrl = `${remoteListener.protocol}://${formatHostForUrl(remoteHost)}:${remoteListener.port}`
     }
   }
 
@@ -576,17 +572,17 @@ async function main() {
   // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
   // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
-    httpStart: visibleHttpStart ? { protocol: "http", bindHost: httpBindHost, port: visibleHttpStart.port } : null,
-    httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    httpStart: options.http ? httpListener : null,
+    httpsStart: httpsListener,
     remoteUrl,
   })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port
   serverMeta.remoteUrl = remoteUrl
-  serverMeta.remotePort = remoteStart?.port
-  serverMeta.host = options.host
-  serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
+  serverMeta.remotePort = remoteListener?.port
+  serverMeta.host = remoteListener?.bindHost ?? options.host
+  serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
   if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
@@ -605,7 +601,7 @@ async function main() {
   if (serverMeta.remotePort && remoteUrl) {
     serverMeta.addresses = remoteAddresses.length
       ? remoteAddresses
-      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+      : resolveNetworkAddresses({ host: serverMeta.host, protocol: remoteListener?.protocol ?? "http", port: serverMeta.remotePort })
   } else {
     serverMeta.addresses = []
   }
