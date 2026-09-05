@@ -4,3 +4,7 @@
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
 @import "./panels/right-panel.css";
+@import "./panels/mission-control.css";
+@import "./panels/mission-overview.css";
+@import "./panels/mission-route.css";
+@import "./panels/mission-mesh.css";
