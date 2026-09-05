@@ -4,7 +4,7 @@ import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -1093,6 +1093,29 @@ describe("OpenCode data projection", () => {
       const message = store.getMessage(messageId)
       assert.deepEqual(message?.partIds, [`${messageId}-text`])
       assert.equal((message?.parts[`${messageId}-text`]?.data as any)?.text, "ping")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("keeps another session's live reducer after a terminal event", () => {
+    const instanceId = "opencode-data-session-isolation"
+    const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({
+      id: `${sessionID}-${type}`, type, created: 1,
+      data: { sessionID, assistantMessageID: `${sessionID}-assistant`, ...data },
+    } as any)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.step.started", {
+        agent: "build", model: { providerID: "provider", id: "model" },
+      }))
+      const idle = event("idle", "session.idle")
+      applyOpenCodeDataEvent(instanceId, "/work", idle)
+      finishOpenCodeDataEvent(instanceId, idle)
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.started"))
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.delta", { ordinal: 0, delta: "kept" }))
+      projectOpenCodeMessages(instanceId, "active", data)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("active-assistant")?.parts["active-assistant-text-0"]?.data as any)?.text, "kept")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)

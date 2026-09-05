@@ -4,12 +4,12 @@ import type { Session } from "../types/session.ts"
 import { getPersistedGenerationRecovery, mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery, resolveHydratedGenerationRecovery } from "./session-generation-recovery.ts"
 const session = (state: Partial<Session> = {}): Session => ({
   id: "session", instanceId: "instance", parentId: null, title: "Session", agent: "build",
-  model: { providerId: "provider", modelId: "model" }, version: "1",
+  model: { providerId: "provider", modelId: "model" },
   time: { created: 1, updated: 1 }, status: "idle", ...state,
 } as Session)
 const runtime = (value: Session) => ({
   title: value.title, status: value.status, runtimeStatusKnown: value.runtimeStatusKnown,
-  generationRecovery: value.generationRecovery, token: value.generationAdmissionToken, source: value.metadata?.source, updated: value.time.updated,
+  generationRecovery: value.generationRecovery, token: value.generationAdmissionToken, source: value.version, updated: value.time.updated,
 })
 describe("session generation recovery", () => {
   it("resolves hydrated, authoritative, and persisted recovery states", () => {
@@ -33,8 +33,8 @@ describe("session generation recovery", () => {
   const mergeCases = [
     ["newer SSE state supersedes a stale fetch", {
       captured: session({ title: "Captured", runtimeStatusKnown: false }),
-      fetched: session({ title: "Stale fetch", metadata: { source: "fetch" }, time: { created: 1, updated: 2 }, runtimeStatusKnown: true, generationRecovery: "interrupted" }),
-      latest: session({ title: "New SSE title", metadata: { source: "sse" }, time: { created: 1, updated: 3 }, status: "working", runtimeStatusKnown: true, generationRecovery: null }),
+      fetched: session({ title: "Stale fetch", version: "fetch", time: { created: 1, updated: 2 }, runtimeStatusKnown: true, generationRecovery: "interrupted" }),
+      latest: session({ title: "New SSE title", version: "sse", time: { created: 1, updated: 3 }, status: "working", runtimeStatusKnown: true, generationRecovery: null }),
       expected: { title: "New SSE title", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: "sse", updated: 3 },
     }],
     ["in-flight admission survives a fetch snapshot", {
@@ -46,7 +46,7 @@ describe("session generation recovery", () => {
     ["active fetch wins after a captured admission completes", {
       captured: session({ title: "Captured", runtimeStatusKnown: true, generationRecovery: "interrupted" }),
       fetched: session({ title: "Fetched", status: "working", runtimeStatusKnown: true, generationRecovery: null }),
-      latest: session({ title: "New SSE title", metadata: { source: "sse" }, time: { created: 1, updated: 3 }, runtimeStatusKnown: false, generationRecovery: "pending" }),
+      latest: session({ title: "New SSE title", version: "sse", time: { created: 1, updated: 3 }, runtimeStatusKnown: false, generationRecovery: "pending" }),
       expected: { title: "New SSE title", status: "working", runtimeStatusKnown: true, generationRecovery: null, token: undefined, source: "sse", updated: 3 },
     }],
     ["active authority clears a captured admission token", {

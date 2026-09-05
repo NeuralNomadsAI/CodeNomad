@@ -2,6 +2,31 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
+import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
+
+it("keeps the beginning and final response when bounding message parts", () => {
+  const partIds = Array.from({ length: MESSAGE_PART_DISPLAY_LIMIT + 2 }, (_, index) => `part-${index}`)
+  const data = buildRecordDisplayData("bounded-parts", {
+    id: "message", sessionId: "session", role: "assistant", status: "complete",
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: Object.fromEntries(partIds.map((id) => [id, { id, revision: 1, data: { id, type: "text", text: id } }])),
+  })
+
+  assert.equal(data.orderedParts.length, MESSAGE_PART_DISPLAY_LIMIT)
+  assert.equal(data.orderedParts[0]?.id, "part-0")
+  assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+  assert.equal(data.truncated, true)
+
+  const displayPartIds = getRecordDisplayPartIds({
+    id: "message", sessionId: "session", role: "assistant", status: "complete",
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: {},
+  })
+  assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
+  assert.equal(displayPartIds[0], "part-0")
+  assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
 
 describe("message-v2 permission state", () => {
   it("keeps one permission attachment when a duplicate moves from global to a tool part", () => {
@@ -66,6 +91,38 @@ describe("message-v2 todo state", () => {
 })
 
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
+  it("trims to 200 messages and purges removed render-cache entries", () => {
+    const instanceId = "window-trim", sessionId = "session"
+    const cache = getSessionMessageRenderCache(instanceId, sessionId)
+    const store = createInstanceMessageStore(instanceId, {
+      onMessagesRemoved: (_instanceId, _sessionId, messageIds) => purgeMessageRenderCache(cache, messageIds),
+    })
+    store.hydrateMessages(sessionId, Array.from({ length: 201 }, (_, index) => ({
+      id: `message-${index}`, sessionId, role: "assistant" as const, status: "complete" as const,
+    })))
+    cache.messageBlocks.set("message-0", {})
+    cache.messageBlocks.set("message-200", {})
+
+    store.trimSessionMessages(sessionId, 200)
+
+    assert.equal(store.getSessionMessageIds(sessionId).length, 200)
+    assert.equal(store.getSessionMessageIds(sessionId).includes("message-0"), false)
+    assert.deepEqual([...cache.messageBlocks.keys()], ["message-200"])
+    store.clearInstance()
+  })
+
+  it("clears pending parts omitted by authoritative hydration", () => {
+    const store = createInstanceMessageStore("pending-cleanup")
+    store.hydrateMessages("session-1", [{ id: "old", sessionId: "session-1", role: "assistant", status: "complete" }])
+    store.bufferPendingPart({ messageId: "old", sessionId: "session-1", part: { type: "text", text: "pending" } as any, receivedAt: 1 })
+
+    store.hydrateMessages("session-1", [{ id: "current", sessionId: "session-1", role: "user", status: "complete" }])
+
+    assert.equal(store.state.pendingParts.old, undefined)
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["current"])
+    store.clearInstance()
+  })
+
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })

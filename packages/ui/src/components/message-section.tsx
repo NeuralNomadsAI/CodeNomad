@@ -16,11 +16,12 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { buildSessionSearchMatches } from "../lib/session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { preserveMessageWindowCursor } from "../stores/message-v2/message-window"
 import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadCompleteMessageHistory, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT, reconcileResidentSearchMatches } from "./message-history-pagination"
 import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { getLogger } from "../lib/logger"
@@ -54,10 +55,10 @@ export interface MessageSectionProps {
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
   hasMoreMessages?: boolean
-  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<void>
+  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<boolean>
+  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<boolean>
+  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<boolean>
+  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<boolean>
   getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
@@ -198,12 +199,13 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const groups = Array.from(new Set(record.partIds.flatMap((partId) => {
+    const displayPartIds = getRecordDisplayPartIds(record)
+    const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
     }))).join(";")
     const pendingForms = pendingFormToolTargets()
-    const tools = record.partIds.flatMap((partId) => {
+    const tools = displayPartIds.flatMap((partId) => {
       const part = record.parts[partId]?.data
       if (part?.type !== "tool") return []
       const pending = Boolean(
@@ -459,14 +461,24 @@ export default function MessageSection(props: MessageSectionProps) {
       const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
-        store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
+        const resolvedStore = store()
+        resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+          snapshot,
+          resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+          resolvedStore.getMessageWindow(sessionId),
+        ))
         return
       }
     }
 
     const lastGoodScrollSnapshot = getLastGoodScrollSnapshot(sessionId)
     if (lastGoodScrollSnapshot) {
-      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
+      const resolvedStore = store()
+      resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+        lastGoodScrollSnapshot,
+        resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+        resolvedStore.getMessageWindow(sessionId),
+      ))
       return
     }
 
@@ -634,7 +646,7 @@ export default function MessageSection(props: MessageSectionProps) {
             hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
             hasMore: () => Boolean(props.hasMoreMessages),
             isCurrent: isCurrentRestore,
-            loadMore: props.onLoadMoreMessages,
+            loadMore: async () => { await props.onLoadMoreMessages?.() },
             getCursor: () => props.getMessageHistoryCursor?.(),
           })
         } catch (error) {
@@ -861,8 +873,8 @@ export default function MessageSection(props: MessageSectionProps) {
     pagingWindow = true
     try {
       if (!isCurrent()) return
-      await load(controller.signal)
-      if (!isCurrent()) return
+      const committed = await load(controller.signal)
+      if (!committed || !isCurrent()) return
       api.setAutoScroll(direction === "latest")
       api.notifyContentRendered()
       await waitTwoFrames()
@@ -951,8 +963,8 @@ export default function MessageSection(props: MessageSectionProps) {
       getPageKey: messageWindowPageKey,
       isCurrent: isCurrentSearch,
       isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
-      loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
-      loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+      loadOldest: async () => { await props.onLoadOldestMessages?.() },
+      loadNewer: async () => { await props.onLoadNewerMessages?.() },
       visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
     }).then((matches) => {
       if (!matches) {
@@ -1036,7 +1048,7 @@ export default function MessageSection(props: MessageSectionProps) {
           isCurrent: () => searchLocatorAuthority.isCurrent(locatorAuthority)
             && activeSearchMatch()?.id === match.id
             && isSearchOpen(),
-          loadMore: props.onLoadNewerMessages ?? (() => Promise.resolve()),
+          loadMore: async () => { await props.onLoadNewerMessages?.() },
           getCursor: messageWindowPageKey,
           maxPages: MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT,
         })

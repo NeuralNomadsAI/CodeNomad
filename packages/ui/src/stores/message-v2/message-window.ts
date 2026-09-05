@@ -1,4 +1,5 @@
 export const MESSAGE_WINDOW_PAGE_SIZE = 200
+export const SESSION_MESSAGE_WINDOW_LIMIT = MESSAGE_WINDOW_PAGE_SIZE
 export const MAX_NEWER_CURSORS = 32
 
 export type MessageWindowKind = "latest" | "history"
@@ -84,6 +85,14 @@ export function toWindowSnapshot(window: MessageWindowState): MessageWindowSnaps
     windowCursor: window.resumeCursor,
     newerCursors: window.newerCursors,
   }
+}
+
+export function preserveMessageWindowCursor<T extends object>(
+  snapshot: T,
+  current: MessageWindowSnapshot | undefined,
+  window: MessageWindowState | undefined,
+): T & MessageWindowSnapshot {
+  return { ...snapshot, ...(window ? toWindowSnapshot(window) : current) }
 }
 
 function sanitizeNewerCursors(cursors: readonly NewerCursor[] | undefined): NewerCursor[] {

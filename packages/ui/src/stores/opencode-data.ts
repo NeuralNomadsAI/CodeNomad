@@ -629,7 +629,27 @@ export function projectOpenCodeMessages(
   }
 }
 
-export function destroyOpenCodeData(instanceId: string): void {
+export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent): void {
+  if (event.type === "session.idle" || event.type === "session.deleted") {
+    destroyOpenCodeData(instanceId, eventSessionId(event))
+  }
+}
+
+export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    const key = messageRevisionKey(instanceId, sessionId)
+    const transcript = transcriptEntries.get(key)
+    if (transcript) {
+      invalidateTranscript(transcript)
+      transcript.entry.dispose()
+      transcriptEntries.delete(key)
+    }
+    mutationRevisions.delete(key)
+    messageRevisions.delete(key)
+    fullDataRevisions.delete(key)
+    instanceDataRevision(instanceId)[1]((current) => current + 1)
+    return
+  }
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)

@@ -4,6 +4,7 @@ import {
   emptyLatestWindow,
   planNewerWindow,
   planOlderWindow,
+  preserveMessageWindowCursor,
   type MessageWindowState,
   windowFromSnapshot,
   withOlderCursor,
@@ -65,5 +66,19 @@ test("restore uses the saved page without inventing a newer stack", () => {
     kind: "history",
     resumeCursor: "c1",
     newerCursors: [null],
+  })
+})
+
+test("preserves the current window while replacing scroll coordinates", () => {
+  assert.deepEqual(preserveMessageWindowCursor(
+    { scrollTop: 20, atBottom: false },
+    { windowIsLatest: false, windowCursor: "persisted", newerCursors: [null] },
+    { kind: "history", resumeCursor: "current", newerCursors: [null, "newer"] },
+  ), {
+    scrollTop: 20,
+    atBottom: false,
+    windowIsLatest: false,
+    windowCursor: "current",
+    newerCursors: [null, "newer"],
   })
 })

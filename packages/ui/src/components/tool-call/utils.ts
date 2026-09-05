@@ -4,12 +4,40 @@ import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } 
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
+import { exceedsRetainedByteLimit } from "../../lib/retained-size"
 const log = getLogger("session")
 
 
 export type { ToolStateCompleted, ToolStateError, ToolStateRunning }
 
 export const diffCapableTools = new Set(["edit", "patch"])
+export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
+export const TOOL_TITLE_RENDER_CHARACTER_LIMIT = 384
+export const MESSAGE_PART_RENDER_LIMIT = 200
+
+export function getItemsForRender<T>(items: readonly T[], limit: number) {
+  return { parts: items.slice(0, limit), truncated: items.length > limit }
+}
+
+export function limitToolOutputForRender(text: string): string {
+  if (text.length <= TOOL_OUTPUT_RENDER_CHARACTER_LIMIT) return text
+  const suffix = `\n\n${tGlobal("toolCall.output.truncated")}`
+  return `${text.slice(0, Math.max(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT - suffix.length))}${suffix}`
+}
+
+export function shouldRenderDiffAsPlainText(text: string): boolean {
+  return text.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+}
+
+export function shouldRenderDiffPayloadAsPlainText(payload: DiffPayload): boolean {
+  return shouldRenderDiffAsPlainText(payload.diffText)
+    || (payload.copyText?.length ?? 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+}
+
+export function limitToolTitleForRender(text: string): string {
+  if (text.length <= TOOL_TITLE_RENDER_CHARACTER_LIMIT) return text
+  return `${text.slice(0, TOOL_TITLE_RENDER_CHARACTER_LIMIT - 3)}...`
+}
 
 export function isToolStateRunning(state: ToolState): state is ToolStateRunning {
   return state.status === "running"
@@ -148,6 +176,41 @@ export function formatUnknown(value: unknown): { text: string; language?: string
   return null
 }
 
+export function formatUnknownForRender(value: unknown): { text: string; language?: string } | null {
+  if (typeof value !== "string" && exceedsRetainedByteLimit(value, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
+    return { text: tGlobal("toolCall.output.tooLarge") }
+  }
+  const result = formatUnknown(value)
+  return result ? { ...result, text: limitToolOutputForRender(result.text) } : null
+}
+
+export function formatToolInputForCopy(input: unknown): { text: string; language?: string } | null {
+  try {
+    const text = JSON.stringify(input, null, 2)
+    return typeof text === "string" ? { text, language: "json" } : null
+  } catch (error) {
+    log.error("Failed to stringify tool call input", error)
+    return null
+  }
+}
+
+export function formatToolInputForRender(input: unknown): { text: string; language?: string } | null {
+  if (typeof input !== "string" && exceedsRetainedByteLimit(input, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT)) {
+    return { text: JSON.stringify(tGlobal("toolCall.output.tooLarge")), language: "json" }
+  }
+  const formatted = formatToolInputForCopy(input)
+  return formatted ? { ...formatted, text: limitToolOutputForRender(formatted.text) } : null
+}
+
+export function formatUnknownForCopy(value: unknown): { text: string; language?: string } | null {
+  try {
+    return formatUnknown(value)
+  } catch (error) {
+    log.error("Failed to format tool call output for copy", error)
+    return { text: tGlobal("toolCall.output.tooLarge") }
+  }
+}
+
 export function inferLanguageFromPath(path?: string): string | undefined {
   return getLanguageFromPath(path || "")
 }
@@ -161,7 +224,11 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   let diffText: string | null = null
 
   for (const candidate of candidates) {
-    if (typeof candidate === "string" && isRenderableDiffText(candidate)) {
+    if (typeof candidate !== "string") continue
+    const renderable = candidate.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
+      ? /(^|\n)@@/.test(candidate.slice(0, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT))
+      : isRenderableDiffText(candidate)
+    if (renderable) {
       diffText = candidate
       break
     }
@@ -234,13 +301,14 @@ export function buildToolSpeechText(options: {
 }): string {
   const sections: string[] = []
 
-  if (options.title.trim()) {
-    sections.push(options.title.trim())
+  const title = limitToolOutputForRender(options.title).trim()
+  if (title) {
+    sections.push(title)
   }
 
   const { input, output } = readToolStatePayload(options.state)
-  const formattedInput = formatUnknown(input)
-  const formattedOutput = formatUnknown(output)
+  const formattedInput = formatUnknownForRender(input)
+  const formattedOutput = formatUnknownForRender(output)
 
   if (formattedInput?.text?.trim()) {
     sections.push(`${options.t("toolCall.io.input")}:\n${formattedInput.text.trim()}`)
@@ -250,13 +318,14 @@ export function buildToolSpeechText(options: {
     sections.push(`${options.t("toolCall.io.output")}:\n${formattedOutput.text.trim()}`)
   }
 
-  if (options.state?.status === "error" && options.state.error?.trim()) {
-    sections.push(`${options.t("toolCall.error.label")} ${options.state.error.trim()}`)
+  const error = options.state?.status === "error" ? limitToolOutputForRender(options.state.error ?? "").trim() : ""
+  if (error) {
+    sections.push(`${options.t("toolCall.error.label")} ${error}`)
   }
 
   if (sections.length === 1 && options.state?.status === "pending") {
     sections.push(options.t("toolCall.pending.waitingToRun"))
   }
 
-  return sections.join("\n\n").trim()
+  return limitToolOutputForRender(sections.join("\n\n").trim())
 }

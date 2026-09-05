@@ -59,3 +59,16 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     return false
   }
 }
+
+export async function copyTextChunksToClipboard(chunks: readonly string[]): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([...chunks], { type: "text/plain" }) })])
+      log.info("Copied text chunks using Clipboard API")
+      return true
+    }
+  } catch (error) {
+    log.warn("Clipboard chunk write failed, trying text fallback:", error)
+  }
+  return copyToClipboard(chunks.join(""))
+}
