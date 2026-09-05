@@ -1,12 +1,15 @@
 use crate::managed_node::resolve_bundled_node_binary;
+use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
+use std::env;
 #[cfg(windows)]
 use std::ffi::c_void;
 use std::ffi::OsStr;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]
 use std::mem::{size_of, zeroed};
@@ -635,6 +638,126 @@ fn generate_auth_cookie_name() -> String {
     format!("{SESSION_COOKIE_NAME_PREFIX}_{pid}_{timestamp}")
 }
 
+const DEFAULT_CONFIG_PATH: &str = "~/.config/codenomad/config.json";
+
+#[derive(Debug, Deserialize)]
+struct PreferencesConfig {
+    #[serde(rename = "listeningMode")]
+    listening_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerConfig {
+    #[serde(rename = "listeningMode")]
+    listening_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppConfig {
+    preferences: Option<PreferencesConfig>,
+    server: Option<ServerConfig>,
+}
+
+fn resolve_config_locations() -> (PathBuf, PathBuf) {
+    let raw = env::var("CLI_CONFIG")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
+
+    let expanded = expand_home(&raw);
+    let lower = raw.trim().to_lowercase();
+
+    if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+        let base = expanded
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| expanded.clone());
+        return (expanded, base.join("config.json"));
+    }
+
+    if lower.ends_with(".json") {
+        let base = expanded
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| expanded.clone());
+        return (base.join("config.yaml"), expanded);
+    }
+
+    // Treat as directory.
+    (expanded.join("config.yaml"), expanded.join("config.json"))
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    if path.starts_with("~/") {
+        if let Some(home) = home_dir().or_else(|| env::var("HOME").ok().map(PathBuf::from)) {
+            return home.join(path.trim_start_matches("~/"));
+        }
+    }
+    PathBuf::from(path)
+}
+
+fn resolve_listening_mode() -> String {
+    let (yaml_path, json_path) = resolve_config_locations();
+
+    if let Ok(content) = fs::read_to_string(&yaml_path) {
+        if let Ok(config) = serde_yaml::from_str::<AppConfig>(&content) {
+            let mode = config
+                .server
+                .as_ref()
+                .and_then(|srv| srv.listening_mode.as_ref())
+                .or_else(|| {
+                    config
+                        .preferences
+                        .as_ref()
+                        .and_then(|prefs| prefs.listening_mode.as_ref())
+                });
+
+            if let Some(mode) = mode {
+                if mode == "local" {
+                    return "local".to_string();
+                }
+                if mode == "all" {
+                    return "all".to_string();
+                }
+            }
+        }
+    }
+
+    // Legacy fallback.
+    if let Ok(content) = fs::read_to_string(&json_path) {
+        if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+            let mode = config
+                .server
+                .as_ref()
+                .and_then(|srv| srv.listening_mode.as_ref())
+                .or_else(|| {
+                    config
+                        .preferences
+                        .as_ref()
+                        .and_then(|prefs| prefs.listening_mode.as_ref())
+                });
+            if let Some(mode) = mode {
+                if mode == "local" {
+                    return "local".to_string();
+                }
+                if mode == "all" {
+                    return "all".to_string();
+                }
+            }
+        }
+    }
+    "local".to_string()
+}
+
+fn resolve_listening_host() -> String {
+    let mode = resolve_listening_mode();
+    if mode == "local" {
+        "127.0.0.1".to_string()
+    } else {
+        "0.0.0.0".to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CliState {
@@ -978,12 +1101,13 @@ impl CliProcessManager {
         };
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
+        let host = resolve_listening_host();
         log_line(&format!(
-            "resolved CLI entry runner={:?} entry={} host=127.0.0.1",
-            resolution.runner, resolution.entry
+            "resolved CLI entry runner={:?} entry={} host={}",
+            resolution.runner, resolution.entry, host
         ));
         let auth_cookie_name = Arc::new(generate_auth_cookie_name());
-        let args = resolution.build_args(dev, auth_cookie_name.as_str());
+        let args = resolution.build_args(dev, &host, auth_cookie_name.as_str());
         log_line(&format!("CLI args: {:?}", args));
         if dev {
             log_line("development mode: will prefer tsx + source if present");
@@ -1569,9 +1693,11 @@ impl CliEntry {
         ))
     }
 
-    fn build_args(&self, dev: bool, auth_cookie_name: &str) -> Vec<String> {
+    fn build_args(&self, dev: bool, host: &str, auth_cookie_name: &str) -> Vec<String> {
         let mut args = vec![
             "serve".to_string(),
+            "--host".to_string(),
+            host.to_string(),
             "--auth-cookie-name".to_string(),
             auth_cookie_name.to_string(),
             "--generate-token".to_string(),
@@ -1579,7 +1705,8 @@ impl CliEntry {
         ];
 
         if dev {
-            // Dev: keep loopback HTTP for the Vite proxy.
+            // Dev: keep loopback HTTP for the Vite proxy, but also enable HTTPS so
+            // remote proxy sessions can still spin up secure local windows.
             let ui_dev_server = std::env::var("VITE_DEV_SERVER_URL")
                 .ok()
                 .filter(|value| !value.trim().is_empty())

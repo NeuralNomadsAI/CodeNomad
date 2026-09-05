@@ -37,6 +37,49 @@ test("encrypted frames fail closed after tampering", async () => {
   await assert.rejects(() => accepted.channel.decrypt(frame), /authentication failed/)
 })
 
+test("encrypted channels reject a skipped counter before exposing later plaintext", async () => {
+  const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]) as CryptoKeyPair
+  const client = await createClientHandshake(await crypto.subtle.exportKey("jwk", pair.publicKey))
+  const host = await createHostHandshake(await crypto.subtle.exportKey("jwk", pair.privateKey))
+  const accepted = await host.accept(client.hello)
+  const clientChannel = await client.accept(accepted.ready)
+  const first = await clientChannel.encrypt(new TextEncoder().encode("first"))
+  const second = await clientChannel.encrypt(new TextEncoder().encode("second"))
+
+  await assert.rejects(() => accepted.channel.decrypt(second), /out of order/)
+  assert.equal(new TextDecoder().decode(await accepted.channel.decrypt(first)), "first")
+})
+
+test("encrypted channels reject concurrent replay before duplicate plaintext is exposed", async () => {
+  const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]) as CryptoKeyPair
+  const client = await createClientHandshake(await crypto.subtle.exportKey("jwk", pair.publicKey))
+  const host = await createHostHandshake(await crypto.subtle.exportKey("jwk", pair.privateKey))
+  const accepted = await host.accept(client.hello)
+  const clientChannel = await client.accept(accepted.ready)
+  const frame = await clientChannel.encrypt(new TextEncoder().encode("once"))
+  const results = await Promise.allSettled([
+    accepted.channel.decrypt(frame),
+    accepted.channel.decrypt(frame),
+  ])
+
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1)
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1)
+})
+
+test("handshake objects admit only one concurrent acceptance", async () => {
+  const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]) as CryptoKeyPair
+  const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey)
+  const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey)
+  const client = await createClientHandshake(publicKey)
+  const host = await createHostHandshake(privateKey)
+  const hostAcceptance = host.accept(client.hello)
+  await assert.rejects(() => host.accept(client.hello), /already accepted/)
+  const accepted = await hostAcceptance
+  const clientAcceptance = client.accept(accepted.ready)
+  await assert.rejects(() => client.accept(accepted.ready), /already accepted/)
+  await clientAcceptance
+})
+
 test("host challenge prevents encrypted requests from being replayed into a new tunnel", async () => {
   const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]) as CryptoKeyPair
   const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey)

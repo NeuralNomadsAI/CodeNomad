@@ -11,7 +11,7 @@ import {
 const logger = { info() {}, warn() {}, error() {} }
 const operations = (overrides: Partial<ServerShutdownOperations> = {}): ServerShutdownOperations => ({
   stopInstanceEventBridge() {}, stopSidecars() {}, stopClientConnections() {},
-  stopRemoteControl() {}, stopWorkspaces() {}, stopHttpServers() {}, stopReleaseMonitor() {},
+  stopRemoteControl() {}, stopRemoteProxySessions() {}, stopWorkspaces() {}, stopHttpServers() {}, stopReleaseMonitor() {},
   ...overrides,
 })
 
@@ -21,10 +21,11 @@ describe("server shutdown orchestration", () => {
     let attempts = 0
     await orchestrateServerShutdown(operations({
       stopRemoteControl: () => { calls.push("remote-control") },
+      stopRemoteProxySessions: () => { calls.push("remote-proxy") },
       stopWorkspaces: () => { calls.push(`workspaces-${++attempts}`); if (attempts === 1) throw new Error("still alive") },
       stopHttpServers: () => { calls.push("http") },
     }), logger)
-    assert.deepEqual(calls, ["workspaces-1", "remote-control", "workspaces-2", "http"])
+    assert.deepEqual(calls, ["workspaces-1", "remote-control", "remote-proxy", "workspaces-2", "http"])
   })
 
   it("closes remaining resources and aggregates the concrete current error", async () => {

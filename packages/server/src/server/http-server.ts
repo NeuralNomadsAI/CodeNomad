@@ -27,6 +27,8 @@ import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
+import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
@@ -40,8 +42,9 @@ import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
-import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import type { RemoteControlManager } from "../remote-control/manager"
+import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
+import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 import type { NativeParent } from "../native-parent"
@@ -64,9 +67,10 @@ interface HttpServerDeps {
   speechService: SpeechService
   sidecarManager: SideCarManager
   previewManager: PreviewManager
+  remoteControlManager: RemoteControlManager
   authManager: AuthManager
   clientConnectionManager: ClientConnectionManager
-  remoteControlManager: RemoteControlManager
+  remoteProxySessionManager: RemoteProxySessionManager
   yoloManager: AutoAcceptManager
   uiStaticDir: string
   uiDevServerUrl?: string
@@ -141,13 +145,22 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
+  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
+
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
-    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl]
+    const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
     for (const candidate of candidates) {
       if (!candidate) continue
       try {
         origins.add(new URL(candidate).origin)
+      } catch {
+        // ignore
+      }
+    }
+    for (const addr of deps.serverMeta.addresses ?? []) {
+      try {
+        origins.add(new URL(addr.remoteUrl).origin)
       } catch {
         // ignore
       }
@@ -178,6 +191,13 @@ export function createHttpServer(deps: HttpServerDeps) {
          return
        }
 
+       // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
+       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
+         cb(null, true)
+         return
+       }
+
+
       cb(null, false)
     },
     credentials: true,
@@ -205,6 +225,11 @@ export function createHttpServer(deps: HttpServerDeps) {
       publicPagePaths.add("/auth/token")
     }
 
+    const isLoopbackRemoteProxyDelete =
+      request.method === "DELETE" &&
+      pathname.startsWith("/api/remote-proxy/sessions/") &&
+      deps.authManager.isLoopbackRequest(request)
+
     const encodedPreviewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
     const hostPreviewToken = parsePreviewCapabilityHost(request.headers.host)
     let isPreviewCapability = false
@@ -227,7 +252,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       authManager: deps.authManager,
       bridgeToken: deps.automationBridgeToken,
     })
-    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isPreviewCapability || isAutomationBridge) {
+    if (publicApiPaths.has(pathname) || publicPagePaths.has(pathname) || isLoopbackRemoteProxyDelete || isPreviewCapability || isAutomationBridge) {
       done()
       return
     }
@@ -292,6 +317,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
+  registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })

@@ -2,12 +2,15 @@ import {
   createClientHandshake,
   decodeBase64,
   encodeBase64,
+  FrameBudget,
   REMOTE_CONTROL_MAX_HTTP_BODY_BYTES,
+  REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES,
   type ClientToHostMessage,
   type EncryptedChannel,
   type HeaderEntries,
   type HostToClientMessage,
 } from "@codenomad/remote-control-protocol"
+import { readBoundedBody } from "./bounded-body"
 import { TunnelEventSource } from "./event-source"
 import {
   TunnelWebSocket,
@@ -19,6 +22,13 @@ import {
 const HOST_KEY_STORAGE = "codenomad.remote-control.host-public-key"
 const HTTP_IDLE_TIMEOUT_MS = 30_000
 const FETCH_PATH_PREFIXES = ["/api/", "/workspaces/"]
+const MAX_ACTIVE_HTTP_REQUESTS = 32
+const MAX_PENDING_SOCKETS = 16
+const MAX_PENDING_FRAMES = 128
+const MAX_PENDING_FRAME_BYTES = 24 * 1024 * 1024
+const MAX_BUFFERED_HTTP_CHUNKS = 512
+const MAX_BUFFERED_HTTP_BYTES = 24 * 1024 * 1024
+const SOCKET_CLOSE_TIMEOUT_MS = 10_000
 
 interface RemoteControlBootstrap {
   tunnelPath: string
@@ -28,16 +38,20 @@ interface PendingHttp {
   resolve: (response: Response) => void
   reject: (error: Error) => void
   controller?: ReadableStreamDefaultController<Uint8Array>
-  queued: Uint8Array[]
+  queued: Array<{ bytes: Uint8Array; release: () => void }>
+  inFlightRelease?: () => void
   ended: boolean
   timeout: ReturnType<typeof setTimeout>
   cleanup: () => void
+  releaseAdmission: () => void
+  method: string
 }
 
 interface PendingSocket {
   socket: TunnelWebSocket
   opening: Promise<void>
   transmission: Promise<void>
+  closeTimer?: ReturnType<typeof setTimeout>
 }
 
 export async function installRemoteControlTransport(): Promise<void> {
@@ -78,8 +92,13 @@ class RemoteControlTunnel implements RemoteSocketBridge {
   private connection: Promise<void> | null = null
   private sendQueue = Promise.resolve()
   private receiveQueue = Promise.resolve()
+  private readonly sendBudget = new FrameBudget(MAX_PENDING_FRAMES, MAX_PENDING_FRAME_BYTES)
+  private readonly receiveBudget = new FrameBudget(MAX_PENDING_FRAMES, MAX_PENDING_FRAME_BYTES)
+  private readonly socketBudget = new FrameBudget(MAX_PENDING_FRAMES, MAX_PENDING_FRAME_BYTES)
+  private readonly httpBufferBudget = new FrameBudget(MAX_BUFFERED_HTTP_CHUNKS, MAX_BUFFERED_HTTP_BYTES)
   private readonly pendingHttp = new Map<string, PendingHttp>()
   private readonly pendingSockets = new Map<string, PendingSocket>()
+  private activeHttpRequests = 0
 
   constructor(
     private readonly bootstrap: RemoteControlBootstrap,
@@ -92,19 +111,38 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     const request = input instanceof Request && init ? new Request(input, init) : source
     const id = crypto.randomUUID()
     if (request.signal.aborted) throw new DOMException("The operation was aborted", "AbortError")
-    const bodyBytes = request.method === "GET" || request.method === "HEAD"
-      ? new Uint8Array()
-      : new Uint8Array(await request.arrayBuffer())
-    if (bodyBytes.byteLength > REMOTE_CONTROL_MAX_HTTP_BODY_BYTES) return Response.json({ error: "Remote request body is too large" }, { status: 413 })
-
-    await this.ensureConnected()
+    if (this.activeHttpRequests >= MAX_ACTIVE_HTTP_REQUESTS) {
+      return Response.json({ error: "Too many active remote requests" }, { status: 429 })
+    }
+    this.activeHttpRequests += 1
+    let admissionActive = true
+    const releaseAdmission = () => {
+      if (!admissionActive) return
+      admissionActive = false
+      this.activeHttpRequests -= 1
+    }
+    let bodyBytes: Uint8Array | null
+    try {
+      bodyBytes = request.method === "GET" || request.method === "HEAD"
+        ? new Uint8Array()
+        : await readBoundedBody(request.body, REMOTE_CONTROL_MAX_HTTP_BODY_BYTES)
+      if (request.signal.aborted) throw new DOMException("The operation was aborted", "AbortError")
+      if (!bodyBytes) {
+        releaseAdmission()
+        return Response.json({ error: "Remote request body is too large" }, { status: 413 })
+      }
+      await this.ensureConnected()
+    } catch (error) {
+      releaseAdmission()
+      throw error
+    }
     const abort = () => {
-      void this.send({ type: "http.cancel", id })
+      void this.send({ type: "http.cancel", id }).catch(() => undefined)
       this.failHttp(id, new DOMException("The operation was aborted", "AbortError"))
     }
     const response = new Promise<Response>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        void this.send({ type: "http.cancel", id })
+        void this.send({ type: "http.cancel", id }).catch(() => undefined)
         this.failHttp(id, new Error("Remote request timed out"))
       }, HTTP_IDLE_TIMEOUT_MS)
       this.pendingHttp.set(id, {
@@ -114,6 +152,8 @@ class RemoteControlTunnel implements RemoteSocketBridge {
         ended: false,
         timeout,
         cleanup: () => request.signal.removeEventListener("abort", abort),
+        releaseAdmission,
+        method: request.method,
       })
     })
     request.signal.addEventListener("abort", abort, { once: true })
@@ -131,6 +171,13 @@ class RemoteControlTunnel implements RemoteSocketBridge {
   }
 
   connectSocket(socket: TunnelWebSocket, url: URL, protocols: string[]): void {
+    if (this.pendingSockets.size >= MAX_PENDING_SOCKETS) {
+      queueMicrotask(() => {
+        socket.fail()
+        socket.finish(1008, "Too many active remote WebSockets", false)
+      })
+      return
+    }
     const opening = this.ensureConnected()
       .then(() => this.send({
         type: "socket.open",
@@ -146,9 +193,23 @@ class RemoteControlTunnel implements RemoteSocketBridge {
   transmitSocket(socket: TunnelWebSocket, data: RemoteSocketData): void {
     const pending = this.pendingSockets.get(socket.id)
     if (!pending || pending.socket !== socket) return
+    const byteLength = socketPayloadByteLength(data)
+    if (byteLength > REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES) {
+      this.failSocket(socket.id)
+      return
+    }
+    const release = this.socketBudget.reserve(byteLength)
+    if (!release) {
+      this.failSocket(socket.id)
+      return
+    }
+    socket.buffer(byteLength)
     const transmission = pending.transmission.then(async () => {
       const payload = await socketPayload(data)
       await this.send({ type: "socket.message", id: socket.id, data: encodeBase64(payload.bytes), binary: payload.binary })
+    }).finally(() => {
+      release()
+      socket.flush(byteLength)
     })
     pending.transmission = transmission.catch(() => undefined)
     void transmission.catch(() => this.failSocket(socket.id))
@@ -162,7 +223,17 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     }
     void pending.transmission
       .then(() => this.send({ type: "socket.close", id: socket.id, code, reason }))
-      .catch(() => undefined)
+      .then(() => {
+        if (this.pendingSockets.get(socket.id) !== pending) return
+        pending.closeTimer = setTimeout(() => {
+          pending.socket.fail()
+          this.finishSocket(socket.id, 1006, "Remote WebSocket close timed out", false)
+        }, SOCKET_CLOSE_TIMEOUT_MS)
+      })
+      .catch(() => {
+        pending.socket.fail()
+        this.finishSocket(socket.id, 1006, "Remote WebSocket close failed", false)
+      })
   }
 
   private ensureConnected(): Promise<void> {
@@ -219,10 +290,16 @@ class RemoteControlTunnel implements RemoteSocketBridge {
         this.close(1002, "Plaintext received after encryption handshake")
         return
       }
+      const frame = new Uint8Array(event.data)
+      const release = this.receiveBudget.reserve(frame.byteLength)
+      if (!release) {
+        this.close(1009, "Remote Control receive queue exceeded its safety limit")
+        return
+      }
       const receive = this.receiveQueue.then(async () => {
         if (this.socket !== socket || this.channel !== channel) return
-        await this.receive(channel, new Uint8Array(event.data))
-      })
+        await this.receive(channel, frame)
+      }).finally(release)
       this.receiveQueue = receive.catch(() => {
         if (this.socket === socket) this.close(1008, "Encrypted Remote Control frame failed")
       })
@@ -233,6 +310,11 @@ class RemoteControlTunnel implements RemoteSocketBridge {
 
   private send(message: ClientToHostMessage): Promise<void> {
     const plaintext = new TextEncoder().encode(JSON.stringify(message))
+    const release = this.sendBudget.reserve(plaintext.byteLength)
+    if (!release) {
+      this.close(1009, "Remote Control send queue exceeded its safety limit")
+      return Promise.reject(new Error("Remote Control send queue exceeded its safety limit"))
+    }
     const socket = this.socket
     const channel = this.channel
     const send = this.sendQueue.then(async () => {
@@ -244,7 +326,7 @@ class RemoteControlTunnel implements RemoteSocketBridge {
         throw new Error("Remote Control tunnel is disconnected")
       }
       socket.send(frame)
-    })
+    }).finally(release)
     this.sendQueue = send.catch(() => undefined)
     return send
   }
@@ -257,7 +339,11 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     else if (message.type === "http.end") this.endHttp(message.id)
     else if (message.type === "http.error") this.failHttp(message.id, new Error(message.message))
     else if (message.type === "socket.ready") this.pendingSockets.get(message.id)?.socket.accept(message.protocol)
-    else if (message.type === "socket.message") this.pendingSockets.get(message.id)?.socket.receive(decodeBase64(message.data), message.binary)
+    else if (message.type === "socket.message") {
+      if (base64ByteLength(message.data) > REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES) {
+        this.failSocket(message.id)
+      } else this.pendingSockets.get(message.id)?.socket.receive(decodeBase64(message.data), message.binary)
+    }
     else if (message.type === "socket.error") this.failSocket(message.id)
     else if (message.type === "socket.close") this.finishSocket(message.id, message.code, message.reason)
   }
@@ -266,21 +352,24 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     const pending = this.pendingHttp.get(message.id)
     if (!pending) return
     this.refreshTimeout(message.id)
-    const stream = new ReadableStream<Uint8Array>({
+    const bodyAllowed = pending.method !== "HEAD" && !responseMustNotHaveBody(message.status)
+    const stream = bodyAllowed ? new ReadableStream<Uint8Array>({
       start: (controller) => {
         pending.controller = controller
-        for (const chunk of pending.queued) controller.enqueue(chunk)
-        pending.queued.length = 0
-        if (pending.ended) controller.close()
+        this.pumpHttp(message.id, pending)
+      },
+      pull: () => {
+        pending.inFlightRelease?.()
+        pending.inFlightRelease = undefined
+        this.refreshTimeout(message.id)
+        this.pumpHttp(message.id, pending)
       },
       cancel: () => {
-        void this.send({ type: "http.cancel", id: message.id })
-        clearTimeout(pending.timeout)
-        pending.cleanup()
-        this.pendingHttp.delete(message.id)
+        void this.send({ type: "http.cancel", id: message.id }).catch(() => undefined)
+        this.releaseHttp(message.id, pending)
       },
-    })
-    pending.resolve(new Response(responseMustNotHaveBody(message.status) ? null : stream, {
+    }, { highWaterMark: 1 }) : null
+    pending.resolve(new Response(stream, {
       status: message.status,
       headers: message.headers,
     }))
@@ -290,28 +379,31 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     const pending = this.pendingHttp.get(id)
     if (!pending || pending.ended) return
     this.refreshTimeout(id)
-    if (pending.controller) pending.controller.enqueue(chunk)
-    else pending.queued.push(chunk)
+    const release = this.httpBufferBudget.reserve(chunk.byteLength)
+    if (!release) {
+      void this.send({ type: "http.cancel", id }).catch(() => undefined)
+      this.failHttp(id, new Error("Remote response buffer exceeded its safety limit"))
+      return
+    }
+    pending.queued.push({ bytes: chunk, release })
+    this.pumpHttp(id, pending)
   }
 
   private endHttp(id: string): void {
     const pending = this.pendingHttp.get(id)
     if (!pending) return
-    clearTimeout(pending.timeout)
-    pending.cleanup()
     pending.ended = true
-    pending.controller?.close()
-    this.pendingHttp.delete(id)
+    pending.releaseAdmission()
+    this.refreshTimeout(id)
+    this.pumpHttp(id, pending)
   }
 
   private failHttp(id: string, error: Error): void {
     const pending = this.pendingHttp.get(id)
     if (!pending) return
-    clearTimeout(pending.timeout)
-    pending.cleanup()
     pending.reject(error)
     pending.controller?.error(error)
-    this.pendingHttp.delete(id)
+    this.releaseHttp(id, pending)
   }
 
   private refreshTimeout(id: string): void {
@@ -319,9 +411,37 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     if (!pending) return
     clearTimeout(pending.timeout)
     pending.timeout = setTimeout(() => {
-      void this.send({ type: "http.cancel", id })
+      void this.send({ type: "http.cancel", id }).catch(() => undefined)
       this.failHttp(id, new Error("Remote response timed out"))
     }, HTTP_IDLE_TIMEOUT_MS)
+  }
+
+  private pumpHttp(id: string, pending: PendingHttp): void {
+    if (this.pendingHttp.get(id) !== pending || pending.inFlightRelease) return
+    if (!pending.controller) {
+      if (pending.ended) this.releaseHttp(id, pending)
+      return
+    }
+    const next = pending.queued.shift()
+    if (next) {
+      pending.inFlightRelease = next.release
+      pending.controller.enqueue(next.bytes)
+      return
+    }
+    if (!pending.ended) return
+    pending.controller.close()
+    this.releaseHttp(id, pending)
+  }
+
+  private releaseHttp(id: string, pending: PendingHttp): void {
+    if (this.pendingHttp.get(id) !== pending) return
+    clearTimeout(pending.timeout)
+    pending.cleanup()
+    pending.releaseAdmission()
+    pending.inFlightRelease?.()
+    for (const queued of pending.queued) queued.release()
+    pending.queued.length = 0
+    this.pendingHttp.delete(id)
   }
 
   private close(code?: number, reason?: string): void {
@@ -349,6 +469,7 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     const pending = this.pendingSockets.get(id)
     if (!pending) return
     this.pendingSockets.delete(id)
+    if (pending.closeTimer) clearTimeout(pending.closeTimer)
     pending.socket.finish(code, reason, wasClean)
   }
 }
@@ -385,6 +506,12 @@ async function socketPayload(data: RemoteSocketData): Promise<{ bytes: Uint8Arra
   return { bytes: new Uint8Array(data), binary: true }
 }
 
+function socketPayloadByteLength(data: RemoteSocketData): number {
+  if (typeof data === "string") return new TextEncoder().encode(data).byteLength
+  if (data instanceof Blob) return data.size
+  return data.byteLength
+}
+
 function requestHeaders(headers: Headers): HeaderEntries {
   const result: HeaderEntries = []
   headers.forEach((value, name) => result.push([name, value]))
@@ -406,6 +533,12 @@ function parseHostMessage(value: string): HostToClientMessage | null {
   } catch {
     return null
   }
+}
+
+function base64ByteLength(value: string): number {
+  if (!value) return 0
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
+  return Math.floor(value.length * 3 / 4) - padding
 }
 
 function responseMustNotHaveBody(status: number): boolean {

@@ -21,8 +21,11 @@ import { ProvidersSettingsSection } from "./settings/providers-settings-section"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
+import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { RemoteControlSettingsSection } from "./settings/remote-control-settings-section"
+import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
+import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
 
@@ -74,6 +77,10 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return (
           <div class="settings-section-stack">
             <RemoteControlSettingsSection />
+            <RemoteAccessSettingsSection />
+            <Show when={canOpenRemoteWindows()}>
+              <SavedRemoteServersCard />
+            </Show>
           </div>
         )
       case "opencode":

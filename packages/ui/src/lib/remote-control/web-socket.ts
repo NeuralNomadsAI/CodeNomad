@@ -10,6 +10,9 @@ type OpenHandler = ((event: Event) => unknown) | null
 type MessageHandler = ((event: MessageEvent) => unknown) | null
 type CloseHandler = ((event: CloseEvent) => unknown) | null
 
+const MAX_PROTOCOLS = 16
+const MAX_PROTOCOL_CHARS = 128
+
 export class TunnelWebSocket extends EventTarget {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -24,13 +27,17 @@ export class TunnelWebSocket extends EventTarget {
   readonly url: string
   readonly extensions = ""
   binaryType: BinaryType = "blob"
-  bufferedAmount = 0
+  private bufferedBytes = 0
   protocol = ""
   readyState = TunnelWebSocket.CONNECTING
   onopen: OpenHandler = null
   onmessage: MessageHandler = null
   onerror: OpenHandler = null
   onclose: CloseHandler = null
+
+  get bufferedAmount(): number {
+    return this.bufferedBytes
+  }
 
   constructor(url: string | URL, protocols: string | string[] | undefined, private readonly bridge: RemoteSocketBridge) {
     super()
@@ -65,6 +72,14 @@ export class TunnelWebSocket extends EventTarget {
     this.onopen?.(event)
   }
 
+  buffer(byteLength: number): void {
+    this.bufferedBytes += byteLength
+  }
+
+  flush(byteLength: number): void {
+    this.bufferedBytes = Math.max(0, this.bufferedBytes - byteLength)
+  }
+
   receive(data: Uint8Array, binary: boolean): void {
     if (this.readyState !== TunnelWebSocket.OPEN) return
     const payload = binary
@@ -87,6 +102,7 @@ export class TunnelWebSocket extends EventTarget {
   finish(code = 1005, reason = "", wasClean = true): void {
     if (this.readyState === TunnelWebSocket.CLOSED) return
     this.readyState = TunnelWebSocket.CLOSED
+    this.bufferedBytes = 0
     const event = new CloseEvent("close", { code, reason, wasClean })
     this.dispatchEvent(event)
     this.onclose?.(event)
@@ -116,15 +132,16 @@ export function tunnelAwareWebSocket(
 
 function normalizeProtocols(value: string | string[] | undefined): string[] {
   const protocols = value === undefined ? [] : typeof value === "string" ? [value] : [...value]
-  if (new Set(protocols).size !== protocols.length
-    || protocols.some((protocol) => !/^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$/.test(protocol))) {
+  if (protocols.length > MAX_PROTOCOLS || new Set(protocols).size !== protocols.length
+    || protocols.some((protocol) => typeof protocol !== "string" || protocol.length > MAX_PROTOCOL_CHARS
+      || !/^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$/.test(protocol))) {
     throw new DOMException("Invalid WebSocket protocol", "SyntaxError")
   }
   return protocols
 }
 
 function validateClose(code: number | undefined, reason: string): void {
-  if (code !== undefined && code !== 1000 && (code < 3000 || code > 4999)) {
+  if (code !== undefined && (!Number.isInteger(code) || (code !== 1000 && (code < 3000 || code > 4999)))) {
     throw new DOMException("Invalid WebSocket close code", "InvalidAccessError")
   }
   if (new TextEncoder().encode(reason).byteLength > 123) {

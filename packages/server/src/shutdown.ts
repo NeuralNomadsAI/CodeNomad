@@ -6,7 +6,7 @@ export const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
 export const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
 
 export type ServerShutdownOperations = Record<
-  "stopInstanceEventBridge" | "stopSidecars" | "stopClientConnections" | "stopRemoteControl" | "stopWorkspaces" |
+  "stopInstanceEventBridge" | "stopSidecars" | "stopClientConnections" | "stopRemoteControl" | "stopRemoteProxySessions" | "stopWorkspaces" |
   "stopHttpServers" | "stopReleaseMonitor",
   ShutdownOperation
 >
@@ -93,6 +93,7 @@ export async function orchestrateServerShutdown(
     settle([
       ["stopInstanceEventBridge", operations.stopInstanceEventBridge], ["stopSidecars", operations.stopSidecars],
       ["stopClientConnections", operations.stopClientConnections], ["stopRemoteControl", operations.stopRemoteControl],
+      ["stopRemoteProxySessions", operations.stopRemoteProxySessions],
     ]),
     workspaceShutdown,
   ])

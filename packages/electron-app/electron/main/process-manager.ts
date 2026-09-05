@@ -2,9 +2,11 @@ import { spawn, type ChildProcess } from "child_process"
 import { app } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
+import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
+import { parse as parseYaml } from "yaml"
 import { ensureManagedNodeBinary } from "./managed-node"
 import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
@@ -29,6 +31,7 @@ const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
 const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
 type CliState = "starting" | "ready" | "error" | "stopped"
+type ListeningMode = "local" | "all"
 
 export interface CliStatus {
   state: CliState
@@ -53,6 +56,75 @@ interface CliEntryResolution {
   runnerPath?: string
   nodeBinaryPath: string
   nodeArgs?: string[]
+}
+
+const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
+
+function isYamlPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase()
+  return lower.endsWith(".yaml") || lower.endsWith(".yml")
+}
+
+function isJsonPath(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".json")
+}
+
+function resolveConfigPaths(raw?: string): { configYamlPath: string; legacyJsonPath: string } {
+  const target = raw && raw.trim().length > 0 ? raw.trim() : DEFAULT_CONFIG_PATH
+  const resolved = resolveConfigPath(target)
+
+  if (isYamlPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: resolved, legacyJsonPath: path.join(baseDir, "config.json") }
+  }
+
+  if (isJsonPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: path.join(baseDir, "config.yaml"), legacyJsonPath: resolved }
+  }
+
+  // Treat as directory.
+  return {
+    configYamlPath: path.join(resolved, "config.yaml"),
+    legacyJsonPath: path.join(resolved, "config.json"),
+  }
+}
+
+function resolveConfigPath(configPath?: string): string {
+  const target = configPath && configPath.trim().length > 0 ? configPath : DEFAULT_CONFIG_PATH
+  if (target.startsWith("~/")) {
+    return path.join(os.homedir(), target.slice(2))
+  }
+  return path.resolve(target)
+}
+
+function resolveHostForMode(mode: ListeningMode): string {
+  return mode === "local" ? "127.0.0.1" : "0.0.0.0"
+}
+
+function readListeningModeFromConfig(): ListeningMode {
+  try {
+    const { configYamlPath, legacyJsonPath } = resolveConfigPaths(process.env.CLI_CONFIG)
+
+    let parsed: any = null
+    if (existsSync(configYamlPath)) {
+      const content = readFileSync(configYamlPath, "utf-8")
+      parsed = parseYaml(content)
+    } else if (existsSync(legacyJsonPath)) {
+      const content = readFileSync(legacyJsonPath, "utf-8")
+      parsed = JSON.parse(content)
+    } else {
+      return "local"
+    }
+
+    const mode = parsed?.server?.listeningMode ?? parsed?.preferences?.listeningMode
+    if (mode === "local" || mode === "all") {
+      return mode
+    }
+  } catch (error) {
+    console.warn("[cli] failed to read listening mode from config", error)
+  }
+  return "local"
 }
 
 export declare interface CliProcessManager {
@@ -125,12 +197,14 @@ export class CliProcessManager extends EventEmitter {
     this.childStartIdentity = undefined
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
-    const args = this.buildCliArgs(options)
+    const listeningMode = this.resolveListeningMode()
+    const host = resolveHostForMode(listeningMode)
+    const args = this.buildCliArgs(options, host)
     const cliEntry = await this.awaitStartupStep(this.resolveCliEntry(options))
     if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
 
     console.info(
-      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=127.0.0.1)`,
+      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
     )
 
     const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
@@ -322,6 +396,10 @@ export class CliProcessManager extends EventEmitter {
     })
   }
 
+  private resolveListeningMode(): ListeningMode {
+    return readListeningModeFromConfig()
+  }
+
   private handleTimeout() {
     const timedOutChild = this.child
     if (timedOutChild) {
@@ -436,13 +514,14 @@ export class CliProcessManager extends EventEmitter {
     this.emit("status", this.status)
   }
 
-  private buildCliArgs(options: StartOptions): string[] {
-    const args = ["serve", "--generate-token", "--auth-cookie-name", this.authCookieName, "--unrestricted-root"]
+  private buildCliArgs(options: StartOptions, host: string): string[] {
+    const args = ["serve", "--host", host, "--generate-token", "--auth-cookie-name", this.authCookieName, "--unrestricted-root"]
 
     if (options.dev) {
       // Dev: run plain HTTP + Vite dev server proxy.
       args.push("--https", "false", "--http", "true")
-      // Avoid collisions with an already-running server by forcing an ephemeral port in dev.
+      // Avoid collisions with an already-running server (and dual-stack ::/0.0.0.0 quirks)
+      // by forcing an ephemeral port in dev.
       args.push("--http-port", "0")
     } else {
       // Prod desktop: always keep loopback HTTP enabled.

@@ -119,7 +119,10 @@ test("hibernating relay carries opaque HTTP streams and WebSockets end to end", 
         /failed|timed out/i,
       )
 
-      for (let index = 0; index < 8; index += 1) await manager.createPairing()
+      const pairingResults = await Promise.allSettled(
+        Array.from({ length: 8 }, () => manager.createPairing()),
+      )
+      assert.equal(pairingResults.filter((result) => result.status === "fulfilled").length, 8)
       await assert.rejects(() => manager.createPairing(), /Too many active pairing links/)
 
       const devices = await manager.devices()

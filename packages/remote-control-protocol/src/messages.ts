@@ -3,6 +3,7 @@ export const REMOTE_CONTROL_HEARTBEAT_REQUEST = "codenomad.remote-control.ping.v
 export const REMOTE_CONTROL_HEARTBEAT_RESPONSE = "codenomad.remote-control.pong.v2"
 export const REMOTE_CONTROL_MAX_HANDSHAKE_BYTES = 4 * 1024
 export const REMOTE_CONTROL_MAX_HTTP_BODY_BYTES = 12 * 1024 * 1024
+export const REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES = 12 * 1024 * 1024
 export const REMOTE_CONTROL_MAX_PLAINTEXT_BYTES = 20 * 1024 * 1024
 
 export type HeaderEntries = Array<[string, string]>

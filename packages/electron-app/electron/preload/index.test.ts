@@ -57,7 +57,7 @@ test("Preferences preload exposes only section and frame controls", () => {
 
   const api = exposed.get("electronAPI") as Record<string, Function>
   assert.deepEqual(Object.keys(api), [
-    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification",
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
     "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",

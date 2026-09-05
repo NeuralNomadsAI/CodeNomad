@@ -398,6 +398,42 @@ export interface YoloStateResponse {
   enabled: boolean
 }
 
+export interface RemoteServerProfile {
+  id: string
+  name: string
+  baseUrl: string
+  skipTlsVerify: boolean
+  createdAt: string
+  updatedAt: string
+  lastConnectedAt?: string
+}
+
+export interface RemoteServerProbeRequest {
+  baseUrl: string
+  skipTlsVerify?: boolean
+}
+
+export interface RemoteServerProbeResponse {
+  ok: boolean
+  reachable: boolean
+  normalizedUrl: string
+  skipTlsVerify: boolean
+  requiresAuth: boolean
+  authenticated: boolean
+  error?: string
+  errorCode?: string
+}
+
+export interface RemoteProxySessionCreateRequest {
+  baseUrl: string
+  skipTlsVerify?: boolean
+}
+
+export interface RemoteProxySessionCreateResponse {
+  sessionId: string
+  windowUrl: string
+}
+
 export type {
   RemoteControlDevice,
   RemoteControlPairing,
@@ -437,6 +473,14 @@ export type WorkspaceEventPayload =
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 
+export interface NetworkAddress {
+  ip: string
+  family: "ipv4" | "ipv6"
+  scope: "external" | "internal" | "loopback"
+  /** Remote URL using the server's remote protocol/port for this IP. */
+  remoteUrl: string
+}
+
 export interface LatestReleaseInfo {
   version: string
   tag: string
@@ -462,16 +506,24 @@ export interface SupportMeta {
 export interface ServerMeta {
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
+  /** URL direct remote clients should use (prefers HTTPS when enabled). */
+  remoteUrl?: string
   /** SSE endpoint advertised to clients (`/api/events` by default). */
   eventsUrl: string
-  /** Loopback host the server is bound to. */
+  /** Host the server is bound to (e.g., 127.0.0.1 or 0.0.0.0). */
   host: string
+  /** Listening mode derived from host binding. */
+  listeningMode: "local" | "all"
   /** Actual local port in use after binding. */
   localPort: number
+  /** Actual direct remote port in use after binding (when remoteUrl is set). */
+  remotePort?: number
   /** Display label for the host (e.g., hostname or friendly name). */
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */
   workspaceRoot: string
+  /** Reachable direct-access addresses for this server, external first. */
+  addresses: NetworkAddress[]
   serverVersion?: string
   ui?: UiMeta
   support?: SupportMeta

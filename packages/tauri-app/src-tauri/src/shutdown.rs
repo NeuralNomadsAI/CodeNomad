@@ -1,5 +1,5 @@
 use crate::{client_state, local_windows::LocalWindows, AppState};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 #[cfg(windows)]
@@ -37,6 +37,7 @@ struct ShutdownState {
     next_generation: u64,
     local_closes: HashMap<String, PendingClose>,
     committed_local_closes: HashMap<String, PendingClose>,
+    approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
     shutdown_started: bool,
@@ -66,6 +67,7 @@ impl ShutdownCoordinator {
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
             || state.committed_local_closes.contains_key(&label)
+            || state.approved_local_closes.contains(&label)
         {
             return None;
         }
@@ -212,6 +214,30 @@ impl ShutdownCoordinator {
 
     fn take_committed_local_close(&self, label: &str) -> Option<PendingClose> {
         self.state.lock().ok()?.committed_local_closes.remove(label)
+    }
+
+    fn local_close_in_flight(&self, label: &str) -> bool {
+        self.state.lock().map_or(true, |state| {
+            state.local_closes.contains_key(label)
+                || state.committed_local_closes.contains_key(label)
+                || state.approved_local_closes.contains(label)
+        })
+    }
+
+    fn approve_local_close(&self, label: String) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .approved_local_closes
+            .insert(label);
+    }
+
+    fn local_window_destroyed(&self, label: &str) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .approved_local_closes
+            .remove(label);
     }
 
     fn exit_allowed(&self) -> bool {
@@ -601,10 +627,21 @@ pub(crate) fn with_navigation_authority<T>(
 }
 
 pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option<bool> {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    if coordinator
+        .state
+        .lock()
+        .ok()
+        .is_some_and(|state| state.approved_local_closes.contains(label))
+    {
+        return Some(true);
+    }
     let pending = app
         .state::<ShutdownCoordinator>()
         .take_committed_local_close(label)?;
     if !pending.persisted {
+        app.state::<ShutdownCoordinator>()
+            .approve_local_close(label.to_string());
         return Some(true);
     }
     let result = app
@@ -620,7 +657,19 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
         emit_flush_cancelled(app, label, pending.generation);
         return Some(false);
     }
+    app.state::<ShutdownCoordinator>()
+        .approve_local_close(label.to_string());
     Some(true)
+}
+
+pub(crate) fn local_window_close_in_flight(app: &AppHandle, label: &str) -> bool {
+    app.state::<ShutdownCoordinator>()
+        .local_close_in_flight(label)
+}
+
+pub(crate) fn local_window_destroyed(app: &AppHandle, label: &str) {
+    app.state::<ShutdownCoordinator>()
+        .local_window_destroyed(label);
 }
 
 pub(crate) fn exit_allowed(app: &AppHandle) -> bool {

@@ -78,6 +78,24 @@ test("remote HTML is not served before device authentication", async () => {
   assert.equal(assetRequests, 0)
 })
 
+test("asset fallback HTML still requires device authentication", async () => {
+  const hostId = "2".repeat(32)
+  let hostRequests = 0
+  const response = await worker.fetch(
+    new Request(`https://${hostId}.remote.example.com/missing-route`, { headers: { accept: "*/*", cookie: DEVICE_COOKIE } }),
+    relayEnv(
+      () => {
+        hostRequests += 1
+        return Response.json({ error: "Remote device is not paired" }, { status: 401 })
+      },
+      () => new Response("<!doctype html><html></html>", { headers: { "content-type": "text/html" } }),
+    ),
+  )
+  assert.equal(response.status, 401)
+  assert.equal(hostRequests, 1)
+  assert.doesNotMatch(await response.text(), /doctype/)
+})
+
 test("immutable UI assets do not wake the host object", async () => {
   const hostId = "1".repeat(32)
   let hostRequests = 0

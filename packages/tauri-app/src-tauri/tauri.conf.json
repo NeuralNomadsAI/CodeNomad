@@ -15,7 +15,8 @@
     "security": {
       "capabilities": [
         "main-window-native-dialogs",
-        "preferences-window"
+        "preferences-window",
+        "remote-window-notifications"
       ]
     }
   },

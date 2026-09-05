@@ -21,6 +21,8 @@ import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
+import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl } from "./server/listener-base-url"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
@@ -43,8 +45,10 @@ const packageJson = require("../package.json") as { version: string }
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const DEFAULT_UI_STATIC_DIR = path.resolve(__dirname, "../public")
+const DEFAULT_REMOTE_CONTROL_RELAY_URL = "https://remote.codenomad.neuralnomads.ai"
 
 interface CliOptions {
+  host: string
   https: boolean
   http: boolean
   httpsPort: number
@@ -76,7 +80,6 @@ const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
 const DEFAULT_HTTP_PORT = 9899
-const DEFAULT_REMOTE_CONTROL_RELAY_URL = "https://remote.codenomad.neuralnomads.ai"
 export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
 
 interface ShutdownSignalSource {
@@ -129,6 +132,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     .name("codenomad")
     .description("CodeNomad CLI server")
     .version(packageJson.version, "-v, --version", "Show the CLI version")
+    .addOption(new Option("--host <host>", "Host interface to bind").env("CLI_HOST").default(DEFAULT_HOST))
     .addOption(new Option("--https <enabled>", "Enable HTTPS listener (true|false)").env("CLI_HTTPS").default("true"))
     .addOption(new Option("--http <enabled>", "Enable HTTP listener (true|false)").env("CLI_HTTP").default("false"))
     .addOption(new Option("--https-port <number>", "HTTPS port (0 for auto)").env("CLI_HTTPS_PORT").default(DEFAULT_HTTPS_PORT).argParser(parsePort))
@@ -172,7 +176,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     .addOption(
       new Option(
         "--dangerously-skip-auth",
-        "Disable CodeNomad's internal auth. Use only for isolated local development.",
+        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc).",
       )
         .env("CODENOMAD_SKIP_AUTH")
         .default(false),
@@ -181,6 +185,7 @@ function parseCliOptions(argv: string[]): CliOptions {
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
+    host: string
     https?: string
     http?: string
     httpsPort: number
@@ -217,6 +222,8 @@ function parseCliOptions(argv: string[]): CliOptions {
 
   const resolvedRoot = parsed.workspaceRoot ?? parsed.root ?? process.cwd()
 
+  const normalizedHost = resolveHost(parsed.host)
+
   const autoUpdateString = (parsed.uiAutoUpdate ?? "true").trim().toLowerCase()
   const uiAutoUpdate = autoUpdateString === "1" || autoUpdateString === "true" || autoUpdateString === "yes"
 
@@ -228,6 +235,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   }
 
   return {
+    host: normalizedHost,
     https: httpsEnabled,
     http: httpEnabled,
     httpsPort: parsed.httpsPort,
@@ -264,6 +272,21 @@ function parsePort(input: string): number {
   return value
 }
 
+function resolveHost(input: string | undefined): string {
+  const trimmed = input?.trim()
+  if (!trimmed) return DEFAULT_HOST
+
+  if (trimmed === "0.0.0.0") {
+    return "0.0.0.0"
+  }
+
+  if (trimmed === "localhost") {
+    return DEFAULT_HOST
+  }
+
+  return trimmed
+}
+
 export function programHasArg(argv: string[], flag: string): boolean {
   return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
@@ -296,6 +319,8 @@ async function main() {
 
   const eventBus = new EventBus(eventLogger)
 
+  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
+
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
 
@@ -305,11 +330,15 @@ async function main() {
 
   const serverMeta: ServerMeta = {
     localUrl: "http://localhost:0",
+    remoteUrl: undefined,
     eventsUrl: `/api/events`,
-    host: DEFAULT_HOST,
+    host: options.host,
+    listeningMode: isLoopbackHost(options.host) ? "local" : "all",
     localPort: 0,
-    hostLabel: DEFAULT_HOST,
+    remotePort: undefined,
+    hostLabel: options.host,
     workspaceRoot: options.rootDir,
+    addresses: [],
   }
 
   const authManager = new AuthManager(
@@ -334,7 +363,7 @@ async function main() {
   const tlsResolution = resolveHttpsOptions({
     enabled: options.https,
     configDir,
-    host: DEFAULT_HOST,
+    host: options.host,
     tlsKeyPath: options.tlsKeyPath,
     tlsCertPath: options.tlsCertPath,
     tlsCaPath: options.tlsCaPath,
@@ -432,7 +461,14 @@ async function main() {
       })
     : null
 
+  const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
+
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
+  const remoteProxySessionManager = new RemoteProxySessionManager({
+    authManager,
+    logger: logger.child({ component: "remote-proxy" }),
+    httpsOptions: tlsResolution?.httpsOptions,
+  })
   const remoteControlSession = authManager.createSession(options.authUsername)
   const remoteControlManager = new RemoteControlManager({
     identity: loadOrCreateRemoteControlIdentity(configDir),
@@ -447,10 +483,12 @@ async function main() {
   const httpsBindPort = httpsPortExplicit ? options.httpsPort : 0
   const httpBindPort = httpPortExplicit ? options.httpPort : 0
 
-  // Remote Control uses an outbound relay connection. CodeNomad itself never
-  // accepts connections from a LAN or public interface.
-  const httpsBindHost = DEFAULT_HOST
-  const httpBindHost = DEFAULT_HOST
+  // Listener binding rules:
+  // - Remote access enabled: HTTP listens on loopback, HTTPS on all IPs (host=0.0.0.0 / LAN IP).
+  // - Remote access disabled: both listen on loopback.
+  // - HTTP-only mode: respect --host (used for dev/testing).
+  const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
+  const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
 
@@ -471,6 +509,7 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
+        remoteProxySessionManager,
         remoteControlManager,
         yoloManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
@@ -499,6 +538,7 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
+        remoteProxySessionManager,
         remoteControlManager,
         yoloManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
@@ -523,14 +563,43 @@ async function main() {
     throw new Error("No listeners started")
   }
 
+  const remoteStart = httpsStart ?? httpStart
+  const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
+
+  let remoteUrl: string | undefined
+  let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
+  if (remoteStart) {
+    const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
+    let remoteHost = options.host
+    if (wantsAll) {
+      if (options.host === "0.0.0.0") {
+        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
+        remoteAddresses = resolved.userVisible
+        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
+      }
+    } else {
+      remoteHost = "localhost"
+    }
+    if (!remoteUrl) {
+      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+    }
+  }
+
+  // Prefer an explicit IPv4 loopback address only when one of the bound listeners
+  // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
+  // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
     httpStart: visibleHttpStart ? { protocol: "http", bindHost: httpBindHost, port: visibleHttpStart.port } : null,
     httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    remoteUrl,
   })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port
-  serverMeta.host = DEFAULT_HOST
+  serverMeta.remoteUrl = remoteUrl
+  serverMeta.remotePort = remoteStart?.port
+  serverMeta.host = options.host
+  serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
   if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
@@ -546,7 +615,28 @@ async function main() {
     }
   }
 
+  if (serverMeta.remotePort && remoteUrl) {
+    serverMeta.addresses = remoteAddresses.length
+      ? remoteAddresses
+      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+  } else {
+    serverMeta.addresses = []
+  }
+
   console.log(`Local Connection URL : ${serverMeta.localUrl}`)
+  if (serverMeta.remoteUrl) {
+    console.log(`Remote Connection URL : ${serverMeta.remoteUrl}`)
+    const additionalRemoteUrls = serverMeta.addresses
+      .map((addr) => addr.remoteUrl)
+      .filter((url) => url !== serverMeta.remoteUrl)
+
+    if (additionalRemoteUrls.length > 0) {
+      console.log("Other Accessible URLs:")
+      for (const url of additionalRemoteUrls) {
+        console.log(`  - ${url}`)
+      }
+    }
+  }
 
   if (options.launch) {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
@@ -565,6 +655,7 @@ async function main() {
           stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
+          stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {

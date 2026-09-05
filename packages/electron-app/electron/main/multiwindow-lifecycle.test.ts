@@ -106,6 +106,63 @@ test("Remote Control keeps the backend alive after the last local window closes"
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
 })
 
+test("a window opened during the Remote Control check cancels stale whole-app shutdown", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  const second = windowRecord("two", calls)
+  const local = [first]
+  let resolveKeepAlive!: (value: boolean) => void
+  const keepAlive = new Promise<boolean>((resolve) => { resolveKeepAlive = resolve })
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => local,
+    getAllWindows: () => local.map((record) => record.window),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true },
+    getAllowedRendererOrigins: () => ["http://localhost"],
+    isTrustedRendererOrigin: () => true,
+    shouldKeepBackendAlive: () => keepAlive,
+  })
+  lifecycle.attach(first)
+
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  local.push(second)
+  resolveKeepAlive(false)
+  await tick()
+  await tick()
+
+  assert.deepEqual(calls, ["prevent", "renderer:one", "native:one", "remove:one", "close:one"])
+})
+
+test("simultaneous local closes retain one record for whole-app shutdown", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  const second = windowRecord("two", calls)
+  const local = [first, second]
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => local,
+    getAllWindows: () => local.map((record) => record.window),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true },
+    getAllowedRendererOrigins: () => ["http://localhost"],
+    isTrustedRendererOrigin: () => true,
+    shouldKeepBackendAlive: async () => false,
+  })
+  lifecycle.attach(first)
+  lifecycle.attach(second)
+
+  first.events.get("close")?.({ preventDefault: () => calls.push("prevent:one") })
+  second.events.get("close")?.({ preventDefault: () => calls.push("prevent:two") })
+  await tick()
+  await tick()
+
+  assert(calls.includes("quit"))
+  assert.equal(calls.includes("remove:two"), false)
+})
+
 test("persisted local close waits for confirmed removal and remains retryable", async () => {
   const calls: string[] = []
   const first = windowRecord("one", calls)

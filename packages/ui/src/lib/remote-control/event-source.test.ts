@@ -65,3 +65,38 @@ test("tunneled EventSource reconnects with the last event identifier", async () 
     else delete (globalThis as { window?: unknown }).window
   }
 })
+
+test("tunneled EventSource rejects an unbounded event line", async () => {
+  const originalFetch = globalThis.fetch
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location: { href: "https://host.remote.example/" } },
+  })
+  let sent = false
+  let cancelled = false
+  globalThis.fetch = async () => new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent) return
+      sent = true
+      controller.enqueue(new TextEncoder().encode(`data: ${"x".repeat(1024 * 1024)}`))
+    },
+    cancel() {
+      cancelled = true
+    },
+  }))
+
+  try {
+    const source = new TunnelEventSource("/api/events")
+    let messages = 0
+    source.onmessage = () => { messages += 1 }
+    await new Promise<void>((resolve) => { source.onerror = () => resolve() })
+    source.close()
+    assert.equal(messages, 0)
+    assert.equal(cancelled, true)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow)
+    else delete (globalThis as { window?: unknown }).window
+  }
+})

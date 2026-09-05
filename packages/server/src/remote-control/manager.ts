@@ -9,6 +9,7 @@ import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { RemoteControlConnector, normalizedRelayUrl, type ConnectorState } from "./connector"
 import type { RemoteControlIdentity } from "./identity"
+import { parseRelayDevices, parseRelayPairing, readRelayJson, type RelayResponse } from "./relay-response"
 
 interface ManagerOptions {
   identity: RemoteControlIdentity
@@ -82,11 +83,8 @@ export class RemoteControlManager {
       signal: AbortSignal.timeout(10_000),
     })
     if (!response.ok) throw new Error(await relayError(response, "Could not create a pairing link"))
-    const payload = await response.json() as { token?: unknown; expiresAt?: unknown }
-    if (typeof payload.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(payload.token)
-      || typeof payload.expiresAt !== "string" || !Number.isFinite(Date.parse(payload.expiresAt))) {
-      throw new Error("Relay returned an invalid pairing link")
-    }
+    const payload = parseRelayPairing(await readRelayJson(response))
+    if (!payload) throw new Error("Relay returned an invalid pairing link")
     const origin = remoteOrigin(relay, this.options.identity.hostId)
     const pairingFragment = encodeBase64(new TextEncoder().encode(JSON.stringify({
       protocol: REMOTE_CONTROL_PROTOCOL_VERSION,
@@ -98,8 +96,8 @@ export class RemoteControlManager {
 
   async devices(): Promise<RemoteControlDevice[]> {
     const response = await this.hostRequest("devices")
-    const payload = await response.json() as { devices?: unknown }
-    const devices = Array.isArray(payload.devices) ? payload.devices as RemoteControlDevice[] : []
+    const devices = parseRelayDevices(await readRelayJson(response))
+    if (!devices) throw new Error("Relay returned an invalid remote device list")
     this.pairedDevices = devices.length
     return devices
   }
@@ -148,7 +146,8 @@ function remoteOrigin(relay: URL, hostId: string): string {
   return `${relay.protocol}//${hostId}.${relay.host}`
 }
 
-async function relayError(response: { json: () => Promise<unknown>; status: number }, fallback: string): Promise<string> {
-  const payload = await response.json().catch(() => null) as { error?: unknown } | null
-  return typeof payload?.error === "string" ? payload.error : `${fallback} (HTTP ${response.status})`
+async function relayError(response: RelayResponse, fallback: string): Promise<string> {
+  const payload = await readRelayJson(response).catch(() => null)
+  const error = typeof payload === "object" && payload !== null ? (payload as { error?: unknown }).error : undefined
+  return typeof error === "string" && error.length <= 512 ? error : `${fallback} (HTTP ${response.status})`
 }

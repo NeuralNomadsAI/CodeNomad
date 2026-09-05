@@ -17,6 +17,10 @@ import type {
   PreviewSession,
   ProviderUsageResponse,
   ServerMeta,
+  RemoteProxySessionCreateRequest,
+  RemoteProxySessionCreateResponse,
+  RemoteServerProbeRequest,
+  RemoteServerProbeResponse,
   RemoteControlDevice,
   RemoteControlPairing,
   RemoteControlStartResponse,
@@ -261,6 +265,21 @@ export const serverApi = {
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+    return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  },
+  deleteRemoteProxySession(id: string): Promise<void> {
+    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
     return request<RemoteControlStatus>("/api/remote-control/status")

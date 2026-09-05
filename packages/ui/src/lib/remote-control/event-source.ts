@@ -1,5 +1,12 @@
 type EventHandler = ((event: Event) => unknown) | null
 
+const MAX_SSE_LINE_CHARS = 1024 * 1024
+const MAX_SSE_EVENT_CHARS = 4 * 1024 * 1024
+const MAX_SSE_EVENT_LINES = 4096
+const MAX_SSE_ID_CHARS = 8 * 1024
+const MIN_RECONNECT_DELAY_MS = 100
+const MAX_RECONNECT_DELAY_MS = 60_000
+
 export class TunnelEventSource extends EventTarget {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -74,6 +81,8 @@ export class TunnelEventSource extends EventTarget {
     let buffer = ""
     let eventName = "message"
     let eventData: string[] = []
+    let eventCharacters = 0
+    let eventLines = 0
     let eventId = this.lastEventId
 
     const dispatch = () => {
@@ -87,33 +96,56 @@ export class TunnelEventSource extends EventTarget {
       if (eventName === "message") this.onmessage?.(event)
       eventName = "message"
       eventData = []
+      eventCharacters = 0
+      eventLines = 0
     }
 
-    while (!this.controller?.signal.aborted) {
-      const { done, value } = await reader.read()
-      buffer += decoder.decode(value, { stream: !done })
-      let newline = buffer.indexOf("\n")
-      while (newline >= 0) {
-        let line = buffer.slice(0, newline)
-        buffer = buffer.slice(newline + 1)
-        if (line.endsWith("\r")) line = line.slice(0, -1)
-        if (!line) dispatch()
-        else if (!line.startsWith(":")) {
-          const separator = line.indexOf(":")
-          const field = separator < 0 ? line : line.slice(0, separator)
-          let data = separator < 0 ? "" : line.slice(separator + 1)
-          if (data.startsWith(" ")) data = data.slice(1)
-          if (field === "event") eventName = data || "message"
-          else if (field === "data") eventData.push(data)
-          else if (field === "id" && !data.includes("\0")) eventId = data
-          else if (field === "retry" && /^\d+$/.test(data)) this.reconnectDelay = Number(data)
+    let complete = false
+    try {
+      while (!this.controller?.signal.aborted) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        let newline = buffer.indexOf("\n")
+        while (newline >= 0) {
+          if (newline > MAX_SSE_LINE_CHARS) throw new Error("Remote event stream line exceeded its safety limit")
+          let line = buffer.slice(0, newline)
+          buffer = buffer.slice(newline + 1)
+          if (line.endsWith("\r")) line = line.slice(0, -1)
+          if (!line) dispatch()
+          else if (!line.startsWith(":")) {
+            const separator = line.indexOf(":")
+            const field = separator < 0 ? line : line.slice(0, separator)
+            let data = separator < 0 ? "" : line.slice(separator + 1)
+            if (data.startsWith(" ")) data = data.slice(1)
+            if (field === "event") eventName = data || "message"
+            else if (field === "data") {
+              eventCharacters += data.length + 1
+              eventLines += 1
+              if (eventCharacters > MAX_SSE_EVENT_CHARS || eventLines > MAX_SSE_EVENT_LINES) {
+                throw new Error("Remote event exceeded its safety limit")
+              }
+              eventData.push(data)
+            }
+            else if (field === "id" && !data.includes("\0")) {
+              if (data.length > MAX_SSE_ID_CHARS) throw new Error("Remote event identifier exceeded its safety limit")
+              eventId = data
+            }
+            else if (field === "retry" && /^\d+$/.test(data)) {
+              this.reconnectDelay = Math.max(MIN_RECONNECT_DELAY_MS, Math.min(MAX_RECONNECT_DELAY_MS, Number(data)))
+            }
+          }
+          newline = buffer.indexOf("\n")
         }
-        newline = buffer.indexOf("\n")
+        if (buffer.length > MAX_SSE_LINE_CHARS) throw new Error("Remote event stream line exceeded its safety limit")
+        if (done) {
+          dispatch()
+          complete = true
+          break
+        }
       }
-      if (done) {
-        dispatch()
-        break
-      }
+    } finally {
+      if (!complete) await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
     }
   }
 

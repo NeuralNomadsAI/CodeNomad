@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
 
-test("trusted renderer URLs require HTTP or HTTPS", () => {
+test("remote window URLs require HTTP or HTTPS", () => {
   assert.equal(requireHttpUrl("http://localhost:3000/app", "baseUrl").protocol, "http:")
   assert.equal(requireHttpUrl("https://example.com/app", "entryUrl").protocol, "https:")
   for (const url of ["file:///tmp/index.html", "data:text/html,hello", "javascript:alert(1)"]) {

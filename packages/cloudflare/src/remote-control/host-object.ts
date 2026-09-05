@@ -132,28 +132,24 @@ export class RemoteControlHost implements DurableObject {
 
   async alarm(): Promise<void> {
     const now = Date.now()
-    const pairings = await this.state.storage.list<PairingRecord>({ prefix: PAIRING_PREFIX })
-    const devices = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
-    const expiredDevices = Array.from(devices.entries()).filter(([, record]) => record.expiresAt <= now)
-    const expired = [
-      ...Array.from(pairings.entries()).filter(([, record]) => record.expiresAt <= now).map(([key]) => key),
-      ...expiredDevices.map(([key]) => key),
-    ]
-    if (expired.length) await this.state.storage.delete(expired)
-    const expiredDeviceIds = new Set(expiredDevices.map(([, record]) => record.id))
-    if (expiredDeviceIds.size) {
-      for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
-        const attachment = socketAttachment(socket)
-        if (attachment?.role === "client" && expiredDeviceIds.has(attachment.deviceId)) {
-          this.closeClient(attachment.id, 1008, "Remote device expired")
-        }
-      }
-    }
-    const nextExpiration = [...pairings.values(), ...devices.values()]
-      .map((record) => record.expiresAt)
-      .filter((expiresAt) => expiresAt > now)
-      .sort((left, right) => left - right)[0]
-    if (nextExpiration) await this.state.storage.setAlarm(nextExpiration)
+    const expiredDeviceIds = await this.state.storage.transaction(async (transaction) => {
+      const pairings = await transaction.list<PairingRecord>({ prefix: PAIRING_PREFIX })
+      const devices = await transaction.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+      const expiredDevices = Array.from(devices.entries()).filter(([, record]) => record.expiresAt <= now)
+      const expired = [
+        ...Array.from(pairings.entries()).filter(([, record]) => record.expiresAt <= now).map(([key]) => key),
+        ...expiredDevices.map(([key]) => key),
+      ]
+      if (expired.length) await transaction.delete(expired)
+      const nextExpiration = [...pairings.values(), ...devices.values()]
+        .map((record) => record.expiresAt)
+        .filter((expiresAt) => expiresAt > now)
+        .sort((left, right) => left - right)[0]
+      if (nextExpiration) await transaction.setAlarm(nextExpiration)
+      else await transaction.deleteAlarm()
+      return expiredDevices.map(([, record]) => record.id)
+    })
+    this.closeDeviceSockets(expiredDeviceIds, "Remote device expired")
   }
 
   private async connectHost(request: Request): Promise<Response> {
@@ -211,24 +207,41 @@ export class RemoteControlHost implements DurableObject {
   private async createPairing(request: Request): Promise<Response> {
     if (request.method !== "POST") return new Response(null, { status: 405 })
     if (!(await this.authorizeHost(request))) return Response.json({ error: "Unauthorized" }, { status: 401 })
-    const host = this.hostConnection()
-    if (!host?.attachment.ready) return Response.json({ error: "Host is offline" }, { status: 409 })
+    if (!this.isHostConnected()) return Response.json({ error: "Host is offline" }, { status: 409 })
 
-    const pairings = await this.state.storage.list<PairingRecord>({ prefix: PAIRING_PREFIX })
     const now = Date.now()
-    const expired = Array.from(pairings.entries()).filter(([, record]) => record.expiresAt <= now).map(([key]) => key)
-    if (expired.length) await this.state.storage.delete(expired)
-    if (pairings.size - expired.length >= MAX_ACTIVE_PAIRINGS) {
+    const token = randomToken()
+    const key = `${PAIRING_PREFIX}${await tokenHash(token)}`
+    const expiresAt = now + PAIRING_TTL_MS
+    const host = this.hostConnection()
+    if (!host?.attachment.ready) return Response.json({ error: "Host reconnected while creating the pairing link" }, { status: 409 })
+    const connectionId = host.attachment.connectionId
+    const created = await this.state.storage.transaction(async (transaction) => {
+      const pairings = await transaction.list<PairingRecord>({ prefix: PAIRING_PREFIX })
+      const expired = Array.from(pairings.entries())
+        .filter(([, record]) => record.expiresAt <= now)
+        .map(([pairingKey]) => pairingKey)
+      if (expired.length) await transaction.delete(expired)
+      const active = Array.from(pairings.values())
+        .filter((record) => record.expiresAt > now && record.connectionId === connectionId)
+      if (active.length >= MAX_ACTIVE_PAIRINGS) return false
+      await transaction.put(key, {
+        expiresAt,
+        connectionId,
+      } satisfies PairingRecord)
+      await scheduleExpiration(transaction, expiresAt)
+      return true
+    })
+    if (!created) {
       return Response.json({ error: "Too many active pairing links" }, { status: 429 })
     }
-
-    const token = randomToken()
-    const expiresAt = now + PAIRING_TTL_MS
-    await this.state.storage.put(`${PAIRING_PREFIX}${await tokenHash(token)}`, {
-      expiresAt,
-      connectionId: host.attachment.connectionId,
-    } satisfies PairingRecord)
-    await this.scheduleExpirationCleanup(expiresAt)
+    if (!this.isCurrentHost(connectionId)) {
+      await this.state.storage.transaction(async (transaction) => {
+        const record = await transaction.get<PairingRecord>(key)
+        if (record?.connectionId === connectionId) await transaction.delete(key)
+      })
+      return Response.json({ error: "Host reconnected while creating the pairing link" }, { status: 409 })
+    }
     return Response.json({ token, expiresAt: new Date(expiresAt).toISOString() })
   }
 
@@ -239,23 +252,8 @@ export class RemoteControlHost implements DurableObject {
     const token = typeof input.token === "string" ? input.token.trim() : ""
     if (!RELAY_TOKEN_PATTERN.test(token)) return Response.json({ error: "Valid pairing token required" }, { status: 400 })
 
-    const key = `${PAIRING_PREFIX}${await tokenHash(token)}`
-    const pairing = await this.state.storage.transaction(async (transaction) => {
-      const record = await transaction.get<PairingRecord>(key)
-      if (record) await transaction.delete(key)
-      return record
-    })
-    const host = this.hostConnection()
-    if (!pairing || pairing.expiresAt <= Date.now() || !host?.attachment.ready || pairing.connectionId !== host.attachment.connectionId) {
-      return Response.json({ error: "Pairing link is invalid or expired" }, { status: 401 })
-    }
-
-    const records = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+    const pairingKey = `${PAIRING_PREFIX}${await tokenHash(token)}`
     const now = Date.now()
-    const expired = Array.from(records.entries()).filter(([, device]) => device.expiresAt <= now).map(([recordKey]) => recordKey)
-    if (expired.length) await this.state.storage.delete(expired)
-    if (records.size - expired.length >= MAX_DEVICES) return Response.json({ error: "Too many paired devices" }, { status: 429 })
-
     const deviceToken = randomToken()
     const device: DeviceRecord = {
       id: crypto.randomUUID(),
@@ -264,8 +262,41 @@ export class RemoteControlHost implements DurableObject {
       lastSeenAt: now,
       expiresAt: now + DEVICE_TTL_MS,
     }
-    await this.state.storage.put(`${DEVICE_PREFIX}${await tokenHash(deviceToken)}`, device)
-    await this.scheduleExpirationCleanup(device.expiresAt)
+    const deviceKey = `${DEVICE_PREFIX}${await tokenHash(deviceToken)}`
+    const host = this.hostConnection()
+    const connectionId = host?.attachment.ready ? host.attachment.connectionId : null
+    const result = await this.state.storage.transaction(async (transaction) => {
+      const record = await transaction.get<PairingRecord>(pairingKey)
+      if (record) await transaction.delete(pairingKey)
+      if (!record || record.expiresAt <= now || !connectionId || record.connectionId !== connectionId) {
+        return { status: "invalid" as const, expiredDeviceIds: [] as string[] }
+      }
+      const devices = await transaction.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+      const expiredEntries = Array.from(devices.entries()).filter(([, candidate]) => candidate.expiresAt <= now)
+      if (expiredEntries.length) await transaction.delete(expiredEntries.map(([key]) => key))
+      const expiredDeviceIds = expiredEntries.map(([, candidate]) => candidate.id)
+      if (devices.size - expiredEntries.length >= MAX_DEVICES) {
+        return { status: "full" as const, expiredDeviceIds }
+      }
+      await transaction.put(deviceKey, device)
+      await scheduleExpiration(transaction, device.expiresAt)
+      return { status: "created" as const, expiredDeviceIds }
+    })
+    this.closeDeviceSockets(result.expiredDeviceIds, "Remote device expired")
+    if (result.status === "invalid") {
+      return Response.json({ error: "Pairing link is invalid or expired" }, { status: 401 })
+    }
+    if (result.status === "full") {
+      return Response.json({ error: "Too many paired devices" }, { status: 429 })
+    }
+    if (!connectionId || !this.isCurrentHost(connectionId)) {
+      await this.state.storage.transaction(async (transaction) => {
+        const stored = await transaction.get<DeviceRecord>(deviceKey)
+        if (stored?.id === device.id) await transaction.delete(deviceKey)
+      })
+      return Response.json({ error: "Pairing link is invalid or expired" }, { status: 401 })
+    }
+
     return new Response(null, {
       status: 204,
       headers: { "Set-Cookie": deviceCookie(deviceToken, Math.floor(DEVICE_TTL_MS / 1000)) },
@@ -274,35 +305,39 @@ export class RemoteControlHost implements DurableObject {
 
   private async devices(request: Request): Promise<Response> {
     if (!(await this.authorizeHost(request))) return Response.json({ error: "Unauthorized" }, { status: 401 })
-    const records = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
     const now = Date.now()
-    const expired = Array.from(records.entries()).filter(([, device]) => device.expiresAt <= now).map(([key]) => key)
-    if (expired.length) await this.state.storage.delete(expired)
-    const devices = Array.from(records.values())
-      .filter((device) => device.expiresAt > now)
-      .map((device) => ({
-        id: device.id,
-        name: device.name,
-        createdAt: new Date(device.createdAt).toISOString(),
-        lastSeenAt: new Date(device.lastSeenAt).toISOString(),
-      }))
-    return Response.json({ devices })
+    const result = await this.state.storage.transaction(async (transaction) => {
+      const records = await transaction.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+      const expiredEntries = Array.from(records.entries()).filter(([, device]) => device.expiresAt <= now)
+      if (expiredEntries.length) await transaction.delete(expiredEntries.map(([key]) => key))
+      return {
+        expiredDeviceIds: expiredEntries.map(([, device]) => device.id),
+        devices: Array.from(records.values())
+          .filter((device) => device.expiresAt > now)
+          .map((device) => ({
+            id: device.id,
+            name: device.name,
+            createdAt: new Date(device.createdAt).toISOString(),
+            lastSeenAt: new Date(device.lastSeenAt).toISOString(),
+          })),
+      }
+    })
+    this.closeDeviceSockets(result.expiredDeviceIds, "Remote device expired")
+    return Response.json({ devices: result.devices })
   }
 
   private async revokeDevice(request: Request): Promise<Response> {
     if (request.method !== "DELETE") return new Response(null, { status: 405 })
     if (!(await this.authorizeHost(request))) return Response.json({ error: "Unauthorized" }, { status: 401 })
     const deviceId = request.headers.get("x-codenomad-relay-device-id")
-    const records = await this.state.storage.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
-    const entry = Array.from(records.entries()).find(([, device]) => device.id === deviceId)
+    const entry = await this.state.storage.transaction(async (transaction) => {
+      const records = await transaction.list<DeviceRecord>({ prefix: DEVICE_PREFIX })
+      const match = Array.from(records.entries()).find(([, device]) => device.id === deviceId)
+      if (match) await transaction.delete(match[0])
+      return match?.[1] ?? null
+    })
     if (entry) {
-      await this.state.storage.delete(entry[0])
-      for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
-        const attachment = socketAttachment(socket)
-        if (attachment?.role === "client" && attachment.deviceId === deviceId) {
-          this.closeClient(attachment.id, 1008, "Remote device was revoked")
-        }
-      }
+      this.closeDeviceSockets([entry.id], "Remote device was revoked")
     }
     return new Response(null, { status: 204 })
   }
@@ -387,11 +422,16 @@ export class RemoteControlHost implements DurableObject {
   }
 
   private closeClient(id: string, code: number, reason: string): void {
-    this.clientSocket(id)?.close(safeRelayCloseCode(code), reason.slice(0, 120))
+    this.clientSocket(id)?.close(safeRelayCloseCode(code), boundedCloseReason(reason))
   }
 
   private isHostConnected(): boolean {
     return this.hostConnection()?.attachment.ready === true
+  }
+
+  private isCurrentHost(connectionId: string): boolean {
+    const host = this.hostConnection()
+    return host?.attachment.ready === true && host.attachment.connectionId === connectionId
   }
 
   private sendHost(message: RelayToHostMessage): boolean {
@@ -435,16 +475,22 @@ export class RemoteControlHost implements DurableObject {
     const token = cookieToken(request)
     if (!token || !RELAY_TOKEN_PATTERN.test(token)) return null
     const key = `${DEVICE_PREFIX}${await tokenHash(token)}`
-    const device = await this.state.storage.get<DeviceRecord>(key)
-    if (!device || device.expiresAt <= Date.now()) {
-      await this.state.storage.delete(key)
-      return null
-    }
-    if (Date.now() - device.lastSeenAt > 60_000) {
-      device.lastSeenAt = Date.now()
-      await this.state.storage.put(key, device)
-    }
-    return device
+    const now = Date.now()
+    const result = await this.state.storage.transaction(async (transaction) => {
+      const device = await transaction.get<DeviceRecord>(key)
+      if (!device) return { device: null, expiredDeviceId: null }
+      if (device.expiresAt <= now) {
+        await transaction.delete(key)
+        return { device: null, expiredDeviceId: device.id }
+      }
+      if (now - device.lastSeenAt > 60_000) {
+        device.lastSeenAt = now
+        await transaction.put(key, device)
+      }
+      return { device, expiredDeviceId: null }
+    })
+    if (result.expiredDeviceId) this.closeDeviceSockets([result.expiredDeviceId], "Remote device expired")
+    return result.device
   }
 
   private unpairedResponse(): Response {
@@ -454,10 +500,24 @@ export class RemoteControlHost implements DurableObject {
     })
   }
 
-  private async scheduleExpirationCleanup(expiresAt: number): Promise<void> {
-    const scheduled = await this.state.storage.getAlarm()
-    if (scheduled === null || expiresAt < scheduled) await this.state.storage.setAlarm(expiresAt)
+  private closeDeviceSockets(deviceIds: Iterable<string>, reason: string): void {
+    const ids = new Set(deviceIds)
+    if (!ids.size) return
+    for (const socket of this.state.getWebSockets(CLIENT_TAG)) {
+      const attachment = socketAttachment(socket)
+      if (attachment?.role === "client" && ids.has(attachment.deviceId)) {
+        this.closeClient(attachment.id, 1008, reason)
+      }
+    }
   }
+}
+
+async function scheduleExpiration(
+  transaction: DurableObjectTransaction,
+  expiresAt: number,
+): Promise<void> {
+  const scheduled = await transaction.getAlarm()
+  if (scheduled === null || expiresAt < scheduled) await transaction.setAlarm(expiresAt)
 }
 
 function clientTag(id: string): string {
@@ -468,4 +528,16 @@ function socketAttachment(socket: WebSocket): SocketAttachment | null {
   const value = socket.deserializeAttachment() as Partial<SocketAttachment> | null
   if (!value || (value.role !== "host" && value.role !== "client")) return null
   return value as SocketAttachment
+}
+
+function boundedCloseReason(value: string): string {
+  let result = ""
+  let bytes = 0
+  for (const character of value) {
+    const next = new TextEncoder().encode(character).byteLength
+    if (bytes + next > 123) break
+    result += character
+    bytes += next
+  }
+  return result
 }

@@ -62,6 +62,7 @@ export async function createClientHandshake(hostPublicJwk: JsonWebKey): Promise<
     hello: JSON.stringify(hello),
     async accept(message: string) {
       if (accepted) throw new Error("Remote Control handshake was already accepted")
+      accepted = true
       const ready = parseReady(message)
       if (!ready) throw new Error("Invalid Remote Control host handshake")
       const hostNonce = decodeNonce(ready.nonce)
@@ -69,7 +70,6 @@ export async function createClientHandshake(hostPublicJwk: JsonWebKey): Promise<
       const channel = createChannel(keys.clientToHost, keys.hostToClient)
       const proof = await channel.decrypt(decodeBase64(ready.proof))
       if (!equalBytes(proof, READY_PROOF)) throw new Error("Remote Control host handshake authentication failed")
-      accepted = true
       return channel
     },
   }
@@ -81,6 +81,7 @@ export async function createHostHandshake(hostPrivateJwk: JsonWebKey): Promise<H
   return {
     async accept(message: string) {
       if (accepted) throw new Error("Remote Control handshake was already accepted")
+      accepted = true
       const hello = parseHello(message)
       if (!hello) throw new Error("Invalid Remote Control client handshake")
       const clientNonce = decodeNonce(hello.nonce)
@@ -89,7 +90,6 @@ export async function createHostHandshake(hostPrivateJwk: JsonWebKey): Promise<H
       const keys = await deriveKeys(hostPrivateKey, clientPublicKey, clientNonce, hostNonce)
       const channel = createChannel(keys.hostToClient, keys.clientToHost)
       const proof = await channel.encrypt(READY_PROOF)
-      accepted = true
       const ready: ReadyMessage = {
         type: "e2ee.ready",
         protocol: REMOTE_CONTROL_PROTOCOL_VERSION,
@@ -134,7 +134,8 @@ function createChannel(encryptionKey: CryptoKey, decryptionKey: CryptoKey): Encr
       if (frame[0] !== FRAME_VERSION) throw new Error("Unsupported Remote Control encrypted frame")
       const iv = frame.slice(1, 1 + IV_BYTES)
       const counter = readCounter(iv, IV_PREFIX_BYTES)
-      if (counter <= receiveCounter) throw new Error("Remote Control encrypted frame was replayed")
+      if (counter !== receiveCounter + 1n) throw new Error("Remote Control encrypted frame was replayed or arrived out of order")
+      receiveCounter = counter
       let plaintext: ArrayBuffer
       try {
         plaintext = await crypto.subtle.decrypt({
@@ -145,7 +146,6 @@ function createChannel(encryptionKey: CryptoKey, decryptionKey: CryptoKey): Encr
       } catch {
         throw new Error("Remote Control encrypted frame authentication failed")
       }
-      receiveCounter = counter
       return new Uint8Array(plaintext)
     },
   }

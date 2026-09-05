@@ -57,8 +57,9 @@ export const RemoteControlSettingsSection: Component = () => {
       const deviceResult = await serverApi.fetchRemoteControlDevices()
       setDevices(deviceResult.devices)
     } catch (cause) {
-      setError(message(cause))
+      const failure = message(cause)
       await refresh()
+      setError(failure)
     } finally {
       setLoading(false)
     }

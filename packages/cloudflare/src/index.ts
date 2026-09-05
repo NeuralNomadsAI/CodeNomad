@@ -96,11 +96,12 @@ async function handleRemoteHost(request: Request, env: Env, hostId: string): Pro
     if (!authorized.ok) return authorized
     return Response.json({ error: "Encrypted Remote Control tunnel required" }, { status: 426 })
   }
-  if (isHtmlNavigation(request, url)) {
+  const htmlNavigation = isHtmlNavigation(request, url)
+  if (htmlNavigation) {
     const authorized = await checkRemoteSession(request, env, hostId)
     if (!authorized.ok) return authorized
   }
-  return remoteAsset(request, env)
+  return remoteAsset(request, env, hostId, htmlNavigation)
 }
 
 function checkRemoteSession(request: Request, env: Env, hostId: string): Promise<Response> {
@@ -124,7 +125,7 @@ function isHtmlNavigation(request: Request, url: URL): boolean {
     || request.headers.get("accept")?.includes("text/html") === true
 }
 
-async function remoteAsset(request: Request, env: Env): Promise<Response> {
+async function remoteAsset(request: Request, env: Env, hostId: string, authorized: boolean): Promise<Response> {
   const response = await env.ASSETS.fetch(request)
   const headers = new Headers(response.headers)
   headers.set("Referrer-Policy", "no-referrer")
@@ -136,6 +137,10 @@ async function remoteAsset(request: Request, env: Env): Promise<Response> {
     || url.pathname.endsWith(".html")
   if (!isHtml) {
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+  }
+  if (!authorized) {
+    const authorization = await checkRemoteSession(request, env, hostId)
+    if (!authorization.ok) return authorization
   }
   if (request.method === "HEAD") {
     return new Response(null, { status: response.status, statusText: response.statusText, headers })

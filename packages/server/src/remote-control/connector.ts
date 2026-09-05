@@ -3,7 +3,10 @@ import {
   REMOTE_CONTROL_HEARTBEAT_RESPONSE,
   REMOTE_CONTROL_MAX_HANDSHAKE_BYTES,
   REMOTE_CONTROL_MAX_HTTP_BODY_BYTES,
+  REMOTE_CONTROL_MAX_PLAINTEXT_BYTES,
+  REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES,
   REMOTE_CONTROL_PROTOCOL_VERSION,
+  FrameBudget,
   createHostHandshake,
   decodeBase64,
   encodeBase64,
@@ -35,6 +38,11 @@ const MAX_ACTIVE_HTTP_REQUESTS = 32
 const MAX_LOCAL_SOCKETS = 16
 const MAX_QUEUED_SOCKET_MESSAGES = 64
 const MAX_QUEUED_SOCKET_BYTES = 1024 * 1024
+const MAX_PENDING_TUNNEL_FRAMES = 128
+const MAX_PENDING_TUNNEL_BYTES = 24 * 1024 * 1024
+const MAX_LOCAL_SOCKET_BUFFERED_BYTES = 24 * 1024 * 1024
+const MAX_RELAY_BUFFERED_BYTES = 32 * 1024 * 1024
+const MAX_RELAY_MESSAGE_BYTES = Math.ceil((REMOTE_CONTROL_MAX_PLAINTEXT_BYTES + 1024) * 4 / 3) + 2 * 1024
 const RELAY_HANDSHAKE_TIMEOUT_MS = 15_000
 const HEARTBEAT_INTERVAL_MS = 30_000
 const HEARTBEAT_TIMEOUT_MS = 70_000
@@ -57,6 +65,8 @@ interface TunnelState {
   channel?: EncryptedChannel
   receiveQueue: Promise<void>
   sendQueue: Promise<void>
+  receiveBudget: FrameBudget
+  sendBudget: FrameBudget
   httpRequests: Map<string, AbortController>
   localSockets: Map<string, InstanceType<typeof WebSocket>>
   localSocketQueues: Map<string, Array<{ data: string; binary: boolean }>>
@@ -116,7 +126,6 @@ export class RemoteControlConnector {
     this.ready = false
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return
-      this.reconnectDelay = INITIAL_RECONNECT_MS
       this.sendRelay({ type: "ready", protocol: REMOTE_CONTROL_PROTOCOL_VERSION })
       this.handshakeTimer = setTimeout(() => socket.close(1002, "Remote Control relay handshake timed out"), RELAY_HANDSHAKE_TIMEOUT_MS)
       this.handshakeTimer.unref()
@@ -151,6 +160,11 @@ export class RemoteControlConnector {
 
   private onRelayMessage(socket: InstanceType<typeof WebSocket>, data: unknown): void {
     if (this.socket !== socket) return
+    const byteLength = typeof data === "string" ? data.length : data instanceof ArrayBuffer ? data.byteLength : 0
+    if (byteLength > MAX_RELAY_MESSAGE_BYTES) {
+      socket.close(1009, "Remote Control relay message is too large")
+      return
+    }
     const text = typeof data === "string" ? data : data instanceof ArrayBuffer ? new TextDecoder().decode(data) : ""
     if (!text) return
     if (text === REMOTE_CONTROL_HEARTBEAT_RESPONSE) {
@@ -170,6 +184,7 @@ export class RemoteControlConnector {
       if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
       this.handshakeTimer = null
       this.ready = true
+      this.reconnectDelay = INITIAL_RECONNECT_MS
       this.startHeartbeat()
       this.options.onState("connected")
       return
@@ -188,8 +203,14 @@ export class RemoteControlConnector {
     }
     const tunnel = this.tunnels.get(message.id)
     if (!tunnel) return
+    const release = tunnel.receiveBudget.reserve(Math.max(0, base64ByteLength(message.data)))
+    if (!release) {
+      this.failTunnel(message.id, new Error("Remote Control receive queue exceeded its safety limit"))
+      return
+    }
     tunnel.receiveQueue = tunnel.receiveQueue
       .then(() => this.handleTunnelFrame(message.id, message.data, message.binary))
+      .finally(release)
       .catch((error) => this.failTunnel(message.id, error))
   }
 
@@ -202,6 +223,8 @@ export class RemoteControlConnector {
       handshake: createHostHandshake(this.options.encryptionPrivateKey),
       receiveQueue: Promise.resolve(),
       sendQueue: Promise.resolve(),
+      receiveBudget: new FrameBudget(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES),
+      sendBudget: new FrameBudget(MAX_PENDING_TUNNEL_FRAMES, MAX_PENDING_TUNNEL_BYTES),
       httpRequests: new Map(),
       localSockets: new Map(),
       localSocketQueues: new Map(),
@@ -227,7 +250,7 @@ export class RemoteControlConnector {
     if (message.type === "http.request") void this.handleHttp(tunnelId, tunnel, message).catch((error) => this.failTunnel(tunnelId, error))
     else if (message.type === "http.cancel") this.cancelHttp(tunnel, message.id)
     else if (message.type === "socket.open") this.openLocalSocket(tunnelId, tunnel, message)
-    else if (message.type === "socket.message") this.forwardSocketMessage(tunnel, message)
+    else if (message.type === "socket.message") this.forwardSocketMessage(tunnelId, tunnel, message)
     else if (message.type === "socket.close") this.closeLocalSocket(tunnel, message.id, message.code, message.reason)
   }
 
@@ -272,6 +295,8 @@ export class RemoteControlConnector {
           if (done) break
           if (value.byteLength) await this.sendClient(tunnelId, { type: "http.chunk", id: message.id, data: encodeBase64(value) })
         }
+      } else if (response.body) {
+        await response.body.cancel()
       }
       await this.sendClient(tunnelId, { type: "http.end", id: message.id })
     } catch (error) {
@@ -310,11 +335,15 @@ export class RemoteControlConnector {
         void this.sendClient(tunnelId, { type: "socket.ready", id: message.id, ...(socket.protocol ? { protocol: socket.protocol } : {}) })
         const queued = tunnel.localSocketQueues.get(message.id) ?? []
         tunnel.localSocketQueues.delete(message.id)
-        for (const entry of queued) this.sendLocalSocket(socket, entry.data, entry.binary)
+        for (const entry of queued) this.sendLocalSocket(tunnelId, tunnel, message.id, socket, entry.data, entry.binary)
       })
       socket.addEventListener("message", (event) => {
         const binary = typeof event.data !== "string"
         const bytes = binary ? new Uint8Array(event.data as ArrayBuffer) : new TextEncoder().encode(event.data as string)
+        if (bytes.byteLength > REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES) {
+          this.closeLocalSocket(tunnel, message.id, 1009, "Local WebSocket message exceeded the remote safety limit")
+          return
+        }
         void this.sendClient(tunnelId, { type: "socket.message", id: message.id, data: encodeBase64(bytes), binary })
       })
       socket.addEventListener("close", (event) => {
@@ -336,9 +365,13 @@ export class RemoteControlConnector {
     }
   }
 
-  private forwardSocketMessage(tunnel: TunnelState, message: Extract<ClientToHostMessage, { type: "socket.message" }>): void {
+  private forwardSocketMessage(tunnelId: string, tunnel: TunnelState, message: Extract<ClientToHostMessage, { type: "socket.message" }>): void {
     const socket = tunnel.localSockets.get(message.id)
     if (!socket) return
+    if (base64ByteLength(message.data) > REMOTE_CONTROL_MAX_SOCKET_MESSAGE_BYTES) {
+      this.closeLocalSocket(tunnel, message.id, 1009, "Remote WebSocket message exceeded its safety limit")
+      return
+    }
     if (socket.readyState === WebSocket.CONNECTING) {
       const queued = tunnel.localSocketQueues.get(message.id)
       const queuedBytes = queued?.reduce((total, entry) => total + base64ByteLength(entry.data), 0) ?? 0
@@ -348,32 +381,52 @@ export class RemoteControlConnector {
       } else queued.push({ data: message.data, binary: message.binary })
       return
     }
-    if (socket.readyState === WebSocket.OPEN) this.sendLocalSocket(socket, message.data, message.binary)
+    if (socket.readyState === WebSocket.OPEN) this.sendLocalSocket(tunnelId, tunnel, message.id, socket, message.data, message.binary)
   }
 
-  private sendLocalSocket(socket: InstanceType<typeof WebSocket>, data: string, binary: boolean): void {
-    const bytes = decodeBase64(data)
-    socket.send(binary ? bytes : new TextDecoder().decode(bytes))
+  private sendLocalSocket(
+    tunnelId: string,
+    tunnel: TunnelState,
+    socketId: string,
+    socket: InstanceType<typeof WebSocket>,
+    data: string,
+    binary: boolean,
+  ): void {
+    try {
+      const bytes = decodeBase64(data)
+      if (socket.bufferedAmount + bytes.byteLength > MAX_LOCAL_SOCKET_BUFFERED_BYTES) {
+        this.closeLocalSocket(tunnel, socketId, 1009, "Remote WebSocket buffer exceeded its safety limit")
+        return
+      }
+      socket.send(binary ? bytes : new TextDecoder().decode(bytes))
+    } catch (error) {
+      this.failTunnel(tunnelId, error)
+    }
   }
 
   private closeLocalSocket(tunnel: TunnelState, id: string, code?: number, reason?: string): void {
     const socket = tunnel.localSockets.get(id)
     tunnel.localSockets.delete(id)
     tunnel.localSocketQueues.delete(id)
-    socket?.close(validCloseCode(code) ? code : undefined, reason?.slice(0, 120))
+    socket?.close(validCloseCode(code) ? code : undefined, boundedCloseReason(reason))
   }
 
   private sendClient(tunnelId: string, message: HostToClientMessage): Promise<void> {
     const tunnel = this.tunnels.get(tunnelId)
     if (!tunnel?.channel) return Promise.resolve()
     const plaintext = new TextEncoder().encode(JSON.stringify(message))
+    const release = tunnel.sendBudget.reserve(plaintext.byteLength)
+    if (!release) {
+      this.failTunnel(tunnelId, new Error("Remote Control send queue exceeded its safety limit"))
+      return Promise.resolve()
+    }
     tunnel.sendQueue = tunnel.sendQueue.then(async () => {
       const channel = tunnel.channel
       if (!channel || this.tunnels.get(tunnelId) !== tunnel) return
       const frame = await channel.encrypt(plaintext)
       if (this.tunnels.get(tunnelId) !== tunnel) return
       this.sendTunnelFrame(tunnelId, frame, true)
-    }).catch((error) => this.failTunnel(tunnelId, error))
+    }).finally(release).catch((error) => this.failTunnel(tunnelId, error))
     return tunnel.sendQueue
   }
 
@@ -382,10 +435,12 @@ export class RemoteControlConnector {
   }
 
   private failTunnel(id: string, error: unknown): void {
+    if (!this.tunnels.has(id)) return
     const reason = error instanceof Error ? error.message : "Encrypted Remote Control tunnel failed"
+    const closeReason = boundedCloseReason(reason)
     this.options.logger.warn({ err: error, tunnelId: id }, "Remote Control encrypted tunnel failed")
-    this.sendRelay({ type: "tunnel.close", id, code: 1008, reason: reason.slice(0, 120) })
-    this.closeTunnel(id, 1008, reason)
+    this.sendRelay({ type: "tunnel.close", id, code: 1008, reason: closeReason })
+    this.closeTunnel(id, 1008, closeReason)
   }
 
   private closeTunnel(id: string, code?: number, reason?: string): void {
@@ -394,7 +449,7 @@ export class RemoteControlConnector {
     this.tunnels.delete(id)
     for (const controller of tunnel.httpRequests.values()) controller.abort()
     for (const socket of tunnel.localSockets.values()) {
-      socket.close(validCloseCode(code) ? code : undefined, reason?.slice(0, 120))
+      socket.close(validCloseCode(code) ? code : undefined, boundedCloseReason(reason))
     }
     tunnel.httpRequests.clear()
     tunnel.localSockets.clear()
@@ -406,7 +461,15 @@ export class RemoteControlConnector {
   }
 
   private sendRelay(message: HostToRelayMessage): void {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message))
+    const socket = this.socket
+    if (socket?.readyState !== WebSocket.OPEN) return
+    const payload = JSON.stringify(message)
+    if (socket.bufferedAmount + payload.length > MAX_RELAY_BUFFERED_BYTES) {
+      socket.close(1013, "Remote Control relay send buffer exceeded its safety limit")
+      this.onClosed(socket, "Remote Control relay send buffer exceeded its safety limit")
+      return
+    }
+    socket.send(payload)
   }
 
   private startHeartbeat(): void {
@@ -438,4 +501,17 @@ export class RemoteControlConnector {
     if (target.origin !== base.origin || !allowedRemotePath(target.pathname)) throw new Error("Remote request escaped the local server")
     return target
   }
+}
+
+function boundedCloseReason(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  let result = ""
+  let bytes = 0
+  for (const character of value) {
+    const next = new TextEncoder().encode(character).byteLength
+    if (bytes + next > 123) break
+    result += character
+    bytes += next
+  }
+  return result
 }

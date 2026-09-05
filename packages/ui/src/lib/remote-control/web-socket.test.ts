@@ -38,6 +38,10 @@ test("tunneled WebSocket preserves text, binary, protocol, and close events", ()
     socket.onopen = () => events.push("open")
     socket.onmessage = (event) => events.push(`message:${event.data}`)
     socket.onclose = (event) => events.push(`close:${event.code}:${event.wasClean}`)
+    socket.buffer(12)
+    assert.equal(socket.bufferedAmount, 12)
+    socket.flush(5)
+    assert.equal(socket.bufferedAmount, 7)
     socket.accept("v2")
     socket.receive(new TextEncoder().encode("hello"), false)
     socket.send("request")
@@ -54,5 +58,37 @@ test("tunneled WebSocket preserves text, binary, protocol, and close events", ()
     else delete (globalThis as { window?: unknown }).window
     if (originalCloseEvent) Object.defineProperty(globalThis, "CloseEvent", originalCloseEvent)
     else delete (globalThis as { CloseEvent?: unknown }).CloseEvent
+  }
+})
+
+test("tunneled WebSocket rejects transport metadata outside its bounded contract", () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location: { href: "https://host.remote.example/" } },
+  })
+  const bridge: RemoteSocketBridge = {
+    connectSocket: () => assert.fail("invalid socket must not connect"),
+    transmitSocket: () => {},
+    disconnectSocket: () => {},
+  }
+  try {
+    assert.throws(
+      () => new TunnelWebSocket("/api/socket", Array.from({ length: 17 }, () => crypto.randomUUID()), bridge),
+      /Invalid WebSocket protocol/,
+    )
+    assert.throws(
+      () => new TunnelWebSocket("/api/socket", [1] as unknown as string[], bridge),
+      /Invalid WebSocket protocol/,
+    )
+    const socket = new TunnelWebSocket("/api/socket", undefined, {
+      ...bridge,
+      connectSocket: () => {},
+    })
+    assert.throws(() => socket.close(Number.NaN), /Invalid WebSocket close code/)
+    assert.throws(() => socket.close(3000.5), /Invalid WebSocket close code/)
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow)
+    else delete (globalThis as { window?: unknown }).window
   }
 })

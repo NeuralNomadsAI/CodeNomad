@@ -39,9 +39,11 @@ operations consult the host object.
 Each host object limits browser tunnels, paired devices, unredeemed pairing
 links, pairing bodies, and opaque frame sizes. The local connector separately
 limits concurrent HTTP requests, local WebSockets, decrypted request bodies,
-handshake frames, and pre-open socket queues. HTTP streams have an idle timeout
-and abandoned requests are cancelled at the host. Expired pairing and device
-records are removed by a Durable Object alarm.
+handshake frames, encrypted send/receive queues, relay buffers, and pre-open
+socket queues. The browser bounds request-body reads, active requests and
+sockets, encrypted queues, WebSocket sends, and unread HTTP response data.
+HTTP streams have an idle timeout and abandoned requests are cancelled at the
+host. Expired pairing and device records are removed by a Durable Object alarm.
 
 These limits contain abuse and memory use, but they are not a substitute for
 Cloudflare account-level usage alerts and limits.
