@@ -1,16 +1,12 @@
 use super::ClientState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
 const MIN_WINDOW_WIDTH: i32 = 800;
 const MIN_WINDOW_HEIGHT: i32 = 600;
 const MIN_ZOOM_LEVEL: f64 = 0.25;
 pub(super) const MAX_ZOOM_LEVEL: f64 = 5.0;
-const SAVE_DEBOUNCE: Duration = Duration::from_millis(250);
-
 pub const DEFAULT_ZOOM_LEVEL: f64 = 1.0;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -254,19 +250,7 @@ fn schedule_flush(app: &AppHandle) {
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };
-    let generation = client_state.save_generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(SAVE_DEBOUNCE);
-        let Some(client_state) = app.try_state::<ClientState>() else {
-            return;
-        };
-        if client_state.save_generation.load(Ordering::SeqCst) == generation {
-            if let Err(err) = client_state.flush() {
-                eprintln!("[client-state] failed to save window state: {err}");
-            }
-        }
-    });
+    client_state.schedule_window_flush(app);
 }
 
 #[cfg(windows)]
