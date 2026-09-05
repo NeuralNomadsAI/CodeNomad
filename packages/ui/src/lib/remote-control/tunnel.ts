@@ -1,4 +1,5 @@
 import {
+  clientWebSocketCloseCode,
   createClientHandshake,
   decodeBase64,
   encodeBase64,
@@ -86,7 +87,7 @@ async function discoverRemoteControl(): Promise<RemoteControlBootstrap | null> {
   }
 }
 
-class RemoteControlTunnel implements RemoteSocketBridge {
+export class RemoteControlTunnel implements RemoteSocketBridge {
   private socket: WebSocket | null = null
   private channel: EncryptedChannel | null = null
   private connection: Promise<void> | null = null
@@ -325,6 +326,10 @@ class RemoteControlTunnel implements RemoteSocketBridge {
       if (this.channel !== channel || this.socket !== socket || socket.readyState !== WebSocket.OPEN) {
         throw new Error("Remote Control tunnel is disconnected")
       }
+      if (socket.bufferedAmount + frame.byteLength > MAX_PENDING_FRAME_BYTES) {
+        this.close(1009, "Remote Control network send buffer exceeded its safety limit")
+        throw new Error("Remote Control network send buffer exceeded its safety limit")
+      }
       socket.send(frame)
     }).finally(release)
     this.sendQueue = send.catch(() => undefined)
@@ -448,7 +453,7 @@ class RemoteControlTunnel implements RemoteSocketBridge {
     const socket = this.socket
     this.socket = null
     this.channel = null
-    if (socket && code && socket.readyState < WebSocket.CLOSING) socket.close(code, reason)
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close(clientWebSocketCloseCode(code), reason)
     for (const id of Array.from(this.pendingHttp.keys())) this.failHttp(id, new Error("Remote Control tunnel disconnected"))
     for (const id of Array.from(this.pendingSockets.keys())) this.finishSocket(id, 1006, "Remote Control tunnel disconnected", false)
   }

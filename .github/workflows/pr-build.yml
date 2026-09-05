@@ -143,6 +143,7 @@ jobs:
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/remote-control/bounded-body.test.ts
           packages/ui/src/lib/remote-control/event-source.test.ts
+          packages/ui/src/lib/remote-control/tunnel.test.ts
           packages/ui/src/lib/remote-control/web-socket.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts

@@ -1,4 +1,5 @@
 import {
+  clientWebSocketCloseCode,
   REMOTE_CONTROL_HEARTBEAT_REQUEST,
   REMOTE_CONTROL_HEARTBEAT_RESPONSE,
   REMOTE_CONTROL_MAX_HANDSHAKE_BYTES,
@@ -27,7 +28,6 @@ import {
   parseRelayMessage,
   relaySocketUrl,
   responseHeaders,
-  validCloseCode,
 } from "./connector-protocol"
 
 export { normalizedRelayUrl } from "./connector-protocol"
@@ -127,7 +127,7 @@ export class RemoteControlConnector {
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return
       this.sendRelay({ type: "ready", protocol: REMOTE_CONTROL_PROTOCOL_VERSION })
-      this.handshakeTimer = setTimeout(() => socket.close(1002, "Remote Control relay handshake timed out"), RELAY_HANDSHAKE_TIMEOUT_MS)
+      this.handshakeTimer = setTimeout(() => socket.close(clientWebSocketCloseCode(1002), "Remote Control relay handshake timed out"), RELAY_HANDSHAKE_TIMEOUT_MS)
       this.handshakeTimer.unref()
     })
     socket.addEventListener("message", (event) => this.onRelayMessage(socket, event.data))
@@ -162,7 +162,7 @@ export class RemoteControlConnector {
     if (this.socket !== socket) return
     const byteLength = typeof data === "string" ? data.length : data instanceof ArrayBuffer ? data.byteLength : 0
     if (byteLength > MAX_RELAY_MESSAGE_BYTES) {
-      socket.close(1009, "Remote Control relay message is too large")
+      socket.close(clientWebSocketCloseCode(1009), "Remote Control relay message is too large")
       return
     }
     const text = typeof data === "string" ? data : data instanceof ArrayBuffer ? new TextDecoder().decode(data) : ""
@@ -173,12 +173,12 @@ export class RemoteControlConnector {
     }
     const message = parseRelayMessage(text)
     if (!message) {
-      this.socket?.close(1003, "Invalid Remote Control relay message")
+      this.socket?.close(clientWebSocketCloseCode(1003), "Invalid Remote Control relay message")
       return
     }
     if (message.type === "ready") {
       if (message.protocol !== REMOTE_CONTROL_PROTOCOL_VERSION) {
-        this.socket?.close(1002, "Unsupported Remote Control protocol")
+        this.socket?.close(clientWebSocketCloseCode(1002), "Unsupported Remote Control protocol")
         return
       }
       if (this.handshakeTimer) clearTimeout(this.handshakeTimer)
@@ -190,7 +190,7 @@ export class RemoteControlConnector {
       return
     }
     if (!this.ready) {
-      this.socket?.close(1002, "Remote Control relay handshake required")
+      this.socket?.close(clientWebSocketCloseCode(1002), "Remote Control relay handshake required")
       return
     }
     if (message.type === "tunnel.open") {
@@ -408,7 +408,7 @@ export class RemoteControlConnector {
     const socket = tunnel.localSockets.get(id)
     tunnel.localSockets.delete(id)
     tunnel.localSocketQueues.delete(id)
-    socket?.close(validCloseCode(code) ? code : undefined, boundedCloseReason(reason))
+    socket?.close(clientWebSocketCloseCode(code), boundedCloseReason(reason))
   }
 
   private sendClient(tunnelId: string, message: HostToClientMessage): Promise<void> {
@@ -449,7 +449,7 @@ export class RemoteControlConnector {
     this.tunnels.delete(id)
     for (const controller of tunnel.httpRequests.values()) controller.abort()
     for (const socket of tunnel.localSockets.values()) {
-      socket.close(validCloseCode(code) ? code : undefined, boundedCloseReason(reason))
+      socket.close(clientWebSocketCloseCode(code), boundedCloseReason(reason))
     }
     tunnel.httpRequests.clear()
     tunnel.localSockets.clear()
@@ -465,7 +465,7 @@ export class RemoteControlConnector {
     if (socket?.readyState !== WebSocket.OPEN) return
     const payload = JSON.stringify(message)
     if (socket.bufferedAmount + payload.length > MAX_RELAY_BUFFERED_BYTES) {
-      socket.close(1013, "Remote Control relay send buffer exceeded its safety limit")
+      socket.close(clientWebSocketCloseCode(1013), "Remote Control relay send buffer exceeded its safety limit")
       this.onClosed(socket, "Remote Control relay send buffer exceeded its safety limit")
       return
     }
@@ -479,7 +479,7 @@ export class RemoteControlConnector {
       const socket = this.socket
       if (!this.ready || socket?.readyState !== WebSocket.OPEN) return
       if (Date.now() - this.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
-        socket.close(1012, "Remote Control relay heartbeat timed out")
+        socket.close(clientWebSocketCloseCode(1012), "Remote Control relay heartbeat timed out")
         this.onClosed(socket, "Remote Control relay stopped responding")
         return
       }

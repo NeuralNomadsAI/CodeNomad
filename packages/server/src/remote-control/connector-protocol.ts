@@ -1,4 +1,5 @@
 import type { ClientToHostMessage, HeaderEntries, RelayToHostMessage } from "@codenomad/remote-control-protocol"
+import { isIP } from "node:net"
 
 const RESPONSE_HEADER_BLOCKLIST = new Set(["connection", "content-encoding", "content-length", "set-cookie", "transfer-encoding", "upgrade"])
 const REQUEST_HEADER_BLOCKLIST = new Set([
@@ -122,7 +123,8 @@ export function validCloseCode(value: number | undefined): value is number {
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase()
-  return normalized === "localhost" || normalized === "::1" || normalized === "[::1]" || normalized.startsWith("127.")
+  return normalized === "localhost" || normalized === "::1" || normalized === "[::1]"
+    || (isIP(normalized) === 4 && normalized.startsWith("127."))
 }
 
 function validHeaders(value: unknown): value is HeaderEntries {
