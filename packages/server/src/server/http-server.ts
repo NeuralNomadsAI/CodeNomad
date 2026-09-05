@@ -26,6 +26,7 @@ import { registerYoloRoutes } from "./routes/yolo"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
+import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
@@ -41,6 +42,7 @@ import type { SpeechService } from "../speech/service"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
+import type { RemoteControlManager } from "../remote-control/manager"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
@@ -65,6 +67,7 @@ interface HttpServerDeps {
   speechService: SpeechService
   sidecarManager: SideCarManager
   previewManager: PreviewManager
+  remoteControlManager: RemoteControlManager
   authManager: AuthManager
   clientConnectionManager: ClientConnectionManager
   remoteProxySessionManager: RemoteProxySessionManager
@@ -316,6 +319,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
+  registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
   registerSideCarRoutes(app, { sidecarManager: deps.sidecarManager })
   registerPreviewRoutes(app, { previewManager: deps.previewManager })

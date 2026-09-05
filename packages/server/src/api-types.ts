@@ -434,6 +434,13 @@ export interface RemoteProxySessionCreateResponse {
   windowUrl: string
 }
 
+export type {
+  RemoteControlDevice,
+  RemoteControlPairing,
+  RemoteControlStartResponse,
+  RemoteControlStatus,
+} from "@codenomad/remote-control-protocol"
+
 export type WorkspaceEventType =
   | "workspace.created"
   | "workspace.started"
@@ -499,7 +506,7 @@ export interface SupportMeta {
 export interface ServerMeta {
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */
   localUrl: string
-  /** URL remote clients should use (prefers HTTPS when enabled). */
+  /** URL direct remote clients should use (prefers HTTPS when enabled). */
   remoteUrl?: string
   /** SSE endpoint advertised to clients (`/api/events` by default). */
   eventsUrl: string
@@ -509,13 +516,13 @@ export interface ServerMeta {
   listeningMode: "local" | "all"
   /** Actual local port in use after binding. */
   localPort: number
-  /** Actual remote port in use after binding (when remoteUrl is set). */
+  /** Actual direct remote port in use after binding (when remoteUrl is set). */
   remotePort?: number
   /** Display label for the host (e.g., hostname or friendly name). */
   hostLabel: string
   /** Absolute path of the filesystem root exposed to clients. */
   workspaceRoot: string
-  /** Reachable addresses for this server, external first. */
+  /** Reachable direct-access addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
   ui?: UiMeta

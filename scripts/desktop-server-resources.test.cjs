@@ -3,7 +3,11 @@ const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
 const test = require("node:test")
-const { resolveNpmTarget, validateServerProductionLock } = require("./desktop-server-resources.cjs")
+const {
+  resolveNpmTarget,
+  stagePrebuiltWorkspacePackage,
+  validateServerProductionLock,
+} = require("./desktop-server-resources.cjs")
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
 
 test("maps every supported desktop target to npm OS and CPU", () => {
@@ -26,6 +30,27 @@ test("integrity-pins the full server production closure in the root lock", () =>
   assert.equal(lock.packages["node_modules/undici"].version, "6.22.0")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
+  assert.ok(closure.has("packages/remote-control-protocol"))
+})
+
+test("stages prebuilt workspace packages without install lifecycle scripts", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-workspace-stage-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, "source")
+  const destination = path.join(root, "destination")
+  fs.mkdirSync(path.join(source, "dist"), { recursive: true })
+  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({
+    name: "@codenomad/example",
+    version: "1.0.0",
+    scripts: { prepare: "npm run build" },
+  }))
+  fs.writeFileSync(path.join(source, "dist", "index.js"), "export {}\n")
+
+  stagePrebuiltWorkspacePackage(source, destination)
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
+  assert.equal(manifest.scripts, undefined)
+  assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export {}\n")
 })
 
 test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {

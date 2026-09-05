@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
- 
+
 
 interface RouteDeps {
   serverMeta: ServerMeta

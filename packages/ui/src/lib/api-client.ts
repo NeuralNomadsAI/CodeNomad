@@ -21,6 +21,10 @@ import type {
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
+  RemoteControlDevice,
+  RemoteControlPairing,
+  RemoteControlStartResponse,
+  RemoteControlStatus,
   YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
@@ -276,6 +280,24 @@ export const serverApi = {
   },
   deleteRemoteProxySession(id: string): Promise<void> {
     return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control/status")
+  },
+  startRemoteControl(): Promise<RemoteControlStartResponse> {
+    return request<RemoteControlStartResponse>("/api/remote-control/start", { method: "POST" })
+  },
+  stopRemoteControl(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
+  },
+  createRemoteControlPairing(): Promise<RemoteControlPairing> {
+    return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
+  },
+  fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
+    return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
+  },
+  revokeRemoteControlDevice(id: string): Promise<void> {
+    return request(`/api/remote-control/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")

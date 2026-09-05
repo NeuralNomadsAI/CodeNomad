@@ -22,6 +22,7 @@ import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
+import { RemoteControlSettingsSection } from "./settings/remote-control-settings-section"
 import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
@@ -58,9 +59,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
-    if (props.standalone || canOpenRemoteWindows()) {
-      items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
-    }
+    items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     return items
   })
 
@@ -75,12 +74,15 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "speech":
         return <SpeechSettingsSection />
       case "remote":
-        return props.standalone || canOpenRemoteWindows() ? (
+        return (
           <div class="settings-section-stack">
+            <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <SavedRemoteServersCard />
+            <Show when={canOpenRemoteWindows()}>
+              <SavedRemoteServersCard />
+            </Show>
           </div>
-        ) : <GeneralSettingsSection showStartupState />
+        )
       case "opencode":
         return <OpenCodeSettingsSection />
       case "providers":
