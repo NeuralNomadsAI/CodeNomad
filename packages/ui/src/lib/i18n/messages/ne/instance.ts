@@ -261,6 +261,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "OpenCode बाइनरी चयन गर्नुहोस्",
   "opencodeBinarySelector.dialog.description": "CLI सर्भरद्वारा उपलब्ध गराइएका फाइलहरू ब्राउज गर्नुहोस्।",
   "opencodeBinarySelector.validation.invalidBinary": "अमान्य OpenCode बाइनरी",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad लाई OpenCode V2 आवश्यक छ। opencode2 बाइनरी स्थापना गरेर चयन गर्नुहोस्।",
   "opencodeBinarySelector.validation.alreadyValidating": "पहिले नै प्रमाणीकरण गर्दै",
   "opencodeBinarySelector.display.systemPath": "{name} (system PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",
