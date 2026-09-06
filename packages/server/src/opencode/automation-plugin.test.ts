@@ -54,13 +54,17 @@ function closeServer(server: http.Server | undefined): Promise<void> {
 function scopeAutomationBridgeRoot(root: string): () => void {
   const previousLocalAppData = process.env.LOCALAPPDATA
   const previousXdgRuntimeDir = process.env.XDG_RUNTIME_DIR
+  const previousWslDistroName = process.env.WSL_DISTRO_NAME
   process.env.LOCALAPPDATA = root
   process.env.XDG_RUNTIME_DIR = root
+  delete process.env.WSL_DISTRO_NAME
   return () => {
     if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
     else process.env.LOCALAPPDATA = previousLocalAppData
     if (previousXdgRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR
     else process.env.XDG_RUNTIME_DIR = previousXdgRuntimeDir
+    if (previousWslDistroName === undefined) delete process.env.WSL_DISTRO_NAME
+    else process.env.WSL_DISTRO_NAME = previousWslDistroName
   }
 }
 
@@ -246,6 +250,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
     const directory = automationBridgeDirectory()
+    assert.equal(path.dirname(path.dirname(directory)), root)
     const base = Date.now() + 10_000
     for (let index = 0; index < 70; index += 1) {
       const startedAt = base + index
