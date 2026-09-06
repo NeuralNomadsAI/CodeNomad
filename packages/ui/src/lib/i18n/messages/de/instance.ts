@@ -261,6 +261,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "OpenCode-Binärdatei auswählen",
   "opencodeBinarySelector.dialog.description": "Vom CLI-Server bereitgestellte Dateien durchsuchen.",
   "opencodeBinarySelector.validation.invalidBinary": "Ungültige OpenCode-Binärdatei",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad benötigt OpenCode V2. Installieren und wählen Sie die opencode2-Binärdatei aus.",
   "opencodeBinarySelector.validation.alreadyValidating": "Wird bereits validiert",
   "opencodeBinarySelector.display.systemPath": "{name} (System-PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",
