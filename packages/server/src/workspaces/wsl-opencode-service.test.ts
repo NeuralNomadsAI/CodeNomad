@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { legacyHelp } from "./__tests__/binary-probe-fixture"
 
 import {
   WslOpenCodeService,
@@ -15,6 +16,22 @@ type ExecCall = {
 const url = "http://127.0.0.1:4321"
 
 describe("WslOpenCodeService", () => {
+  it("preserves the V1 diagnosis for Linux CLIs regardless of wrapper exit status", async () => {
+    for (const code of [0, 1]) for (const stream of ["stdout", "stderr"]) {
+      const test = harness({}, {
+        execFile: async (file, args) => {
+          assert.equal(file, "wsl.exe")
+          assert.deepEqual(args, ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "status"])
+          const output = { stdout: "", stderr: "", [stream]: legacyHelp }
+          if (code) throw Object.assign(new Error("Command failed"), { code, ...output })
+          return output
+        },
+        fetch: async () => { throw new Error("Legacy discovery must not contact a daemon") },
+      })
+      await assert.rejects(test.service.discover(), /^Error: opencode_v2_required: WSL/)
+    }
+  })
+
   it("discovers stopped and running services with exact CLI arguments and no shell", async () => {
     const stopped = harness({ status: "stopped\n" })
     assert.equal(await stopped.service.discover(), undefined)
