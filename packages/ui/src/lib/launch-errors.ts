@@ -10,22 +10,22 @@ export function formatLaunchErrorMessage(
     return fallbackMessage
   }
 
-  const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
-  if (openCodeV2RequiredMessage && raw.includes(OPENCODE_V2_REQUIRED_ERROR_CODE)) {
-    return openCodeV2RequiredMessage
-  }
+  let raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
 
   try {
     const parsed = JSON.parse(raw) as unknown
     const configError = formatConfigError(parsed, invalidConfigMessage)
     if (configError) return configError
     if (parsed && typeof parsed === "object" && "error" in parsed && typeof (parsed as any).error === "string") {
-      return (parsed as any).error
+      raw = (parsed as any).error
     }
   } catch {
     // ignore JSON parse errors
   }
 
+  if (openCodeV2RequiredMessage && (raw === OPENCODE_V2_REQUIRED_ERROR_CODE || raw.startsWith(`${OPENCODE_V2_REQUIRED_ERROR_CODE}:`))) {
+    return openCodeV2RequiredMessage
+  }
   return raw
 }
 

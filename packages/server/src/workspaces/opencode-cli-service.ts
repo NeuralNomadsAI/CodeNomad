@@ -89,13 +89,13 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     }
+    let result: ServiceExecResult
     try {
-      const result = await this.withDeadline(
+      result = await this.withDeadline(
         this.dependencies.execFile(spec.command, spec.args, options),
         deadlineAt,
         commandLabel,
       )
-      return result.stdout
     } catch (error) {
       const output = error && typeof error === "object"
         ? error as { stdout?: unknown; stderr?: unknown }
@@ -113,6 +113,10 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       const detail = boundedExecError(error)
       throw new Error(`${this.options.label} OpenCode ${commandLabel} failed${detail ? `: ${detail}` : ""}`)
     }
+    if (isOpenCodeServiceCommandUnavailable(result.stdout, result.stderr)) {
+      throw new Error(`${OPENCODE_V2_REQUIRED_ERROR_CODE}: ${this.options.label} binary does not support the OpenCode V2 service lifecycle`)
+    }
+    return result.stdout
   }
 
   private async validateHealth(endpoint: Endpoint, deadlineAt: number): Promise<void> {

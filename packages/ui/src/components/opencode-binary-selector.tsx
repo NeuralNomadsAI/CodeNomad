@@ -98,11 +98,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   })
 
   async function validateBinary(path: string): Promise<{ valid: boolean; version?: string; error?: string }> {
-    if (versionInfo().has(path)) {
-      const cachedVersion = versionInfo().get(path)
-      return cachedVersion ? { valid: true, version: cachedVersion } : { valid: true }
-    }
-
+    // Persisted versions are display metadata, not proof that this path still
+    // supports V2. In particular, always revalidate an explicit add/browse.
     if (validatingPaths().has(path)) {
       return { valid: false, error: t("opencodeBinarySelector.validation.alreadyValidating") }
     }

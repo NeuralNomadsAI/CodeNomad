@@ -16,6 +16,22 @@ describe("formatLaunchErrorMessage", () => {
     )
   })
 
+  it("does not hide unrelated diagnostics mentioning the compatibility marker", () => {
+    for (const raw of [
+      "ENOENT: /tmp/opencode_v2_required/opencode2",
+      "Connection failed: opencode_v2_required is a log filename",
+    ]) {
+      assert.equal(formatLaunchErrorMessage(raw, "fallback", "Invalid config", "Select V2"), raw)
+    }
+    const config = JSON.stringify({ name: "ConfigInvalidError", data: { path: "/tmp/opencode_v2_required/config.json" } })
+    assert.equal(formatLaunchErrorMessage(config, "fallback", "Invalid config", "Select V2"), "Invalid config\n/tmp/opencode_v2_required/config.json")
+  })
+
+  it("localizes compatibility codes transported by JSON API errors", () => {
+    const raw = new Error(JSON.stringify({ error: "opencode_v2_required: Host binary does not support V2" }))
+    assert.equal(formatLaunchErrorMessage(raw, "fallback", "Invalid config", "Select V2"), "Select V2")
+  })
+
   it("formats OpenCode configuration validation details", () => {
     const error = new Error(JSON.stringify({
       name: "ConfigInvalidError",

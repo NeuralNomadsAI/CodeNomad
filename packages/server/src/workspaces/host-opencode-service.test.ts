@@ -109,6 +109,15 @@ describe("HostOpenCodeService", () => {
       return true
     })
   })
+
+  it("recognizes legacy help even when a wrapper exits zero on stdout or stderr", async () => {
+    for (const stream of ["stdout", "stderr"]) {
+      const service = createService([], {}, {
+        execFile: async () => ({ stdout: "", stderr: "", [stream]: "Commands:\n  opencode completion\n  opencode [project]\n" }),
+      })
+      await assert.rejects(service.discover(), new RegExp(`^Error: ${OPENCODE_V2_REQUIRED_ERROR_CODE}:`))
+    }
+  })
 })
 
 function createService(

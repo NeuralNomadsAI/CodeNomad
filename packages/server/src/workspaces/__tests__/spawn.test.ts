@@ -269,9 +269,9 @@ describe("buildServiceLaunchSpec", () => {
 })
 
 describe("probeOpenCodeBinary", () => {
-  it("rejects a V1 binary whose root help exits successfully without a service command", () => {
+  it("rejects a V1 binary whose root help exits successfully without a service command", async () => {
     const calls: string[][] = []
-    const result = probeOpenCodeBinary(process.execPath, (spec) => {
+    const result = await probeOpenCodeBinary(process.execPath, (spec) => {
       calls.push(spec.args)
       return spec.args[0] === "--version"
         ? { status: 0, stdout: "1.18.25\n", stderr: "" }
@@ -286,12 +286,22 @@ describe("probeOpenCodeBinary", () => {
     })
   })
 
-  it("accepts a binary that supports the service lifecycle", () => {
-    const result = probeOpenCodeBinary(process.execPath, (spec) => spec.args[0] === "--version"
+  it("accepts a binary that supports the service lifecycle", async () => {
+    const result = await probeOpenCodeBinary(process.execPath, (spec) => spec.args[0] === "--version"
       ? { status: 0, stdout: "opencode2 v0.0.0-beta-18999\n", stderr: "" }
-      : { status: 0, stdout: "stopped\n", stderr: "" })
+      : { status: 0, stdout: "USAGE\n  opencode2 service <subcommand> [flags]\nSUBCOMMANDS\n  start  Start server\n  status  Server status\n  get  Get configuration\n", stderr: "" })
 
     assert.deepEqual(result, { valid: true, version: "0.0.0-beta-18999" })
+  })
+
+  it("does not accept an empty, unrelated, or daemon-status response as capability evidence", async () => {
+    for (const stdout of ["", "stopped\n", "http://127.0.0.1:1234\n", "arbitrary wrapper help\n"]) {
+      const result = await probeOpenCodeBinary(process.execPath, (spec) => ({
+        status: 0, stdout: spec.args[0] === "--version" ? "2.0.0\n" : stdout,
+      }))
+      assert.equal(result.valid, false, JSON.stringify(stdout))
+      assert.equal(result.errorCode, undefined, "unknown output must not be mislabeled as V1")
+    }
   })
 })
 

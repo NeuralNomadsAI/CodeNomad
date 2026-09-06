@@ -15,7 +15,7 @@ const ValidateBinarySchema = z.object({
   path: z.string(),
 })
 
-function validateBinaryPath(binaryPath: string): BinaryValidationResult {
+function validateBinaryPath(binaryPath: string): Promise<BinaryValidationResult> {
   return probeOpenCodeBinary(binaryPath)
 }
 
