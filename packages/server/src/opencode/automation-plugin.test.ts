@@ -252,6 +252,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
     const directory = automationBridgeDirectory()
+    assert.equal(path.dirname(path.dirname(directory)), root)
     const base = Date.now() + 10_000
     for (let index = 0; index < 70; index += 1) {
       const startedAt = base + index

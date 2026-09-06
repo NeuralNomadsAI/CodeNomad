@@ -2,6 +2,9 @@ import { execFile, spawnSync } from "child_process"
 import { readFileSync, statSync } from "fs"
 import path from "path"
 
+import { OPENCODE_V2_REQUIRED_ERROR_CODE, type BinaryValidationResult } from "../api-types"
+import { isOpenCodeServiceCommandUnavailable, isOpenCodeServiceHelp } from "./opencode-cli-compatibility"
+
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
@@ -37,6 +40,16 @@ interface WslPath {
 export type WslWorkingDirectory =
   | { kind: "linux"; path: string }
   | { kind: "windows"; path: string }
+
+interface BinaryProbeExecution {
+  error?: Error
+  status: number | null
+  stdout?: string | null
+  stderr?: string | null
+}
+
+type BinaryProbeExecutor = (spec: SpawnSpec, timeoutMs?: number) => BinaryProbeExecution
+type AsyncBinaryProbeExecutor = (spec: SpawnSpec, timeoutMs: number) => BinaryProbeExecution | Promise<BinaryProbeExecution>
 
 export function parseWslUncPath(input: string): WslPath | null {
   const normalized = input.trim().replace(/\//g, "\\")
@@ -173,7 +186,10 @@ export function buildServiceLaunchSpec(
   return { kind: "host", binary: binaryPath, platform }
 }
 
-export function probeBinaryVersion(binaryPath: string): {
+export function probeBinaryVersion(
+  binaryPath: string,
+  execute: BinaryProbeExecutor = executeBinaryProbe,
+): {
   valid: boolean
   version?: string
   reported?: string
@@ -185,45 +201,109 @@ export function probeBinaryVersion(binaryPath: string): {
 
   try {
     const spec = buildSpawnSpec(binaryPath, ["--version"])
-    const result = spawnSync(spec.command, spec.args, {
+    const result = execute(spec)
+    return parseBinaryVersion(result)
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
+  if (result.error) {
+    return { valid: false, error: result.error.message }
+  }
+
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim()
+    const stdout = result.stdout?.trim()
+    const combined = stderr || stdout
+    const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
+    return { valid: false, error }
+  }
+
+  const stdoutLines = String(result.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  const stderrLines = String(result.stderr ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+
+  // Prefer stdout; fall back to stderr (some tools report version there).
+  const reported = stdoutLines[0] ?? stderrLines[0]
+  if (!reported) {
+    return { valid: true }
+  }
+
+  const versionMatch = reported.match(VERSION_REGEX)
+  const version = versionMatch?.[1]
+  return { valid: true, version, reported }
+}
+
+export async function probeOpenCodeBinary(
+  binaryPath: string,
+  execute: AsyncBinaryProbeExecutor = executeAsyncBinaryProbe,
+): Promise<BinaryValidationResult> {
+  if (!binaryPath) return { valid: false, error: "Missing binary path" }
+  try {
+    // Neither probe starts a daemon, and both are asynchronous and bounded so
+    // opening settings cannot stall the shared backend's requests/event stream.
+    const version = parseBinaryVersion(await execute(buildSpawnSpec(binaryPath, ["--version"]), 5_000))
+    if (!version.valid) return { valid: false, ...(version.error ? { error: version.error } : {}) }
+    const versionResult = version.version ? { version: version.version } : {}
+    const result = await execute(buildSpawnSpec(binaryPath, ["service", "--help"]), 5_000)
+    if (result.error) return { valid: false, ...versionResult, error: result.error.message }
+    if (isOpenCodeServiceCommandUnavailable(result.stdout, result.stderr)) {
+      return { valid: false, ...versionResult, errorCode: OPENCODE_V2_REQUIRED_ERROR_CODE }
+    }
+    if (result.status === 0) {
+      return isOpenCodeServiceHelp(result.stdout, result.stderr)
+        ? { valid: true, ...versionResult }
+        : { valid: false, ...versionResult }
+    }
+
+    const detail = String(result.stderr ?? "").trim() || String(result.stdout ?? "").trim()
+    const suffix = detail ? `: ${detail.slice(0, 1_024)}` : ""
+    return { valid: false, ...versionResult, error: `OpenCode service probe exited with code ${result.status}${suffix}` }
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function executeAsyncBinaryProbe(spec: SpawnSpec, timeoutMs: number): Promise<BinaryProbeExecution> {
+  return new Promise((resolve) => {
+    execFile(spec.command, spec.args, {
       encoding: "utf8",
       cwd: spec.cwd,
       env: spec.env,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+      shell: false,
       windowsVerbatimArguments: Boolean(spec.options.windowsVerbatimArguments),
-    })
+    }, (error, stdout, stderr) => resolve({
+      status: error ? (typeof error.code === "number" ? error.code : null) : 0,
+      ...(error && typeof error.code !== "number" ? { error } : {}),
+      stdout,
+      stderr,
+    }))
+  })
+}
 
-    if (result.error) {
-      return { valid: false, error: result.error.message }
-    }
-
-    if (result.status !== 0) {
-      const stderr = result.stderr?.trim()
-      const stdout = result.stdout?.trim()
-      const combined = stderr || stdout
-      const error = combined ? `Exited with code ${result.status}: ${combined}` : `Exited with code ${result.status}`
-      return { valid: false, error }
-    }
-
-    const stdoutLines = String(result.stdout ?? "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-    const stderrLines = String(result.stderr ?? "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-
-    // Prefer stdout; fall back to stderr (some tools report version there).
-    const reported = stdoutLines[0] ?? stderrLines[0]
-    if (!reported) {
-      return { valid: true }
-    }
-
-    const versionMatch = reported.match(VERSION_REGEX)
-    const version = versionMatch?.[1]
-    return { valid: true, version, reported }
-  } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) }
+function executeBinaryProbe(spec: SpawnSpec, timeoutMs?: number): BinaryProbeExecution {
+  const result = spawnSync(spec.command, spec.args, {
+    encoding: "utf8",
+    cwd: spec.cwd,
+    env: spec.env,
+    timeout: timeoutMs,
+    windowsVerbatimArguments: Boolean(spec.options.windowsVerbatimArguments),
+  })
+  return {
+    status: result.status,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.stdout !== null ? { stdout: result.stdout } : {}),
+    ...(result.stderr !== null ? { stderr: result.stderr } : {}),
   }
 }
 

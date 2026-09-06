@@ -6,6 +6,8 @@ mod navigation;
 mod partitions;
 mod process;
 mod window;
+mod window_flush;
+mod window_updates;
 
 #[doc(hidden)]
 pub use commands::{
@@ -35,7 +37,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -72,7 +73,8 @@ pub struct ClientState {
     state: Mutex<PersistedClientState>,
     zoom_levels: Mutex<HashMap<String, f64>>,
     write_lock: Mutex<()>,
-    save_generation: AtomicU64,
+    window_flush: window_flush::WindowFlushScheduler,
+    pending_windows: Mutex<window_updates::WindowCaptures>,
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
@@ -205,7 +207,8 @@ impl ClientState {
             state: Mutex::new(state),
             zoom_levels: Mutex::new(zoom_levels),
             write_lock: Mutex::new(()),
-            save_generation: AtomicU64::new(0),
+            window_flush: window_flush::WindowFlushScheduler::default(),
+            pending_windows: Mutex::new(window_updates::WindowCaptures::default()),
             renderer_access: access::RendererAccess::default(),
             ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
@@ -402,6 +405,9 @@ impl ClientState {
     }
 
     fn load_window(&self, window_id: &str) -> Result<ClientStateLoadResult, String> {
+        // Ownership validation reads the election files. Do not make native
+        // capture wait for that I/O through the shared in-memory state mutex.
+        let is_primary = self.is_primary();
         let state = self.state.lock().map_err(|err| err.to_string())?;
         let record = match state.record(window_id) {
             Ok(record) => record,
@@ -421,7 +427,6 @@ impl ClientState {
             }
             Err(error) => return Err(error),
         };
-        let is_primary = self.is_primary();
         Ok(ClientStateLoadResult {
             is_primary,
             restore_enabled: if is_primary || !self.process.is_registered() {
@@ -699,9 +704,27 @@ impl ClientState {
             .map_err(|err| err.to_string())?
             .unsupported_future_envelope;
         if self.is_primary() && !unsupported {
+            {
+                let mut state = self.state.lock().map_err(|err| err.to_string())?;
+                self.apply_window_captures(&mut state)?;
+            }
             self.write_current_state()?;
         }
         Ok(())
+    }
+
+    fn schedule_window_flush(&self, app: &AppHandle) {
+        let app = app.clone();
+        if let Err(error) = self.window_flush.schedule(move || {
+            // Only persist captured data; never dispatch native getters from this worker.
+            if let Some(state) = app.try_state::<ClientState>() {
+                if let Err(error) = state.flush() {
+                    eprintln!("[client-state] failed to save window state: {error}");
+                }
+            }
+        }) {
+            eprintln!("[client-state] failed to schedule window-state flush: {error}");
+        }
     }
 
     fn normal_writes_suppressed(&self, window_id: &str) -> Result<bool, String> {
@@ -728,29 +751,35 @@ impl ClientState {
         (self.write_state)(&self.state_path, &bytes, &|| {
             self.is_primary() && replacement_valid()
         })?;
+        // New events may already be queued, but only this serialized writer can
+        // have merged captures into the state we just published.
+        self.window_captures_published();
         Ok(())
     }
 
     fn mutate_and_write(
         &self,
-        _window_id: &str,
+        window_id: &str,
         mutate: impl FnOnce(&mut PersistedClientState) -> Result<(), String>,
         replacement_valid: &dyn Fn() -> bool,
     ) -> Result<bool, String> {
         let previous_state = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            // Preserve captures in rollback; arrivals during I/O stay in the mailbox.
+            self.apply_window_captures(&mut state)?;
             let previous = state.clone();
             mutate(&mut state)?;
+            self.preserve_window_capture_policy(&previous, window_id);
             previous
         };
 
-        match self.write_current_state_guarded(replacement_valid) {
-            Ok(()) => Ok(true),
-            Err(err) => {
-                *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous_state;
-                Err(err)
-            }
+        let result = self.write_current_state_guarded(replacement_valid);
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if result.is_err() {
+            *state = previous_state;
         }
+        self.finish_window_capture_policy(&state, window_id);
+        result.map(|()| true)
     }
 
     pub(crate) fn add_window(&self, window_id: String) -> Result<bool, String> {
@@ -799,34 +828,50 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
-        let mut zoom_levels = self.zoom_levels.lock().map_err(|err| err.to_string())?;
         let previous = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
                 return Ok(false);
             }
+            self.apply_window_captures(&mut state)?;
             let previous = state.clone();
             if !state.remove_window(window_id)? {
                 return Ok(false);
             }
+            self.preserve_window_capture_policy(&previous, window_id);
             previous
         };
-        if let Err(err) = self.write_current_state() {
-            *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous;
-            return Err(err);
+        let result = self.write_current_state();
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            if result.is_err() {
+                *state = previous;
+            }
+            self.finish_window_capture_policy(&state, window_id);
         }
+        result?;
         self.renderer_access.remove(window_id);
-        zoom_levels.remove(window_id);
+        self.zoom_levels
+            .lock()
+            .map_err(|err| err.to_string())?
+            .remove(window_id);
         self.collect_partitions(&|| true);
         Ok(true)
     }
 
     fn release_locks(&self) {
+        self.stop_window_captures();
+        self.window_flush.stop();
         // Lock order fences takeover until root publication and partition GC leave write_lock.
         let _write = self
             .write_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
+        // Also drain a capture admitted before stop whose wakeup wasn't sent yet,
+        // or retry geometry merged by a worker whose publication failed.
+        if let Err(error) = self.flush_pending_window_captures() {
+            eprintln!("[client-state] failed to drain final window state: {error}");
+        }
         self.process.release_locks();
     }
 
