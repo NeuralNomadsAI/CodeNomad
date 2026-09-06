@@ -1,3 +1,4 @@
+use super::window_updates::WindowGeometry;
 use super::ClientState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -176,29 +177,25 @@ fn center_distance_squared(bounds: &WindowBounds, display: DisplayArea) -> i128 
     (bounds_x - display_x).pow(2) + (bounds_y - display_y).pow(2)
 }
 
-fn capture_window_in_memory(app: &AppHandle, window_label: &str, window_id: &str, persisted: bool) {
+fn capture_window_in_memory(
+    app: &AppHandle,
+    window_label: &str,
+    window_id: &str,
+    persisted: bool,
+) -> bool {
     if !persisted {
-        return;
+        return false;
     }
     let Some(client_state) = app.try_state::<ClientState>() else {
-        return;
+        return false;
     };
-    let Ok(_write) = client_state.write_lock.lock() else {
-        return;
-    };
-    if !client_state.is_primary() {
-        return;
-    }
-    if client_state
-        .normal_writes_suppressed(window_id)
-        .unwrap_or(true)
-    {
-        return;
-    }
     let Some(window) = app.get_webview_window(window_label) else {
-        return;
+        return false;
     };
+    client_state.capture_window_geometry(window_id, || read_window_geometry(&window))
+}
 
+fn read_window_geometry(window: &tauri::WebviewWindow) -> WindowGeometry {
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(false);
@@ -222,27 +219,10 @@ fn capture_window_in_memory(app: &AppHandle, window_label: &str, window_id: &str
     } else {
         None
     };
-    let zoom_factor = client_state
-        .zoom_levels
-        .lock()
-        .ok()
-        .and_then(|zoom| zoom.get(window_id).copied())
-        .unwrap_or(DEFAULT_ZOOM_LEVEL);
-    let Ok(mut state) = client_state.state.lock() else {
-        return;
-    };
-    let Ok(record) = state.record_mut(window_id) else {
-        return;
-    };
-    let bounds =
-        current_bounds.or_else(|| record.window.as_ref().map(|window| window.bounds.clone()));
-    if let Some(bounds) = bounds {
-        record.window = Some(NativeWindowState {
-            bounds,
-            maximized,
-            fullscreen,
-            zoom_factor,
-        });
+    WindowGeometry {
+        bounds: current_bounds,
+        maximized,
+        fullscreen,
     }
 }
 
@@ -289,10 +269,7 @@ fn register_native_zoom_handler(
             zoom_levels.insert(window_id.clone(), normalized);
             drop(zoom_levels);
 
-            if client_state.is_primary()
-                && client_state.normal_writes_suppressed(&window_id).ok() == Some(false)
-            {
-                capture_window_in_memory(&callback_app, &window_label, &window_id, persisted);
+            if capture_window_in_memory(&callback_app, &window_label, &window_id, persisted) {
                 schedule_flush(&callback_app);
             }
             Ok(())
@@ -375,11 +352,15 @@ pub fn setup_local_window(
                 };
             }
         }
-        if let Ok(mut state) = client_state.state.lock() {
-            if let Ok(record) = state.record_mut(window_id) {
-                record.window = Some(saved_window.clone());
-            }
-        }
+        // Seed clamped normal bounds before maximizing, replacing any early
+        // native zoom callback's default geometry in the mailbox.
+        client_state.queue_window_capture(
+            window_id,
+            Some(saved_window.bounds.clone()),
+            saved_window.maximized,
+            saved_window.fullscreen,
+            saved_window.zoom_factor,
+        );
         let _ = window.set_zoom(saved_window.zoom_factor);
         if saved_window.maximized {
             let _ = window.maximize();
@@ -392,7 +373,9 @@ pub fn setup_local_window(
         }
     }
 
-    capture_window_in_memory(app, window.label(), window_id, persisted);
+    if capture_window_in_memory(app, window.label(), window_id, persisted) {
+        schedule_flush(app);
+    }
     let app_handle = app.clone();
     let window_label = window.label().to_string();
     let window_id = window_id.to_string();
@@ -400,8 +383,9 @@ pub fn setup_local_window(
         WindowEvent::Resized(_)
         | WindowEvent::Moved(_)
         | WindowEvent::ScaleFactorChanged { .. } => {
-            capture_window_in_memory(&app_handle, &window_label, &window_id, persisted);
-            schedule_flush(&app_handle);
+            if capture_window_in_memory(&app_handle, &window_label, &window_id, persisted) {
+                schedule_flush(&app_handle);
+            }
         }
         _ => {}
     });
@@ -430,9 +414,8 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
         .try_state::<crate::local_windows::LocalWindows>()
         .and_then(|windows| windows.record(window_label))
         .is_some_and(|record| record.persisted);
-    capture_window_in_memory(app, window_label, &window_id, persisted);
-    if let Err(err) = client_state.flush() {
-        eprintln!("[client-state] failed to save zoom level: {err}");
+    if capture_window_in_memory(app, window_label, &window_id, persisted) {
+        schedule_flush(app);
     }
 }
 
