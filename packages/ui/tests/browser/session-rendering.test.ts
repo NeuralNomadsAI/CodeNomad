@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = req.url?.includes("navigation") ? "navigation" : req.url?.includes("undo") ? "undo" : "session"
+          const name = req.url?.includes("nested-scroll") ? "nested-scroll" : req.url?.includes("navigation") ? "navigation" : req.url?.includes("undo") ? "undo" : "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -265,5 +265,65 @@ test("undo of the first prompt stays empty after cold reload and native reprojec
     assert.equal(state.prompts, 0)
     assert.equal(state.nativeCount, 6)
     assert.equal(await page.locator(".message-stream-block[data-message-id]").count(), 0)
+  })
+})
+
+test("middle-button scrolling owns nested tool output even after the intent timeout", async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const bounds = (await output.boundingBox())!
+    await page.mouse.move(bounds.x + 100, bounds.y + 100)
+    await page.mouse.down({ button: "middle" })
+    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false)
+    try {
+      // Native middle autoscroll can begin well after pointerdown, then continue
+      // outside the child. Simulate its scroll ticks, not a wheel event: this
+      // exercises the real nested/outer follow controllers and renderer writes.
+      await page.evaluate(`new Promise(resolve => { let n = 50; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+      await page.mouse.move(bounds.x + 650, bounds.y + 30)
+      await output.evaluate(el => { el.scrollTop = 900 })
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+      let before = await output.evaluate(el => el.scrollTop)
+      for (let i = 0; i < 5; i++) {
+        await page.evaluate(() => (window as any).fixture.renderOutput())
+        await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+        const after = await output.evaluate(el => el.scrollTop)
+        assert.ok(after <= before + 1, `Tool renders must not oppose upward native middle autoscroll (${before} -> ${after})`)
+        before = after
+      }
+      const state = await page.evaluate(() => (window as any).fixture.snapshot())
+      assert.equal(state.innerFollow, false)
+      assert.equal(state.outerFollow, false)
+    } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+test("nested scroll ownership cancels an already queued bottom write and can explicitly rejoin", async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    await output.evaluate(el => {
+      (window as any).fixture.renderOutput()
+      el.dispatchEvent(new PointerEvent("pointerdown", { button: 1, buttons: 4, bubbles: true }))
+      el.scrollTop = 700
+      el.dispatchEvent(new Event("scroll"))
+    })
+    await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+    assert.equal(await output.evaluate(el => el.scrollTop), 700)
+    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false)
+    await output.evaluate(el => {
+      el.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true }))
+      el.scrollTop = el.scrollHeight
+      el.dispatchEvent(new Event("scroll"))
+    })
+    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, true)
   })
 })
