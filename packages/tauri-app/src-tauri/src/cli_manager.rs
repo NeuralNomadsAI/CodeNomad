@@ -1,4 +1,7 @@
 use crate::managed_node::resolve_bundled_node_binary;
+#[cfg(unix)]
+#[path = "shell_environment.rs"]
+mod shell_environment;
 use dirs::home_dir;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -8,6 +11,7 @@ use std::collections::VecDeque;
 use std::env;
 #[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(any(unix, test))]
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -1101,6 +1105,8 @@ impl CliProcessManager {
         };
         log_line("resolving CLI entry");
         let resolution = CliEntry::resolve(&app, dev)?;
+        #[cfg(unix)]
+        let mut resolution = resolution;
         let host = resolve_listening_host();
         log_line(&format!(
             "resolved CLI entry runner={:?} entry={} host={}",
@@ -1127,72 +1133,70 @@ impl CliProcessManager {
             ));
         }
 
-        let command_info = if use_user_shell {
-            log_line("spawning via POSIX-compatible shell");
-            ShellCommandType::UserShell(build_shell_command_string(&resolution, &args)?)
-        } else {
-            log_line(if resolution.runner == Runner::Tsx {
-                "spawning directly with node + tsx"
-            } else {
-                "spawning directly with node"
-            });
-            ShellCommandType::Direct(DirectCommand {
-                program: resolution.node_binary.clone(),
-                args: resolution.runner_args(&args),
-            })
+        #[cfg(unix)]
+        let shell_env = {
+            log_line("resolving shell environment (3 second limit)");
+            match shell_environment::resolve(
+                &default_shell(),
+                &resolution.node_binary,
+                cwd.as_deref(),
+                || manager.is_current_generation(generation),
+            ) {
+                Ok(environment) => {
+                    resolution.node_binary = environment.executable;
+                    Some(environment.env)
+                }
+                Err(_) => {
+                    // Startup files may prompt (GPG, SSH, etc.). Never run the backend
+                    // inside that shell, nor log captured environment values/secrets.
+                    log_line("shell environment unavailable; using inherited application environment");
+                    None
+                }
+            }
         };
-
-        let mut child = match &command_info {
-            ShellCommandType::UserShell(cmd) => {
-                log_line(&format!("spawn command: {} {:?}", cmd.shell, cmd.args));
-                let mut c = Command::new(&cmd.shell);
-                c.args(&cmd.args)
-                    .env("ELECTRON_RUN_AS_NODE", "1")
-                    .env_remove("npm_config_prefix")
-                    .env_remove("NPM_CONFIG_PREFIX")
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                #[cfg(windows)]
-                c.env("CODENOMAD_NATIVE_PARENT", "1");
-                configure_spawn(&mut c);
-                if let Some(ref cwd) = cwd {
-                    c.current_dir(cwd);
-                }
-                #[cfg(unix)]
-                configure_posix_process_group(&mut c);
-                c.spawn()?
+        if !manager.is_current_generation(generation) {
+            return Ok(());
+        }
+        let cmd = DirectCommand {
+            program: resolution.node_binary.clone(),
+            args: resolution.runner_args(&args),
+        };
+        let mut child = {
+            log_line(&format!("spawn command: {} {:?}", cmd.program, cmd.args));
+            #[cfg(windows)]
+            let mut c = {
+                // The launcher cannot create Node until its stdin gate opens. Assigning
+                // the blocked launcher first makes every later descendant inherit the job.
+                let mut launcher = Command::new(std::env::current_exe()?);
+                launcher
+                    .arg(WINDOWS_CLI_LAUNCHER_ARG)
+                    .arg(&cmd.program)
+                    .args(&cmd.args)
+                    .stdin(Stdio::piped());
+                launcher
+            };
+            #[cfg(not(windows))]
+            let mut c = Command::new(&cmd.program);
+            #[cfg(not(windows))]
+            c.args(&cmd.args);
+            #[cfg(unix)]
+            if let Some(env) = shell_env {
+                c.env_clear().envs(env);
             }
-            ShellCommandType::Direct(cmd) => {
-                log_line(&format!("spawn command: {} {:?}", cmd.program, cmd.args));
-                #[cfg(windows)]
-                let mut c = {
-                    // The launcher cannot create Node until its stdin gate opens. Assigning
-                    // the blocked launcher first makes every later descendant inherit the job.
-                    let mut launcher = Command::new(std::env::current_exe()?);
-                    launcher
-                        .arg(WINDOWS_CLI_LAUNCHER_ARG)
-                        .arg(&cmd.program)
-                        .args(&cmd.args)
-                        .stdin(Stdio::piped());
-                    launcher
-                };
-                #[cfg(not(windows))]
-                let mut c = Command::new(&cmd.program);
-                #[cfg(not(windows))]
-                c.args(&cmd.args);
-                c.env("ELECTRON_RUN_AS_NODE", "1")
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                #[cfg(windows)]
-                c.env("CODENOMAD_NATIVE_PARENT", "1");
-                configure_spawn(&mut c);
-                if let Some(ref cwd) = cwd {
-                    c.current_dir(cwd);
-                }
-                #[cfg(unix)]
-                configure_posix_process_group(&mut c);
-                c.spawn()?
+            c.env("ELECTRON_RUN_AS_NODE", "1")
+                .env_remove("npm_config_prefix")
+                .env_remove("NPM_CONFIG_PREFIX")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(windows)]
+            c.env("CODENOMAD_NATIVE_PARENT", "1");
+            configure_spawn(&mut c);
+            if let Some(ref cwd) = cwd {
+                c.current_dir(cwd);
             }
+            #[cfg(unix)]
+            configure_posix_process_group(&mut c);
+            c.spawn()?
         };
 
         let pid = child.id();
@@ -1629,21 +1633,9 @@ fn supports_user_shell() -> bool {
 }
 
 #[derive(Debug)]
-struct ShellCommand {
-    shell: String,
-    args: Vec<String>,
-}
-
-#[derive(Debug)]
 struct DirectCommand {
     program: String,
     args: Vec<String>,
-}
-
-#[derive(Debug)]
-enum ShellCommandType {
-    UserShell(ShellCommand),
-    Direct(DirectCommand),
 }
 
 #[derive(Debug)]
@@ -1852,30 +1844,7 @@ fn prod_entry_candidates(
     candidates
 }
 
-fn build_shell_command_string(
-    entry: &CliEntry,
-    cli_args: &[String],
-) -> anyhow::Result<ShellCommand> {
-    let shell = default_shell();
-    let mut quoted: Vec<String> = Vec::new();
-    quoted.push(shell_escape(&entry.node_binary));
-    for arg in entry.runner_args(cli_args) {
-        quoted.push(shell_escape(&arg));
-    }
-    let command = format!(
-        "if [ -x {} ] || command -v {} >/dev/null 2>&1; then ELECTRON_RUN_AS_NODE=1 exec {}; else printf '%s%s\\n' '{}' {}; exit 127; fi",
-        shell_escape(&entry.node_binary),
-        shell_escape(&entry.node_binary),
-        quoted.join(" "),
-        MISSING_NODE_PREFIX,
-        shell_escape(&entry.node_binary),
-    );
-    let wrapped_command = wrap_command_for_shell(&command, &shell);
-    let args = build_shell_args(&shell, &wrapped_command);
-    log_line(&format!("POSIX shell command: {} {:?}", shell, args));
-    Ok(ShellCommand { shell, args })
-}
-
+#[cfg(unix)]
 fn default_shell() -> String {
     select_posix_shell(
         std::env::var("SHELL").ok().as_deref(),
@@ -1883,6 +1852,7 @@ fn default_shell() -> String {
     )
 }
 
+#[cfg(any(unix, test))]
 fn select_posix_shell(configured_shell: Option<&str>, macos: bool) -> String {
     if let Some(shell) = configured_shell.map(str::trim).filter(|shell| {
         let name = std::path::Path::new(shell)
@@ -1901,58 +1871,6 @@ fn select_posix_shell(configured_shell: Option<&str>, macos: bool) -> String {
         "/bin/zsh".to_string()
     } else {
         "/bin/bash".to_string()
-    }
-}
-
-fn wrap_command_for_shell(command: &str, shell: &str) -> String {
-    let shell_name = std::path::Path::new(shell)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("")
-        .to_lowercase();
-
-    if shell_name.contains("bash") {
-        return format!(
-            "if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; {}",
-            command
-        );
-    }
-
-    if shell_name.contains("zsh") {
-        return format!(
-            "if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; {}",
-            command
-        );
-    }
-
-    command.to_string()
-}
-
-fn shell_escape(input: &str) -> String {
-    if input.is_empty() {
-        "''".to_string()
-    } else if !input
-        .chars()
-        .any(|c| matches!(c, ' ' | '"' | '\'' | '$' | '`' | '!'))
-    {
-        input.to_string()
-    } else {
-        let escaped = input.replace('\'', "'\\''");
-        format!("'{}'", escaped)
-    }
-}
-
-fn build_shell_args(shell: &str, command: &str) -> Vec<String> {
-    let shell_name = std::path::Path::new(shell)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("")
-        .to_lowercase();
-
-    if shell_name.contains("zsh") || shell_name.contains("bash") {
-        vec!["-i".into(), "-l".into(), "-c".into(), command.into()]
-    } else {
-        vec!["-l".into(), "-c".into(), command.into()]
     }
 }
 
