@@ -1375,7 +1375,13 @@ async function loadMessages(
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
     if (apiMessages.length === 0) {
-      if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+      if (intent === "older") {
+        // V2 boundary cursors do not guarantee another page. An exhausted
+        // history request says nothing about the messages already resident.
+        // Keep their window identity (including live/latest authority) and
+        // scroll anchor; only retire the cursor that reached the boundary.
+        commitMessageWindow(instanceId, sessionId, withOlderCursor(currentWindow, undefined), "open")
+      } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
         retryAfterRevisionConflict = true
       } else if (store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
