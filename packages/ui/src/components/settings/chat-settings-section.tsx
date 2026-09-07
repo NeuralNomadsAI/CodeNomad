@@ -79,7 +79,7 @@ export const ChatSettingsSection: Component = () => {
 
   const visibilityRows = createMemo<VisibilityRow[]>(() => [
     { kind: "thinking", key: "thinking", label: t("settings.behavior.expansionDefaults.thinking") },
-    ...getConfigurableToolEntries().map((entry) => ({
+    ...getConfigurableToolEntries().filter((entry) => entry.tool !== OTHER_TOOL_NAME).map((entry) => ({
       kind: "tool" as const,
       key: entry.tool,
       label: entry.labelKey ? t(entry.labelKey) : entry.label,
@@ -87,6 +87,7 @@ export const ChatSettingsSection: Component = () => {
     { kind: "diagnostics", key: "diagnostics", label: t("settings.behavior.diagnosticsDefault.title") },
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
+    { kind: "tool", key: OTHER_TOOL_NAME, label: t("settings.behavior.expansionDefaults.otherTools") },
   ])
 
   const currentToolMode = (tool: string): VisibilityPreference => {
