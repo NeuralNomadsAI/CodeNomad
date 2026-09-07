@@ -56,6 +56,13 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
+  seedHistory: async () => {
+    for (let i = 0; i < 60; i++) {
+      nativeMessages.push({ id: `msg_${String(i).padStart(4, "0")}`, type: "assistant", agent: "build", model,
+        time: { created: i + 1, completed: i + 1 }, content: [{ type: "text", text: `History ${i}\n\n` + "A previously rendered response.\n\n".repeat(3 + i % 5) }] })
+    }
+    await loadMessages(instanceId, sessionId, { force: true })
+  },
   startEmpty: () => emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model }),
   start: () => {
     emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })

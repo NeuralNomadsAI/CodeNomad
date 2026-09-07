@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -112,7 +113,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-  const [itemKeyMeasurementEpoch, setItemKeyMeasurementEpoch] = createSignal(0)
+  const [measurementAuthority, setMeasurementAuthority] = createSignal<{ cache?: VirtualizerHandle["cache"]; probes: number[] }>({ probes: [] })
   const [virtualItems, setVirtualItems] = createSignal<T[]>(props.items().slice())
   const [shiftVirtualItems, setShiftVirtualItems] = createSignal(false)
 
@@ -125,7 +126,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
   const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
   const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
-  const measurementAuthority = createMemo(() => ({ key: itemKeyMeasurementEpoch() }))
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
   const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
@@ -900,6 +900,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const shiftGeneration = ++windowShiftGeneration
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
+      const measurementCache = change.resetMeasurements
+        ? remapVirtualMeasurements(virtualItemKeys, nextItemKeys, virtuaHandle()?.cache, autoScroll())
+        : undefined
+      const viewport = change.resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
+      // A second native event can reorder again before ResizeObserver measures
+      // the zero-seeded rows. Carry bounded probes across that intermediate reset.
+      const pendingProbeKeys = measurementAuthority().probes.slice(-MEASUREMENT_PROBE_COUNT).map(index => virtualItemKeys[index])
+      const visibleKeys = change.resetMeasurements && viewport
+        ? new Set(Array.from(itemElements).filter(([, element]) => {
+            const rect = element.getBoundingClientRect()
+            return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
+          }).map(([key]) => key).concat(pendingProbeKeys))
+        : new Set<string>()
       if (change.shiftedStartCount > 0) {
         const retainedCount = virtualItemKeys.length - change.shiftedStartCount
         setShiftVirtualItems(false)
@@ -919,7 +932,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
       if (change.resetMeasurements) {
         itemElements.clear()
-        setItemKeyMeasurementEpoch((epoch) => epoch + 1)
+        setMeasurementAuthority({
+          cache: measurementCache?.cache,
+          probes: [...(measurementCache?.probes ?? []), ...nextItemKeys.flatMap((key, index) => visibleKeys.has(key) ? [index] : [])],
+        })
       }
       if (change.endChanged && autoScroll()) api.notifyContentRendered()
     },
@@ -1032,14 +1048,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         {/* Client-only: keep bounded measurement probes, not an SSR range that
             stays pinned until a real scroll event (short threads cannot scroll). */}
         <Show keyed when={measurementAuthority()}>
-          {(_authority) => (
+          {(authority) => (
             <Virtualizer
+              cache={authority.cache}
               ref={setVirtuaHandle}
               scrollRef={scrollElement()}
               data={virtualItems()}
               shift={shiftVirtualItems()}
               bufferSize={props.overscanPx ?? 400}
-              keepMounted={Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => index)}
+              keepMounted={[...new Set([
+                ...Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => index),
+                ...authority.probes.filter(index => index < virtualItems().length),
+              ])]}
               onScroll={handleScroll}
             >
               {(item, index) => {

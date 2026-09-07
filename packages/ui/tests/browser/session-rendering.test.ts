@@ -76,6 +76,49 @@ test("long list reaches its actual end, appends beyond the initial range, and st
   })
 })
 
+test("sending from a long transcript neither blanks nor jumps down during optimistic reordering", async () => {
+  await open("session", async page => {
+    await page.evaluate(() => (window as any).fixture.seedHistory())
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("History 59"))
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    await page.evaluate(`(() => {
+      window.paintFrames = [];
+      window.watchPaint = true;
+      const frame = () => {
+        const stream = document.querySelector('.message-stream');
+        const bounds = stream.getBoundingClientRect();
+        const visible = [...stream.querySelectorAll('[data-view="message-item"]')].filter(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom && rect.height > 0;
+        });
+        const anchor = stream.querySelector('[data-message-id="msg_0059"]');
+        window.paintFrames.push({ top: stream.scrollTop, height: stream.scrollHeight, visible: visible.length, anchorTop: anchor?.getBoundingClientRect().top ?? null });
+        if (window.watchPaint) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    })()`)
+    const prompt = page.locator("textarea:visible").first()
+    await prompt.fill("New prompt after history")
+    await prompt.press("Enter")
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("New prompt after history"))
+    await page.evaluate(`new Promise(resolve => { let n = 45; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const frames = await page.evaluate(() => { (window as any).watchPaint = false; return (window as any).paintFrames as Array<{ top: number; height: number; visible: number; anchorTop: number | null }> })
+    assert.ok(frames.length > 20)
+    assert.deepEqual(frames.filter(frame => frame.visible === 0), [], "No blank frame may be painted during a submit")
+    const initial = frames[0], final = frames.at(-1)!
+    assert.ok(final.top > initial.top, "The new prompt must advance the tail")
+    for (const [index, frame] of frames.entries()) {
+      assert.ok(frame.anchorTop !== null, "The last historical reply must stay mounted")
+      assert.ok(frame.top >= initial.top - 2 && frame.top <= final.top + 2, "No scroll collapse or overshoot may be painted")
+      assert.ok(frame.height >= initial.height - 2 && frame.height <= final.height + 2, "No estimated-height spike may be painted")
+      if (index > 0) assert.ok(frame.anchorTop <= frames[index - 1].anchorTop! + 2, "Historical content must not bounce downward")
+    }
+    await page.evaluate(() => { (window as any).fixture.start(); (window as any).fixture.delta("Reply after stable submit") })
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Reply after stable submit"))
+    assert.ok(await page.locator("[data-virtual-follow-key]").count() < 40, "Measurement probes must not mount the full history")
+  })
+})
+
 test("an evicted empty assistant cannot donate its cached block to a rehydrated answer", async () => {
   await open("session", async page => {
     const prompt = page.locator("textarea:visible").first()

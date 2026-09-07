@@ -119,6 +119,7 @@ jobs:
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
+          packages/ui/src/components/virtual-follow-measurements.test.ts
           packages/ui/src/lib/client-identity.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/hooks/use-app-session-capture.test.ts
