@@ -25,6 +25,7 @@ import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
+import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
 
@@ -535,10 +536,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const restoredText = getUserMessageText(messageId)
 
     try {
-      await instance.client.session.revert.stage({
-        sessionID: props.sessionId,
-        messageID: messageId,
-      })
+      await stageSessionRevert(props.instanceId, props.sessionId, messageId)
 
       if (restoredText) {
         if (promptInputApi) {

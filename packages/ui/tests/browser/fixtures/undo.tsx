@@ -19,6 +19,7 @@ const model = { providerID: "fixture", id: "fixture" }
 const native = JSON.parse(sessionStorage.getItem(storageKey) || "null") ?? {
   revert: null,
   prompts: 0,
+  active: location.search.includes("busy"),
   messages: Array.from({ length: 6 }, (_, i) => i % 2 === 0
     ? { id: `msg_0${i + 1}`, type: "user", text: ["Earlier prompt", "Undo this prompt", "Later prompt"][i / 2], time: { created: i + 1 } }
     : { id: `msg_0${i + 1}`, type: "assistant", agent: "build", model, content: [{ type: "text", text: ["Earlier answer", "Undone answer", "Later answer"][(i - 1) / 2] }], time: { created: i + 1, completed: i + 1 } }),
@@ -29,6 +30,7 @@ const info = () => ({ id: sessionId, title: "Undo fixture", agent: "build", mode
   ...(native.revert ? { revert: { ...native.revert } } : {}),
 })
 let clock = Date.now()
+let waitCalls = 0, settle: (() => void) | undefined
 const emit = (type: string, data: any) => (sseManager as any).handleEvent(instanceId, {
   id: `ev_${++clock}`, type, created: clock, location: { directory: "/fixture" }, data: { sessionID: sessionId, ...data },
 })
@@ -38,7 +40,14 @@ const client: any = {
     list: async () => ({ data: [info()], cursor: {} }), get: async () => info(),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
     switchAgent: async () => {}, switchModel: async () => {},
+    interrupt: async () => ({ interrupted: true }),
+    wait: async () => {
+      waitCalls++
+      await new Promise<void>(resolve => { settle = resolve })
+      native.active = false
+    },
     revert: { stage: async ({ messageID }: any) => {
+      if (native.active) throw { _tag: "SessionBusyError", sessionID: sessionId, message: "busy" }
       native.revert = { messageID }
       persist()
       // Match native stage: keep every transcript record, publish the boundary
@@ -77,7 +86,8 @@ async function boot() {
   ;(window as any).fixture = {
     switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
     return: async () => { await fetchSessions(instanceId); await loadMessages(instanceId, sessionId, { force: true }); setActiveSession(instanceId, sessionId); setVisible(true) },
-    snapshot: () => ({ nativeCount: native.messages.length, prompts: native.prompts, revert: native.revert, ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId) }),
+    settle: () => settle?.(),
+    snapshot: () => ({ waitCalls, nativeCount: native.messages.length, prompts: native.prompts, revert: native.revert, ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId) }),
   }
 }
 void boot()

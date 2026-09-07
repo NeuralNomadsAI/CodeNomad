@@ -142,13 +142,19 @@ test("returning to a long list preserves the escaped reader anchor", async () =>
   })
 })
 
-for (const sendFollowUp of [false, true]) {
-  test(`undo excludes its prompt and every later exchange across return and cold reload (${sendFollowUp ? "with" : "without"} another send)`, async () => {
-    await open("undo", async page => {
+for (const [sendFollowUp, busy] of [[false, false], [true, false], [false, true]]) {
+  test(`undo excludes its prompt and every later exchange across return and cold reload (${sendFollowUp ? "with" : "without"} another send, ${busy ? "busy" : "idle"})`, async () => {
+    await open(busy ? "undo-busy" : "undo", async page => {
       await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Later answer"))
       const message = page.locator('.message-stream-block[data-message-id="msg_03"]')
       await message.hover()
       await message.getByRole("button", { name: "Undo changes up to here (deletes messages)", exact: true }).click()
+      if (busy) {
+        await page.waitForFunction(() => (window as any).fixture.snapshot().waitCalls === 1)
+        assert.equal(await message.count(), 1, "Interruption acceptance must not masquerade as completed undo")
+        assert.equal(await page.locator("textarea:visible").first().inputValue(), "")
+        await page.evaluate(() => (window as any).fixture.settle())
+      }
       await page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement)?.value === "Undo this prompt")
       const assertUndone = async () => {
         await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Earlier answer"))
