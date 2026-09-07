@@ -426,6 +426,120 @@ describe("session request authority", () => {
     }
   })
 
+  for (const kind of ["latest", "history"] as const) {
+    for (const count of [10, 200]) {
+      it(`preserves the ${kind} window of ${count} messages when the older cursor returns an empty terminal page`, async () => {
+        const instanceId = `empty-older-${kind}-${count}`, sessionId = "session"
+        const { client, cleanup } = setup(instanceId)
+        const page = Array.from({ length: count }, (_, index) => ({
+          ...apiMessage(`message-${count - index}`),
+          time: { created: count - index },
+          tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+          cost: 1,
+        }))
+        const requests: any[] = []
+        ;(client as any).message = { list: async (input: any) => {
+          requests.push(input)
+          if (input.cursor === "past-oldest") return { data: [], cursor: {} }
+          if (kind === "history" && !input.cursor) return { data: [apiMessage("latest")], cursor: { next: "history" } }
+          // Native V2 supplies boundary cursors even for a short final page.
+          return { data: page, cursor: { next: "past-oldest", previous: "toward-latest" } }
+        } }
+        setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+        try {
+          await loadMessages(instanceId, sessionId)
+          if (kind === "history") await loadMoreMessages(instanceId, sessionId)
+          const store = messageStoreBus.getOrCreate(instanceId)
+          const ids = [...store.getSessionMessageIds(sessionId)]
+          const infos = ids.map((id) => store.getMessageInfo(id))
+          const usage = JSON.parse(JSON.stringify(store.getSessionUsage(sessionId)))
+          const revision = store.getSessionRevision(sessionId)
+          const window = { ...store.getMessageWindow(sessionId)!, newerCursors: [...store.getMessageWindow(sessionId)!.newerCursors] }
+          store.setScrollSnapshot(sessionId, "message-stream", {
+            scrollTop: 0, atBottom: false, scrollRatio: 0, maxScrollTop: 900,
+            anchorKey: ids[0], anchorOffset: -5, followModeType: "escaped",
+            windowIsLatest: kind === "latest", windowCursor: window.resumeCursor, newerCursors: window.newerCursors,
+          })
+          const { updatedAt: _before, ...snapshot } = store.getScrollSnapshot(sessionId, "message-stream")!
+
+          await loadMoreMessages(instanceId, sessionId)
+
+          assert.deepEqual(store.getSessionMessageIds(sessionId), ids)
+          ids.forEach((id, index) => assert.strictEqual(store.getMessageInfo(id), infos[index]))
+          assert.deepEqual(store.getSessionUsage(sessionId), usage)
+          assert.equal(store.getSessionRevision(sessionId), revision)
+          const { olderCursor: _exhausted, ...retainedWindow } = window
+          assert.deepEqual(store.getMessageWindow(sessionId), retainedWindow)
+          const { updatedAt: _after, ...retainedSnapshot } = store.getScrollSnapshot(sessionId, "message-stream")!
+          assert.deepEqual(retainedSnapshot, snapshot)
+          assert.equal(isLatestMessageWindow(instanceId, sessionId), kind === "latest")
+          assert.equal(hasMoreMessages(instanceId, sessionId), false)
+          assert.equal(getSessionMessagesLoadError(instanceId, sessionId), undefined)
+          await loadMoreMessages(instanceId, sessionId)
+          assert.equal(requests.filter((input) => input.cursor === "past-oldest").length, 1)
+          if (kind === "history") {
+            await loadNewerMessageWindow(instanceId, sessionId)
+            assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest"])
+            assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+          }
+        } finally {
+          cleanup()
+        }
+      })
+    }
+  }
+
+  it("keeps live events authoritative during and after an empty older-page probe", async () => {
+    const instanceId = "empty-older-live-events", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const terminal = deferred<any>()
+    let calls = 0
+    ;(client as any).message = { list: (input: any) => {
+      calls += 1
+      return input.cursor ? terminal.promise : Promise.resolve({ data: [apiMessage("initial")], cursor: { next: "past-oldest" } })
+    } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const addLiveMessage = (id: string) => {
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `event-${id}`, type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+    }
+    try {
+      await loadMessages(instanceId, sessionId)
+      const request = loadMoreMessages(instanceId, sessionId)
+      addLiveMessage("during")
+      terminal.resolve({ data: [], cursor: {} })
+      await request
+      addLiveMessage("after")
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["initial", "during", "after"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+      assert.equal(hasMoreMessages(instanceId, sessionId), false)
+      assert.equal(calls, 2)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
+  it("still clears a genuinely empty authoritative latest snapshot", async () => {
+    const instanceId = "empty-authoritative-latest", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let empty = false
+    ;(client as any).message = { list: async () => ({ data: empty ? [] : [apiMessage("removed")], cursor: {} }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      empty = true
+      await loadLatestMessageWindow(instanceId, sessionId)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+    } finally {
+      cleanup()
+    }
+  })
+
   it("prunes a partial forced refresh only when its authoritative cursor chain exhausts", async () => {
     const instanceId = "partial-message-refresh", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
