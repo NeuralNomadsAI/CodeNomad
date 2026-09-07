@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = req.url?.includes("nested-scroll") ? "nested-scroll" : req.url?.includes("navigation") ? "navigation" : req.url?.includes("undo") ? "undo" : "session"
+          const name = ["tall-append", "nested-scroll", "navigation", "undo"].find(name => req.url?.includes(name)) ?? "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -35,12 +35,28 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`(() => {
+    window.fixtureScrollEvents = [];
+    for (const type of ['wheel', 'scroll', 'pointerdown']) document.addEventListener(type, event => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      window.fixtureScrollEvents.push({ type, target: target.className, deltaY: event.deltaY,
+        top: target.scrollTop, height: target.scrollHeight, time: performance.now() });
+      if (window.fixtureScrollEvents.length > 80) window.fixtureScrollEvents.shift();
+    }, { capture: true, passive: true });
+  })()`)
   await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
   try {
     await page.goto(`${baseUrl}/fixture?${name}`)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await run(page)
     assert.deepEqual(errors, [])
+  } catch (error) {
+    console.error("Browser fixture failure", name, await page.evaluate(() => ({
+      state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
+      streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
+    })))
+    throw error
   } finally { await page.close() }
 }
 
@@ -157,6 +173,60 @@ test("an evicted empty assistant cannot donate its cached block to a rehydrated 
     await page.evaluate(() => (window as any).fixture.switchAway())
     await page.evaluate(() => (window as any).fixture.return())
     await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Restored answer is visible"))
+  })
+})
+
+test("appending a prompt after a single tall reply never exposes estimated blank space", async () => {
+  await open("tall-append", async page => {
+    await page.waitForFunction(() => (document.querySelector(".message-stream")?.scrollHeight ?? 0) >= 3320)
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await page.evaluate(`new Promise(resolve => { let n=12; const frame=()=>--n?requestAnimationFrame(frame):resolve();requestAnimationFrame(frame) })`)
+    await page.evaluate(`(() => {
+      window.appendFrames=[]; window.trackAppend=true;
+      const frame=()=>{const stream=document.querySelector('.message-stream');const box=stream.getBoundingClientRect();
+        const rows=Array.from(stream.querySelectorAll('[data-row]')).map(el=>{const r=el.getBoundingClientRect();return {y:r.top-box.top,h:r.height,text:el.textContent}});
+        window.appendFrames.push({top:stream.scrollTop,height:stream.scrollHeight,viewport:stream.clientHeight,rows});
+        if(window.trackAppend)requestAnimationFrame(frame);
+      };requestAnimationFrame(frame);
+    })()`)
+    await page.evaluate(() => (window as any).fixture.append())
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("new-prompt"))
+    await page.evaluate(() => (window as any).fixture.metadata())
+    await page.evaluate(`new Promise(resolve => { let n=25; const frame=()=>--n?requestAnimationFrame(frame):resolve();requestAnimationFrame(frame) })`)
+    const frames=await page.evaluate(() => { (window as any).trackAppend=false; return (window as any).appendFrames })
+    for(const frame of frames) {
+      assert.ok(frame.rows.some((r: any)=>r.h>0 && r.y<frame.viewport && r.y+r.h>0), `blank append frame: ${JSON.stringify(frame)}`)
+      const bottom=Math.max(...frame.rows.map((r: any)=>r.y+r.h))
+      assert.ok(bottom >= frame.viewport-4, `bottom overshot rendered content by ${frame.viewport-bottom}px`)
+    }
+  })
+})
+
+test("a real send stays rendered across delayed admission, inbox echo and authoritative reloads", async () => {
+  await open("session", async page => {
+    await page.evaluate(() => (window as any).fixture.delayPrompt())
+    const marker = "Pending prompt must never disappear"
+    const prompt = page.locator("textarea:visible").first()
+    await prompt.fill(marker)
+    await prompt.press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.admitted())
+    const assertPrompt = async () => {
+      const rows = page.locator(".message-stream-block").filter({ hasText: marker })
+      assert.equal(await rows.count(), 1)
+      assert.equal(await rows.isVisible(), true)
+    }
+    await assertPrompt()
+    for (const phase of ["before-accept", "accepted", "inbox-echo", "persisted"]) {
+      if (phase === "accepted") await page.evaluate(() => (window as any).fixture.acceptPrompt())
+      if (phase === "inbox-echo") await page.evaluate(() => (window as any).fixture.echoPrompt())
+      if (phase === "persisted") await page.evaluate(() => (window as any).fixture.persistPrompt())
+      await page.evaluate(() => (window as any).fixture.reload())
+      await assertPrompt()
+      await page.evaluate(() => (window as any).fixture.switchAway())
+      await page.evaluate(() => (window as any).fixture.return())
+      await page.waitForFunction(text => document.querySelector(".message-stream")?.textContent?.includes(text), marker)
+      await assertPrompt()
+    }
   })
 })
 
@@ -277,14 +347,19 @@ test("middle-button scrolling owns nested tool output even after the intent time
     await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
     await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
     const bounds = (await output.boundingBox())!
+    await page.evaluate(() => document.addEventListener("pointerdown", event => {
+      (window as any).middleHit = { tag: (event.target as HTMLElement)?.outerHTML?.slice(0, 180), button: event.button, y: event.clientY }
+    }, { once: true }))
     await page.mouse.move(bounds.x + 100, bounds.y + 100)
     await page.mouse.down({ button: "middle" })
-    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false)
+    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false,
+      JSON.stringify(await page.evaluate(() => ({ hit: (window as any).middleHit, box: document.querySelector("[data-nested-output]")?.getBoundingClientRect().toJSON() }))))
     try {
       // Native middle autoscroll can begin well after pointerdown, then continue
       // outside the child. Simulate its scroll ticks, not a wheel event: this
       // exercises the real nested/outer follow controllers and renderer writes.
-      await page.evaluate(`new Promise(resolve => { let n = 50; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+      const started = await page.evaluate(() => performance.now())
+      await page.waitForFunction(start => performance.now() - start > 800, started)
       await page.mouse.move(bounds.x + 650, bounds.y + 30)
       await output.evaluate(el => { el.scrollTop = 900 })
       await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)

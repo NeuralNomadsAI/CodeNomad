@@ -16,6 +16,8 @@ import "../../../src/index.css"
 const instanceId = "browser-instance", sessionId = "browser-session"
 const assistantId = "msg_assistant"
 let time = Date.now(), calls = 0
+let delayPrompt = false, admittedPrompt: any
+let releasePrompt: (() => void) | undefined
 const nativeMessages: any[] = []
 const model = { providerID: "fixture", id: "fixture" }
 const emit = (type: string, data: any) => (sseManager as any).handleEvent(instanceId, {
@@ -31,6 +33,11 @@ const client: any = {
     switchModel: async (data: any) => emit("session.model.selected", data),
     message: async ({ messageID }: any) => ({ id: messageID, type: "model-switched", model, time: { created: time } }),
     prompt: async (input: any) => {
+      if (delayPrompt) {
+        admittedPrompt = input
+        await new Promise<void>(resolve => { releasePrompt = resolve })
+        return { id: input.id }
+      }
       nativeMessages.push({ type: "user", text: input.text, id: input.id, time: { created: ++time } })
       emit("session.inbox.enqueued", { inboxID: input.id, item: { type: "user", payload: { text: input.text }, delivery: "steer" } })
       emit("session.inbox.delivered", { inboxID: input.id })
@@ -56,6 +63,17 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={visible()}><SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
+  delayPrompt: () => { delayPrompt = true },
+  acceptPrompt: () => releasePrompt?.(),
+  echoPrompt: () => {
+    emit("session.inbox.enqueued", { inboxID: admittedPrompt.id, item: { type: "user", payload: { text: admittedPrompt.text }, delivery: "steer" } })
+  },
+  persistPrompt: () => {
+    nativeMessages.push({ type: "user", text: admittedPrompt.text, id: admittedPrompt.id, time: { created: ++time } })
+    emit("session.inbox.delivered", { inboxID: admittedPrompt.id })
+  },
+  reload: () => loadMessages(instanceId, sessionId, { force: true }),
+  admitted: () => admittedPrompt?.id,
   seedHistory: async () => {
     for (let i = 0; i < 60; i++) {
       nativeMessages.push({ id: `msg_${String(i).padStart(4, "0")}`, type: "assistant", agent: "build", model,

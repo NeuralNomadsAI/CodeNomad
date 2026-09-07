@@ -900,13 +900,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const shiftGeneration = ++windowShiftGeneration
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
-      const measurementCache = change.resetMeasurements
+      // A short append also needs measured probes: a hidden native metadata row
+      // estimated at the mean height of a tall answer can pin beyond every row.
+      // Keep large page loads and rolling-window shifts on their bounded path.
+      const appendedCount = nextItemKeys.length - virtualItemKeys.length
+      const measureAppend = virtualItemKeys.length > 0 && appendedCount > 0
+        && appendedCount <= MEASUREMENT_PROBE_COUNT && change.shiftedStartCount === 0
+      const resetMeasurements = change.resetMeasurements || measureAppend
+      const measurementCache = resetMeasurements
         ? remapVirtualMeasurements(virtualItemKeys, nextItemKeys, virtuaHandle()?.cache, autoScroll(), measurementAuthority().pendingProbeKeys)
         : undefined
-      const viewport = change.resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
+      const viewport = resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
       // Visible rows and pending measurements have separate lifetimes: many
       // visible rows must never evict a zero-seeded insertion before its measure.
-      const visibleKeys = change.resetMeasurements && viewport
+      const visibleKeys = resetMeasurements && viewport
         ? new Set(Array.from(itemElements).filter(([, element]) => {
             const rect = element.getBoundingClientRect()
             return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
@@ -929,7 +936,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         virtualItemKeys = nextItemKeys
       }
 
-      if (change.resetMeasurements) {
+      if (resetMeasurements) {
         itemElements.clear()
         setMeasurementAuthority({
           cache: measurementCache?.cache,
