@@ -532,6 +532,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   async function handleRevert(messageId: string) {
     const instance = instances().get(props.instanceId)
     if (!instance || !instance.client) return
+    const restoredText = getUserMessageText(messageId)
 
     try {
       await instance.client.session.revert.stage({
@@ -539,7 +540,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         messageID: messageId,
       })
 
-      const restoredText = getUserMessageText(messageId)
       if (restoredText) {
         if (promptInputApi) {
           promptInputApi.setPromptText(restoredText, { focus: true })

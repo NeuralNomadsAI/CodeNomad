@@ -444,7 +444,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       parentId: input.parentId ?? session.parentId ?? null,
       updatedAt: Date.now(),
       messageIds: nextMessageIds,
-      revert: input.revert ?? session.revert ?? null,
+      revert: input.revert !== undefined ? input.revert : session.revert ?? null,
     })
 
     if (Array.isArray(input.messageIds) && !areMessageIdListsEqual(previousIds, nextMessageIds)) {
@@ -505,7 +505,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // the id would repeat in session.messageIds. First occurrence wins,
     // preserving snapshot order.
     const seenInputIds = new Set<string>()
+    const revertMessageId = state.sessions[sessionId]?.revert?.messageID
     const dedupedInputs = inputs.filter((input) => {
+      // V2 revert boundaries use message ID ordering, including when the
+      // boundary itself lies outside this resident page (as on commit).
+      if (revertMessageId && input.id >= revertMessageId) return false
       if (seenInputIds.has(input.id)) return false
       seenInputIds.add(input.id)
       return true
@@ -619,6 +623,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
+        if (!serverIdSet.has(messageId)) continue
         // Only bump the info version -- which participates in message-block's
         // render-cache signature -- when the info content actually changed.
         // An identical snapshot (the common case on a reconnect force-reload)
@@ -1425,52 +1430,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
     const session = state.sessions[sessionId]
     if (!session) return
-    const stopIndex = session.messageIds.indexOf(revertMessageId)
+    const stopIndex = session.messageIds.findIndex((id) => id >= revertMessageId)
     if (stopIndex === -1) return
     const removedIds = session.messageIds.slice(stopIndex)
-    const keptIds = session.messageIds.slice(0, stopIndex)
     if (removedIds.length === 0) return
 
-    removedIds.forEach((messageId) => clearPromptDisplayOverride(instanceId, sessionId, messageId))
-
-    setState("sessions", sessionId, "messageIds", keptIds)
-
-    setState("messages", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => delete next[id])
-      return next
+    // Use the normal removal path: Solid merges object updates, so merely
+    // omitting keys does not delete records or invalidate their render caches.
+    batch(() => {
+      removedIds.forEach((id) => removeMessage(id, sessionId))
     })
-
-    setState("messageInfoVersion", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => delete next[id])
-      return next
-    })
-
-    removedIds.forEach((id) => messageInfoCache.delete(id))
-
-    setState("pendingParts", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    setState("permissions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    withUsageState(sessionId, (draft) => {
-      removedIds.forEach((id) => removeUsageEntry(draft, id))
-    })
-
-    recomputeLastAssistantMessageId(sessionId, keptIds)
-    bumpSessionRevision(sessionId)
   }
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {

@@ -40,7 +40,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
@@ -323,7 +323,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const instanceSessions = new Map(prev.get(instanceId))
       const existing = instanceSessions.get(sessionId)
       const compacting = existing?.status === "compacting"
       const candidate: Session = {
@@ -356,6 +356,9 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     reconcilePendingSessionIndicators(instanceId)
+
+    const published = updatedInstanceSessions?.get(sessionId)
+    if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
     if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 
@@ -410,6 +413,17 @@ function handleSessionUpdate(
     withSession(instanceId, event.data.sessionID, (session) => {
       session.revert = revert ?? undefined
     })
+    if (event.type === "session.revert.cleared") {
+      // The staged tail is still owned by OpenCode, but no longer resident.
+      // Clearing the marker alone cannot render it again.
+      const sessionId = event.data.sessionID
+      invalidateSessionMessageLoad(instanceId, sessionId)
+      if (activeSessionId().get(instanceId) === sessionId) {
+        void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+          log.error("Failed to reload messages after clearing revert", error)
+        })
+      }
+    }
     return
   }
 
