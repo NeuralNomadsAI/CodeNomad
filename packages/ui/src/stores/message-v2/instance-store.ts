@@ -574,11 +574,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
     })
 
-    const infoList = infos ? Array.from(infos) : undefined
+    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
+    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
     const usageInfos = options?.preserveOmitted && infoList
       ? new Map([
           ...Array.from(messageInfoCache.values())
-            .filter((info) => info.sessionID === sessionId)
+            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
             .map((info) => [info.id as string, info] as const),
           ...infoList.map((info) => [info.id as string, info] as const),
         ]).values()

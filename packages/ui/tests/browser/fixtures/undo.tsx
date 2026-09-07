@@ -10,6 +10,7 @@ import { sessions, setActiveSession, setProviders } from "../../../src/stores/se
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { fetchSessions, loadMessages } from "../../../src/stores/session-api"
+import { projectOpenCodeMessages } from "../../../src/stores/opencode-data"
 import "../../../src/index.css"
 
 // Only the fake native authority survives page.reload. No UI store or module
@@ -71,7 +72,9 @@ const client: any = {
     },
   },
   model: { default: async () => model },
-  message: { list: async () => ({ data: [...native.messages].reverse(), cursor: {} }) },
+  message: { list: async ({ cursor }: { cursor?: string }) => cursor
+    ? { data: [], cursor: {} }
+    : { data: [...native.messages].reverse(), cursor: { next: "terminal" } } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
@@ -87,7 +90,8 @@ async function boot() {
     switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
     return: async () => { await fetchSessions(instanceId); await loadMessages(instanceId, sessionId, { force: true }); setActiveSession(instanceId, sessionId); setVisible(true) },
     settle: () => settle?.(),
-    snapshot: () => ({ waitCalls, nativeCount: native.messages.length, prompts: native.prompts, revert: native.revert, ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId) }),
+    reproject: () => projectOpenCodeMessages(instanceId, sessionId, { session: { message: { list: () => native.messages } } } as any),
+    snapshot: () => ({ waitCalls, nativeCount: native.messages.length, prompts: native.prompts, revert: native.revert, storedRevert: messageStoreBus.getOrCreate(instanceId).getSessionRevert(sessionId), ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId) }),
   }
 }
 void boot()

@@ -43,3 +43,35 @@ test("unrelated pages and missing measurements use a fresh virtualizer cache", (
   assert.equal(remapVirtualMeasurements(["a"], ["b"], [[140], 200]), undefined)
   assert.equal(remapVirtualMeasurements(["a"], ["a"], undefined), undefined)
 })
+
+test("unmeasured zero-seeded probes survive repeated reorders by key", () => {
+  let keys = ["a", "b"]
+  let state = remapVirtualMeasurements(keys, [...keys, "prompt"], [[48, 48], 48])!
+  keys = [...keys, "prompt"]
+  for (let i = 0; i < 20; i++) {
+    const next = [...keys].reverse()
+    state = remapVirtualMeasurements(keys, next, state.cache, true, state.probes.map(index => keys[index]))!
+    keys = next
+    assert.deepEqual(state.probes, [keys.indexOf("prompt")])
+    assert.equal(state.cache[0][keys.indexOf("prompt")], 0)
+  }
+})
+
+test("settled probes preserve positive measurements without remounting offscreen rows", () => {
+  assert.deepEqual(remapVirtualMeasurements(["a", "prompt"], ["prompt", "a"], [[48, 72], 48], false, ["prompt"]), {
+    cache: [[72, 48], 48], probes: [],
+  })
+})
+
+test("probe overflow restores estimation instead of stranding zero-height rows", () => {
+  const keys = ["a", ...Array.from({ length: 8 }, (_, i) => `pending-${i}`)]
+  const result = remapVirtualMeasurements(keys, [...keys, "new"], [[48, ...Array(8).fill(0)], 48], true, keys.slice(1))!
+  assert.deepEqual(result.probes, [])
+  assert.deepEqual(result.cache, [[48, ...Array(9).fill(-1)], 48])
+})
+
+test("removed pending keys cannot seed an unrelated row at their former index", () => {
+  assert.deepEqual(remapVirtualMeasurements(["pending", "a", "b"], ["b", "a"], [[0, 48, 72], 48], false, ["pending"]), {
+    cache: [[72, 48], 48], probes: [],
+  })
+})

@@ -119,6 +119,30 @@ test("sending from a long transcript neither blanks nor jumps down during optimi
   })
 })
 
+for (const following of [true, false]) {
+  test(`consecutive resets retain unmeasured insertions with more than eight visible rows (following=${following})`, async () => {
+    await open("navigation", async page => {
+      await page.evaluate(follow => follow ? (window as any).fixture.follow() : (window as any).fixture.middle(), following)
+      await page.waitForFunction(follow => follow
+        ? document.querySelector('[data-virtual-follow-key="row-199"]')?.getBoundingClientRect().bottom === 700
+        : document.querySelector('[data-virtual-follow-key="row-100"]')?.getBoundingClientRect().top === 0, following)
+      await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+      await page.evaluate(() => (window as any).fixture.reorder())
+      await page.waitForFunction(() => document.querySelector('[data-virtual-follow-key="prompt"]')?.getBoundingClientRect().height === 48, undefined, { timeout: 5000 })
+      if (!following) {
+        const snapshot = await page.evaluate(() => (window as any).fixture.snapshot())
+        assert.equal(snapshot.anchorKey, "row-100")
+        assert.equal(snapshot.anchorOffset, 0)
+        assert.equal(snapshot.atBottom, false)
+      }
+      await page.evaluate(() => (window as any).fixture.bottom())
+      await page.waitForFunction(() => document.querySelector('[data-virtual-follow-key="prompt"]')?.getBoundingClientRect().bottom === 700)
+      assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollHeight), 201 * 48)
+      assert.ok(await page.locator("[data-virtual-follow-key]").count() < 60)
+    })
+  })
+}
+
 test("an evicted empty assistant cannot donate its cached block to a rehydrated answer", async () => {
   await open("session", async page => {
     const prompt = page.locator("textarea:visible").first()
@@ -225,3 +249,21 @@ for (const [sendFollowUp, busy] of [[false, false], [true, false], [false, true]
     })
   })
 }
+
+test("undo of the first prompt stays empty after cold reload and native reprojection", async () => {
+  await open("undo", async page => {
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Later answer"))
+    const first = page.locator('.message-stream-block[data-message-id="msg_01"]')
+    await first.hover()
+    await first.getByRole("button", { name: "Undo changes up to here (deletes messages)", exact: true }).click()
+    await page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement)?.value === "Earlier prompt")
+    await page.reload()
+    await page.waitForFunction(() => (window as any).fixture?.snapshot().storedRevert?.messageID === "msg_01")
+    await page.evaluate(() => (window as any).fixture.reproject())
+    const state = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.deepEqual(state.ids, [])
+    assert.equal(state.prompts, 0)
+    assert.equal(state.nativeCount, 6)
+    assert.equal(await page.locator(".message-stream-block[data-message-id]").count(), 0)
+  })
+})

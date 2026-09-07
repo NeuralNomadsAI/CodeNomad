@@ -199,6 +199,34 @@ describe("session request authority", () => {
     } finally { cleanup() }
   })
 
+  it("retains undo authority when seeking past the entire staged transcript reaches an empty page", async () => {
+    const instanceId = "revert-entire-transcript", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const revert = { messageID: "msg_1" }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, { ...session(instanceId, sessionId), revert }]])))
+    client.message = { list: async ({ cursor }: { cursor?: string }) => cursor
+      ? { data: [], cursor: {} }
+      : { data: [apiMessage("msg_2"), apiMessage("msg_1")], cursor: { next: "terminal" } } }
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      const live = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "late-output", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "msg_3", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, live)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      assert.deepEqual(store.getSessionRevert(sessionId), revert)
+      // A later authoritative empty transcript with no marker must also clear
+      // the stored boundary, so subsequent new messages are not suppressed.
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      client.message.list = async () => ({ data: [], cursor: {} })
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.equal(store.getSessionRevert(sessionId), null)
+    } finally { destroyOpenCodeData(instanceId); cleanup() }
+  })
+
   it("does not restore deleted search results or their parent chain", async () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)

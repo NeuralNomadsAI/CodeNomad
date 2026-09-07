@@ -1408,6 +1408,10 @@ async function loadMessages(
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
+        // Seeking past a fully staged transcript can end on an empty native
+        // page. It still carries session metadata authority: late projections
+        // must retain the boundary, and a cleared boundary must not linger.
+        store.setSessionRevert(sessionId, sessions().get(instanceId)?.get(sessionId)?.revert ?? null)
         commitMessageWindow(instanceId, sessionId, nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
       }

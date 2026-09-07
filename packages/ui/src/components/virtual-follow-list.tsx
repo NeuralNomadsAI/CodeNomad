@@ -113,7 +113,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-  const [measurementAuthority, setMeasurementAuthority] = createSignal<{ cache?: VirtualizerHandle["cache"]; probes: number[] }>({ probes: [] })
+  const [measurementAuthority, setMeasurementAuthority] = createSignal<{ cache?: VirtualizerHandle["cache"]; probes: number[]; pendingProbeKeys: string[] }>({ probes: [], pendingProbeKeys: [] })
   const [virtualItems, setVirtualItems] = createSignal<T[]>(props.items().slice())
   const [shiftVirtualItems, setShiftVirtualItems] = createSignal(false)
 
@@ -901,17 +901,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
       const measurementCache = change.resetMeasurements
-        ? remapVirtualMeasurements(virtualItemKeys, nextItemKeys, virtuaHandle()?.cache, autoScroll())
+        ? remapVirtualMeasurements(virtualItemKeys, nextItemKeys, virtuaHandle()?.cache, autoScroll(), measurementAuthority().pendingProbeKeys)
         : undefined
       const viewport = change.resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
-      // A second native event can reorder again before ResizeObserver measures
-      // the zero-seeded rows. Carry bounded probes across that intermediate reset.
-      const pendingProbeKeys = measurementAuthority().probes.slice(-MEASUREMENT_PROBE_COUNT).map(index => virtualItemKeys[index])
+      // Visible rows and pending measurements have separate lifetimes: many
+      // visible rows must never evict a zero-seeded insertion before its measure.
       const visibleKeys = change.resetMeasurements && viewport
         ? new Set(Array.from(itemElements).filter(([, element]) => {
             const rect = element.getBoundingClientRect()
             return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
-          }).map(([key]) => key).concat(pendingProbeKeys))
+          }).map(([key]) => key))
         : new Set<string>()
       if (change.shiftedStartCount > 0) {
         const retainedCount = virtualItemKeys.length - change.shiftedStartCount
@@ -934,6 +933,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         itemElements.clear()
         setMeasurementAuthority({
           cache: measurementCache?.cache,
+          pendingProbeKeys: measurementCache?.probes.map(index => nextItemKeys[index]) ?? [],
           probes: [...(measurementCache?.probes ?? []), ...nextItemKeys.flatMap((key, index) => visibleKeys.has(key) ? [index] : [])],
         })
       }

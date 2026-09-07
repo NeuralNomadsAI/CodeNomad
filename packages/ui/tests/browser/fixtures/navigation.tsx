@@ -17,6 +17,12 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
 /></Show>, document.getElementById("root")!)
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
+  follow: () => { api?.scrollToBottom({ immediate: true }); api?.setAutoScroll(true) },
+  middle: () => api?.scrollToKey("row-100", { block: "start" }),
+  reorder: () => {
+    setItems(current => [current[1], current[0], ...current.slice(2), "prompt"])
+    queueMicrotask(() => setItems(current => [current[1], current[0], ...current.slice(2)]))
+  },
   snapshot: () => api?.captureScrollSnapshot(),
   append: () => setItems(current => [...current, `row-${current.length}`]),
   switchAway: () => { snapshot = api?.captureScrollSnapshot(); setVisible(false) },

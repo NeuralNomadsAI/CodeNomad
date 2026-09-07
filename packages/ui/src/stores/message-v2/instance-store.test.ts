@@ -4,6 +4,38 @@ import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
 import { buildRecordDisplayData } from "./record-display-cache.ts"
+import type { MessageInfo } from "../../types/message"
+
+describe("staged undo usage authority", () => {
+  for (const preserveOmitted of [false, true]) {
+    it(`keeps visible usage stable on hydration (preserveOmitted=${preserveOmitted})`, () => {
+      const store = createInstanceMessageStore("undo-usage")
+      const records = ["msg_01", "msg_02", "msg_03"].map(id => ({ id, sessionId: "session", role: "assistant" as const, status: "complete" as const }))
+      const infos = records.map((record, i) => ({ id: record.id, sessionID: "session", role: "assistant", time: { created: i + 1, completed: i + 1 }, cost: 1,
+        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+      })) as MessageInfo[]
+      store.hydrateMessages("session", records, infos)
+      store.setSessionRevert("session", { messageID: "msg_02" })
+      const usage = JSON.parse(JSON.stringify(store.getSessionUsage("session")))
+      assert.equal(usage.totalCost, 1)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(store.getSessionMessageIds("session"), ["msg_01"])
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      // A native page can consist entirely of the staged tail; it must not
+      // contribute usage even when the visible boundary is outside that page.
+      store.hydrateMessages("session", records.slice(1), infos.slice(1), { preserveOmitted: true })
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      const cold = createInstanceMessageStore("undo-usage-cold")
+      cold.setSessionRevert("session", { messageID: "msg_02" })
+      cold.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(cold.getSessionUsage("session"), usage)
+      // Clearing the marker must allow the native tail and its usage back.
+      store.setSessionRevert("session", null)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.equal(store.getSessionUsage("session")?.totalCost, 3)
+    })
+  }
+})
 
 describe("message display cache authority", () => {
   it("changes display identity after eviction even when numeric revisions repeat", () => {
