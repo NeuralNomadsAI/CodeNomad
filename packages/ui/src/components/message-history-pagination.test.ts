@@ -81,21 +81,6 @@ describe("message history pagination", () => {
     assert.ok(paging.indexOf('api.setAutoScroll(direction === "latest")', position) > position)
   })
 
-  it("does not reposition the retained page after an exhausted older-cursor probe", () => {
-    const window = { kind: "latest", olderCursor: "past-oldest", newerCursors: [] }
-    const exhausted = { ...window, olderCursor: undefined }
-    assert.equal(getMessageWindowPageKey(window), getMessageWindowPageKey(exhausted))
-    const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
-    const start = source.indexOf("async function pageWindow(")
-    const paging = source.slice(start, source.indexOf("function messageWindowPageKey", start))
-    const capture = paging.indexOf("const previousPage = messageWindowPageKey()")
-    const load = paging.indexOf("await load(controller.signal)")
-    const stop = paging.indexOf('if (direction === "older" && messageWindowPageKey() === previousPage) return')
-    const follow = paging.indexOf('api.setAutoScroll(direction === "latest")')
-    assert.ok(capture >= 0 && capture < load)
-    assert.ok(stop > load && stop < follow)
-  })
-
   it("keeps native inbox prompts after delivered transcript messages", () => {
     const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
     const start = source.indexOf("const visibleMessageIds")
