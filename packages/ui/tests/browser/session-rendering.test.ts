@@ -356,6 +356,10 @@ test("middle-button scrolling owns nested tool output even after the intent time
     await page.mouse.down({ button: "middle" })
     assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false,
       JSON.stringify(await page.evaluate(() => ({ hit: (window as any).middleHit, box: document.querySelector("[data-nested-output]")?.getBoundingClientRect().toJSON() }))))
+    await page.evaluate(() => { (window as any).gestureOutput = document.querySelector("[data-nested-output]") })
+    await page.evaluate(() => (window as any).fixture.append())
+    assert.equal(await page.evaluate(() => (window as any).gestureOutput === document.querySelector("[data-nested-output]")), true,
+      "A streamed append must not replace the active native drag target")
     try {
       // Native middle autoscroll can begin well after pointerdown, then continue
       // outside the child. Simulate its scroll ticks, not a wheel event: this

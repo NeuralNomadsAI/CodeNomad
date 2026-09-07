@@ -903,8 +903,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // A short append also needs measured probes: a hidden native metadata row
       // estimated at the mean height of a tall answer can pin beyond every row.
       // Keep large page loads and rolling-window shifts on their bounded path.
+      // Escaped readers must retain their DOM gesture target: remounting an
+      // existing tool scroller cancels a held native middle-button drag.
       const appendedCount = nextItemKeys.length - virtualItemKeys.length
-      const measureAppend = virtualItemKeys.length > 0 && appendedCount > 0
+      const measureAppend = autoScroll() && virtualItemKeys.length > 0 && appendedCount > 0
         && appendedCount <= MEASUREMENT_PROBE_COUNT && change.shiftedStartCount === 0
       const resetMeasurements = change.resetMeasurements || measureAppend
       const measurementCache = resetMeasurements

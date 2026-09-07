@@ -7,8 +7,8 @@ import "../../../src/index.css"
 const [savedTop, setSavedTop] = createSignal(0)
 const nested = createFollowScroll({ getScrollTopSnapshot: savedTop, setScrollTopSnapshot: setSavedTop, sentinelClassName: "fixture-sentinel" })
 let api: VirtualFollowListApi | undefined
-const items = Array.from({ length: 30 }, (_, i) => `row-${i}`)
-render(() => <VirtualFollowList items={() => items} getKey={item => item}
+const [items, setItems] = createSignal(Array.from({ length: 30 }, (_, i) => `row-${i}`))
+render(() => <VirtualFollowList items={items} getKey={item => item}
   registerApi={value => { api = value }}
   renderItem={item => item === "row-29"
     ? <div style={{ height: "250px" }}>
@@ -23,5 +23,6 @@ render(() => <VirtualFollowList items={() => items} getKey={item => item}
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
   renderOutput: nested.restoreAfterRender,
+  append: () => setItems(items => [...items, `row-${items.length}`]),
   snapshot: () => ({ outerFollow: api?.getAutoScroll(), innerFollow: nested.autoScroll(), outerTop: api?.getScrollElement()?.scrollTop, savedTop: savedTop() }),
 }
