@@ -11,6 +11,7 @@ import {
 import {
   buildToolExpansionPresetDefaults,
   getConfigurableToolEntries,
+  getToolRegistryEntry,
   OTHER_TOOL_NAME,
   THINKING_EXPANSION_PRESETS,
 } from "../tool-call/tool-registry"
@@ -77,17 +78,35 @@ export const ChatSettingsSection: Component = () => {
     { value: "expanded", label: t("commands.common.expanded") },
   ])
 
-  const visibilityRows = createMemo<VisibilityRow[]>(() => [
-    { kind: "thinking", key: "thinking", label: t("settings.behavior.expansionDefaults.thinking") },
-    ...getConfigurableToolEntries().filter((entry) => entry.tool !== OTHER_TOOL_NAME).map((entry) => ({
-      kind: "tool" as const,
+  const toolRow = (tool: string): VisibilityRow => {
+    const entry = getToolRegistryEntry(tool)
+    return {
+      kind: "tool",
       key: entry.tool,
       label: entry.labelKey ? t(entry.labelKey) : entry.label,
-    })),
+    }
+  }
+
+  const visibilityRows = createMemo<VisibilityRow[]>(() => [
+    { kind: "thinking", key: "thinking", label: t("settings.behavior.expansionDefaults.thinking") },
+    toolRow("bash"),
+    toolRow("read"),
+    toolRow("write"),
+    toolRow("edit"),
+    toolRow("patch"),
+    toolRow("apply_patch"),
+    toolRow("webfetch"),
+    toolRow("glob"),
+    toolRow("grep"),
+    toolRow("todowrite"),
+    toolRow("task"),
+    toolRow("skill"),
+    toolRow("question"),
+    toolRow("invalid"),
     { kind: "diagnostics", key: "diagnostics", label: t("settings.behavior.diagnosticsDefault.title") },
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
-    { kind: "tool", key: OTHER_TOOL_NAME, label: t("settings.behavior.expansionDefaults.otherTools") },
+    toolRow(OTHER_TOOL_NAME),
   ])
 
   const currentToolMode = (tool: string): VisibilityPreference => {
