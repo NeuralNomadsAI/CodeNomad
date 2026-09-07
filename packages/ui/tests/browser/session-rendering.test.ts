@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = req.url?.includes("navigation") ? "navigation" : "session"
+          const name = req.url?.includes("navigation") ? "navigation" : req.url?.includes("undo") ? "undo" : "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -32,7 +32,7 @@ before(async () => {
 after(async () => { await browser?.close(); await server?.close() })
 
 async function open(name: string, run: (page: Page) => Promise<void>) {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
@@ -141,3 +141,38 @@ test("returning to a long list preserves the escaped reader anchor", async () =>
     assert.ok(Math.abs(after.anchorOffset - before.anchorOffset) < 2)
   })
 })
+
+for (const sendFollowUp of [false, true]) {
+  test(`undo excludes its prompt and every later exchange across return and cold reload (${sendFollowUp ? "with" : "without"} another send)`, async () => {
+    await open("undo", async page => {
+      await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Later answer"))
+      const message = page.locator('.message-stream-block[data-message-id="msg_03"]')
+      await message.hover()
+      await message.getByRole("button", { name: "Undo changes up to here (deletes messages)", exact: true }).click()
+      await page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement)?.value === "Undo this prompt")
+      const assertUndone = async () => {
+        await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Earlier answer"))
+        assert.equal(await page.locator('.message-stream-block[data-message-id="msg_03"], .message-stream-block[data-message-id="msg_04"], .message-stream-block[data-message-id="msg_05"], .message-stream-block[data-message-id="msg_06"]').count(), 0)
+      }
+      await assertUndone()
+      assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).prompts, 0)
+      if (sendFollowUp) {
+        const prompt = page.locator("textarea:visible").first()
+        await prompt.fill("Replacement prompt")
+        await prompt.press("Enter")
+        await page.waitForFunction(() => (window as any).fixture.snapshot().prompts === 1)
+      }
+      await page.evaluate(() => (window as any).fixture.switchAway())
+      await page.evaluate(() => (window as any).fixture.return())
+      await assertUndone()
+      await page.reload()
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await assertUndone()
+      const state = await page.evaluate(() => (window as any).fixture.snapshot())
+      assert.equal(state.prompts, sendFollowUp ? 1 : 0)
+      assert.equal(state.nativeCount, sendFollowUp ? 3 : 6)
+      assert.deepEqual(state.revert, sendFollowUp ? null : { messageID: "msg_03" })
+      if (sendFollowUp) await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Replacement prompt"))
+    })
+  })
+}
