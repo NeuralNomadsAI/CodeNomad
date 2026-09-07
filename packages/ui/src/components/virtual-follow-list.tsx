@@ -4,7 +4,7 @@ import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSI
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
-const MEASUREMENT_RESET_SSR_COUNT = 8
+const MEASUREMENT_PROBE_COUNT = 8
 const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -1029,6 +1029,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onClick={props.onClick}
       >
         {props.renderBeforeItems?.()}
+        {/* Client-only: keep bounded measurement probes, not an SSR range that
+            stays pinned until a real scroll event (short threads cannot scroll). */}
         <Show keyed when={measurementAuthority()}>
           {(_authority) => (
             <Virtualizer
@@ -1037,7 +1039,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
               data={virtualItems()}
               shift={shiftVirtualItems()}
               bufferSize={props.overscanPx ?? 400}
-              ssrCount={Math.min(virtualItems().length, MEASUREMENT_RESET_SSR_COUNT)}
+              keepMounted={Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => index)}
               onScroll={handleScroll}
             >
               {(item, index) => {

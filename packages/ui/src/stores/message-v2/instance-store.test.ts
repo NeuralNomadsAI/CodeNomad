@@ -1,7 +1,39 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import { buildRecordDisplayData } from "./record-display-cache.ts"
+
+describe("message display cache authority", () => {
+  it("changes display identity after eviction even when numeric revisions repeat", () => {
+    const store = createInstanceMessageStore("display-identity")
+    const base = { id: "assistant", sessionId: "session", role: "assistant" as const, status: "streaming" as const }
+    store.hydrateMessages("session", [base])
+    const original = store.getMessage(base.id)!
+    const empty = buildRecordDisplayData("display-identity", original)
+    assert.equal(empty.orderedParts.length, 0)
+
+    store.reconcileEmptyAuthoritativeSnapshot("session")
+    const completed = { ...base, parts: [{ id: "text", type: "text", text: "restored response" } as any] }
+    store.hydrateMessages("session", [completed])
+    const restored = store.getMessage(base.id)!
+    const display = buildRecordDisplayData("display-identity", restored)
+    assert.equal(restored.revision, original.revision)
+    assert.notEqual(display, empty)
+    assert.equal((display.orderedParts[0] as any).text, "restored response")
+
+    store.hydrateMessages("session", [completed])
+    assert.equal(buildRecordDisplayData("display-identity", store.getMessage(base.id)!), display,
+      "an unchanged resident snapshot must still reuse display data")
+  })
+
+  it("binds the derived message block cache to the invalidatable display identity", () => {
+    const source = readFileSync(new URL("../../components/message-block.tsx", import.meta.url), "utf8")
+    assert.match(source, /cachedBlock\.signature === cacheSignature && cachedBlock\.displayData === displayData/)
+    assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
+  })
+})
 
 describe("message-v2 permission state", () => {
   it("keeps one permission attachment when a duplicate moves from global to a tool part", () => {

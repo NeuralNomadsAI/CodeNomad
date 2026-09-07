@@ -177,6 +177,12 @@ jobs:
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
 
+      - name: Install Chromium for UI rendering regressions
+        run: npx playwright install --with-deps chromium
+
+      - name: Test browser transcript rendering and navigation
+        run: npm run test:browser --workspace @codenomad/ui
+
       - name: Prepare Tauri test resources
         run: >-
           npm run dev:prep --workspace @codenomad/tauri-app &&

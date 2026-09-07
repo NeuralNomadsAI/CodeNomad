@@ -27,9 +27,18 @@ const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promi
 const technicalPartUpdates = new Map<string, Promise<void>>()
 const sessionAdmissions = new Map<string, Promise<unknown>>()
 
-function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+function serializeSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
   const key = `${instanceId}:${sessionId}`
-  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(action)
+  const settled = run.finally(() => {
+    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
+  })
+  sessionAdmissions.set(key, settled)
+  return settled
+}
+
+function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+  return serializeSessionAction(instanceId, sessionId, async () => {
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       const result = await action()
@@ -40,11 +49,20 @@ function admitSessionAction<T>(instanceId: string, sessionId: string, action: ()
       throw error
     }
   })
-  const settled = run.finally(() => {
-    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
+}
+
+export function revertSession(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  const client = instances().get(instanceId)?.client
+  return serializeSessionAction(instanceId, sessionId, async () => {
+    const isCurrent = () => client && instances().get(instanceId)?.client === client && sessions().get(instanceId)?.has(sessionId)
+    if (!isCurrent()) throw new Error("Instance not ready")
+    // Staging a revert hides a tail but does not cancel native execution.
+    // Drain earlier local prompt admissions, then use Stop semantics first.
+    // Do not claim undo when interruption fails.
+    await abortSession(instanceId, sessionId)
+    if (!isCurrent()) throw new Error("Instance not ready")
+    await getRootClient(instanceId).session.revert.stage({ sessionID: sessionId, messageID: messageId })
   })
-  sessionAdmissions.set(key, settled)
-  return settled
 }
 
 function serializeTechnicalPartUpdate(

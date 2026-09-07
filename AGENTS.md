@@ -49,6 +49,8 @@ Behavior for agents:
 ## Tooling Preferences
 - Use the `edit` tool for modifying existing files; prefer it over other editing methods.
 - Use the `write` tool only when creating new files from scratch.
+- Browser rendering regressions live in `packages/ui/tests/browser/`, with deterministic HTTP fixtures beside them in `fixtures/`. Exercise the real Solid components and native event dispatcher rather than reimplementing rendering logic.
+- Run them with `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`. `CODENOMAD_BROWSER_PATH` optionally selects an existing Chromium executable; it does not target the installed application or user sessions.
 
 ## V2 Runtime Launch
 - Launch the release executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
