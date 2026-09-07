@@ -31,23 +31,9 @@ function isSupportedPosixShell(shellPath: string): boolean {
   return shellName === "bash" || shellName === "zsh"
 }
 
-function wrapCommandForShell(command: string, shellPath: string): string {
-  const shellName = path.basename(shellPath)
-
-  if (shellName.includes("bash")) {
-    return 'if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; ' + command
-  }
-
-  if (shellName.includes("zsh")) {
-    return 'if [ -f ~/.zshrc ]; then source ~/.zshrc >/dev/null 2>&1; fi; ' + command
-  }
-
-  return command
-}
-
 function buildShellArgs(shellPath: string): string[] {
   const shellName = path.basename(shellPath)
-  if (shellName.includes("zsh")) {
+  if (shellName.includes("zsh") || shellName.includes("bash")) {
     return ["-l", "-i", "-c"]
   }
   return ["-l", "-c"]
@@ -70,11 +56,16 @@ export function buildUserShellCommand(userCommand: string): ShellCommand {
   }
 
   const shellPath = getDefaultShellPath()
-  const script = wrapCommandForShell(userCommand, shellPath)
   const args = buildShellArgs(shellPath)
+  // Unlike zsh, login bash does not automatically read .bashrc. Preserve the
+  // previous Bash compatibility path even when a profile doesn't source it.
+  const script = path.basename(shellPath).toLowerCase() === "bash"
+    ? 'if [ -f ~/.bashrc ]; then source ~/.bashrc >/dev/null 2>&1; fi; ' + userCommand
+    : userCommand
 
   return {
     command: shellPath,
+    // Zsh already loads .zshrc: never explicitly source it a second time.
     args: [...args, script],
   }
 }
