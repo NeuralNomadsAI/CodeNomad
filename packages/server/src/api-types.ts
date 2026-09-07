@@ -353,10 +353,13 @@ export interface BinaryUpdateRequest {
   makeDefault?: boolean
 }
 
+export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
+
 export interface BinaryValidationResult {
   valid: boolean
   version?: string
   error?: string
+  errorCode?: typeof OPENCODE_V2_REQUIRED_ERROR_CODE
 }
 
 export interface OpenCodeUpdateStatus {
