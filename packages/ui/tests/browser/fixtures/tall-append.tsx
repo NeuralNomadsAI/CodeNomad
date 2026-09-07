@@ -7,10 +7,15 @@ const [items, setItems] = createSignal(["prompt", "reply"])
 let api: VirtualFollowListApi | undefined
 render(() => <VirtualFollowList items={items} getKey={item => item}
   registerApi={value => { api = value }}
-  renderItem={item => <div data-row={item} style={{ height: item === "reply" ? "3200px" : item === "metadata" ? "0px" : "120px" }}>{item}</div>}
+  renderItem={item => <div data-row={item} style={{ height: item === "reply" ? "3200px" : item === "metadata" || item.startsWith("hidden-") ? "0px" : "120px" }}>{item}</div>}
 />, document.getElementById("root")!)
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
   append: () => setItems(items => [...items, "new-prompt"]),
   metadata: () => setItems(items => [...items, "metadata"]),
+  replacePage: () => {
+    api?.setAutoScroll(false)
+    setItems(Array.from({length:200},(_,i)=>i<175?`hidden-${i}`:`page-row-${i}`))
+    queueMicrotask(()=>void api?.settleAtBottom())
+  },
 }

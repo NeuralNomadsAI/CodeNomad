@@ -1065,6 +1065,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
               bufferSize={props.overscanPx ?? 400}
               keepMounted={[...new Set([
                 ...Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => index),
+                // A disjoint older page is entered at its bottom. Its first
+                // records may all be hidden native metadata, so head probes
+                // alone cannot render the destination before the scroll event.
+                ...Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => virtualItems().length - 1 - index),
                 ...authority.probes.filter(index => index < virtualItems().length),
               ])]}
               onScroll={handleScroll}

@@ -176,7 +176,7 @@ test("an evicted empty assistant cannot donate its cached block to a rehydrated 
   })
 })
 
-test("appending a prompt after a single tall reply never exposes estimated blank space", async () => {
+test("short appends and disjoint 200-row pages never expose estimated blank space", async () => {
   await open("tall-append", async page => {
     await page.waitForFunction(() => (document.querySelector(".message-stream")?.scrollHeight ?? 0) >= 3320)
     await page.evaluate(() => (window as any).fixture.bottom())
@@ -192,6 +192,8 @@ test("appending a prompt after a single tall reply never exposes estimated blank
     await page.evaluate(() => (window as any).fixture.append())
     await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("new-prompt"))
     await page.evaluate(() => (window as any).fixture.metadata())
+    await page.evaluate(`new Promise(resolve => { let n=25; const frame=()=>--n?requestAnimationFrame(frame):resolve();requestAnimationFrame(frame) })`)
+    await page.evaluate(() => (window as any).fixture.replacePage())
     await page.evaluate(`new Promise(resolve => { let n=25; const frame=()=>--n?requestAnimationFrame(frame):resolve();requestAnimationFrame(frame) })`)
     const frames=await page.evaluate(() => { (window as any).trackAppend=false; return (window as any).appendFrames })
     for(const frame of frames) {
