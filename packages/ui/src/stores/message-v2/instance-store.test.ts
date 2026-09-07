@@ -5,6 +5,23 @@ import { describe, it } from "node:test"
 import { createInstanceMessageStore } from "./instance-store.ts"
 import { buildRecordDisplayData } from "./record-display-cache.ts"
 import type { MessageInfo } from "../../types/message"
+import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
+
+describe("message window replacement authority", () => {
+  it("retires an older resume cursor when returning to latest before cold restoration", () => {
+    const store = createInstanceMessageStore("window-replacement")
+    store.setMessageWindow("session", { kind: "history", resumeCursor: "older-200", olderCursor: "older-400", newerCursors: [null] })
+    const previous = store.getMessageWindow("session")
+    store.setMessageWindow("session", emptyLatestWindow())
+    const window = store.getMessageWindow("session")!
+    assert.notEqual(window, previous, "Window identity fences in-flight page requests")
+    assert.equal(window.resumeCursor, undefined)
+    assert.equal(window.olderCursor, undefined)
+    const snapshot = JSON.parse(JSON.stringify(toWindowSnapshot(window)))
+    assert.deepEqual(windowFromSnapshot(snapshot), emptyLatestWindow())
+    assert.deepEqual(windowFromSnapshot({ windowIsLatest: true, windowCursor: "stale-older" }), emptyLatestWindow())
+  })
+})
 
 describe("staged undo usage authority", () => {
   for (const preserveOmitted of [false, true]) {

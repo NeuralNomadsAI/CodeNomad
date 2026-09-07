@@ -45,7 +45,11 @@ const client: any = {
     },
   },
   model: { default: async () => ({ data: model }) },
-  message: { list: async () => { calls++; return { data: nativeMessages.slice().reverse(), cursor: {} } } },
+  message: { list: async ({ cursor, limit = 200 }: { cursor?: string; limit?: number } = {}) => {
+    calls++
+    const offset = Number(cursor ?? 0), messages = nativeMessages.slice().reverse()
+    return { data: messages.slice(offset, offset + limit), cursor: offset + limit < messages.length ? { next: String(offset + limit) } : {} }
+  } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
@@ -74,8 +78,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   admitted: () => admittedPrompt?.id,
-  seedHistory: async () => {
-    for (let i = 0; i < 60; i++) {
+  seedHistory: async (count = 60) => {
+    for (let i = 0; i < count; i++) {
       nativeMessages.push({ id: `msg_${String(i).padStart(4, "0")}`, type: "assistant", agent: "build", model,
         time: { created: i + 1, completed: i + 1 }, content: [{ type: "text", text: `History ${i}\n\n` + "A previously rendered response.\n\n".repeat(3 + i % 5) }] })
     }
@@ -102,5 +106,5 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   },
   switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
   return: () => { setActiveSession(instanceId, sessionId); setVisible(true) },
-  snapshot: () => ({ calls, ids: store.getSessionMessageIds(sessionId), text: store.getMessage(assistantId)?.parts[`${assistantId}-text-0`]?.data.text }),
+  snapshot: () => ({ calls, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId), scroll: store.getScrollSnapshot(sessionId, "message-stream"), text: store.getMessage(assistantId)?.parts[`${assistantId}-text-0`]?.data.text }),
 }

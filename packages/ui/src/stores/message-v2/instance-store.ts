@@ -1479,7 +1479,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setMessageWindow(sessionId: string, window: MessageWindowState) {
     ensureSessionEntry(sessionId)
-    setState("sessions", sessionId, "messageWindow", window)
+    // Window state is authoritative, not a partial patch. Solid's default
+    // object merge otherwise retains a history resumeCursor on latest pages.
+    const next: MessageWindowState = { kind: window.kind, newerCursors: [...window.newerCursors] }
+    if (window.resumeCursor !== undefined) next.resumeCursor = window.resumeCursor
+    if (window.olderCursor !== undefined) next.olderCursor = window.olderCursor
+    setState("sessions", sessionId, produce((session) => { session.messageWindow = next }))
   }
 
   function getMessageWindow(sessionId: string) {

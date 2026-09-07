@@ -92,6 +92,39 @@ test("long list reaches its actual end, appends beyond the initial range, and st
   })
 })
 
+test("return to latest from a 620-record history replaces the saved older-page snapshot", async () => {
+  await open("session", async page => {
+    await page.evaluate(() => (window as any).fixture.seedHistory(620))
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("History 619"))
+    await page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.windowIsLatest === true)
+    const initial = await page.evaluate(() => performance.now())
+    await page.waitForFunction(initial => performance.now() - initial > 1200, initial)
+    const stream = page.locator(".message-stream")
+    const box = await stream.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width - 5, box.y + box.height / 2)
+    await page.mouse.wheel(0, -1000000)
+    await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.windowIsLatest === false)
+    const ready = await page.evaluate(() => performance.now())
+    await page.waitForFunction(ready => performance.now() - ready > 1000, ready)
+    await page.mouse.move(box.x + 10, box.y + box.height / 2)
+    await page.mouse.wheel(0, -400)
+    await page.waitForFunction(() => { const el = document.querySelector(".message-stream")!; return el.scrollHeight - el.clientHeight - el.scrollTop > 100 }, undefined, { timeout: 5000 })
+    await page.locator(".message-scroll-controls").hover()
+    await page.getByRole("button", { name: "Scroll to latest message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind === "latest")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.windowIsLatest === true, undefined, { timeout: 5000 })
+    const latest = await page.evaluate(() => performance.now())
+    await page.waitForFunction(latest => performance.now() - latest > 1200, latest)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().scroll.windowCursor), undefined,
+      "A latest-page snapshot must retire the older resume cursor before cold restoration")
+    await page.evaluate(() => (window as any).fixture.switchAway())
+    await page.evaluate(() => (window as any).fixture.return())
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("History 619"))
+  })
+})
+
 test("sending from a long transcript neither blanks nor jumps down during optimistic reordering", async () => {
   await open("session", async page => {
     await page.evaluate(() => (window as any).fixture.seedHistory())
