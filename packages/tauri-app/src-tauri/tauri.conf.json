@@ -22,6 +22,9 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "minimumSystemVersion": "13.5"
+    },
     "linux": {
       "appimage": {
         "files": {

@@ -92,7 +92,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .node-version
 
       - name: Wait for Windows Tauri release asset
         id: release_asset

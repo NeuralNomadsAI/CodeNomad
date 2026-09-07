@@ -2,6 +2,7 @@
 const fs = require("fs")
 const path = require("path")
 const { spawnSync } = require("child_process")
+const { MANAGED_NODE_VERSION } = require("./prepare-node-runtime.cjs")
 
 const requiredPackages = [
   "yaml",
@@ -9,6 +10,7 @@ const requiredPackages = [
   "@fastify/static",
   "@fastify/cors",
   "@fastify/reply-from",
+  "@opencode-ai/client",
   "openai",
   "pino",
   "undici",
@@ -58,6 +60,7 @@ function run(command, args, options = {}) {
   if (result.status !== 0) {
     throw new Error(`${command} exited with code ${result.status ?? 1}`)
   }
+  return result
 }
 
 function smokeServer(resourcesRoot, target) {
@@ -81,18 +84,20 @@ function smokeServer(resourcesRoot, target) {
     return
   }
 
+  const version = run(node, ["--version"], { stdio: "pipe", encoding: "utf8" }).stdout.trim()
+  if (version !== MANAGED_NODE_VERSION) {
+    throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)
+  }
+  console.log(`packaged Node version ok: ${version}`)
   run(node, [entrypoint, "--version"])
 
-  const requireScript = [
-    "import { createRequire } from 'module';",
-    "import path from 'path';",
-    `const root = ${JSON.stringify(serverRoot)};`,
-    "const req = createRequire(path.join(root, 'dist/bin.js'));",
-    `${JSON.stringify(requiredPackages)}.forEach((name) => req(name));`,
+  const importScript = [
+    `for (const name of ${JSON.stringify(requiredPackages)}) await import(name);`,
     "console.log('packaged dependency imports ok');",
   ].join(" ")
 
-  run(node, ["--input-type=module", "-e", requireScript])
+  // Resolve from the packaged server, not the build checkout. The V2 client is ESM-only.
+  run(node, ["--input-type=module", "-e", importScript], { cwd: serverRoot })
 }
 
 function smokeLoadingAssets(loadingRoot) {

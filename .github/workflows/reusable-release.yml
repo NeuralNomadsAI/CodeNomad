@@ -43,9 +43,6 @@ permissions:
   id-token: write
   contents: write
 
-env:
-  NODE_VERSION: 20
-
 jobs:
   prepare-release:
     runs-on: ubuntu-latest
@@ -62,7 +59,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
 
       - name: Compute release versions
         id: versions

@@ -75,7 +75,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust
@@ -101,7 +101,7 @@ jobs:
         run: npm run typecheck
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs
 
       - name: Test Electron client state
         run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
@@ -199,7 +199,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust
@@ -239,7 +239,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -270,7 +270,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust
