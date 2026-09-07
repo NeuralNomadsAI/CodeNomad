@@ -101,6 +101,7 @@
 }
 
 .message-item-actions {
+  position: relative;
   @apply flex items-center gap-0;
   flex: 0 0 auto;
 }
@@ -159,15 +160,19 @@
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] .message-action-group {
+.message-item-header-row[data-content-overflow="true"] .message-action-group {
+  position: absolute;
+  inset-inline-end: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.message-item-header-row[data-content-overflow="true"] .message-item-actions > .action-overflow-trigger.action-overflow-wide {
   display: none;
 }
 
-.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-wide {
-  display: none;
-}
-
-.session-center-column[data-session-center-width="narrow"] .message-item-actions[data-action-overflow="true"] > .action-overflow-trigger.action-overflow-narrow {
+.message-item-header-row[data-content-overflow="true"] .message-item-actions > .action-overflow-trigger.action-overflow-narrow {
   display: inline-flex;
 }
 

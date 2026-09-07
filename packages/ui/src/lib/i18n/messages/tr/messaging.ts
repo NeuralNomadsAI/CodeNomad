@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "Mesaj içeriği",
+  "transcriptFilters.description": "İçeriği gösterin veya gizleyin ve başlangıçta genişletilip genişletilmeyeceğini seçin. Bu ayarlar tüm konuşmalara uygulanır.",
+  "transcriptFilters.show": "{name} göster",
+  "transcriptFilters.hide": "{name} gizle",
+  "transcriptFilters.expand": "{name} genişlet",
+  "transcriptFilters.collapse": "{name} daralt",
   "messageListHeader.sidebar.openSessionListAriaLabel": "Session listesini aç",
   "messageListHeader.metrics.usedLabel": "Kullanılan",
   "messageListHeader.metrics.availableLabel": "Kalan",

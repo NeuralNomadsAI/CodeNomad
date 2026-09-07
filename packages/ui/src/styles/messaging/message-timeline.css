@@ -70,8 +70,8 @@
   width: 100%;
   min-height: 1.25rem;
   border-radius: 0;
-  border: 1px solid var(--border-base);
-  background-color: var(--surface-secondary);
+  border: 1px solid transparent;
+  background-color: transparent;
   position: relative;
   display: flex;
   align-items: center;
@@ -96,6 +96,21 @@
   width: 100%;
 }
 
+/* Short, neutral separators distinguish adjacent markers without boxing them. */
+.message-timeline-segment::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  inset-inline: 30%;
+  height: 1px;
+  background-color: var(--border-divider);
+  pointer-events: none;
+}
+
+.message-timeline-segment:is(:hover, :focus-visible, :active, .message-timeline-segment-active)::after {
+  opacity: 0;
+}
+
 .message-timeline-item-spacer {
   flex: none;
   width: 100%;
@@ -112,7 +127,7 @@
 
 .message-timeline-segment-active {
   opacity: 1;
-  border-color: var(--border-strong);
+  border-color: currentColor;
   background-color: var(--selection-neutral-strong-bg);
 }
 
@@ -120,6 +135,8 @@
 .message-timeline-segment:focus-visible,
 .message-timeline-segment:active {
   opacity: 1;
+  border-color: currentColor;
+  background-color: var(--selection-neutral-strong-bg);
   transform: none;
   outline: none;
 }
@@ -129,42 +146,27 @@
 }
 
 .message-timeline-user {
-  border-color: var(--message-user-border);
-  background-color: var(--message-user-bg);
+  color: var(--message-user-border);
 }
 
 .message-timeline-assistant {
-  border-color: var(--message-assistant-border);
-  background-color: var(--message-assistant-bg);
+  color: var(--message-assistant-border);
 }
 
 .message-timeline-tool {
-  border-color: var(--message-tool-border);
-  background-color: var(--surface-secondary);
+  color: var(--message-tool-border);
 }
 
 .message-timeline-segment.message-timeline-segment-permission {
-  border-color: var(--session-status-permission-fg);
-  background-color: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);
-}
-
-.message-timeline-segment.message-timeline-segment-permission:hover,
-.message-timeline-segment.message-timeline-segment-permission:focus-visible {
-  background-color: var(--session-status-permission-bg);
-  color: var(--session-status-permission-fg);
-  border-color: var(--session-status-permission-fg);
-  transform: translateY(-1px);
 }
 
 .message-timeline-compaction-auto {
-  border-color: var(--session-status-compacting-fg);
-  background-color: var(--surface-secondary);
+  color: var(--session-status-compacting-fg);
 }
 
 .message-timeline-compaction-manual {
-  border-color: var(--session-status-compacting-fg);
-  background-color: var(--surface-secondary);
+  color: var(--session-status-compacting-fg);
 }
 
 .message-timeline-label {

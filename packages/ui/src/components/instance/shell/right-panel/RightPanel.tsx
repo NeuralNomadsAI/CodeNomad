@@ -9,7 +9,7 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
+import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
 import { Settings2 } from "lucide-solid"
 
 import type { Instance } from "../../../../types/instance"
@@ -264,7 +264,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               title={props.t("instanceShell.rightDrawer.toggle.close")}
               onClick={props.onCloseRightDrawer}
             >
-              <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+              <ArrowForwardIcon fontSize="small" />
             </IconButton>
             <IconButton
               ref={customizationTriggerRef}

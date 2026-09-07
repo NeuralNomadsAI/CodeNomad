@@ -8,6 +8,20 @@
   border-radius: 0 !important;
 }
 
+/* Explicit round exceptions requested for Yolo and overlay navigation. */
+.yolo-mode-switch .MuiSwitch-switchBase,
+.yolo-mode-switch .MuiSwitch-thumb {
+  border-radius: 50% !important;
+}
+
+.yolo-mode-switch .MuiSwitch-track {
+  border-radius: 999px !important;
+}
+
+.session-header-drawer-toggle .MuiIconButton-root {
+  border-radius: 50% !important;
+}
+
 .button-primary,
 button.button-primary {
   @apply px-3 text-sm;

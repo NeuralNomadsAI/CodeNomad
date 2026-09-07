@@ -59,6 +59,11 @@
 .selector-trigger-icon svg {
   width: var(--icon-size);
   height: var(--icon-size);
+  transition: transform 150ms ease;
+}
+
+.selector-trigger:is([aria-expanded="true"], [data-expanded]) .selector-trigger-icon svg {
+  transform: rotate(180deg);
 }
 
 .selector-trigger:hover .selector-trigger-icon {

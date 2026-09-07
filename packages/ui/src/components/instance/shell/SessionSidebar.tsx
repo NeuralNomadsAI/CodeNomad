@@ -5,7 +5,7 @@ import type { DrawerViewState } from "./types"
 
 import { PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
+import ArrowBackIcon from "@suid/icons-material/ArrowBack"
 import InfoOutlinedIcon from "@suid/icons-material/InfoOutlined"
 
 import SessionList from "../../session-list"
@@ -85,7 +85,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               title={props.t("instanceShell.leftDrawer.toggle.close")}
               onClick={props.onCloseLeftDrawer}
             >
-              <MenuOpenIcon fontSize="small" />
+              <ArrowBackIcon fontSize="small" />
             </IconButton>
           </div>
         </div>

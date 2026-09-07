@@ -22,21 +22,28 @@
 }
 
 .right-panel-tab-bar .tab-container {
-  @apply flex items-center justify-between gap-1 px-2 pt-2 pb-0;
-  align-items: flex-end;
+  @apply flex items-center justify-between gap-1 px-2;
+  padding-block: 0;
+  align-items: center;
   height: 100%;
 }
 
 /* Keep the shortcuts (close/pin) fixed; only the tabs should scroll. */
 .right-panel-tab-bar .tab-scroll {
+  position: relative;
+  z-index: 1;
   @apply flex-1;
   width: auto;
+  min-width: 0;
+  align-self: flex-start;
+  padding-top: 1px;
+  margin-bottom: -1px;
 }
 
 /* Shortcuts on the left side - match left drawer icon colors */
 .tab-strip-shortcuts {
   @apply flex items-center gap-1 flex-shrink-0;
-  align-self: flex-start;
+  align-self: center;
   color: var(--text-muted);
 }
 
@@ -46,9 +53,8 @@
   font-family: var(--font-family-sans);
   cursor: grab;
   outline: none;
-  border: 0;
-  border-inline-end: 1px solid var(--tab-border);
-  border-bottom: 1px solid var(--tab-border);
+  border: 1px solid var(--tab-border);
+  margin-inline-end: -1px;
   border-radius: 0;
   z-index: 1;
 }
@@ -70,7 +76,7 @@
 .right-panel-tab-active {
   background-color: var(--surface-secondary);
   border-top: 1px solid var(--tab-border);
-  border-bottom: 0;
+  border-bottom-color: var(--surface-secondary);
   color: var(--tab-active-text);
   z-index: 2;
 }
@@ -749,7 +755,7 @@
 }
 
 .status-process-card {
-  @apply px-2 py-2 transition-colors duration-150;
+  @apply border px-2 py-2 transition-colors duration-150;
   background-color: var(--surface-base);
 }
 
@@ -943,8 +949,18 @@
   opacity: 1;
 }
 
-.status-tab-container .right-panel-accordion-content .border {
-  border-width: 0;
+.status-tab-container .right-panel-accordion-content :is(.border, .status-process-card) {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.right-panel-tab-active::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background-color: var(--surface-secondary);
 }
 
 .section-label {

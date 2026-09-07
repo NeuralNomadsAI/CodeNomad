@@ -8,7 +8,8 @@ import {
   type JSX,
   type Setter,
 } from "solid-js"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
+import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
+import ArrowBackIcon from "@suid/icons-material/ArrowBack"
 
 import type { TranslateParams } from "../../../lib/i18n"
 
@@ -118,11 +119,11 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   }
 
   const leftAppBarButtonIcon = () => {
-    return createComponent(MenuOpenIcon, { fontSize: "small", sx: { transform: "scaleX(-1)" } })
+    return createComponent(ArrowForwardIcon, { fontSize: "small" })
   }
 
   const rightAppBarButtonIcon = () => {
-    return createComponent(MenuOpenIcon, { fontSize: "small" })
+    return createComponent(ArrowBackIcon, { fontSize: "small" })
   }
 
   const handleLeftAppBarButtonClick = () => {

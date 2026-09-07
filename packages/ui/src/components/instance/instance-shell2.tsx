@@ -34,6 +34,7 @@ import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overflow-menu"
+import TranscriptFilters from "../transcript-filters"
 import { sseManager } from "../../lib/sse-manager"
 import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
@@ -1023,7 +1024,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
       >
         <Show when={!mobileFullscreen()}>
-          <AppBar position="sticky" color="default" elevation={0} class="border-b border-base">
+          <AppBar position="sticky" color="default" elevation={0} sx={{ borderBottom: 0 }}>
             <Toolbar ref={(element) => { sessionToolbarEl = element }} variant="dense" class="panel-header session-toolbar flex items-center gap-2 py-0">
               {renderHeaderLeftSlot()}
 
@@ -1049,6 +1050,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <div class="ms-auto flex items-center gap-3">
                   <div class="connection-status-meta flex items-center gap-3">
                     <div class="session-header-actions-slot">
+                      <Show when={!showingInfoView()}><TranscriptFilters /></Show>
                       <div class="panel-header-actions session-header-expanded-actions">
                         <IconButton
                           color="inherit"

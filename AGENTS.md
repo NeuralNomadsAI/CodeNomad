@@ -8,7 +8,11 @@
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
 - Use the shared `.window-*` primitives from `src/styles/components/window.css` for dialog, popover, and floating-window headers, toolbars, bodies, footers, titles, and actions.
 - Keep agent, model, and thinking controls in the composer footer via `PromptContextControls`; adapt that footer with the named `prompt-composer` container rather than viewport-only breakpoints.
+- Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
+- Explicit round exceptions: the Yolo switch, overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
+- The message-content popup and Chat settings share `components/transcript-visibility.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`.
+- Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 
 ## Coding Principles

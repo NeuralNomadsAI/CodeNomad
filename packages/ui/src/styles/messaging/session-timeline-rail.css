@@ -1,0 +1,43 @@
+/* The timeline mount spans the transcript, attachments, and composer together. */
+.session-view {
+  position: relative;
+  isolation: isolate;
+}
+
+.session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
+  padding-inline-end: 40px;
+}
+
+.session-timeline-slot {
+  pointer-events: none;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 40px;
+  display: flex;
+}
+
+.session-timeline-slot .message-timeline-sidebar {
+  pointer-events: auto;
+}
+
+.session-timeline-slot > div {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+}
+
+@media (pointer: coarse) {
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
+    padding-inline-end: var(--touch-target-size);
+  }
+  .session-timeline-slot { width: var(--touch-target-size); }
+}
+
+.session-center-column[data-session-header-density="4"] .session-view {
+  padding-inline-end: 0;
+}
+
+.session-center-column[data-session-header-density="4"] .session-timeline-slot {
+  display: none;
+}

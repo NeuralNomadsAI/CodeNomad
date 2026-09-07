@@ -10,10 +10,10 @@ import {
 } from "../../stores/preferences"
 import {
   buildToolExpansionPresetDefaults,
-  getConfigurableToolEntries,
   OTHER_TOOL_NAME,
   THINKING_EXPANSION_PRESETS,
-} from "../tool-call/tool-registry"
+} from "../tool-call/tool-presentation"
+import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows, type TranscriptVisibilityRow as VisibilityRow } from "../transcript-visibility"
 
 const toolExpansionPresetOptions: ToolCallExpansionPreset[] = ["minimal", "balanced", "detailed", "everything"]
 
@@ -60,13 +60,6 @@ const transcriptDetailPresets = {
 
 type SelectOption = { value: VisibilityPreference; label: string }
 
-type VisibilityRow =
-  | { kind: "thinking"; key: "thinking"; label: string }
-  | { kind: "tool"; key: string; label: string }
-  | { kind: "diagnostics"; key: "diagnostics"; label: string }
-  | { kind: "inputs"; key: "inputs"; label: string }
-  | { kind: "usage"; key: "usage"; label: string }
-
 export const ChatSettingsSection: Component = () => {
   const { t } = useI18n()
   const { preferences, updatePreferences } = useConfig()
@@ -77,41 +70,8 @@ export const ChatSettingsSection: Component = () => {
     { value: "expanded", label: t("commands.common.expanded") },
   ])
 
-  const visibilityRows = createMemo<VisibilityRow[]>(() => [
-    { kind: "thinking", key: "thinking", label: t("settings.behavior.expansionDefaults.thinking") },
-    ...getConfigurableToolEntries().map((entry) => ({
-      kind: "tool" as const,
-      key: entry.tool,
-      label: entry.labelKey ? t(entry.labelKey) : entry.label,
-    })),
-    { kind: "diagnostics", key: "diagnostics", label: t("settings.behavior.diagnosticsDefault.title") },
-    { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
-    { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
-  ])
-
-  const currentToolMode = (tool: string): VisibilityPreference => {
-    const pref = preferences().toolCallExpansionDefaults
-    const entry = getConfigurableToolEntries().find((item) => item.tool === tool)
-    if (pref.tools[tool]) return pref.tools[tool]
-    if (pref.preset !== "custom" && entry) return entry.expansionPresets[pref.preset]
-    return pref.tools[OTHER_TOOL_NAME] ?? "expanded"
-  }
-
-  const currentThinkingExpansion = () => {
-    const current = preferences()
-    const pref = current.toolCallExpansionDefaults
-    if (pref.thinking) return pref.thinking
-    if (pref.preset !== "custom") return THINKING_EXPANSION_PRESETS[pref.preset]
-    return current.thinkingBlocksExpansion ?? "expanded"
-  }
-
-  const currentThinkingMode = (): VisibilityPreference =>
-    preferences().showThinkingBlocks ? currentThinkingExpansion() : "hidden"
-
-  const currentUsageMode = (): VisibilityPreference => {
-    const current = preferences()
-    return current.showUsageMetrics ? current.usageMetricsExpansion : "hidden"
-  }
+  const visibilityRows = createMemo(() => transcriptVisibilityRows(t))
+  const currentThinkingMode = () => transcriptVisibility(preferences(), { kind: "thinking", key: "thinking", label: "" })
 
   const currentPreset = createMemo(() => {
     const current = preferences()
@@ -128,12 +88,6 @@ export const ChatSettingsSection: Component = () => {
       : "custom"
   })
 
-  const materializeToolModes = () => {
-    const tools: Record<string, VisibilityPreference> = {}
-    for (const entry of getConfigurableToolEntries()) tools[entry.tool] = currentToolMode(entry.tool)
-    return tools
-  }
-
   const applyExpansionPreset = (preset: ToolCallExpansionPreset) => {
     const tools = buildToolExpansionPresetDefaults(preset)
     const thinking = THINKING_EXPANSION_PRESETS[preset]
@@ -146,45 +100,10 @@ export const ChatSettingsSection: Component = () => {
   }
 
   const setVisibilityRowMode = (row: VisibilityRow, mode: VisibilityPreference) => {
-    const current = preferences()
-    if (row.kind === "diagnostics") {
-      updatePreferences({ diagnosticsExpansion: mode })
-      return
-    }
-    if (row.kind === "inputs") {
-      updatePreferences({ toolInputsVisibility: mode })
-      return
-    }
-    if (row.kind === "usage") {
-      updatePreferences({
-        showUsageMetrics: mode !== "hidden",
-        usageMetricsExpansion: mode === "hidden" ? current.usageMetricsExpansion : mode,
-      })
-      return
-    }
-
-    const tools = materializeToolModes()
-    const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : currentThinkingExpansion()
-    if (row.kind === "tool") tools[row.key] = mode
-    updatePreferences({
-      showThinkingBlocks: row.kind === "thinking" ? mode !== "hidden" : current.showThinkingBlocks,
-      toolCallExpansionDefaults: { preset: "custom", thinking, tools },
-      thinkingBlocksExpansion:
-        row.kind === "thinking" && mode !== "hidden" ? mode : current.thinkingBlocksExpansion,
-      toolOutputExpansion:
-        row.kind === "tool" && row.key === OTHER_TOOL_NAME && mode !== "hidden"
-          ? mode
-          : current.toolOutputExpansion,
-    })
+    updatePreferences(transcriptVisibilityPatch(preferences(), row, mode))
   }
 
-  const rowMode = (row: VisibilityRow): VisibilityPreference => {
-    if (row.kind === "thinking") return currentThinkingMode()
-    if (row.kind === "tool") return currentToolMode(row.key)
-    if (row.kind === "diagnostics") return preferences().diagnosticsExpansion
-    if (row.kind === "inputs") return preferences().toolInputsVisibility
-    return currentUsageMode()
-  }
+  const rowMode = (row: VisibilityRow) => transcriptVisibility(preferences(), row)
 
   const selectedVisibilityOption = (mode: VisibilityPreference) =>
     visibilityOptions().find((option) => option.value === mode)

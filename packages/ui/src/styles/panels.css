@@ -3,4 +3,6 @@
 @import "./panels/modal.css";
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
+@import "./components/session-row-actions.css";
+@import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";

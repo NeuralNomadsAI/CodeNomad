@@ -11,6 +11,7 @@ import { useI18n } from "../lib/i18n"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { observeActionOverflow } from "./measured-action-overflow"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
@@ -546,7 +547,7 @@ export default function MessageItem(props: MessageItemProps) {
       data-assistant-text-block={isAssistantTextBlock() ? "true" : undefined}
     >
       <header class="message-item-header pb-0">
-        <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
+        <div class="message-item-header-row message-item-header-row--top" ref={(el) => { topRowEl = el; observeActionOverflow(el) }}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
               <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>

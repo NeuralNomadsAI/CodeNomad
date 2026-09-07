@@ -1,5 +1,6 @@
-import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
@@ -39,7 +40,14 @@ const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 const log = getLogger("session")
 
+function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }) {
+  return <Show when={props.mount} fallback={props.children}>
+    {(mount) => <Portal mount={mount()}>{props.children}</Portal>}
+  </Show>
+}
+
 export interface MessageSectionProps {
+  timelineMount?: HTMLElement
   instanceId: string
   sessionId: string
   loading?: boolean
@@ -1089,7 +1097,7 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <div
-        class={`message-layout${showTimeline() ? " message-layout--with-timeline" : ""}`}
+        class={`message-layout${showTimeline() && !props.timelineMount ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
@@ -1151,7 +1159,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   aria-label={t("messageSection.scroll.toFirstAriaLabel")}
                   title={t("messageSection.scroll.toFirstAriaLabel")}
                 >
-                  <ChevronUp class="message-scroll-icon w-4 h-4" aria-hidden="true" />
+                  <ArrowUp class="message-scroll-icon w-4 h-4" aria-hidden="true" />
                 </button>
               </Show>
               <Show when={state.showScrollBottomButton()}>
@@ -1162,7 +1170,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                   title={t("messageSection.scroll.toLatestAriaLabel")}
                 >
-                  <ChevronDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
+                  <ArrowDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
                 </button>
               </Show>
             </div>
@@ -1394,6 +1402,7 @@ export default function MessageSection(props: MessageSectionProps) {
         />
 
         <Show when={showTimeline()}>
+          <TimelinePlacement mount={props.timelineMount}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
               segments={timelineSegments()}
@@ -1407,6 +1416,7 @@ export default function MessageSection(props: MessageSectionProps) {
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />
           </div>
+          </TimelinePlacement>
         </Show>
       </div>
     </div>

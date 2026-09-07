@@ -116,6 +116,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+  const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
   const pendingIdleSeenTimers = new Set<string>()
   const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
   let submitBottomPinIntentSequence = 0
@@ -611,6 +612,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           when={preview()?.mode === "preview"}
           fallback={
             <MessageSection
+              timelineMount={timelineMount()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               loading={messagesLoading()}
@@ -691,6 +693,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
           registerPromptInputApi={registerPromptInputApi}
         />
+        <div class="session-timeline-slot" ref={setTimelineMount} />
       </div>
     </Show>
   )

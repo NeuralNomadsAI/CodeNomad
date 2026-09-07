@@ -225,7 +225,7 @@
   @apply inline-flex items-center justify-center;
   width: 1.75rem;
   height: 1.75rem;
-  border-radius: 0;
+  border-radius: 50%;
   border: 1px solid var(--border-base);
   background-color: transparent;
   color: var(--text-primary);

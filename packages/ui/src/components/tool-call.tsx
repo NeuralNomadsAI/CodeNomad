@@ -41,6 +41,7 @@ import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { observeActionOverflow } from "./measured-action-overflow"
 import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
@@ -929,7 +930,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
+        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"

@@ -6,6 +6,18 @@
 
 .tab-bar-instance {
   background-color: var(--surface-secondary);
+  position: relative;
+  border-bottom: 0;
+}
+
+.tab-bar-instance::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background-color: var(--tab-border);
+  pointer-events: none;
 }
 
 .tab-bar-session {
@@ -25,6 +37,8 @@
 }
 
 .tab-bar-instance .tab-scroll {
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
@@ -34,8 +48,49 @@
 }
 
 .tab-bar-instance .tab-container {
-  padding-top: calc(var(--space-xs) + var(--scrollbar-size));
-  padding-bottom: 0;
+  padding-block: 0;
+  /* Preserve the previous strip's outer height, including its baseline. */
+  height: calc(var(--chrome-height) + var(--space-xs) + var(--scrollbar-size) + 1px);
+}
+
+.tab-bar-instance .tab-scroll,
+.right-panel-tab-bar .tab-scroll {
+  height: calc(100% + 1px);
+  /* scaleY(-1) places this gutter and the horizontal scrollbar above the tabs. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  align-self: flex-start;
+  scrollbar-width: auto;
+  /* Override the global forced native scrollbar colors so WebKit honors the
+     token-sized scrollbar and its shared thumb/track styles. */
+  scrollbar-color: auto !important;
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-strip, .tab-strip-tabs, .tab-draggable, .right-panel-tab-draggable) {
+  height: 100%;
+  align-items: stretch;
+}
+
+/* Fixed content height reserves the scrollbar lane even when overflow is absent.
+   scrollbar-gutter only reserves inline gutters, not this horizontal lane. */
+.tab-bar-instance .tab-strip,
+.right-panel-tab-bar .tab-strip {
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) .tab-scroll::-webkit-scrollbar {
+  height: var(--scrollbar-size);
+}
+
+.tab-bar-instance .tab-draggable > div {
+  height: 100%;
+  display: flex;
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-base, .tab-pill, .right-panel-tab) {
+  height: 100%;
+  padding-block: 0;
 }
 
 .tab-scroll .tab-strip {
@@ -109,9 +164,8 @@
   @apply inline-flex items-center gap-2 px-3 py-2 max-w-[200px] transition-colors text-sm font-normal;
   font-family: var(--font-family-sans);
   outline: none;
-  border: 0;
-  border-inline-end: 1px solid var(--tab-border);
-  border-bottom: 1px solid var(--tab-border);
+  border: 1px solid var(--tab-border);
+  margin-inline-end: -1px;
   border-radius: 0;
 }
 
@@ -125,7 +179,7 @@
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
   border-top: 1px solid var(--tab-border);
-  border-bottom: 0;
+  border-bottom-color: transparent;
 }
 
 .tab-bar-instance .tab-active,
@@ -154,7 +208,7 @@
 .tab-inactive {
   background-color: var(--tab-inactive-bg);
   border-inline-end-color: var(--tab-border);
-  border-bottom-color: transparent;
+  border-bottom-color: var(--tab-border);
   color: var(--tab-inactive-text);
 }
 
@@ -265,9 +319,8 @@
   @apply inline-flex items-center gap-1 px-3 py-2 max-w-[220px] text-sm;
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
-  border: 0;
-  border-inline-end: 1px solid var(--tab-border);
-  border-bottom: 1px solid transparent;
+  border: 1px solid var(--tab-border);
+  margin-inline-end: -1px;
   border-radius: 0;
   outline: none;
 }
@@ -282,7 +335,7 @@
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
   border-top: 1px solid var(--tab-border);
-  border-bottom: 0;
+  border-bottom-color: transparent;
 }
 
 .tab-pill-button {
@@ -302,8 +355,8 @@
   @apply inline-flex items-center gap-2 px-3 py-1.5 max-w-[150px] transition-colors text-sm;
   font-family: var(--font-family-sans);
   outline: none;
-  border: 0;
-  border-inline-end: 1px solid var(--border-divider);
+  border: 1px solid var(--tab-border);
+  margin-inline-end: -1px;
 }
 
 .session-tab-base:focus-visible {
