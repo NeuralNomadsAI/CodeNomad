@@ -22,7 +22,7 @@ import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
-import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, revertSession } from "../../stores/session-actions"
+import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion } from "../../stores/session-actions"
 
 const log = getLogger("actions")
 
@@ -459,7 +459,7 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await revertSession(instance.id, sessionId, messageID)
+          await instance.client.session.revert.stage({ sessionID: sessionId, messageID })
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)

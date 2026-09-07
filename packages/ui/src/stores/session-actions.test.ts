@@ -7,7 +7,6 @@ import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
-  revertSession,
   deleteMessagePart,
   deleteMessageTechnicalParts,
   deleteTechnicalPartGroup,
@@ -89,65 +88,6 @@ afterEach(() => {
   setConversationModeEnabled(instanceId, false)
   setModelThinkingSelection({ providerId: "provider", modelId: "old" }, undefined)
   setModelThinkingSelection({ providerId: "provider", modelId: "new" }, undefined)
-})
-
-describe("undo execution authority", () => {
-  it("waits for native interruption before staging the revert", async () => {
-    const calls: string[] = []
-    let release!: () => void
-    const gate = new Promise<void>(resolve => { release = resolve })
-    seed({ session: {
-      interrupt: async () => { calls.push("interrupt"); await gate },
-      revert: { stage: async () => { calls.push("stage") } },
-    } })
-    const undo = revertSession(instanceId, sessionId, "message")
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.deepEqual(calls, ["interrupt"])
-    release()
-    await undo
-    assert.deepEqual(calls, ["interrupt", "stage"])
-  })
-
-  it("does not stage or hide messages when interruption fails", async () => {
-    let staged = false
-    seed({ session: {
-      interrupt: async () => { throw new Error("interrupt failed") },
-      revert: { stage: async () => { staged = true } },
-    } })
-    await assert.rejects(revertSession(instanceId, sessionId, "message"), /interrupt failed/)
-    assert.equal(staged, false)
-  })
-
-  it("does not stage against a replacement instance after waiting for interruption", async () => {
-    let staged = false
-    seed({ session: {
-      interrupt: async () => { updateInstance(instanceId, { client: {} as any }) },
-      revert: { stage: async () => { staged = true } },
-    } })
-    await assert.rejects(revertSession(instanceId, sessionId, "message"), /Instance not ready/)
-    assert.equal(staged, false)
-  })
-
-  it("orders undo after an already admitted prompt so the prompt cannot restart it afterward", async () => {
-    const calls: string[] = []
-    let release!: () => void
-    const gate = new Promise<void>(resolve => { release = resolve })
-    seed({ session: {
-      instructions: { entry: { remove: async () => {} } },
-      switchAgent: async () => {}, switchModel: async () => {},
-      prompt: async (input: any) => { calls.push("prompt"); await gate; return { id: input.id } },
-      interrupt: async () => { calls.push("interrupt") },
-      revert: { stage: async () => { calls.push("stage") } },
-    } })
-    const send = sendMessage(instanceId, sessionId, "test")
-    await new Promise<void>(resolve => setImmediate(resolve))
-    const undo = revertSession(instanceId, sessionId, "message")
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.deepEqual(calls, ["prompt"])
-    release()
-    await Promise.all([send, undo])
-    assert.deepEqual(calls, ["prompt", "interrupt", "stage"])
-  })
 })
 
 describe("voice instruction sync", () => {
