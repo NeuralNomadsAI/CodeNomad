@@ -22,7 +22,11 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
   follow: () => { api?.scrollToBottom({ immediate: true }); api?.setAutoScroll(true) },
   middle: () => api?.scrollToKey("row-100", { block: "start" }),
   nearTail: () => api?.scrollToKey("row-180", { block: "start" }),
-  roll: () => setItems(current => [...current.slice(1), "streaming-tail"]),
+  roll: () => {
+    setItems(current => [...current.slice(1), "streaming-tail"])
+    // Metadata/inbox reprojection may publish the same IDs before settlement.
+    queueMicrotask(() => setItems(current => current.slice()))
+  },
   growTail: setTailHeight,
   resizeHead: setHeadHeight,
   reorder: () => {

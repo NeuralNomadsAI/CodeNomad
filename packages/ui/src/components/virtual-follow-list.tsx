@@ -158,6 +158,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
   let virtualItemKeys = virtualItems().map((item, index) => props.getKey(item, index))
+  let plannedItems = virtualItems().slice()
+  let plannedKeys = virtualItemKeys.slice()
   let windowShiftGeneration = 0
   let virtualContentResizeObserver: ResizeObserver | null = null
   let observedVirtualContent: HTMLElement | null = null
@@ -920,6 +922,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return { items, keys: items.map((item, index) => props.getKey(item, index)) }
     },
     ({ items: nextItems, keys: nextItemKeys }) => {
+      // Equivalent source reprojections are not new window plans. In particular,
+      // they must not invalidate a rolling adjustment waiting for its first RAF.
+      if (nextItems.length === plannedItems.length && nextItems.every((item, index) =>
+        item === plannedItems[index] && nextItemKeys[index] === plannedKeys[index])) return
+      plannedItems = nextItems.slice()
+      plannedKeys = nextItemKeys.slice()
       const shiftGeneration = ++windowShiftGeneration
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
@@ -1003,6 +1011,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setShiftVirtualItems(false)
     setVirtualItems(items.slice())
     virtualItemKeys = items.map((item, index) => props.getKey(item, index))
+    plannedItems = items.slice()
+    plannedKeys = virtualItemKeys.slice()
     itemElements.clear()
   }))
 
