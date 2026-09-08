@@ -209,6 +209,25 @@ test("an evicted empty assistant cannot donate its cached block to a rehydrated 
   })
 })
 
+test("rolling the 200-row window keeps an escaped anchor while a later reply grows", async () => {
+  await open("navigation", async page => {
+    await page.evaluate(() => (window as any).fixture.nearTail())
+    await page.waitForFunction(() => document.querySelector('[data-virtual-follow-key="row-180"]')?.getBoundingClientRect().top === 0)
+    await page.evaluate(`new Promise(resolve => setTimeout(resolve, 250))`)
+    await page.evaluate(() => (window as any).fixture.roll())
+    const frames = await page.evaluate(`new Promise(resolve => {
+      let i = 0; const frames = [];
+      const frame = () => {
+        window.fixture.growTail(48 + i * 12);
+        const row = document.querySelector('[data-virtual-follow-key="row-180"]');
+        frames.push(row?.getBoundingClientRect().top);
+        if (++i === 40) resolve(frames); else requestAnimationFrame(frame);
+      }; requestAnimationFrame(frame);
+    })`) as number[]
+    assert.ok(frames.every(top => top !== undefined && Math.abs(top) < 2), `Later reply growth moved the reader: ${frames.join(",")}`)
+  })
+})
+
 test("short appends and disjoint 200-row pages never expose estimated blank space", async () => {
   await open("tall-append", async page => {
     await page.waitForFunction(() => (document.querySelector(".message-stream")?.scrollHeight ?? 0) >= 3320)
@@ -421,7 +440,7 @@ test("undo of the first prompt stays empty after cold reload and native reprojec
   })
 })
 
-test("middle-button scrolling owns nested tool output even after the intent timeout", async () => {
+for (const operation of ["append", "roll"]) test(`middle-button scrolling owns nested tool output across ${operation} and the intent timeout`, async () => {
   await open("nested-scroll", async page => {
     await page.evaluate(() => (window as any).fixture.bottom())
     const output = page.locator("[data-nested-output]")
@@ -438,9 +457,12 @@ test("middle-button scrolling owns nested tool output even after the intent time
     assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false,
       JSON.stringify(await page.evaluate(() => ({ hit: (window as any).middleHit, box: document.querySelector("[data-nested-output]")?.getBoundingClientRect().toJSON() }))))
     await page.evaluate(() => { (window as any).gestureOutput = document.querySelector("[data-nested-output]") })
-    await page.evaluate(() => (window as any).fixture.append())
+    await page.evaluate(operation => (window as any).fixture[operation](), operation)
+    await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
     assert.equal(await page.evaluate(() => (window as any).gestureOutput === document.querySelector("[data-nested-output]")), true,
       "A streamed append must not replace the active native drag target")
+    assert.equal(await output.locator("..").getAttribute("data-item-index"), operation === "roll" ? "28" : "29",
+      "Keeping the keyed child must not freeze its shifted index")
     try {
       // Native middle autoscroll can begin well after pointerdown, then continue
       // outside the child. Simulate its scroll ticks, not a wheel event: this

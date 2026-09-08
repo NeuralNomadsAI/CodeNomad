@@ -10,8 +10,8 @@ let api: VirtualFollowListApi | undefined
 const [items, setItems] = createSignal(Array.from({ length: 30 }, (_, i) => `row-${i}`))
 render(() => <VirtualFollowList items={items} getKey={item => item}
   registerApi={value => { api = value }}
-  renderItem={item => item === "row-29"
-    ? <div style={{ height: "250px" }}>
+  renderItem={(item, index) => item === "row-29"
+    ? <div data-item-index={index()} style={{ height: "250px" }}>
         <div data-nested-output ref={nested.registerContainer} onScroll={nested.handleScroll}
           style={{ height: "200px", width: "600px", overflow: "auto" }}>
           <pre style={{ margin: "0", height: "1600px" }}><code>Artificial tool output</code></pre>
@@ -24,5 +24,6 @@ render(() => <VirtualFollowList items={items} getKey={item => item}
   bottom: () => api?.scrollToBottom({ immediate: true }),
   renderOutput: nested.restoreAfterRender,
   append: () => setItems(items => [...items, `row-${items.length}`]),
+  roll: () => setItems(items => [...items.slice(1), "streaming-tail"]),
   snapshot: () => ({ outerFollow: api?.getAutoScroll(), innerFollow: nested.autoScroll(), outerTop: api?.getScrollElement()?.scrollTop, savedTop: savedTop() }),
 }

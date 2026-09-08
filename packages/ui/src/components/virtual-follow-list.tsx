@@ -68,7 +68,7 @@ export interface VirtualFollowListState {
 export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
-  renderItem: (item: T, index: number) => JSX.Element
+  renderItem: (item: T, index: Accessor<number>) => JSX.Element
   getAnchorId?: (key: string) => string
   overscanPx?: number
   streamingActive?: Accessor<boolean>
@@ -936,6 +936,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           setShiftVirtualItems(true)
           setVirtualItems(nextItems.slice())
           virtualItemKeys = nextItemKeys
+          // Shift mode adjusts for every subsequent measurement, including a
+          // streaming tail below an escaped reader, until scrolling becomes idle.
+          // Release that end-relative mode through the public relative operation:
+          // zero follows the current offset, never a captured pre-gesture target.
+          // Keep the keyed DOM intact for a held nested middle-button drag.
+          requestAnimationFrame(() => {
+            if (shiftGeneration === windowShiftGeneration) virtuaHandle()?.scrollBy(0)
+          })
         })
       } else {
         setShiftVirtualItems(false)
@@ -1091,7 +1099,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                       if (itemElements.get(key) === element) itemElements.delete(key)
                     })
                   }}
-                >{props.renderItem(item, index())}</div>
+                >{props.renderItem(item, index)}</div>
               }}
             </Virtualizer>
           )}
