@@ -222,6 +222,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   function markUserScrollIntent(direction: "up" | "down" | null) {
     props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
+    const element = scrollElement()
+    if (element) {
+      // A wheel can arrive before the native scroll notification updates
+      // Virtua's cached offset. Publish the live offset before replacing its
+      // pending imperative operation with a zero-relative one, so the previous
+      // measurement subscription cannot reassert a pre-gesture target.
+      element.dispatchEvent(new Event("scroll"))
+      virtuaHandle()?.scrollBy(0)
+    }
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
     if (hasActiveExplicitBottomPin() || explicitBottomPinIntent()) cancelExplicitBottomPinFromUser()
     if (direction === "up") {
