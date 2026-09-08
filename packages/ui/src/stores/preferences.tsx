@@ -22,6 +22,7 @@ import {
   createColorSchemePresetId,
   MAX_COLOR_SCHEME_PRESETS,
   normalizeColorSchemeOverrides,
+  isDefaultCustomColors,
   normalizeColorSchemePresets,
   type UserColorSchemePresets,
 } from "../lib/color-scheme-presets"
@@ -590,7 +591,12 @@ const themePreference = createMemo<ThemePreference>(() => uiStateBucket().theme 
 const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
 const colorSchemePreference = createMemo(() => {
   const scheme = normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, themePreference())
-  if (scheme.id === "custom") return scheme
+  if (scheme.id === "custom") {
+    return scheme.appearance === "dark" && !uiStateBucket().activeColorSchemePresetId && isDefaultCustomColors(scheme.colors)
+      ? normalizeColorScheme("basalt")
+      : scheme
+  }
+  if (scheme.id === "system") return scheme
   const colors = colorSchemeOverrides()[scheme.id]
   return colors ? normalizeColorScheme({ ...scheme, colors }) : scheme
 })
@@ -599,7 +605,7 @@ const customColorSchemePreference = createMemo(() => {
   const config = uiConfigBucket()
   const custom = state.customColorScheme
     ?? config.customColorScheme
-    ?? (colorSchemePreference().id === "custom" ? state.colorScheme ?? config.colorScheme : undefined)
+    ?? (colorSchemePreference().id === "custom" && !state.activeColorSchemePresetId ? state.colorScheme ?? config.colorScheme : undefined)
   const value = typeof custom === "object" && custom !== null && !Array.isArray(custom)
     ? { ...(custom as Record<string, unknown>), id: "custom" }
     : { id: "custom" }
@@ -781,6 +787,7 @@ function selectColorSchemePreset(id: string): Promise<void> {
 
 function saveColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<void> {
   if (!isColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme override"))
+  if (id === "system") return setColorSchemePreference(normalizeColorScheme({ id: "custom", appearance, colors }))
   const scheme = normalizeColorScheme({ id, appearance, colors })
   const legacyTheme: ThemePreference = scheme.appearance === "system" ? "system" : scheme.appearance
   const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {

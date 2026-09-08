@@ -140,7 +140,8 @@
 }
 
 .session-sidebar-title {
-  color: var(--text-primary);
+  color: var(--text-muted);
+  opacity: 0.6;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
@@ -511,40 +512,6 @@
 }
 
 
-.session-item-base.session-item-nested {
-  padding-inline-start: var(--session-indent);
-  position: relative;
-}
-
-.session-item-base.session-item-nested::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  inset-inline-start: var(--session-connector-offset);
-  width: 1px;
-  background-color: var(--text-secondary);
-  opacity: 0.65;
-  pointer-events: none;
-}
-
-.session-item-base.session-item-nested.session-item-child-last::before {
-  bottom: 50%;
-}
-
-.session-item-base.session-item-nested::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  inset-inline-start: var(--session-connector-offset);
-  width: 0.875rem;
-  height: 1px;
-  background-color: var(--text-secondary);
-  opacity: 0.65;
-  transform: translateY(-0.5px);
-  pointer-events: none;
-}
-
 .session-item-base.session-item-border-user {
   border-inline-start: 1px solid transparent;
 }
@@ -567,16 +534,6 @@
 
 .session-item-base:is(:hover, :focus-within, .session-item-active) .session-item-kind-icon {
   opacity: 1;
-}
-
-.session-item-expander {
-  @apply flex-shrink-0 p-0.5 transition-colors;
-  border-radius: 0;
-}
-
-.session-item-expander--spacer {
-  width: calc(0.875rem + 0.25rem);
-  height: calc(0.875rem + 0.25rem);
 }
 
 .session-item-select:focus-visible,

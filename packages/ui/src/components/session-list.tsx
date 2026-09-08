@@ -615,11 +615,10 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const nestedStyle = () => {
       if (!isChild()) return undefined
-      const visualDepth = Math.min(rowProps.depth, 6)
-      const indent = 1.375 + visualDepth * 0.875
+      const indent = (depth: number) => `round(nearest, calc(var(--session-tree-first-indent) + ${depth - 1} * var(--session-tree-step)), 1px)`
       return {
-        "--session-indent": `${indent}rem`,
-        "--session-connector-offset": `${indent - 0.875}rem`,
+        "--session-indent": indent(rowProps.depth),
+        "--session-parent-indent": rowProps.depth === 1 ? "var(--session-root-indent)" : indent(rowProps.depth - 1),
       }
     }
 

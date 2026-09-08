@@ -1050,7 +1050,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 <div class="ms-auto flex items-center gap-3">
                   <div class="connection-status-meta flex items-center gap-3">
                     <div class="session-header-actions-slot">
-                      <Show when={!showingInfoView()}><TranscriptFilters /></Show>
                       <div class="panel-header-actions session-header-expanded-actions">
                         <IconButton
                           color="inherit"
@@ -1097,6 +1096,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                       </span>
+                    </Show>
+                    <Show when={!showingInfoView()}>
+                      <div class="panel-header-actions"><TranscriptFilters /></div>
                     </Show>
                   </div>
                 </div>

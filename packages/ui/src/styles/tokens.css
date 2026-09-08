@@ -43,9 +43,9 @@
   --status-warning: #ff9800;
   
   /* Message-specific tokens */
-  --message-user-bg: var(--surface-secondary);
+  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 94%, var(--message-user-border));
   --message-user-border: #2196f3;
-  --message-assistant-bg: var(--surface-base);
+  --message-assistant-bg: var(--surface-secondary);
   --message-assistant-border: #d97706;
 
   --message-tool-bg: #f8f8f8;
@@ -61,9 +61,9 @@
   --message-part-header-title-line-height: var(--line-height-normal);
   --message-part-hover: color-mix(in oklab, var(--text-primary) 4%, transparent);
 
-  /* Session list selection tints */
-  --session-user-active-bg: color-mix(in oklab, var(--surface-secondary) 85%, var(--message-user-border));
-  --session-assistant-active-bg: color-mix(in oklab, var(--surface-secondary) 85%, var(--message-assistant-border));
+  /* Selection is neutral; the icon alone identifies the participant. */
+  --session-user-active-bg: var(--list-item-highlight-bg-solid);
+  --session-assistant-active-bg: var(--list-item-highlight-bg-solid);
 
   /* Semantic component colors */
   --session-status-working-fg: #b45309;
@@ -243,9 +243,9 @@
     --status-warning: #ff9800;
     
     /* Message-specific tokens */
-    --message-user-bg: var(--surface-secondary);
+    --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
     --message-user-border: #42a5f5;
-    --message-assistant-bg: var(--surface-base);
+    --message-assistant-bg: var(--surface-secondary);
     --message-assistant-border: #d97706;
 
     --message-tool-bg: #212529;
@@ -343,9 +343,9 @@
   --status-warning: #ff9800;
   
   /* Message-specific tokens */
-  --message-user-bg: var(--surface-secondary);
+  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
   --message-user-border: #2196f3;
-  --message-assistant-bg: var(--surface-base);
+  --message-assistant-bg: var(--surface-secondary);
   --message-assistant-border: #d97706;
 
   --message-tool-bg: #212529;

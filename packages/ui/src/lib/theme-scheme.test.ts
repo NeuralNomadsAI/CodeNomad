@@ -115,7 +115,7 @@ describe("built-in color schemes", () => {
     assert.notDeepEqual(SYSTEM_LIGHT_COLOR_SCHEME_COLORS, LIGHT_COLOR_SCHEME_COLORS)
   })
 
-  it("preserves the exact CodeNomad Classic dark palette", () => {
+  it("preserves Classic surfaces while separating participant roles", () => {
     assert.deepEqual(BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === "classic")?.colors, {
       surfaceBase: "#1A1A1A",
       surfaceSecondary: "#2A2A2A",
@@ -127,9 +127,9 @@ describe("built-in color schemes", () => {
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
-      userAccent: "#2196F3",
-      agentAccent: "#D97706",
-      compactionAccent: "#C084FC",
+      userAccent: "#79BCE0",
+      agentAccent: "#D89DBD",
+      compactionAccent: "#AC9DDD",
       yoloAccent: "#0080FF",
     })
   })
@@ -153,12 +153,15 @@ describe("applyColorScheme", () => {
     assert.equal(root.attributes.get("data-theme"), "light")
   })
 
-  it("uses the existing dark CSS tokens for CodeNomad Classic", () => {
+  it("renders Classic defaults and explicit edits through the same token path", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     applyColorScheme(normalizeColorScheme("classic"), { target: root.value })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), "#1A1A1A")
     assert.equal(root.attributes.get("data-theme"), "dark")
+    const colors = { ...normalizeColorScheme("classic").colors!, accentPrimary: "#FF00FF" }
+    applyColorScheme(normalizeColorScheme({ id: "classic", colors }), { target: root.value })
+    assert.equal(root.properties.get("--accent-primary"), "#FF00FF")
   })
 
   it("resolves system appearance without imposing a data theme", () => {
@@ -179,11 +182,11 @@ describe("applyColorScheme", () => {
     assert.ok(contrastRatio(text ?? "", "#8FA8FF") >= 4.5)
   })
 
-  it("derives legacy blue UI states from the selected accent", () => {
+  it("keeps neutral selection independent of accent-colored actions", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     assert.equal(root.properties.get("--attachment-chip-text"), "#67C9BA")
-    assert.equal(root.properties.get("--dropdown-highlight-bg"), "rgba(103, 201, 186, 0.2)")
+    assert.equal(root.properties.get("--dropdown-highlight-bg"), "rgba(168, 184, 191, 0.2)")
   })
 
   it("applies customizable semantic roles", () => {
@@ -204,9 +207,10 @@ describe("applyColorScheme", () => {
       assert.equal(root.properties.get("--tab-active-bg"), scheme.colors?.surfaceBase, id)
       assert.equal(root.properties.get("--tab-inactive-bg"), scheme.colors?.surfaceSecondary, id)
       assert.equal(root.properties.get("--message-user-border"), scheme.colors?.userAccent, id)
-      assert.equal(root.properties.get("--message-user-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.notEqual(root.properties.get("--message-user-bg"), scheme.colors?.surfaceSecondary, id)
       assert.equal(root.properties.get("--message-assistant-border"), scheme.colors?.agentAccent, id)
-      assert.equal(root.properties.get("--message-assistant-bg"), scheme.colors?.surfaceBase, id)
+      assert.equal(root.properties.get("--message-assistant-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.notEqual(root.properties.get("--message-assistant-bg"), root.properties.get("--surface-base"), id)
     }
   })
 })

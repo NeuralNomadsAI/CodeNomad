@@ -26,6 +26,7 @@
 
 .theme-scheme-picker {
   flex: 1;
+  min-width: 0;
 }
 
 .theme-scheme-picker:focus {
@@ -147,6 +148,7 @@
 
 .theme-scheme-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-xs);
   margin-inline-start: auto;
 }
@@ -165,5 +167,13 @@
   .theme-scheme-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+}
+
+@media (pointer: coarse) {
+  .theme-scheme-appearance-option,
+  .theme-scheme-picker,
+  .theme-scheme-actions .selector-button {
+    min-height: var(--touch-target-size);
   }
 }

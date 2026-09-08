@@ -1,4 +1,5 @@
 import { Popover } from "@kobalte/core/popover"
+import IconButton from "@suid/material/IconButton"
 import { Dynamic } from "solid-js/web"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { Brain, BookOpen, CheckSquare, ChevronDown, ChevronRight, Eye, EyeOff, FileEdit, Globe, ListFilter, Pencil, Search, Terminal, Wrench, X } from "lucide-solid"
@@ -19,7 +20,7 @@ export default function TranscriptFilters() {
   const [saving, setSaving] = createSignal(false)
   return (
     <Popover placement="bottom-end" gutter={6}>
-      <Popover.Trigger class="window-icon-button transcript-filters-trigger" aria-label={t("transcriptFilters.title")} title={t("transcriptFilters.title")}>
+      <Popover.Trigger as={IconButton} size="small" color="inherit" class="transcript-filters-trigger icon-toggle" aria-label={t("transcriptFilters.title")} title={t("transcriptFilters.title")}>
         <ListFilter class="w-4 h-4" aria-hidden="true" />
       </Popover.Trigger>
       <Popover.Portal>
@@ -28,7 +29,7 @@ export default function TranscriptFilters() {
             <Popover.Title class="window-title">{t("transcriptFilters.title")}</Popover.Title>
             <Popover.CloseButton class="window-icon-button" aria-label={t("toastHistory.close")}><X class="w-4 h-4" aria-hidden="true" /></Popover.CloseButton>
           </header>
-          <Popover.Description class="transcript-filters-description">{t("transcriptFilters.description")}</Popover.Description>
+          <Popover.Description class="sr-only">{t("transcriptFilters.description")}</Popover.Description>
           <div class="window-body transcript-filters-list">
             <For each={rows()}>{(row) => {
               const mode = () => transcriptVisibility(preferences(), row)

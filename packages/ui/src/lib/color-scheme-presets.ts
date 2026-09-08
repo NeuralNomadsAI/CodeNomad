@@ -1,5 +1,6 @@
 import {
   COLOR_SCHEME_IDS,
+  DEFAULT_CUSTOM_COLORS,
   isColorSchemeColors,
   type ColorSchemeColors,
   type ColorSchemeId,
@@ -14,6 +15,12 @@ export interface UserColorSchemePreset {
 export type UserColorSchemePresets = Record<string, UserColorSchemePreset>
 export type BuiltInColorSchemeOverrides = Partial<Record<Exclude<ColorSchemeId, "custom">, ColorSchemeColors>>
 export const MAX_COLOR_SCHEME_PRESETS = 50
+
+// Do not add an empty customization slot to the catalog. Legacy data is kept
+// intact in storage; a default-only selection is presented as Basalt.
+export function isDefaultCustomColors(colors: Readonly<ColorSchemeColors> | undefined): boolean {
+  return Boolean(colors && Object.entries(DEFAULT_CUSTOM_COLORS).every(([key, value]) => colors[key as keyof ColorSchemeColors] === value))
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

@@ -1,0 +1,74 @@
+/* Each child branch uses its parent's expander axis, not the child's indent.
+   These local dimensions also account for selection controls and touch targets. */
+.session-item-base {
+  --session-root-indent: 6px;
+  --session-expander-size: calc(0.875rem + 0.25rem);
+  --session-tree-axis-inset: calc(var(--session-expander-size) / 2 - 0.5px);
+  /* Halve the horizontal arms without shrinking the expander hit area. */
+  --session-tree-step: calc((max(0.875rem, calc(var(--session-expander-size) / 2 + var(--space-xs))) + var(--session-tree-axis-inset)) / 2);
+  --session-tree-first-indent: calc((1.375rem + var(--session-root-indent)) / 2 + var(--session-tree-step));
+  --session-selection-offset: 0px;
+  padding-inline-start: var(--session-root-indent);
+}
+
+.session-item-base:has(> input[type="checkbox"]) {
+  --session-selection-offset: calc(0.875rem + var(--space-xs));
+}
+
+.session-item-base > input[type="checkbox"] {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.session-item-expander {
+  @apply transition-colors;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--session-expander-size);
+  height: var(--session-expander-size);
+  padding: 0.125rem;
+  border-radius: 0;
+}
+
+.session-item-base.session-item-nested {
+  --session-connector-offset: calc(var(--session-parent-indent) + var(--session-selection-offset) + var(--session-tree-axis-inset));
+  padding-inline-start: var(--session-indent);
+  position: relative;
+}
+
+.session-item-base.session-item-nested::before,
+.session-item-base.session-item-nested::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: var(--session-connector-offset);
+  background-color: var(--text-secondary);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.session-item-base.session-item-nested::before {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.session-item-base.session-item-nested.session-item-child-last::before {
+  bottom: 50%;
+}
+
+.session-item-base.session-item-nested::after {
+  top: 50%;
+  width: calc(var(--session-indent) + var(--session-selection-offset) - var(--session-connector-offset));
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+@media (pointer: coarse) {
+  .session-item-base {
+    --session-expander-size: var(--touch-target-size);
+  }
+}
