@@ -9,8 +9,10 @@ const [tailHeight, setTailHeight] = createSignal(48)
 const [headHeight, setHeadHeight] = createSignal(48)
 let api: VirtualFollowListApi | undefined
 let snapshot: VirtualFollowScrollSnapshot | undefined
+let reachedTop = 0
 render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={item => item}
   initialAutoScroll={() => false} initialScrollToBottom={() => false}
+  onUserReachedTop={() => { reachedTop++ }}
   registerApi={value => {
     api = value
     if (snapshot) api.restoreScrollSnapshot(snapshot)
@@ -34,6 +36,7 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
     queueMicrotask(() => setItems(current => [current[1], current[0], ...current.slice(2)]))
   },
   snapshot: () => api?.captureScrollSnapshot(),
+  reachedTop: () => reachedTop,
   append: () => setItems(current => [...current, `row-${current.length}`]),
   switchAway: () => { snapshot = api?.captureScrollSnapshot(); setVisible(false) },
   return: () => setVisible(true),

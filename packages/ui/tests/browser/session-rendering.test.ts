@@ -209,6 +209,19 @@ test("an evicted empty assistant cannot donate its cached block to a rehydrated 
   })
 })
 
+test("a following reader can wheel to the older-page boundary", async () => {
+  await open("navigation", async page => {
+    await page.evaluate(() => (window as any).fixture.follow())
+    await page.waitForFunction(() => document.querySelector('.message-stream')!.scrollTop > 8000)
+    await page.evaluate(`new Promise(resolve => setTimeout(resolve, 250))`)
+    const box = (await page.locator(".message-stream").boundingBox())!
+    await page.mouse.move(box.x + 10, box.y + 350)
+    await page.mouse.wheel(0, -100000)
+    await page.waitForFunction(() => document.querySelector('.message-stream')!.scrollTop === 0)
+    await page.waitForFunction(() => (window as any).fixture.reachedTop() > 0, undefined, { timeout: 2000 })
+  })
+})
+
 for (const resizeHead of [false, true]) test(`rolling the 200-row window keeps an escaped anchor while a later reply grows (head resize=${resizeHead})`, async () => {
   await open("navigation", async page => {
     await page.evaluate(() => (window as any).fixture.nearTail())
