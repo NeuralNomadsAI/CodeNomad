@@ -6,7 +6,8 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getCommands } from "./commands.ts"
-import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, projectOpenCodeMessages } from "./opencode-data.ts"
@@ -23,6 +24,7 @@ import {
   prependSessionListId,
   sessions,
   setSessions,
+  setActiveSession,
 } from "./session-state.ts"
 
 function deferred<T>() {
@@ -71,6 +73,160 @@ function setup(instanceId: string) {
 }
 
 describe("session request authority", () => {
+  it("publishes a locally forked root in the catalog without waiting for SSE or a refresh", async () => {
+    const instanceId = "fork-catalog-local"
+    const { client, cleanup } = setup(instanceId)
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([["source", session(instanceId, "source")]])))
+    prependSessionListId(instanceId, "source")
+    const previousMap = sessions().get(instanceId)
+    client.session.fork = async () => apiSession("fork")
+    try {
+      await forkSession(instanceId, "source")
+      assert.deepEqual(getSessionListIds(instanceId), ["fork", "source"])
+      assert.notEqual(sessions().get(instanceId), previousMap)
+      assert.equal(previousMap?.has("fork"), false)
+      client.session.get = async () => apiSession("fork")
+      handleNativeSessionEvent(instanceId, { id: "echo", type: "session.forked", created: 1, data: { sessionID: "fork" } } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(getSessionListIds(instanceId), ["fork", "source"])
+    } finally { cleanup() }
+  })
+
+  it("publishes an externally forked root after its authoritative lookup", async () => {
+    const instanceId = "fork-catalog-event"
+    const { client, cleanup } = setup(instanceId)
+    client.session.get = async () => apiSession("fork")
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "fork-event", type: "session.forked", created: 1,
+        data: { sessionID: "fork" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(getSessionListIds(instanceId), ["fork"])
+    } finally { cleanup() }
+  })
+
+  it("does not resurrect a staged undo on transcript reload", async () => {
+    const instanceId = "revert-transcript-reload", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    client.message = { list: async () => ({ data: [apiMessage("msg_3"), { id: "msg_2", type: "user", text: "undo me", time: { created: 1 } }, apiMessage("msg_1")] }) }
+    try {
+      await loadMessages(instanceId, sessionId)
+      handleSessionUpdate(instanceId, {
+        id: "undo", type: "session.revert.staged", created: 2,
+        data: { sessionID: sessionId, revert: { messageID: "msg_2" } },
+      } as any)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1"])
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1"])
+      assert.equal(store.getMessage("msg_2"), undefined)
+      assert.equal(store.getMessage("msg_3"), undefined)
+      const live = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "late-output", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "msg_4", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, live)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1"])
+      assert.equal(store.getSessionRevert(sessionId)?.messageID, "msg_2")
+      setActiveSession(instanceId, sessionId)
+      handleSessionUpdate(instanceId, {
+        id: "redo", type: "session.revert.cleared", created: 3, data: { sessionID: sessionId },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(store.getSessionRevert(sessionId), null)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1", "msg_2", "msg_3"])
+    } finally { cleanup() }
+  })
+
+  it("keeps a staged boundary authoritative when it is outside the fetched page", async () => {
+    const instanceId = "revert-outside-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const reverted = { ...session(instanceId, sessionId), revert: { messageID: "msg_2" } }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, reverted]])))
+    client.message = { list: async () => ({ data: [apiMessage("msg_4"), apiMessage("msg_3")] }) }
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      assert.equal(store.getSessionRevert(sessionId)?.messageID, "msg_2")
+      client.message.list = async () => ({ data: [apiMessage("msg_1")] })
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1"])
+    } finally { cleanup() }
+  })
+
+  it("clears a stale revert from an authoritative session catalog before reloading messages", async () => {
+    const instanceId = "revert-cleared-catalog", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      ...session(instanceId, sessionId), revert: { messageID: "msg_2" },
+    }]])))
+    client.message = { list: async () => ({ data: [apiMessage("msg_3"), apiMessage("msg_1")] }) }
+    client.session.list = async () => ({ data: [apiSession(sessionId)] })
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1"])
+      await fetchSessions(instanceId)
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.revert, undefined)
+      assert.equal(store.getSessionRevert(sessionId), null)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_1", "msg_3"])
+    } finally { cleanup() }
+  })
+
+  it("opens the latest visible page when an undone tail fills the newest native page", async () => {
+    const instanceId = "revert-hidden-newest-page", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      ...session(instanceId, sessionId), revert: { messageID: "msg_0200" },
+    }]])))
+    const requests: Array<string | undefined> = []
+    client.message = { list: async ({ cursor }: { cursor?: string }) => {
+      requests.push(cursor)
+      return cursor
+        ? { data: [apiMessage("msg_0200"), apiMessage("msg_0199")], cursor: { next: "older" } }
+        : { data: Array.from({ length: 200 }, (_, index) => apiMessage(`msg_${String(400 - index).padStart(4, "0")}`)), cursor: { next: "visible" } }
+    } }
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.deepEqual(requests, [undefined, "visible"])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_0199"])
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+      assert.equal(hasMoreMessages(instanceId, sessionId), true)
+    } finally { cleanup() }
+  })
+
+  it("retains undo authority when seeking past the entire staged transcript reaches an empty page", async () => {
+    const instanceId = "revert-entire-transcript", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const revert = { messageID: "msg_1" }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, { ...session(instanceId, sessionId), revert }]])))
+    client.message = { list: async ({ cursor }: { cursor?: string }) => cursor
+      ? { data: [], cursor: {} }
+      : { data: [apiMessage("msg_2"), apiMessage("msg_1")], cursor: { next: "terminal" } } }
+    try {
+      await loadMessages(instanceId, sessionId)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      const live = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "late-output", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "msg_3", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, live)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      assert.deepEqual(store.getSessionRevert(sessionId), revert)
+      // A later authoritative empty transcript with no marker must also clear
+      // the stored boundary, so subsequent new messages are not suppressed.
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      client.message.list = async () => ({ data: [], cursor: {} })
+      await loadMessages(instanceId, sessionId, { force: true })
+      assert.equal(store.getSessionRevert(sessionId), null)
+    } finally { destroyOpenCodeData(instanceId); cleanup() }
+  })
+
   it("does not restore deleted search results or their parent chain", async () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)
