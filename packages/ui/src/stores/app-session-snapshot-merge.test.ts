@@ -6,11 +6,14 @@ import type { RestorableSessionState, RestorableWorkspaceTabState } from "./clie
 import {
   createRestorableSessionPreservation,
   createRestoredTabCommitGuard,
+  getPreservedWorkspaceReopenTarget,
+  hasRestoredTabBinding,
   markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened,
   markPreservedWorkspaceUnavailable,
   mergeRestorableSessionState,
   recordRestoredTab,
+  settleRestoredTab,
 } from "./app-session-snapshot-merge.ts"
 
 const empty = (): RestorableSessionState => ({ tabs: [], activeTabIndex: -1 })
@@ -37,6 +40,43 @@ function workspaceAt(state: RestorableSessionState, index = 0): RestorableWorksp
 }
 
 describe("app session snapshot merge", () => {
+  for (const settled of [false, true]) it(`does not rebind a ${settled ? "settled" : "pending"} restored window to a later global folder occurrence`, () => {
+    const saved = session([workspace("C:\\work", 3, {
+      activeSessionId: "selected", activeParentSessionId: "selected", drafts: { selected: "window draft" },
+    })])
+    const preservation = createRestorableSessionPreservation(saved)
+    // The old global occurrence3 is restored to a new runtime instance that now
+    // occupies occurrence0. Other windows then create more copies of the folder.
+    recordRestoredTab(preservation, 0, "instance:attached", settled ? new Set() : undefined)
+    const foreign = { runtimeTabId: "instance:other-window", folder: "c:/work", occurrence: 3 }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, foreign), null)
+    markPreservedWorkspaceReopened(preservation, foreign)
+    assert.equal(preservation.results[0]?.runtimeTabId, "instance:attached")
+    if (!settled) {
+      assert.equal(hasRestoredTabBinding(preservation, 0, "instance:attached"), true)
+      assert.equal(workspaceAt(mergeRestorableSessionState(session([workspace("C:\\work", 0)]), preservation, {
+        currentTabIds: ["instance:attached"],
+      })).drafts.selected, "window draft")
+      assert.equal(settleRestoredTab(preservation, 0, "instance:attached", "instance:attached", new Set()), true)
+    }
+    markPreservedWorkspaceRemoved(preservation, foreign)
+    markPreservedWorkspaceUnavailable(preservation, foreign)
+    assert.equal(preservation.results[0]?.status, "restored", "Foreign lifecycle events cannot retire this window's binding")
+  })
+
+  it("allows a replacement runtime only after the bound workspace is actually unavailable", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work", 3, { drafts: { s: "draft" } })]))
+    recordRestoredTab(preservation, 0, "instance:old", new Set())
+    markPreservedWorkspaceUnavailable(preservation, { runtimeTabId: "instance:old", folder: "/work", occurrence: 0 })
+    assert.equal(hasRestoredTabBinding(preservation, 0, "instance:old"), false, "Unavailable runtime cannot settle a late hydration")
+    const replacement = { runtimeTabId: "instance:replacement", folder: "/work", occurrence: 3 }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, replacement)?.snapshot.drafts.s, "draft")
+    markPreservedWorkspaceReopened(preservation, replacement)
+    assert.equal(hasRestoredTabBinding(preservation, 0, "instance:replacement"), true)
+    const later = { ...replacement, runtimeTabId: "instance:unrelated" }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, later), null, "The replacement's new binding is exclusive again")
+  })
+
   it("retains unsent state after a non-authoritative workspace stop", () => {
     const saved = session([workspace("/work", 0, { drafts: { missing: "saved", current: "old" } })])
     const preservation = createRestorableSessionPreservation(saved)
