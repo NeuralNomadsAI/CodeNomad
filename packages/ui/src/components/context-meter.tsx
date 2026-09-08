@@ -105,7 +105,7 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
   const tooltipText = () => `Context Used: ${percentLabel()}`
 
   const valuePill = () => (
-    <div class={containerClass}>
+    <div class={`${containerClass} opacity-50`}>
       <span class={LABEL_CLASS}>{props.usedLabel}</span>
       <span class="font-semibold text-primary tabular-nums">{props.formatTokens(used())}</span>
       <span class="text-muted">/</span>

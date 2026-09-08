@@ -93,8 +93,13 @@
 }
 
 .right-panel-tab-inactive:hover {
-  background-color: var(--tab-inactive-hover-bg);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
   color: var(--tab-inactive-text);
+}
+
+.right-panel-tab-active:hover,
+.file-list-item-active:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 /* Files tab layout */
@@ -257,8 +262,8 @@
   @apply border-b-0;
 }
 
-.file-list-item:hover {
-  background-color: var(--surface-hover);
+.file-list-item:not(.file-list-item-active):not(.git-change-list-item-bulk-selected):hover {
+  background-color: var(--surface-hover-overlay);
 }
 
 .file-list-item-active {
@@ -274,6 +279,7 @@
 
 .git-change-list-item-bulk-selected:hover {
   background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 .git-change-list-item-bulk-selected.file-list-item-active {
@@ -760,7 +766,8 @@
 }
 
 .status-process-card:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--surface-base);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
   box-shadow: none;
 }
 
@@ -785,7 +792,7 @@
 }
 
 .right-panel-accordion-header-row:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--surface-hover-overlay);
   color: var(--text-primary);
 }
 

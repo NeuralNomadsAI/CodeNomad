@@ -1,4 +1,6 @@
 import { DARK_IDENTITY_COLORS, LIGHT_IDENTITY_COLORS, SOFT_COLOR_SCHEME_IDS, SOFT_COLOR_SCHEMES, SOFT_SYSTEM_DARK, SOFT_SYSTEM_LIGHT } from "./soft-color-schemes.ts"
+import { classicLightSurfaces } from "./classic-light-surfaces"
+import { classicDarkSurfaces } from "./classic-dark-surfaces"
 
 export const COLOR_SCHEME_IDS = ["system", "light", ...SOFT_COLOR_SCHEME_IDS, "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
@@ -90,16 +92,16 @@ export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
 export const LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
   surfaceBase: "#FFFFFF",
   surfaceSecondary: "#F5F5F5",
-  surfaceMuted: "#ECEFF3",
-  borderBase: "#D1D5DB",
+  surfaceMuted: "#F8FAFC",
+  borderBase: "#E0E0E0",
   textPrimary: "#111827",
-  textMuted: "#4B5563",
-  accentPrimary: "#005FCC",
+  textMuted: "#475569",
+  accentPrimary: "#0066FF",
   statusSuccess: "#237A43",
   statusWarning: "#9A6700",
   statusError: "#C62828",
   ...LIGHT_IDENTITY_COLORS,
-  yoloAccent: "#005FCC",
+  yoloAccent: "#0066FF",
 }
 
 export const SYSTEM_LIGHT_COLOR_SCHEME_COLORS = SOFT_SYSTEM_LIGHT
@@ -115,13 +117,12 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   },
   {
     id: "light",
-    labelKey: "settings.appearance.colorScheme.option.light",
+    labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
     descriptionKey: "settings.appearance.colorScheme.description.light",
     appearance: "light",
     editable: false,
     colors: LIGHT_COLOR_SCHEME_COLORS,
   },
-  ...SOFT_COLOR_SCHEMES,
   {
     id: "classic",
     labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
@@ -139,10 +140,13 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
-      ...DARK_IDENTITY_COLORS,
+      userAccent: "#2196F3",
+      agentAccent: "#D97706",
+      compactionAccent: "#C084FC",
       yoloAccent: "#0080FF",
     },
   },
+  ...SOFT_COLOR_SCHEMES,
   {
     id: "basalt",
     labelKey: "settings.appearance.colorScheme.option.basalt",
@@ -457,8 +461,8 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--surface-primary": colors.surfaceBase,
     "--surface-secondary": colors.surfaceSecondary,
     "--surface-muted": colors.surfaceMuted,
-    "--surface-code": colors.surfaceMuted,
-    "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, dark ? 0.12 : 0.08),
+    "--surface-code": colors.surfaceBase,
+    "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, 0.04),
     "--border-base": colors.borderBase,
     "--border-secondary": mix(colors.borderBase, colors.surfaceSecondary, 0.72),
     "--border-muted": mix(colors.borderBase, colors.surfaceSecondary, 0.5),
@@ -503,18 +507,18 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--status-error-fg": colors.statusError,
     "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.05 : 0.06),
     "--message-user-border": colors.userAccent,
-    "--message-assistant-bg": colors.surfaceSecondary,
+    "--message-assistant-bg": colors.surfaceMuted,
     "--message-assistant-border": colors.agentAccent,
     "--message-tool-bg": colors.surfaceMuted,
     "--message-tool-border": mix(colors.textMuted, colors.borderBase, 0.28),
     "--session-status-compacting-fg": colors.compactionAccent,
     "--session-status-compacting-bg": alpha(colors.compactionAccent, dark ? 0.28 : 0.18),
-    "--session-yolo-accent": colors.yoloAccent,
+    "--session-yolo-accent": colors.accentPrimary,
     "--tab-active-bg": colors.surfaceBase,
-    "--tab-active-hover-bg": mix(colors.textPrimary, colors.surfaceBase, dark ? 0.06 : 0.04),
+    "--tab-active-hover-bg": mix(colors.textPrimary, colors.surfaceBase, 0.04),
     "--tab-active-text": colors.textPrimary,
     "--tab-inactive-bg": colors.surfaceSecondary,
-    "--tab-inactive-hover-bg": colors.surfaceMuted,
+    "--tab-inactive-hover-bg": mix(colors.textPrimary, colors.surfaceSecondary, 0.04),
     "--tab-inactive-text": colors.textMuted,
     "--tab-rail-bg": colors.surfaceSecondary,
     "--tab-border": colors.borderBase,
@@ -544,6 +548,12 @@ export function applyColorScheme(
   if (colors) {
     for (const [property, value] of Object.entries(derivedProperties(colors, dark))) {
       target.style.setProperty(property, value)
+    }
+    if (scheme.id === "light") {
+      for (const [property, value] of Object.entries(classicLightSurfaces(colors))) target.style.setProperty(property, value)
+    }
+    if (scheme.id === "classic") {
+      for (const [property, value] of Object.entries(classicDarkSurfaces(colors))) target.style.setProperty(property, value)
     }
   }
 

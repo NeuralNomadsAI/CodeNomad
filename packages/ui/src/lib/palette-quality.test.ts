@@ -32,6 +32,14 @@ const distance = (a: string, b: string) => Math.hypot(...lab(a).map((v, i) => v 
 const readyMade = BUILT_IN_COLOR_SCHEMES.filter((s) => s.colors && s.id !== "custom")
 
 describe("palette quality", () => {
+  it("restores Classic's dev surface assignments including inset tool output", () => {
+    const p = render("classic")
+    assert.equal(p.get("--surface-base"), "#1A1A1A")
+    assert.equal(p.get("--surface-secondary"), "#2A2A2A")
+    assert.equal(p.get("--message-assistant-bg"), "#212529")
+    assert.equal(p.get("--message-tool-bg"), "#212529")
+    assert.equal(p.get("--surface-code"), "#1A1A1A")
+  })
   it("has unique stable IDs, six soft light and four soft dark choices", () => {
     assert.equal(new Set(COLOR_SCHEME_IDS).size, COLOR_SCHEME_IDS.length)
     assert.equal(new Set(BUILT_IN_COLOR_SCHEMES.map((s) => s.id)).size, COLOR_SCHEME_IDS.length)
@@ -53,10 +61,19 @@ describe("palette quality", () => {
       }
       assert.notEqual(p.get("--message-assistant-bg"), p.get("--surface-base"))
       assert.notEqual(p.get("--message-user-bg"), p.get("--message-assistant-bg"))
-      assert.notEqual(p.get("--message-tool-bg"), p.get("--message-assistant-bg"))
+      assert.equal(p.get("--message-tool-bg"), p.get("--message-assistant-bg"))
+      assert.notEqual(p.get("--surface-code"), p.get("--message-tool-bg"))
+      assert.notEqual(p.get("--surface-secondary"), p.get("--message-tool-bg"))
     })
-    it(`${scheme.id}: participants are not another function's color`, () => {
+    it(`${scheme.id}: keeps distinct participant roles or explicit V1 Classic identity`, () => {
       const c = scheme.colors!
+      // Classic is the explicitly requested historical exception, not a new
+      // soft family. Its blue user/accent proximity is part of V1's identity.
+      if (scheme.id === "classic") {
+        assert.equal(c.userAccent, "#2196F3")
+        assert.equal(c.agentAccent, "#D97706")
+        return
+      }
       const otherRoles: (keyof ColorSchemeColors)[] = ["accentPrimary", "statusSuccess", "statusWarning", "statusError", "compactionAccent", "yoloAccent"]
       assert.ok(distance(c.userAccent, c.agentAccent) >= 12)
       for (const role of ["userAccent", "agentAccent"] as const) {

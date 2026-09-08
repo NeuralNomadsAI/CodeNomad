@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import { Bot, User, Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -551,7 +551,16 @@ export default function MessageItem(props: MessageItemProps) {
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
               <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>
-                {speakerLabel()}
+                <Show when={isUser()} fallback={
+                  <span class="inline-flex items-center gap-1">
+                    <Bot class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    {speakerLabel()}
+                  </span>
+                }>
+                  <span class="inline-flex items-center" role="img" aria-label={speakerLabel()} title={speakerLabel()}>
+                    <User class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </span>
+                </Show>
               </span>
               <time class="message-timestamp message-timestamp-inline" dateTime={timestampIso()}>{timestamp()}</time>
             </div>

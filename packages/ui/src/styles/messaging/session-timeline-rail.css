@@ -1,4 +1,4 @@
-/* The timeline mount spans the transcript, attachments, and composer together. */
+/* The timeline ends at the composer footer, not below its controls. */
 .session-view {
   position: relative;
   isolation: isolate;
@@ -17,6 +17,18 @@
   display: flex;
 }
 
+.session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+  content: "";
+  position: absolute;
+  inset-block: -1px 0;
+  inset-inline-start: 100%;
+  width: 40px;
+  border-block-start: 1px solid var(--border-divider);
+  border-inline-start: 1px solid var(--border-divider);
+  background-color: var(--surface-chrome);
+  pointer-events: none;
+}
+
 .session-timeline-slot .message-timeline-sidebar {
   pointer-events: auto;
 }
@@ -32,6 +44,9 @@
     padding-inline-end: var(--touch-target-size);
   }
   .session-timeline-slot { width: var(--touch-target-size); }
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+    width: var(--touch-target-size);
+  }
 }
 
 .session-center-column[data-session-header-density="4"] .session-view {
@@ -39,5 +54,9 @@
 }
 
 .session-center-column[data-session-header-density="4"] .session-timeline-slot {
+  display: none;
+}
+
+.session-center-column[data-session-header-density="4"] .session-view .prompt-input-footer::after {
   display: none;
 }

@@ -57,7 +57,7 @@ const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
 
   return (
     <div class={`session-context-panel px-4 py-2 ${props.class ?? ""}`}>
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary">
+      <div class="flex flex-wrap items-center gap-2 text-xs text-primary opacity-50">
         <div class={chipClass}>
           <span class={chipLabelClass}>{t("contextUsagePanel.labels.input")}</span>
           <span class="font-semibold text-primary">{formatTokenTotal(inputTokens())}</span>

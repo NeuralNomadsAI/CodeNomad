@@ -16,6 +16,8 @@
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 - Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`, with references in `dev-docs/PALETTE_SOURCES.md`. Keep selection independent of participant identity, and keep transcript/composer surfaces distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
+- Appearance mode and the saved light/dark selections are independent (`lib/appearance-preferences.ts`). Message/tool cards use the muted surface, inset output and the composer use the base canvas, and preferences use the same secondary surface as the main panels. Use `--surface-hover-overlay` for a subtle local rollover; preserve selected backgrounds beneath that overlay instead of replacing them with a generic panel color.
+- Right-panel base-canvas button rollover overrides live in `styles/panels/control-hover.css`; do not substitute the secondary surface merely to show hover.
 
 ## Coding Principles
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.

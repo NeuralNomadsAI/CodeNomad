@@ -1,5 +1,70 @@
 # Palette review — 2026-09-08
 
+## Subsequent user-approved refinements
+
+- Both historical appearances are labeled Classic and lead their respective
+  filtered lists. V1 references are `52f0e629^:packages/ui/src/styles/tokens.css`.
+  Light Classic restores its separate near-white tool and blue-gray code
+  surfaces; dark Classic restores its historical participant colors. Saved
+  custom colors remain intact.
+- YOLO now renders with the palette accent; its redundant editor field is
+  hidden, while legacy stored values remain preserved.
+- Shared header shading uses 75% secondary / 25% base, with chrome aliasing
+  that token. The top title/menu bar uses 25% secondary / 75% base.
+- The timeline stops above composer controls. A single horizontal separator
+  closes it; a chrome-colored blank area remains below it. Composer buttons
+  are flat, flush, separated, and no longer expose bottom container padding.
+- Usage chips and context text have 50% opacity. Message headers use the
+  timeline's role icons, replacing visible You and preceding the agent name.
+- Latest verification: 71 palette/appearance tests rerun successfully, UI
+  typecheck and production build passed. Earlier browser counts below predate
+  these refinements and are not a full regression run of this final state.
+
+## Final surface and appearance follow-up
+
+The historical audit and first implementation below are retained as a record.
+The user's subsequent review supersedes the initial surface mapping and picker
+grouping:
+
+- General starts with appearance settings. Auto / Dark / Light is independent
+  of the saved light and dark palettes. Fixed modes filter the flat palette
+  list; Auto offers both editable slots. Classic is labeled simply Classic.
+- Existing selections migrate without writes or recoloring custom data. The
+  inactive palette, named preset identity and colors survive mode changes and
+  reload. Deleting a preset preserves the selected slot's actual colors.
+- Restore Classic's dev mapping: canvas/composer and inset output `#1A1A1A`,
+  panels `#2A2A2A`, assistant/tool cards `#212529`. The initial implementation
+  incorrectly mapped assistant/tool cards to the panel surface and inset output
+  to the muted surface; merely changing palette hex values could not fix that.
+- All families now use those semantic roles consistently. Preferences content
+  and navigation use the same secondary surface as main panels instead of a
+  darker base canvas/chrome mixture. Palette controls reuse the shared control
+  surface.
+- Chat, session rows, right-panel rows/cards/tabs and preferences navigation
+  share a local 4% text-color hover overlay. Selected backgrounds remain below
+  that overlay; focus outlines and disabled semantics are not replaced by hover.
+  Base-canvas toolbar buttons keep their own canvas instead of jumping to the
+  secondary surface on interaction.
+
+Validation includes pure palette/migration tests, mocked queued storage writes,
+the real Solid appearance editor and ToolCall in independent browser fixtures,
+and native screenshots. The new browser suite checks 17 palettes across 12
+hover targets (204 combinations), mode filtering and persistence. The isolated
+native settings check covers 14 cases, including Auto, reload and LTR/RTL.
+The production UI was rebuilt and copied only to the already-running isolated
+Tauri build. No user draft, shared service or other desktop process was stopped.
+
+Final checks: 228 targeted UI tests, 26 browser tests, and the two appearance
+browser tests rerun after the selected-file hover fix all passed. UI typecheck,
+production build and diff check passed. Native Classic/preferences screenshots
+and idle/hover crops are in `%LOCALAPPDATA%/Temp/opencode/pr667-*-native.png`
+and `pr667-native-rollovers.png`; the 17 browser palette captures are in
+`pr667-surfaces/`. The isolated host remains open on Classic.
+
+The merge reconciliation and previously authorized palette/UI work were pushed
+as `f5d28ead` and `306da15b`; the later appearance/surface refinements are
+published together in the follow-up UI commit.
+
 ## Scope and evidence
 
 - Compare `feat/ui-harmonization` at `b11e85c0` with fetched `origin/dev` at `e5115fe8`.

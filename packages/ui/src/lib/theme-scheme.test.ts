@@ -127,9 +127,9 @@ describe("built-in color schemes", () => {
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
-      userAccent: "#79BCE0",
-      agentAccent: "#D89DBD",
-      compactionAccent: "#AC9DDD",
+      userAccent: "#2196F3",
+      agentAccent: "#D97706",
+      compactionAccent: "#C084FC",
       yoloAccent: "#0080FF",
     })
   })
@@ -196,11 +196,11 @@ describe("applyColorScheme", () => {
     assert.equal(root.properties.get("--message-user-border"), colors.userAccent)
     assert.equal(root.properties.get("--message-assistant-border"), colors.agentAccent)
     assert.equal(root.properties.get("--session-status-compacting-fg"), colors.compactionAccent)
-    assert.equal(root.properties.get("--session-yolo-accent"), colors.yoloAccent)
+    assert.equal(root.properties.get("--session-yolo-accent"), colors.accentPrimary)
   })
 
   it("derives tabs and message surfaces from each palette", () => {
-    for (const id of ["fjord", "lichen", "velvet", "ember", "porcelain", "dawn", "parchment"] as const) {
+    for (const id of ["light", "classic", "fjord", "lichen", "velvet", "ember", "porcelain", "dawn", "parchment"] as const) {
       const root = target()
       const scheme = normalizeColorScheme(id)
       applyColorScheme(scheme, { target: root.value })
@@ -209,7 +209,7 @@ describe("applyColorScheme", () => {
       assert.equal(root.properties.get("--message-user-border"), scheme.colors?.userAccent, id)
       assert.notEqual(root.properties.get("--message-user-bg"), scheme.colors?.surfaceSecondary, id)
       assert.equal(root.properties.get("--message-assistant-border"), scheme.colors?.agentAccent, id)
-      assert.equal(root.properties.get("--message-assistant-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.equal(root.properties.get("--message-assistant-bg"), id === "light" ? "#F8F8F8" : scheme.colors?.surfaceMuted, id)
       assert.notEqual(root.properties.get("--message-assistant-bg"), root.properties.get("--surface-base"), id)
     }
   })

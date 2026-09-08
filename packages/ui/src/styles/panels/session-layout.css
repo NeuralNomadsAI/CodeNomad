@@ -617,11 +617,15 @@
 }
 
 .session-item-inactive:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--surface-hover-overlay);
   color: var(--text-primary);
 }
 
 
+
+.session-item-active:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
 
 .session-item-active .session-item-close:hover {
   background-color: var(--surface-hover);

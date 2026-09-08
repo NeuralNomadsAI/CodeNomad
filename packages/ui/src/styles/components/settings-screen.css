@@ -51,7 +51,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  background: var(--surface-chrome);
+  background: var(--surface-secondary);
   border-inline-end: 1px solid var(--border-divider);
 }
 
@@ -71,7 +71,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-base);
+  background: var(--surface-secondary);
 }
 
 .settings-window-root > .modal-surface.settings-screen-shell {
@@ -167,7 +167,7 @@
 }
 
 .settings-nav-button:hover {
-  background: var(--surface-interactive-hover);
+  background-color: var(--surface-hover-overlay);
   color: var(--text-primary);
 }
 
@@ -175,6 +175,10 @@
   background: var(--selection-neutral-strong-bg);
   border-color: transparent;
   color: var(--text-primary);
+}
+
+.settings-nav-button[data-selected="true"]:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 .settings-nav-button-icon {
@@ -222,7 +226,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface-base);
+  background: var(--surface-secondary);
 }
 
 .settings-screen-content-header {

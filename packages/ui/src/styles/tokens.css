@@ -5,14 +5,15 @@
   --surface-primary: var(--surface-base);
   --surface-secondary: #f5f5f5;
   --surface-muted: #f8fafc;
-  --surface-shade-light: color-mix(in oklab, var(--surface-secondary) 74%, var(--surface-base));
-  --surface-shade-strong: color-mix(in oklab, var(--surface-secondary) 42%, var(--surface-base));
+  --surface-shade-light: color-mix(in oklab, var(--surface-secondary) 75%, var(--surface-base));
+  --surface-shade-strong: color-mix(in oklab, var(--surface-secondary) 25%, var(--surface-base));
   --surface-code: #f1f5f9;
   --surface-hover: #e0e0e0;
-  --surface-chrome: color-mix(in oklab, var(--surface-secondary) 58%, var(--surface-base));
+  --surface-chrome: var(--surface-shade-light);
   --surface-subtle: color-mix(in oklab, var(--surface-secondary) 36%, var(--surface-base));
   --surface-control: color-mix(in oklab, var(--surface-secondary) 72%, var(--surface-base));
-  --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 7%, var(--surface-chrome));
+  --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 4%, var(--surface-secondary));
+  --surface-hover-overlay: color-mix(in oklab, var(--text-primary) 4%, transparent);
   --selection-neutral-bg: color-mix(in oklab, var(--text-primary) 7%, transparent);
   --selection-neutral-strong-bg: color-mix(in oklab, var(--text-primary) 10%, transparent);
   --markdown-table-row-odd: transparent;
@@ -45,7 +46,7 @@
   /* Message-specific tokens */
   --message-user-bg: color-mix(in oklab, var(--surface-secondary) 94%, var(--message-user-border));
   --message-user-border: #2196f3;
-  --message-assistant-bg: var(--surface-secondary);
+  --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #d97706;
 
   --message-tool-bg: #f8f8f8;
@@ -59,7 +60,7 @@
   --message-part-header-title-font-size: var(--font-size-sm);
   --message-part-header-title-font-weight: var(--font-weight-regular);
   --message-part-header-title-line-height: var(--line-height-normal);
-  --message-part-hover: color-mix(in oklab, var(--text-primary) 4%, transparent);
+  --message-part-hover: var(--surface-hover-overlay);
 
   /* Selection is neutral; the icon alone identifies the participant. */
   --session-user-active-bg: var(--list-item-highlight-bg-solid);
@@ -245,7 +246,7 @@
     /* Message-specific tokens */
     --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
     --message-user-border: #42a5f5;
-    --message-assistant-bg: var(--surface-secondary);
+    --message-assistant-bg: var(--message-tool-bg);
     --message-assistant-border: #d97706;
 
     --message-tool-bg: #212529;
@@ -345,7 +346,7 @@
   /* Message-specific tokens */
   --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
   --message-user-border: #2196f3;
-  --message-assistant-bg: var(--surface-secondary);
+  --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #d97706;
 
   --message-tool-bg: #212529;

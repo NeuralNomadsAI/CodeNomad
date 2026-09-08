@@ -1,6 +1,11 @@
 # Soft palette sources and adaptation
 
 CodeNomad's soft collection uses its own localized names and semantic roles.
+Appearance mode and the two saved palettes are independent. The picker is flat
+and filters by fixed mode; Auto exposes both slots for editing. Classic retains
+the dev canvas/panel/tool relationship, and all families use the muted surface
+for message/tool cards with base-canvas inset output. Earlier review notes that
+mention grouped palettes or panel-colored assistant cards are superseded.
 These are adaptations, not exact editor-theme ports. No Zed syntax definitions,
 theme loader, extension code, or complete theme JSON is shipped.
 

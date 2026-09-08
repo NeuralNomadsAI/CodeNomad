@@ -27,6 +27,18 @@
 .theme-scheme-picker {
   flex: 1;
   min-width: 0;
+  background-color: var(--surface-control);
+}
+
+.theme-scheme-mode {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .theme-scheme-picker:focus {
@@ -168,6 +180,10 @@
     width: 100%;
     justify-content: flex-end;
   }
+}
+
+.theme-scheme-appearance-option:hover:not(:disabled) {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 @media (pointer: coarse) {

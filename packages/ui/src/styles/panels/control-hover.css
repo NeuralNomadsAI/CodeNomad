@@ -1,0 +1,17 @@
+/* These controls rest on the base canvas, not the generic panel surface.
+   Keep that canvas and add the same local overlay as message/session rows. */
+.files-toggle-button:hover,
+.files-header-icon-button:hover,
+.git-change-row-action:hover,
+.file-viewer-toolbar-icon-button:hover,
+.file-viewer-toolbar-button:hover,
+.git-change-commit-button:hover:not(:disabled),
+.git-change-commit-button-overlay:hover {
+  background-color: var(--surface-base);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+
+.git-change-section-header:hover {
+  background-color: var(--surface-secondary);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}

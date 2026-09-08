@@ -8,6 +8,7 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import PromptContextControls from "../prompt-input/PromptContextControls"
+import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
@@ -118,6 +119,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
   const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
+  createEffect(() => {
+    const rail = timelineMount()
+    if (rail) onCleanup(observeTimelineRailBoundary(rail))
+  })
   const pendingIdleSeenTimers = new Set<string>()
   const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
   let submitBottomPinIntentSequence = 0

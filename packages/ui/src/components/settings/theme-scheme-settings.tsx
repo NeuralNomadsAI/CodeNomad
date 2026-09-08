@@ -1,17 +1,14 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { useTheme } from "../../lib/theme"
+import type { AppearanceMode } from "../../lib/appearance-preferences"
 import { isDefaultCustomColors, nextColorSchemePresetName } from "../../lib/color-scheme-presets"
 import { showConfirmDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
-import { SOFT_COLOR_SCHEME_IDS } from "../../lib/soft-color-schemes"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
   LIGHT_COLOR_SCHEME_COLORS,
-  SYSTEM_DARK_COLOR_SCHEME_COLORS,
-  SYSTEM_LIGHT_COLOR_SCHEME_COLORS,
   isColorSchemeColors,
   normalizeColorScheme,
   type ColorSchemeColors,
@@ -32,7 +29,6 @@ const COLOR_FIELDS: ReadonlyArray<{ key: keyof ColorSchemeColors; labelKey: stri
   { key: "userAccent", labelKey: "settings.appearance.colorScheme.custom.field.userAccent" },
   { key: "agentAccent", labelKey: "settings.appearance.colorScheme.custom.field.agentAccent" },
   { key: "compactionAccent", labelKey: "settings.appearance.colorScheme.custom.field.compactionAccent" },
-  { key: "yoloAccent", labelKey: "settings.appearance.colorScheme.custom.field.yoloAccent" },
 ]
 
 interface PaletteOption {
@@ -48,12 +44,12 @@ interface PaletteOption {
 
 export const ThemeSchemeSettings: Component = () => {
   const { t } = useI18n()
-  const { colorScheme } = useTheme()
   const config = useConfig()
   const [draftColors, setDraftColors] = createSignal<ColorSchemeColors>({ ...DEFAULT_CUSTOM_COLORS })
   const [appearance, setAppearance] = createSignal<"light" | "dark">("dark")
   const [filter, setFilter] = createSignal<"light" | "dark">("dark")
-  const [visitedKeys, setVisitedKeys] = createSignal<Partial<Record<"light" | "dark", string>>>({})
+  const colorScheme = () => config.getAppearancePalette(filter())
+  const presetIdForFilter = () => config.getAppearancePresetId(filter())
   const [editingKey, setEditingKey] = createSignal("")
   const [sourceName, setSourceName] = createSignal(t("settings.appearance.colorScheme.option.custom"))
   const [draftName, setDraftName] = createSignal("")
@@ -62,23 +58,14 @@ export const ThemeSchemeSettings: Component = () => {
   const [saving, setSaving] = createSignal(false)
   const [saveFailed, setSaveFailed] = createSignal(false)
 
-  const systemMedia = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : undefined
-  const [systemDark, setSystemDark] = createSignal(systemMedia?.matches ?? false)
-  const handleSystemAppearance = (event: MediaQueryListEvent) => setSystemDark(event.matches)
-  systemMedia?.addEventListener("change", handleSystemAppearance)
-  onCleanup(() => systemMedia?.removeEventListener("change", handleSystemAppearance))
-  const systemColors = () => systemDark() ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS
-
   const options = createMemo<PaletteOption[]>(() => [
-    ...BUILT_IN_COLOR_SCHEMES.filter((scheme) => scheme.id !== "custom"
+    ...BUILT_IN_COLOR_SCHEMES.filter((scheme) => scheme.id !== "system" && (scheme.id !== "custom"
       || !isDefaultCustomColors(config.customColorSchemePreference().colors)
       || config.customColorSchemePreference().appearance === "light"
-      || (colorScheme().id === "custom" && !config.activeColorSchemePresetId())
-    ).map((scheme): PaletteOption => {
-      const activeCustom = scheme.id === "custom" && colorScheme().id === "custom" && !config.activeColorSchemePresetId()
-      const originalColors = scheme.id === "system"
-        ? systemColors()
-        : scheme.id === "light"
+      || (colorScheme().id === "custom" && !presetIdForFilter())
+    )).map((scheme): PaletteOption => {
+      const activeCustom = scheme.id === "custom" && colorScheme().id === "custom" && !presetIdForFilter()
+      const originalColors = scheme.id === "light"
           ? LIGHT_COLOR_SCHEME_COLORS
           : scheme.colors ?? DEFAULT_CUSTOM_COLORS
       const savedColors = scheme.id === "system" ? undefined : scheme.id === "custom"
@@ -89,9 +76,7 @@ export const ThemeSchemeSettings: Component = () => {
         id: scheme.id,
         name: t(scheme.id === "custom" ? "settings.appearance.palette.saved" : scheme.labelKey),
         description: t(scheme.descriptionKey),
-        appearance: scheme.id === "system"
-          ? (systemDark() ? "dark" : "light")
-          : scheme.id === "custom"
+        appearance: scheme.id === "custom"
             ? ((activeCustom ? colorScheme() : config.customColorSchemePreference()).appearance === "light" ? "light" : "dark")
           : scheme.appearance === "light" ? "light" : "dark",
         colors: savedColors ?? originalColors,
@@ -109,11 +94,10 @@ export const ThemeSchemeSettings: Component = () => {
     })),
   ])
 
-  const activeKey = createMemo(() => config.activeColorSchemePresetId()
-    ? `preset:${config.activeColorSchemePresetId()}`
+  const activeKey = createMemo(() => presetIdForFilter()
+    ? `preset:${presetIdForFilter()}`
     : `builtin:${colorScheme().id}`)
   const filteredOptions = createMemo(() => options().filter((option) => option.id !== "system" && option.appearance === filter()))
-  const isSoftOption = (option: PaletteOption) => SOFT_COLOR_SCHEME_IDS.some((id) => id === option.id)
   const editingOption = createMemo(() => options().find((option) => option.key === editingKey()))
   const validDraft = createMemo(() => isColorSchemeColors(draftColors()))
   const savedBuiltinOverride = createMemo(() => {
@@ -130,9 +114,12 @@ export const ThemeSchemeSettings: Component = () => {
     setEditingKey(option.key)
     setSourceName(option.name)
     setAppearance(option.appearance)
-    setFilter(option.appearance)
-    setVisitedKeys((current) => ({ ...current, [option.appearance]: option.key }))
     setDraftColors({ ...option.colors })
+  })
+
+  createEffect(() => {
+    const mode = config.themePreference()
+    if (mode !== "system" && !dirty() && !saving()) setFilter(mode)
   })
 
   const confirmDiscardIfDirty = async () => !dirty() || showConfirmDialog(
@@ -154,7 +141,6 @@ export const ThemeSchemeSettings: Component = () => {
     setCreating(false)
     setSaveFailed(false)
     setEditingKey(option.key)
-    setVisitedKeys((current) => ({ ...current, [option.appearance]: option.key }))
     setSourceName(option.name)
     setAppearance(option.appearance)
     setDraftColors({ ...option.colors })
@@ -181,10 +167,6 @@ export const ThemeSchemeSettings: Component = () => {
     setSourceName(option.name)
     setAppearance(option.appearance)
     setDraftColors({ ...colors, [key]: value.toUpperCase() })
-    if (option.id === "system" && !creating()) {
-      setDraftName(nextColorSchemePresetName(sourceName(), Object.values(config.colorSchemePresets()).map((preset) => preset.name)))
-      setCreating(true)
-    }
     setDirty(true)
     setSaveFailed(false)
     return true
@@ -196,7 +178,7 @@ export const ThemeSchemeSettings: Component = () => {
     setSaving(true)
     setSaveFailed(false)
     try {
-      if (option.id === "custom") await config.setColorSchemePreference(normalizeColorScheme("custom"))
+      if (option.id === "custom") await config.setColorSchemePreference(normalizeColorScheme({ id: "custom", appearance: option.appearance, colors: option.originalColors }))
       else await config.resetColorSchemeOverride(option.id)
       setDraftColors({ ...option.originalColors })
       setAppearance(option.appearance)
@@ -241,7 +223,6 @@ export const ThemeSchemeSettings: Component = () => {
       }
       const id = await config.saveColorSchemePreset(name, appearance(), draftColors(), presetId)
       setEditingKey(`preset:${id}`)
-      setVisitedKeys((current) => ({ ...current, [appearance()]: `preset:${id}` }))
       setSourceName(name)
       setCreating(false)
       setDirty(false)
@@ -285,10 +266,21 @@ export const ThemeSchemeSettings: Component = () => {
     setDirty(false)
     setCreating(false)
     setFilter(next)
-    const candidates = options().filter((candidate) => candidate.id !== "system" && candidate.appearance === next)
-    const option = candidates.find((candidate) => candidate.key === visitedKeys()[next])
-      ?? candidates.find(isSoftOption) ?? candidates[0]
-    if (option) await selectOption(option)
+  }
+
+  const changeMode = async (mode: AppearanceMode) => {
+    if (saving() || !(await confirmDiscardIfDirty())) return
+    setSaving(true)
+    setSaveFailed(false)
+    try {
+      await config.setThemePreference(mode)
+      setDirty(false)
+      setCreating(false)
+    } catch {
+      setSaveFailed(true)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const colorsFor = (option: PaletteOption) => editingKey() === option.key ? draftColors() : option.colors
@@ -301,15 +293,21 @@ export const ThemeSchemeSettings: Component = () => {
       </div>
 
       <div class="theme-scheme-list">
+        <div class="theme-scheme-mode">
+          <span>{t("settings.appearance.palette.mode")}</span>
+          <div class="theme-scheme-appearance-options" role="group" aria-label={t("settings.appearance.palette.mode")}>
+            <For each={["system", "dark", "light"] as const}>{(mode) => (
+              <button type="button" class="theme-scheme-appearance-option" disabled={saving()}
+                data-selected={config.themePreference() === mode ? "true" : "false"}
+                aria-pressed={config.themePreference() === mode}
+                onClick={() => void changeMode(mode)}
+              >{t(mode === "system" ? "settings.appearance.palette.auto" : `settings.appearance.colorScheme.custom.appearance.${mode}`)}</button>
+            )}</For>
+          </div>
+        </div>
+        <p class="settings-card-subtitle">{t("settings.appearance.palette.independent")}</p>
         <div class="theme-scheme-toolbar">
-          <button
-            type="button"
-            class="theme-scheme-appearance-option"
-            aria-pressed={colorScheme().id === "system"}
-            data-selected={colorScheme().id === "system" ? "true" : "false"}
-            disabled={saving()}
-            onClick={() => void selectOption(options().find((option) => option.id === "system")!)}
-          >{t("settings.appearance.colorScheme.option.system")}</button>
+          <Show when={config.themePreference() === "system"}>
           <div class="theme-scheme-appearance-options" aria-label={t("settings.appearance.colorScheme.custom.appearance")}>
             <For each={["light", "dark"] as const}>{(option) => (
               <button
@@ -324,6 +322,7 @@ export const ThemeSchemeSettings: Component = () => {
               </button>
             )}</For>
           </div>
+          </Show>
         <select
           class="selector-input theme-scheme-picker"
           value={editingOption()?.key ?? ""}
@@ -336,16 +335,7 @@ export const ThemeSchemeSettings: Component = () => {
             void selectOption(option).then(() => { select.value = editingKey() })
           }}
         >
-          <Show when={editingOption()?.id === "system"}>
-            <option value="builtin:system" hidden>{t("settings.appearance.colorScheme.option.system")}</option>
-          </Show>
-          <optgroup label={t("settings.appearance.palette.soft")}>
-            <For each={filteredOptions().filter(isSoftOption)}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
-          </optgroup>
-          <optgroup label={t("settings.appearance.palette.legacy")}>
-            <For each={filteredOptions().filter((option) => option.id && option.id !== "custom" && !isSoftOption(option))}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
-          </optgroup>
-          <For each={filteredOptions().filter((option) => option.presetId || option.id === "custom")}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
+          <For each={filteredOptions()}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
         </select>
         </div>
         <Show when={editingOption()} keyed>{(option) => (
