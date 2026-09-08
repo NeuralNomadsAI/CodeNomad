@@ -248,7 +248,17 @@ test("a real send stays rendered across delayed admission, inbox echo and author
     const assertPrompt = async () => {
       const rows = page.locator(".message-stream-block").filter({ hasText: marker })
       assert.equal(await rows.count(), 1)
-      assert.equal(await rows.isVisible(), true)
+      const visible = await rows.isVisible()
+      if (!visible) console.error("Pending prompt geometry", await rows.evaluate(el => {
+        const ancestors = []
+        for (let node: Element | null = el; node; node = node.parentElement) {
+          const style = getComputedStyle(node), rect = node.getBoundingClientRect()
+          ancestors.push({ className: node.className, visibility: style.visibility, display: style.display,
+            height: rect.height, width: rect.width, key: node.getAttribute("data-virtual-follow-key") })
+        }
+        return ancestors
+      }))
+      assert.equal(visible, true)
     }
     await assertPrompt()
     for (const phase of ["before-accept", "accepted", "inbox-echo", "persisted"]) {
@@ -259,8 +269,26 @@ test("a real send stays rendered across delayed admission, inbox echo and author
       await assertPrompt()
       await page.evaluate(() => (window as any).fixture.switchAway())
       await page.evaluate(() => (window as any).fixture.return())
-      await page.waitForFunction(text => document.querySelector(".message-stream")?.textContent?.includes(text), marker)
+      // Returning mounts a fresh virtualizer. DOM text can already exist in an
+      // unmeasured, hidden row; that is not the first visible restored frame.
+      // Only the remount gets this readiness wait. Reloads above must retain
+      // the already-visible prompt without a recovery wait.
+      await page.locator(".message-stream-block").filter({ hasText: marker }).waitFor({ state: "visible" })
       await assertPrompt()
+      const stable = await page.evaluate(`new Promise(resolve => {
+        let remaining = 12
+        const frame = () => {
+          const rows = Array.from(document.querySelectorAll(".message-stream-block"))
+            .filter(row => row.textContent?.includes(${JSON.stringify(marker)}))
+          const rect = rows[0]?.getBoundingClientRect()
+          if (rows.length !== 1 || !rect?.height || !rect.width || getComputedStyle(rows[0]).visibility === "hidden") {
+            resolve(false)
+          } else if (--remaining === 0) resolve(true)
+          else requestAnimationFrame(frame)
+        }
+        requestAnimationFrame(frame)
+      })`)
+      assert.equal(stable, true, `The ${phase} prompt must stay visible after its first restored frame`)
     }
   })
 })
