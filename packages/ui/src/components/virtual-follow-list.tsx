@@ -1,6 +1,7 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
+import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -169,6 +170,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function cancelActiveScrollRestore() {
+    readerSettlement.cancel()
     const onCancelled = cancelRestore
     if (!onCancelled) return
     invalidateScrollRestore()
@@ -201,6 +203,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       case "scroll-key": return performScrollToKey(effect.key, { block: effect.block, smooth: effect.smooth })
     }
   }
+
+  const readerSettlement = createVirtualReaderSettlement({
+    enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
+    getAnchor: () => scrollElement() ? findTopVisibleAnchor(scrollElement()!) ?? undefined : undefined,
+    align: (anchor) => {
+      const element = scrollElement(), item = itemElements.get(anchor.key)
+      if (!element || !item?.isConnected) return
+      const delta = item.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
+      if (Math.abs(delta) < 1) return
+      markProgrammaticScroll()
+      element.scrollTop += delta
+    },
+  })
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
     props.onScrollIntent?.(direction)
@@ -349,6 +364,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleScroll() {
+    readerSettlement.notify()
     updateScrollStateFromDom()
     props.onScroll?.(captureScrollSnapshot())
 
@@ -417,6 +433,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function flushContentRendered() {
+    readerSettlement.notify()
     pendingContentRenderedFrame = null
     if (restartAnchorRestore) {
       restartAnchorRestore()
@@ -563,6 +580,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
+    readerSettlement.cancel()
     const element = scrollElement()
     if (!element) {
       opts?.fallback?.()
@@ -927,6 +945,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           }).map(([key]) => key))
         : new Set<string>()
       if (change.shiftedStartCount > 0) {
+        const reader = !autoScroll() ? readerSettlement.capture() : undefined
+        if (reader?.anchor && !nextItemKeys.includes(reader.anchor.key)) readerSettlement.cancel()
         const retainedCount = virtualItemKeys.length - change.shiftedStartCount
         setShiftVirtualItems(false)
         setVirtualItems([...virtualItems(), ...nextItems.slice(retainedCount)])
@@ -942,10 +962,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           // zero follows the current offset, never a captured pre-gesture target.
           // Keep the keyed DOM intact for a held nested middle-button drag.
           requestAnimationFrame(() => {
-            if (shiftGeneration === windowShiftGeneration) virtuaHandle()?.scrollBy(0)
+            if (shiftGeneration !== windowShiftGeneration) return
+            virtuaHandle()?.scrollBy(0)
+            readerSettlement.settle(reader)
           })
         })
-      } else {
+    } else {
         setShiftVirtualItems(false)
         setVirtualItems(nextItems.slice())
         virtualItemKeys = nextItemKeys
@@ -966,6 +988,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
+    readerSettlement.cancel()
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
@@ -985,6 +1008,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(isActive, (active) => {
     if (!active) {
+      readerSettlement.cancel()
       if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
       pendingExplicitBottomPinFrame = null
       clearExplicitBottomPin()
@@ -1005,6 +1029,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
+      readerSettlement.cancel()
       if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
         previousHeight = nextHeight
         return
@@ -1040,6 +1065,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   onCleanup(() => {
     invalidateScrollRestore()
+    readerSettlement.cancel()
     clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)

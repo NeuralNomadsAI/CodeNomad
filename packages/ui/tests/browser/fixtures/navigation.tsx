@@ -6,6 +6,7 @@ import "../../../src/index.css"
 const [visible, setVisible] = createSignal(true)
 const [items, setItems] = createSignal(Array.from({ length: 200 }, (_, i) => `row-${i}`))
 const [tailHeight, setTailHeight] = createSignal(48)
+const [headHeight, setHeadHeight] = createSignal(48)
 let api: VirtualFollowListApi | undefined
 let snapshot: VirtualFollowScrollSnapshot | undefined
 render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={item => item}
@@ -14,7 +15,7 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
     api = value
     if (snapshot) api.restoreScrollSnapshot(snapshot)
   }}
-  renderItem={item => <div style={{ height: item === "streaming-tail" ? `${tailHeight()}px` : "48px" }}>{item}</div>}
+  renderItem={item => <div style={{ height: item === "streaming-tail" ? `${tailHeight()}px` : item === "row-1" ? `${headHeight()}px` : "48px" }}>{item}</div>}
 /></Show>, document.getElementById("root")!)
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
@@ -23,6 +24,7 @@ render(() => <Show when={visible()}><VirtualFollowList items={items} getKey={ite
   nearTail: () => api?.scrollToKey("row-180", { block: "start" }),
   roll: () => setItems(current => [...current.slice(1), "streaming-tail"]),
   growTail: setTailHeight,
+  resizeHead: setHeadHeight,
   reorder: () => {
     setItems(current => [current[1], current[0], ...current.slice(2), "prompt"])
     queueMicrotask(() => setItems(current => [current[1], current[0], ...current.slice(2)]))

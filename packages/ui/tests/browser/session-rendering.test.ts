@@ -209,7 +209,7 @@ test("an evicted empty assistant cannot donate its cached block to a rehydrated 
   })
 })
 
-test("rolling the 200-row window keeps an escaped anchor while a later reply grows", async () => {
+for (const resizeHead of [false, true]) test(`rolling the 200-row window keeps an escaped anchor while a later reply grows (head resize=${resizeHead})`, async () => {
   await open("navigation", async page => {
     await page.evaluate(() => (window as any).fixture.nearTail())
     await page.waitForFunction(() => document.querySelector('[data-virtual-follow-key="row-180"]')?.getBoundingClientRect().top === 0)
@@ -219,12 +219,23 @@ test("rolling the 200-row window keeps an escaped anchor while a later reply gro
       let i = 0; const frames = [];
       const frame = () => {
         window.fixture.growTail(48 + i * 12);
+        if (${resizeHead} && i === 0) window.fixture.resizeHead(80);
         const row = document.querySelector('[data-virtual-follow-key="row-180"]');
         frames.push(row?.getBoundingClientRect().top);
         if (++i === 40) resolve(frames); else requestAnimationFrame(frame);
       }; requestAnimationFrame(frame);
     })`) as number[]
     assert.ok(frames.every(top => top !== undefined && Math.abs(top) < 2), `Later reply growth moved the reader: ${frames.join(",")}`)
+    const box = (await page.locator(".message-stream").boundingBox())!
+    await page.mouse.move(box.x + 10, box.y + 350)
+    await page.mouse.wheel(0, -300)
+    await page.waitForFunction(() => (window as any).fixture.snapshot().anchorKey !== "row-180")
+    const escaped = await page.evaluate(() => (window as any).fixture.snapshot())
+    await page.evaluate(() => (window as any).fixture.growTail(2000))
+    await page.evaluate(`new Promise(resolve => setTimeout(resolve, 300))`)
+    const afterGesture = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.equal(afterGesture.anchorKey, escaped.anchorKey, "A later wheel must cancel retained-anchor ownership")
+    assert.ok(Math.abs(afterGesture.anchorOffset - escaped.anchorOffset) < 2)
   })
 })
 
