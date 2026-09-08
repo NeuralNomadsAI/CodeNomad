@@ -199,12 +199,20 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
 
 function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
   const normalized = directory.replace(/\\/g, "/").toLowerCase()
-  const targetInstanceId = Array.from(instances().values()).find((instance) => {
+  const matchesDirectory = (instance: { id: string; folder: string }) => {
     const directories = [instance.folder, ...getWorktrees(instance.id).map((worktree) => worktree.directory)]
     return directories.some((candidate) => candidate.replace(/\\/g, "/").toLowerCase() === normalized)
-  })?.id
+  }
+  // A location can be open in several instances. An echo for a location still
+  // owned by this instance must not transfer its restored session to whichever
+  // duplicate happens to appear first, or clear its transcript/reading state.
+  const sourceInstance = instances().get(sourceInstanceId)
+  const targetInstanceId = sourceInstance && matchesDirectory(sourceInstance)
+    ? sourceInstanceId
+    : Array.from(instances().values()).find(matchesDirectory)?.id
 
   if (!targetInstanceId || targetInstanceId === sourceInstanceId) {
+    if (targetInstanceId) withSession(sourceInstanceId, sessionId, (session) => { session.location = { directory } })
     void fetchSessions(sourceInstanceId, { reset: true })
     return
   }

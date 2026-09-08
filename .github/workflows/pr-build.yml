@@ -174,6 +174,7 @@ jobs:
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/session-status.test.ts
