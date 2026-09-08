@@ -7,6 +7,7 @@ import { normalizeWorkspacePath } from "./app-session-reconciliation"
 export interface RestoreTabResult {
   status: "pending" | "restored" | "removed"
   runtimeTabId?: string | null
+  runtimeUnavailable?: true
   unavailableSessionIds?: ReadonlySet<string>
 }
 export interface RestorableSessionPreservation {
@@ -76,7 +77,7 @@ export function hasRestoredTabBinding(
   expectedRuntimeTabId: string,
 ): boolean {
   const result = preservation.results[sourceIndex]
-  return Boolean(result?.status === "pending" && result.runtimeTabId === expectedRuntimeTabId)
+  return Boolean(result?.status === "pending" && !result.runtimeUnavailable && result.runtimeTabId === expectedRuntimeTabId)
 }
 export function settleRestoredTab(
   preservation: RestorableSessionPreservation,
@@ -97,7 +98,12 @@ function findWorkspaceSourceIndex(
   if (runtimeIndex >= 0) return runtimeIndex
   const identity = `workspace:${normalizeWorkspacePath(workspace.folder)}:${workspace.occurrence}`
   const index = mapTabIdentities(preservation.sourceTabs).findIndex((candidate) => candidate.value === identity)
-  return index >= 0 ? index : undefined
+  if (index < 0) return undefined
+  const result = preservation.results[index]
+  // Occurrences describe the old global workspace order, not a live binding.
+  // Another window can later occupy that occurrence during concurrent startup.
+  // Only a missing/unavailable binding may be recovered by this fallback.
+  return result?.runtimeTabId && !result.runtimeUnavailable ? undefined : index
 }
 export function getPreservedWorkspaceState(
   preservation: RestorableSessionPreservation,
@@ -139,6 +145,7 @@ export function markPreservedWorkspaceReopened(
   preservation.results[index] = result?.status === "removed"
     ? { status: "pending", runtimeTabId: workspace.runtimeTabId }
     : { ...result, status: "pending", runtimeTabId: workspace.runtimeTabId }
+  delete preservation.results[index]!.runtimeUnavailable
   return preservation
 }
 function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): RestorableTabState | null {
@@ -303,6 +310,6 @@ export function markPreservedWorkspaceUnavailable(
   if (current) preservation.sourceTabs[index] = source?.kind === "workspace"
     ? mergeWorkspaceState(current, source, authority)
     : current
-  preservation.results[index] = { status: "pending", runtimeTabId: workspace.runtimeTabId }
+  preservation.results[index] = { status: "pending", runtimeTabId: workspace.runtimeTabId, runtimeUnavailable: true }
   return preservation
 }

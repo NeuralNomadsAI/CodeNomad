@@ -1,4 +1,5 @@
-import { For, createSignal, Show, createEffect, createMemo, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { For, createSignal, Show, createEffect, createMemo, on, onCleanup, type Accessor, type JSXElement } from "solid-js"
+import { createStore, reconcile, unwrap } from "solid-js/store"
 import { ArrowRightSquare, Check, ChevronRight, Copy, Hourglass, Loader2, Volume2, WrapText, XCircle } from "lucide-solid"
 import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -603,7 +604,19 @@ export default function ToolCall(props: ToolCallProps) {
   const { preferences, setDiffViewMode } = useConfig()
   const { isDark } = useTheme()
   const { t } = useI18n()
-  const toolCallMemo = createMemo(() => props.toolCall)
+  // Native page reprojections allocate fresh objects even for completed tools.
+  // Reconcile their fields so unchanged output does not recreate its scroller
+  // (and discard a held native gesture) when another message arrives.
+  // Own the reconciled snapshot: reconcile must never mutate a record borrowed
+  // from the shared message store, including nested input/metadata objects.
+  const snapshotPart = () => structuredClone(unwrap(props.toolCall))
+  const [renderPart, setRenderPart] = createStore({ part: snapshotPart() })
+  createEffect(on(
+    () => [props.toolCall, props.partVersion, props.messageVersion] as const,
+    () => setRenderPart("part", reconcile(snapshotPart())),
+    { defer: true },
+  ))
+  const toolCallMemo = () => renderPart.part
   const toolName = createMemo(() => toolCallMemo()?.tool || "")
   const toolCallIdentifier = createMemo(() => {
     const partId = toolCallMemo()?.id

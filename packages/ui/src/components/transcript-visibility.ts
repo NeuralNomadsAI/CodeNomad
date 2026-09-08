@@ -11,12 +11,12 @@ export type TranscriptVisibilityRow =
 export function transcriptVisibilityRows(t: (key: string) => string): TranscriptVisibilityRow[] {
   return [
     { kind: "thinking", key: "thinking", label: t("settings.behavior.expansionDefaults.thinking") },
-    ...getConfigurableToolEntries().map((entry) => ({
-      kind: "tool" as const, key: entry.tool, label: entry.labelKey ? t(entry.labelKey) : entry.label,
-    })),
     { kind: "diagnostics", key: "diagnostics", label: t("settings.behavior.diagnosticsDefault.title") },
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
+    ...getConfigurableToolEntries().map((entry) => ({
+      kind: "tool" as const, key: entry.tool, label: entry.labelKey ? t(entry.labelKey) : entry.label,
+    })),
   ]
 }
 

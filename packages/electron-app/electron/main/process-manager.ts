@@ -19,7 +19,8 @@ import {
 } from "./process-stop"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
-import { buildUserShellCommand, getUserShellEnv, supportsUserShell } from "./user-shell"
+import { getUserShellEnv, supportsUserShell } from "./user-shell"
+import { resolveShellEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
 
 const nodeRequire = createRequire(import.meta.url)
@@ -207,13 +208,26 @@ export class CliProcessManager extends EventEmitter {
       `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
     )
 
-    const env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+    let env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+    if (supportsUserShell()) {
+      const controller = new AbortController()
+      try {
+        const discovered = await this.awaitStartupStep(resolveShellEnvironment(cliEntry.nodeBinaryPath, controller.signal))
+        env = discovered.env
+        cliEntry.nodeBinaryPath = discovered.executable
+      } catch {
+        console.warn("[cli] shell environment unavailable; using inherited application environment")
+      } finally {
+        controller.abort()
+      }
+      if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
+    }
     env.ELECTRON_RUN_AS_NODE = "1"
     env.CODENOMAD_NATIVE_PARENT = "1"
+    delete env.npm_config_prefix
+    delete env.NPM_CONFIG_PREFIX
 
-    const spawnDetails = supportsUserShell()
-      ? buildUserShellCommand(`ELECTRON_RUN_AS_NODE=1 exec ${this.buildCommand(cliEntry, args)}`)
-      : this.buildDirectSpawn(cliEntry, args)
+    const spawnDetails = this.buildDirectSpawn(cliEntry, args)
 
     const child = spawn(spawnDetails.command, spawnDetails.args, {
       cwd: process.cwd(),
@@ -536,19 +550,6 @@ export class CliProcessManager extends EventEmitter {
     }
 
     return args
-  }
-
-  private buildCommand(cliEntry: CliEntryResolution, args: string[]): string {
-    const parts = [JSON.stringify(cliEntry.nodeBinaryPath)]
-    for (const nodeArg of cliEntry.nodeArgs ?? []) {
-      parts.push(JSON.stringify(nodeArg))
-    }
-    if (cliEntry.runner === "tsx" && cliEntry.runnerPath) {
-      parts.push(JSON.stringify(cliEntry.runnerPath))
-    }
-    parts.push(JSON.stringify(cliEntry.entry))
-    args.forEach((arg) => parts.push(JSON.stringify(arg)))
-    return parts.join(" ")
   }
 
   private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {

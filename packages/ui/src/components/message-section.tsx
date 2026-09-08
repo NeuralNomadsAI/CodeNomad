@@ -827,8 +827,12 @@ export default function MessageSection(props: MessageSectionProps) {
     pagingWindow = true
     try {
       if (!isCurrent()) return
+      const previousPage = messageWindowPageKey()
       await load(controller.signal)
       if (!isCurrent()) return
+      // An empty boundary probe retires the older cursor without changing the
+      // resident page. Do not jump from its top back to its bottom in that case.
+      if (direction === "older" && messageWindowPageKey() === previousPage) return
       api.setAutoScroll(direction === "latest")
       api.notifyContentRendered()
       await waitTwoFrames()
@@ -1256,7 +1260,7 @@ export default function MessageSection(props: MessageSectionProps) {
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               store={store}
-              messageIndex={index}
+              messageIndex={index()}
               showThinking={() => preferences().showThinkingBlocks}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
