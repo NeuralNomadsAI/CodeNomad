@@ -275,11 +275,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || items.length === 0) return
     const offset = handle?.scrollOffset ?? element.scrollTop
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-    if (handle && shouldAdvanceBottomPin(offset, maxOffset)) {
+    if (shouldAdvanceBottomPin(offset, maxOffset)) {
       markProgrammaticScroll()
-      handle.scrollToIndex(items.length - 1, { align: "end", smooth: !immediate })
-    } else if (!handle && shouldAdvanceBottomPin(offset, maxOffset)) {
-      scrollToOffset(maxOffset, true)
+      element.scrollTo({ top: maxOffset, behavior: immediate ? "instant" : "smooth" })
     }
     pinDomBottomAfterLayout()
   }
@@ -290,7 +288,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handle = virtuaHandle()
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
     const offset = handle?.scrollOffset ?? element.scrollTop
-    if (shouldAdvanceBottomPin(offset, maxOffset)) scrollToOffset(maxOffset, true)
+    if (shouldAdvanceBottomPin(offset, maxOffset)) {
+      // Virtua's imperative scroll reasserts its target on later measurements
+      // and has no public cancellation API. Bottom settlement is already owned
+      // here, so keep its writes synchronous and gate every later frame on follow.
+      markProgrammaticScroll()
+      element.scrollTop = maxOffset
+      scrollController.recordProgrammaticOffset(element.scrollTop, true)
+    }
     if (remainingFrames <= 0) return
     requestAnimationFrame(() => pinDomBottomAfterLayout(remainingFrames - 1))
   }

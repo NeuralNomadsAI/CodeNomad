@@ -237,6 +237,26 @@ test("short appends and disjoint 200-row pages never expose estimated blank spac
   })
 })
 
+for (const operation of ["bottom", "settleBottom"]) test(`an upward wheel wins over ${operation} while measured rows resize`, async () => {
+  await open("tall-append", async page => {
+    const stream = page.locator(".message-stream")
+    const box = await stream.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + 10, box.y + box.height / 2)
+    await page.evaluate(operation => (window as any).fixture[operation](), operation)
+    await page.mouse.wheel(0, -100000)
+    await page.waitForFunction(() => document.querySelector(".message-stream")!.scrollTop === 0)
+    await page.evaluate(() => (window as any).fixture.resizeReply(4200))
+    const offsets = await page.evaluate(`new Promise(resolve => {
+      const offsets = []; let count = 0;
+      const frame = () => { offsets.push(document.querySelector('.message-stream').scrollTop);
+        if (++count === 30) resolve(offsets); else requestAnimationFrame(frame); };
+      requestAnimationFrame(frame);
+    })`) as number[]
+    assert.ok(offsets.every(offset => offset < 2), `A cancelled bottom operation pulled the reader back: ${offsets.join(",")}`)
+  })
+})
+
 test("a real send stays rendered across delayed admission, inbox echo and authoritative reloads", async () => {
   await open("session", async page => {
     await page.evaluate(() => (window as any).fixture.delayPrompt())
