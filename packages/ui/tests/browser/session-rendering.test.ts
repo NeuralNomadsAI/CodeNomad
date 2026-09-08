@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = ["tall-append", "nested-scroll", "navigation", "undo"].find(name => req.url?.includes(name)) ?? "session"
+          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection"].find(name => req.url?.includes(name)) ?? "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -219,6 +219,32 @@ test("a following reader can wheel to the older-page boundary", async () => {
     await page.mouse.wheel(0, -100000)
     await page.waitForFunction(() => document.querySelector('.message-stream')!.scrollTop === 0)
     await page.waitForFunction(() => (window as any).fixture.reachedTop() > 0, undefined, { timeout: 2000 })
+  })
+})
+
+test("unchanged native tool reprojection retains the held output scroller", async () => {
+  await open("tool-reprojection", async page => {
+    await page.locator(".tool-call-header").click()
+    const output = page.locator(".tool-call-markdown")
+    await output.waitFor({ state: "visible" })
+    const box = (await output.boundingBox())!
+    await page.mouse.move(box.x + 100, box.y + 100)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await output.evaluate(el => { (window as any).heldTool = el; el.scrollTop = 240 })
+      await page.evaluate(() => (window as any).fixture.reproject())
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+      assert.equal(await output.evaluate(el => el === (window as any).heldTool), true)
+      assert.equal(await output.evaluate(el => el.scrollTop), 240)
+    } finally { await page.mouse.up({ button: "middle" }) }
+    await page.evaluate(() => (window as any).fixture.changeOutput())
+    await page.waitForFunction(() => document.querySelector('.tool-call-markdown')?.textContent?.includes('Changed native output'))
+    await page.evaluate(() => (window as any).fixture.mutateOutput())
+    await page.waitForFunction(() => document.querySelector('.tool-call-markdown')?.textContent?.includes('Versioned in-place output'))
+    await page.evaluate(() => (window as any).fixture.fail())
+    await page.waitForFunction(() => document.querySelector('.tool-call-error-content')?.textContent?.includes('Changed native error'))
+    assert.match(await page.evaluate(() => (window as any).fixture.originalOutput()), /Native tool fixture line 159/,
+      "Local reconciliation must not mutate the caller's original native record")
   })
 })
 
