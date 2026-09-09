@@ -163,6 +163,22 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("forwards native execution settlement only for a session owned by the workspace", async () => {
+    const { app, requestCount, sessionGets } = await harness()
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/session/wait" })
+    assert.equal(response.statusCode, 200)
+    assert.equal(JSON.parse(response.body).url, "/api/session/session/wait")
+    assert.deepEqual(sessionGets, ["session"])
+    assert.equal(requestCount(), 1)
+  })
+
+  it("rejects settlement waits for sessions belonging to another workspace", async () => {
+    const { app, requestCount } = await harness("/other")
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/session/wait" })
+    assert.equal(response.statusCode, 403)
+    assert.equal(requestCount(), 0)
+  })
+
   it("filters the project list and its sandboxes to the workspace", async () => {
     const { app, requestCount } = await harness()
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/project" })

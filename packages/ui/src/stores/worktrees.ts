@@ -205,6 +205,11 @@ async function setWorktreeSlugForParentSession(
   const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === normalizedSlug)
   if (!worktree) throw new Error(`Worktree not found: ${normalizedSlug}`)
 
+  // Controlled selectors can report their current option while metadata loads.
+  // Do not turn that reconciliation into a native move and a session.moved echo.
+  const currentDirectory = sessions().get(instanceId)?.get(parentSessionId)?.location.directory
+  if (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(worktree.directory)) return
+
   await getRootClient(instanceId).session.move({
     sessionID: parentSessionId,
     directory: worktree.directory,

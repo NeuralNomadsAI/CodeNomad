@@ -238,6 +238,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.dialog.title": "OpenCode Binary Seç",
   "opencodeBinarySelector.dialog.description": "CLI sunucusunun sunduğu dosyalara göz atın.",
   "opencodeBinarySelector.validation.invalidBinary": "Geçersiz OpenCode binary'si",
+  "opencodeBinarySelector.validation.v2Required": "CodeNomad, OpenCode V2 gerektirir. opencode2 binary'sini yükleyip seçin.",
   "opencodeBinarySelector.validation.alreadyValidating": "Zaten doğrulanıyor",
   "opencodeBinarySelector.display.systemPath": "{name} (sistem PATH)",
   "opencodeBinarySelector.versionLabel": "v{version}",
