@@ -3,7 +3,7 @@ import cors from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
-import { connect as connectTcp, type Socket } from "net"
+import { connect as connectTcp, isIP, type Socket } from "net"
 import path from "path"
 import type { Readable } from "stream"
 import { connect as connectTls, type TLSSocket } from "tls"
@@ -48,6 +48,7 @@ import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation
 import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
 import { DeveloperCdp } from "../developer-cdp"
+import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 
 interface HttpServerDeps {
   bindHost: string
@@ -142,8 +143,6 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
 
   const allowedDevOrigins = new Set(["http://localhost:3000", "http://127.0.0.1:3000"])
-  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
-
   const getSelfOrigins = (): Set<string> => {
     const origins = new Set<string>()
     const candidates: Array<string | undefined> = [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl]
@@ -189,7 +188,7 @@ export function createHttpServer(deps: HttpServerDeps) {
        }
 
        // When we bind to a non-loopback host (e.g., 0.0.0.0 or LAN IP), allow cross-origin UI access.
-       if (deps.bindHost === "0.0.0.0" || !isLoopbackHost(deps.bindHost)) {
+       if (isWildcardHost(deps.bindHost) || !isLoopbackHost(deps.bindHost)) {
          cb(null, true)
          return
        }
@@ -355,7 +354,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     instance: app,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
-        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost })
+        const dualStackWildcard = isWildcardHost(deps.bindHost) && isIP(stripHostBrackets(deps.bindHost)) === 6
+        const addressInfo = await app.listen({ port: requestedPort, host: deps.bindHost, ...(dualStackWildcard ? { ipv6Only: false } : {}) })
         return { addressInfo, requestedPort }
       }
 
@@ -390,7 +390,7 @@ export function createHttpServer(deps: HttpServerDeps) {
         }
       }
 
-      const displayHost = deps.bindHost === "127.0.0.1" ? "localhost" : deps.bindHost
+      const displayHost = deps.bindHost === "127.0.0.1" ? "localhost" : formatHostForUrl(deps.bindHost)
       const serverUrl = `${deps.protocol}://${displayHost}:${actualPort}`
 
       deps.logger.info({ port: actualPort, host: deps.bindHost, protocol: deps.protocol }, "HTTP server listening")
