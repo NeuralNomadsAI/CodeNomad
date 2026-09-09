@@ -18,7 +18,7 @@ export const instanceMessages = {
   "instanceInfo.labels.binaryPath": "Binary yolu",
   "instanceInfo.labels.environmentVariables": "Ortam Değişkenleri ({count})",
   "instanceInfo.loading": "Yükleniyor...",
-  "instanceInfo.server.title": "Sunucu",
+  "instanceInfo.server.title": "OpenCode süreci",
   "instanceInfo.server.port": "Port:",
   "instanceInfo.server.pid": "PID:",
   "instanceInfo.server.status": "Durum:",
