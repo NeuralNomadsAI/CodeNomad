@@ -27,6 +27,12 @@
   overflow-anchor: none;
 }
 
+.message-stream [data-virtual-follow-key] {
+  /* Virtua disables container hit testing while scrolling. Message controls
+     and nested tool scrollers must still receive input at the visible target. */
+  pointer-events: auto;
+}
+
 .virtual-follow-list-overlay {
   position: absolute;
   inset: 0;

@@ -26,6 +26,7 @@ import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldCle
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
 import { messagesLoaded } from "../../stores/session-state"
+import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
 
@@ -537,14 +538,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   async function handleRevert(messageId: string) {
     const instance = instances().get(props.instanceId)
     if (!instance || !instance.client) return
+    const restoredText = getUserMessageText(messageId)
 
     try {
-      await instance.client.session.revert.stage({
-        sessionID: props.sessionId,
-        messageID: messageId,
-      })
+      await stageSessionRevert(props.instanceId, props.sessionId, messageId)
 
-      const restoredText = getUserMessageText(messageId)
       if (restoredText) {
         if (promptInputApi) {
           promptInputApi.setPromptText(restoredText, { focus: true })

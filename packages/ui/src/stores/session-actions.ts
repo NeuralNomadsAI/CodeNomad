@@ -1,4 +1,5 @@
 import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode-ai/client"
+import { isSessionBusyError } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
@@ -28,9 +29,18 @@ const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promi
 const technicalPartUpdates = new Map<string, Promise<void>>()
 const sessionAdmissions = new Map<string, Promise<unknown>>()
 
-function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+function serializeSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
   const key = `${instanceId}:${sessionId}`
-  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(action)
+  const settled = run.finally(() => {
+    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
+  })
+  sessionAdmissions.set(key, settled)
+  return settled
+}
+
+function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+  return serializeSessionAction(instanceId, sessionId, async () => {
     const admission = beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       const result = await action()
@@ -41,11 +51,36 @@ function admitSessionAction<T>(instanceId: string, sessionId: string, action: ()
       throw error
     }
   })
-  const settled = run.finally(() => {
-    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
+}
+
+export function stageSessionRevert(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  const owner = instances().get(instanceId)?.client
+  return serializeSessionAction(instanceId, sessionId, async () => {
+    const assertCurrent = () => {
+      if (!owner || instances().get(instanceId)?.client !== owner || !sessions().get(instanceId)?.has(sessionId)) {
+        throw new Error("Instance not ready")
+      }
+    }
+    assertCurrent()
+    const client = getRootClient(instanceId)
+    const input = { sessionID: sessionId, messageID: messageId }
+    const options = { signal: AbortSignal.timeout(15_000) }
+    try {
+      await client.session.revert.stage(input, options)
+    } catch (error) {
+      // The native response, not potentially stale UI status, decides whether
+      // interruption is required. Idle undo never interrupts another session.
+      if (!isSessionBusyError(error)) throw error
+      assertCurrent()
+      await client.session.interrupt({ sessionID: sessionId, continue: false }, options)
+      assertCurrent()
+      // Interrupt acknowledges acceptance before execution cleanup settles.
+      await client.session.wait({ sessionID: sessionId }, options)
+      assertCurrent()
+      await client.session.revert.stage(input, options)
+    }
+    assertCurrent()
   })
-  sessionAdmissions.set(key, settled)
-  return settled
 }
 
 function serializeTechnicalPartUpdate(

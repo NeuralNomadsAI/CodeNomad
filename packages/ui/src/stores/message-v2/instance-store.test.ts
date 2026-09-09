@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
 import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
+import type { MessageInfo } from "../../types/message"
+import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
 
 it("keeps the beginning and final response when bounding message parts", () => {
   const partIds = Array.from({ length: MESSAGE_PART_DISPLAY_LIMIT + 2 }, (_, index) => `part-${index}`)
@@ -26,6 +29,83 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(displayPartIds[0], "part-0")
   assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
+
+describe("message window replacement authority", () => {
+  it("retires an older resume cursor when returning to latest before cold restoration", () => {
+    const store = createInstanceMessageStore("window-replacement")
+    store.setMessageWindow("session", { kind: "history", resumeCursor: "older-200", olderCursor: "older-400", newerCursors: [null] })
+    const previous = store.getMessageWindow("session")
+    store.setMessageWindow("session", emptyLatestWindow())
+    const window = store.getMessageWindow("session")!
+    assert.notEqual(window, previous, "Window identity fences in-flight page requests")
+    assert.equal(window.resumeCursor, undefined)
+    assert.equal(window.olderCursor, undefined)
+    const snapshot = JSON.parse(JSON.stringify(toWindowSnapshot(window)))
+    assert.deepEqual(windowFromSnapshot(snapshot), emptyLatestWindow())
+    assert.deepEqual(windowFromSnapshot({ windowIsLatest: true, windowCursor: "stale-older" }), emptyLatestWindow())
+  })
+})
+
+describe("staged undo usage authority", () => {
+  for (const preserveOmitted of [false, true]) {
+    it(`keeps visible usage stable on hydration (preserveOmitted=${preserveOmitted})`, () => {
+      const store = createInstanceMessageStore("undo-usage")
+      const records = ["msg_01", "msg_02", "msg_03"].map(id => ({ id, sessionId: "session", role: "assistant" as const, status: "complete" as const }))
+      const infos = records.map((record, i) => ({ id: record.id, sessionID: "session", role: "assistant", time: { created: i + 1, completed: i + 1 }, cost: 1,
+        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+      })) as MessageInfo[]
+      store.hydrateMessages("session", records, infos)
+      store.setSessionRevert("session", { messageID: "msg_02" })
+      const usage = JSON.parse(JSON.stringify(store.getSessionUsage("session")))
+      assert.equal(usage.totalCost, 1)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(store.getSessionMessageIds("session"), ["msg_01"])
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      // A native page can consist entirely of the staged tail; it must not
+      // contribute usage even when the visible boundary is outside that page.
+      store.hydrateMessages("session", records.slice(1), infos.slice(1), { preserveOmitted: true })
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      const cold = createInstanceMessageStore("undo-usage-cold")
+      cold.setSessionRevert("session", { messageID: "msg_02" })
+      cold.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(cold.getSessionUsage("session"), usage)
+      // Clearing the marker must allow the native tail and its usage back.
+      store.setSessionRevert("session", null)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.equal(store.getSessionUsage("session")?.totalCost, 3)
+    })
+  }
+})
+
+describe("message display cache authority", () => {
+  it("changes display identity after eviction even when numeric revisions repeat", () => {
+    const store = createInstanceMessageStore("display-identity")
+    const base = { id: "assistant", sessionId: "session", role: "assistant" as const, status: "streaming" as const }
+    store.hydrateMessages("session", [base])
+    const original = store.getMessage(base.id)!
+    const empty = buildRecordDisplayData("display-identity", original)
+    assert.equal(empty.orderedParts.length, 0)
+
+    store.reconcileEmptyAuthoritativeSnapshot("session")
+    const completed = { ...base, parts: [{ id: "text", type: "text", text: "restored response" } as any] }
+    store.hydrateMessages("session", [completed])
+    const restored = store.getMessage(base.id)!
+    const display = buildRecordDisplayData("display-identity", restored)
+    assert.equal(restored.revision, original.revision)
+    assert.notEqual(display, empty)
+    assert.equal((display.orderedParts[0] as any).text, "restored response")
+
+    store.hydrateMessages("session", [completed])
+    assert.equal(buildRecordDisplayData("display-identity", store.getMessage(base.id)!), display,
+      "an unchanged resident snapshot must still reuse display data")
+  })
+
+  it("binds the derived message block cache to the invalidatable display identity", () => {
+    const source = readFileSync(new URL("../../components/message-block.tsx", import.meta.url), "utf8")
+    assert.match(source, /cachedBlock\.signature === cacheSignature && cachedBlock\.displayData === displayData/)
+    assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
+  })
 })
 
 describe("message-v2 permission state", () => {

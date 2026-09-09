@@ -18,7 +18,7 @@ export const instanceMessages = {
   "instanceInfo.labels.binaryPath": "נתיב קובץ בינארי",
   "instanceInfo.labels.environmentVariables": "משתני סביבה ({count})",
   "instanceInfo.loading": "טוען...",
-  "instanceInfo.server.title": "שרת",
+  "instanceInfo.server.title": "תהליך OpenCode",
   "instanceInfo.server.port": "פורט:",
   "instanceInfo.server.pid": "PID:",
   "instanceInfo.server.status": "סטטוס:",

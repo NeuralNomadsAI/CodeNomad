@@ -16,6 +16,7 @@ import {
   planSessionTechnicalPartDeletion,
   runShellCommand,
   sendMessage,
+  stageSessionRevert,
   updateSessionAgent,
   updateSessionModel,
 } from "./session-actions.ts"
@@ -89,6 +90,73 @@ afterEach(() => {
   setConversationModeEnabled(instanceId, false)
   setModelThinkingSelection({ providerId: "provider", modelId: "old" }, undefined)
   setModelThinkingSelection({ providerId: "provider", modelId: "new" }, undefined)
+})
+
+describe("native undo settlement", () => {
+  const busy = { _tag: "SessionBusyError", sessionID: sessionId, message: "busy" }
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+
+  it("does not interrupt an idle session and preserves native stage semantics", async () => {
+    const calls: unknown[] = []
+    seed({ session: { revert: { stage: async (input: unknown) => { calls.push(input) } } } })
+    await stageSessionRevert(instanceId, sessionId, "message")
+    assert.deepEqual(calls, [{ sessionID: sessionId, messageID: "message" }])
+  })
+
+  it("waits for settlement after native Busy, even when the UI thinks the session is idle", async () => {
+    const calls: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    seed({ session: {
+      revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
+      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, continue: false }) },
+      wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
+    } })
+    const undo = stageSessionRevert(instanceId, sessionId, "message")
+    await tick()
+    assert.deepEqual(calls, ["stage", "interrupt", "wait"])
+    release()
+    await undo
+    assert.deepEqual(calls, ["stage", "interrupt", "wait", "stage"])
+  })
+
+  for (const failure of ["interrupt", "wait", "retry", "other-error", "replacement"] as const) {
+    it(`does not claim successful undo after ${failure}`, async () => {
+      let stages = 0, interrupts = 0
+      seed({ session: {
+        revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
+        interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
+        wait: async () => {
+          if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
+          if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+        },
+      } })
+      await assert.rejects(stageSessionRevert(instanceId, sessionId, "message"))
+      assert.equal(stages, failure === "retry" ? 2 : 1)
+      assert.equal(interrupts, failure === "other-error" ? 0 : 1)
+    })
+  }
+
+  it("orders undo after prior prompt admission and before a later send", async () => {
+    const calls: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    seed({ session: {
+      instructions: { entry: { remove: async () => {} } },
+      switchAgent: async () => {}, switchModel: async () => {},
+      prompt: async (input: any) => { calls.push(input.text); if (input.text === "before") await gate; return { id: input.id } },
+      revert: { stage: async () => { calls.push("stage") } },
+    } })
+    const before = sendMessage(instanceId, sessionId, "before")
+    await tick()
+    const undo = stageSessionRevert(instanceId, sessionId, "message")
+    const after = sendMessage(instanceId, sessionId, "after")
+    await tick()
+    assert.deepEqual(calls, ["before"])
+    release()
+    await Promise.all([before, undo, after])
+    assert.deepEqual(calls, ["before", "stage", "after"])
+  })
 })
 
 describe("voice instruction sync", () => {

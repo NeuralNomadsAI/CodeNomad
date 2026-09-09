@@ -790,7 +790,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     time: {
       ...apiSession.time,
     },
-    revert: apiSession.revert ?? existingSession?.revert,
+    revert: apiSession.revert,
     pendingPermission: existingSession?.pendingPermission,
   }
 }
@@ -929,13 +929,15 @@ async function forkSession(
 
   setSessions((prev) => {
     const next = new Map(prev)
-    const instanceSessions = next.get(instanceId) || new Map()
+    const instanceSessions = new Map(prev.get(instanceId))
     instanceSessions.set(forkedSession.id, forkedSession)
     next.set(instanceId, instanceSessions)
     return next
   })
 
   syncInstanceSessionIndicator(instanceId)
+
+  if (!forkedSession.parentId) prependSessionListId(instanceId, forkedSession.id)
 
   const instanceProviders = providers().get(instanceId) || []
   const forkProvider = instanceProviders.find((p) => p.id === forkedSession.model.providerId)
@@ -1285,6 +1287,7 @@ async function loadMessages(
   const revisionRetry = options?.revisionRetry ?? 0
   const store = messageStoreBus.getOrCreate(instanceId)
   const storedWindow = store.getMessageWindow(sessionId)
+  let expectedWindow = storedWindow
   const snapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
   const currentWindow = storedWindow ?? windowFromSnapshot(snapshot)
   const planned = planMessageWindowLoad(currentWindow, intent)
@@ -1321,7 +1324,11 @@ async function loadMessages(
   const isCurrentLoad = () => ownsLoadState() && options?.signal?.aborted !== true
   const isCurrent = () => isCurrentLoad()
     && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
-    && store.getMessageWindow(sessionId) === storedWindow
+    && store.getMessageWindow(sessionId) === expectedWindow
+  const commitCurrentWindow = (window: MessageWindowState, windowIntent: MessageWindowIntent) => {
+    commitMessageWindow(instanceId, sessionId, window, windowIntent)
+    expectedWindow = store.getMessageWindow(sessionId)
+  }
   options?.registerInvalidation?.(() => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
   })
@@ -1391,6 +1398,25 @@ async function loadMessages(
         ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
       }, { signal })
     }
+    // A staged undo leaves its tail in the native transcript until commit.
+    // On opening/latest, seek the latest *visible* page rather than treating
+    // a page consisting entirely of that hidden tail as an empty session.
+    if (!isCurrent()) return false
+    if ((intent === "open" || intent === "latest") && !planned.cursor && session.revert?.messageID) {
+      const boundary = session.revert.messageID
+      const seen = new Set<string>()
+      while (response.data.length > 0 && response.data.every((message) => message.id >= boundary)) {
+        const cursor = response.cursor?.next
+        if (!cursor) break
+        if (seen.has(cursor) || seen.size >= MESSAGE_CURSOR_SEEK_LIMIT) {
+          throw new Error(tGlobal("messageSection.loadError.detail"))
+        }
+        seen.add(cursor)
+        response = await client.message.list({ sessionID: sessionId, limit: 200, cursor },
+          options?.signal ? { signal: options.signal } : undefined)
+        if (!isCurrent()) return false
+      }
+    }
     const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
     const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
@@ -1409,13 +1435,23 @@ async function loadMessages(
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
     if (apiMessages.length === 0) {
-      if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+      if (intent === "older") {
+        // V2 boundary cursors do not guarantee another page. An exhausted
+        // history request says nothing about the messages already resident.
+        // Keep their window identity (including live/latest authority) and
+        // scroll anchor; only retire the cursor that reached the boundary.
+        commitCurrentWindow(withOlderCursor(currentWindow, undefined), "open")
+      } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
         retryAfterRevisionConflict = true
       } else if (store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
+        // Seeking past a fully staged transcript can end on an empty native
+        // page. It still carries session metadata authority: late projections
+        // must retain the boundary, and a cleared boundary must not linger.
+        store.setSessionRevert(sessionId, sessions().get(instanceId)?.get(sessionId)?.revert ?? null)
+        commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
         committed = true
       }
@@ -1480,7 +1516,7 @@ async function loadMessages(
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
+        commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
