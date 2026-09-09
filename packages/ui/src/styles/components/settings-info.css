@@ -19,6 +19,7 @@
 }
 
 .settings-info-label {
+  margin: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
@@ -26,6 +27,7 @@
 }
 
 .settings-info-value {
+  margin: 0;
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   text-align: end;

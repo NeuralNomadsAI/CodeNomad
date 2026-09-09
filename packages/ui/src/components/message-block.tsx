@@ -120,6 +120,7 @@ function navigateToTaskSession(location: TaskSessionLocation) {
 
 interface CachedBlockEntry {
   signature: string
+  displayData: ReturnType<typeof buildRecordDisplayData>
   block: MessageDisplayBlock
   contentKeys: string[]
   toolKeys: string[]
@@ -648,15 +649,19 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
+    // Removing and rehydrating a record can reuse revision/info version zero.
+    // Its display data is invalidated by the store on removal, so also bind
+    // this derived cache to that identity, not just to the numeric signature.
+    const displayData = buildRecordDisplayData(props.instanceId, current)
     const cachedBlock = sessionCache.messageBlocks.get(current.id)
-    if (cachedBlock && cachedBlock.signature === cacheSignature) {
+    if (cachedBlock && cachedBlock.signature === cacheSignature && cachedBlock.displayData === displayData) {
       return cachedBlock.block
     }
 
     // Only capture info after cache check fails - ensures fresh data on version bump
     const info = untrack(messageInfo)
 
-    const { orderedParts } = buildRecordDisplayData(props.instanceId, current)
+    const { orderedParts } = displayData
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []
     const blockToolKeys: string[] = []
@@ -830,6 +835,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     const resultBlock: MessageDisplayBlock = { record: current, items }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,
+      displayData,
       block: resultBlock,
       contentKeys: blockContentKeys.slice(),
       toolKeys: blockToolKeys.slice(),

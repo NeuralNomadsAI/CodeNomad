@@ -40,7 +40,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, removeSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
@@ -199,12 +199,20 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
 
 function handleSessionMoved(sourceInstanceId: string, sessionId: string, directory: string): void {
   const normalized = directory.replace(/\\/g, "/").toLowerCase()
-  const targetInstanceId = Array.from(instances().values()).find((instance) => {
+  const matchesDirectory = (instance: { id: string; folder: string }) => {
     const directories = [instance.folder, ...getWorktrees(instance.id).map((worktree) => worktree.directory)]
     return directories.some((candidate) => candidate.replace(/\\/g, "/").toLowerCase() === normalized)
-  })?.id
+  }
+  // A location can be open in several instances. An echo for a location still
+  // owned by this instance must not transfer its restored session to whichever
+  // duplicate happens to appear first, or clear its transcript/reading state.
+  const sourceInstance = instances().get(sourceInstanceId)
+  const targetInstanceId = sourceInstance && matchesDirectory(sourceInstance)
+    ? sourceInstanceId
+    : Array.from(instances().values()).find(matchesDirectory)?.id
 
   if (!targetInstanceId || targetInstanceId === sourceInstanceId) {
+    if (targetInstanceId) withSession(sourceInstanceId, sessionId, (session) => { session.location = { directory } })
     void fetchSessions(sourceInstanceId, { reset: true })
     return
   }
@@ -323,7 +331,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const instanceSessions = new Map(prev.get(instanceId))
       const existing = instanceSessions.get(sessionId)
       const compacting = existing?.status === "compacting"
       const candidate: Session = {
@@ -356,6 +364,9 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     reconcilePendingSessionIndicators(instanceId)
+
+    const published = updatedInstanceSessions?.get(sessionId)
+    if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
     if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 
@@ -410,6 +421,17 @@ function handleSessionUpdate(
     withSession(instanceId, event.data.sessionID, (session) => {
       session.revert = revert ?? undefined
     })
+    if (event.type === "session.revert.cleared") {
+      // The staged tail is still owned by OpenCode, but no longer resident.
+      // Clearing the marker alone cannot render it again.
+      const sessionId = event.data.sessionID
+      invalidateSessionMessageLoad(instanceId, sessionId)
+      if (activeSessionId().get(instanceId) === sessionId) {
+        void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+          log.error("Failed to reload messages after clearing revert", error)
+        })
+      }
+    }
     return
   }
 
