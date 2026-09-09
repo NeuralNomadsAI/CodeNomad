@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "सफाइ पुष्टि भएन। प्लगइन उपलब्ध नहुन सक्छ, चलिरहेको अवस्थामा सफाइ बन्द हुन सक्छ वा सन्देश परिवर्तन भएको हुन सक्छ। फेरि प्रयास गर्नुअघि सन्देश पुनः लोड गर्नुहोस्।",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "कुनै अघिल्लो सत्रहरू छैनन्",
   "sessionPicker.resume.title": "सत्र पुन: सुरु गर्नुहोस् ({count}):",

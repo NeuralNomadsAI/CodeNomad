@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "No se confirmó la limpieza. El plugin puede no estar disponible, la limpieza en vivo puede estar desactivada o el mensaje puede haber cambiado. Recarga el mensaje antes de reintentar.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "No hay sesiones anteriores",
   "sessionPicker.resume.title": "Reanudar una sesión ({count}):",

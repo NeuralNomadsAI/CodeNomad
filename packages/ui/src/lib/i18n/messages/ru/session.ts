@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "Очистка не подтверждена. Плагин может быть недоступен, очистка во время работы отключена или сообщение изменилось. Перезагрузите сообщение перед повторной попыткой.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "Нет предыдущих сессий",
   "sessionPicker.resume.title": "Продолжить сессию ({count}):",

@@ -11,6 +11,8 @@
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 
 ## Coding Principles
+
+- The draft session-pruning experiment is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`; see `dev-docs/SESSION_PRUNING_RPC.md`. Do not auto-install it, open generic RPC proxy access, or enable file-backed mutations. The default plugin only previews explicitly configured storage; mutation tests use isolated in-memory SQLite until coordination with OpenCode execution and client caches is validated.
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.
 - Uphold DRY: share helpers via dedicated modules before copy/pasting logic across stores, components, or scripts.
 - Enforce single responsibility; split large files when concerns diverge (state, actions, API, events, etc.).

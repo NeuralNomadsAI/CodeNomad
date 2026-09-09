@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "Cleanup was not confirmed. The pruning plugin may be unavailable, live cleanup may be disabled, or the message may have changed. Reload the message before retrying.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "No previous sessions",
   "sessionPicker.resume.title": "Resume a session ({count}):",

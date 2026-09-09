@@ -4,6 +4,7 @@ import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
+import { pruneMessageContent } from "./session-pruning"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
@@ -620,30 +621,26 @@ async function deleteSelectedMessageTechnicalParts(
     if (message.type !== "assistant" || !message.time.completed) {
       throw new Error("Message content changed before deletion")
     }
-    const currentRecord = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
     const indexes = new Set(targets.map((selected) => {
       const part = selected.part!
-      const currentIndex = currentRecord?.partIds.indexOf(selected.partId) ?? -1
-      if (currentIndex >= 0) return currentIndex
       const time = part.time as { created?: number; completed?: number } | undefined
-      return message.content.findIndex((candidate) => {
-        if (candidate.type !== part.type) return false
-        if (candidate.type === "tool" && part.type === "tool") return candidate.id === part.id
-        if (candidate.type !== "reasoning" || part.type !== "reasoning") return false
+      const matches = message.content.flatMap((candidate, index) => {
+        if (candidate.type !== part.type) return []
+        if (candidate.type === "tool" && part.type === "tool") return candidate.id === part.id ? [index] : []
+        if (candidate.type !== "reasoning" || part.type !== "reasoning") return []
         return candidate.text === part.text
-          && candidate.time?.created === time?.created
-          && candidate.time?.completed === time?.completed
+          && (time?.created === undefined || candidate.time?.created === time.created)
+          && (time?.completed === undefined || candidate.time?.completed === time.completed) ? [index] : []
       })
+      // Local array positions can be stale after another client's prune. Never
+      // guess between duplicate reasoning blocks without a stable identity.
+      return matches.length === 1 ? matches[0] : -1
     }))
     if (indexes.has(-1)) {
       throw new Error("Message content changed before deletion")
     }
 
-    const updated = await client.session.messageUpdate({
-      sessionID: sessionId,
-      messageID: messageId,
-      content: message.content.filter((_, index) => !indexes.has(index)),
-    })
+    const updated = await pruneMessageContent(instanceId, sessionId, message, [...indexes])
     applyUpdatedMessage(instanceId, sessionId, updated)
   })
 }
@@ -663,7 +660,8 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
     if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
     const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
     if (content.length === message.content.length) return
-    const updated = await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
+    const indexes = message.content.flatMap((part, index) => part.type === "tool" || part.type === "reasoning" ? [index] : [])
+    const updated = await pruneMessageContent(instanceId, sessionId, message, indexes)
     applyUpdatedMessage(instanceId, sessionId, updated)
   })
 }

@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "Die Bereinigung wurde nicht bestätigt. Das Plugin ist möglicherweise nicht verfügbar, die Live-Bereinigung deaktiviert oder die Nachricht wurde geändert. Laden Sie die Nachricht vor einem erneuten Versuch neu.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "Keine vorherigen Sitzungen",
   "sessionPicker.resume.title": "Sitzung fortsetzen ({count}):",

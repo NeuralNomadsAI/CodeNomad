@@ -23,6 +23,7 @@ import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setProviders, setSessions } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -30,6 +31,7 @@ const storageMethods = {
   fetchConfigOwner: serverApi.fetchConfigOwner,
   fetchStateOwner: serverApi.fetchStateOwner,
   patchStateOwner: serverApi.patchStateOwner,
+  pruneSessionMessage: serverApi.pruneSessionMessage,
 }
 let testUiState: Record<string, any> = {}
 
@@ -52,6 +54,23 @@ after(() => {
 })
 
 function seed(client: any): void {
+  if (client.session?.applyPrune) {
+    const read = client.session.message
+    const committed = new Map<string, any>()
+    client.session.message = async (input: any) => committed.get(input.messageID) ?? read(input)
+    serverApi.pruneSessionMessage = async (owner, input) => {
+      assert.equal(owner, instanceId)
+      assert.deepEqual(Object.keys(input).sort(), ["indexes", "messageID", "revision", "sessionID"])
+      const message = await client.session.message(input)
+      assert.equal(input.revision, await contentRevision(message.content))
+      const updated = await client.session.applyPrune({
+        sessionID: input.sessionID, messageID: input.messageID,
+        content: message.content.filter((_: unknown, index: number) => !input.indexes.includes(index)),
+      })
+      committed.set(input.messageID, updated)
+      return { status: "pruned", messageID: input.messageID, revision: await contentRevision(updated.content), removedCount: input.indexes.length }
+    }
+  }
   const session = {
     id: sessionId,
     instanceId,
@@ -82,6 +101,7 @@ async function selectVariant(modelId: string, variant: string): Promise<void> {
 }
 
 afterEach(() => {
+  serverApi.pruneSessionMessage = storageMethods.pruneSessionMessage
   setSessions(new Map())
   setProviders(new Map())
   removeInstance(instanceId, { authoritative: false })
@@ -239,7 +259,51 @@ describe("session interruption", () => {
   })
 })
 
-describe("native message content mutation", () => {
+describe("plugin RPC message pruning", () => {
+  it("keeps the local message when the plugin blocks or its acknowledgement is lost", async () => {
+    const messageId = "blocked-prune"
+    const content = [{ type: "tool", id: "tool-1", state: { status: "completed" } }, { type: "text", text: "keep" }]
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
+    ] })
+    for (const reason of ["unavailable", "maintenance_required", "conflict"] as const) {
+      serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"))
+      assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+    }
+    serverApi.pruneSessionMessage = async () => { throw new Error("Lost acknowledgement") }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), /Lost acknowledgement/)
+    assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+  })
+
+  it("resolves a tool by identity rather than a stale local array position", async () => {
+    const messageId = "stale-selection"
+    const content = [{ type: "text", text: "new text" }, { type: "tool", id: "tool-1", state: { status: "completed" } }]
+    let selected: number[] = []
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    serverApi.pruneSessionMessage = async (_owner, input) => { selected = input.indexes; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"))
+    assert.deepEqual(selected, [1])
+  })
+
+  it("refuses ambiguous reasoning instead of deleting another occurrence", async () => {
+    const messageId = "ambiguous-selection"
+    const content = [{ type: "reasoning", text: "same" }, { type: "reasoning", text: "same" }]
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    let calls = 0
+    serverApi.pruneSessionMessage = async () => { calls++; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /changed before deletion/)
+    assert.equal(calls, 0)
+  })
+
   it("removes one terminal assistant part and projects the updated response", async () => {
     const messageId = "assistant-message"
     const content = [
@@ -263,7 +327,7 @@ describe("native message content mutation", () => {
         time: { created: 1, completed: 3 },
         content,
       }),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updateInput = input
         return {
           id: messageId,
@@ -318,7 +382,7 @@ describe("native message content mutation", () => {
     }
     seed({ session: {
       message: async () => structuredClone(remote),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         remote = { ...remote, content: input.content }
         return structuredClone(remote)
       },
@@ -355,7 +419,7 @@ describe("native message content mutation", () => {
     let updateInput: any
     seed({ session: {
       message: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updateInput = input
         return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
       },
@@ -394,7 +458,7 @@ describe("native message content mutation", () => {
     const updates: any[] = []
     seed({ session: {
       message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updates.push(input)
         return { ...messages.get(input.messageID), content: input.content }
       },
@@ -447,7 +511,7 @@ describe("native message content mutation", () => {
       } },
       session: {
         message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
-        messageUpdate: async (input: any) => {
+        applyPrune: async (input: any) => {
           updates.push(input)
           return { ...messages.get(input.messageID), content: input.content }
         },

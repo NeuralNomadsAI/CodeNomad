@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "Temizlik doğrulanmadı. Eklenti kullanılamıyor, çalışma sırasında temizlik devre dışı veya mesaj değişmiş olabilir. Yeniden denemeden önce mesajı yeniden yükleyin.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "Önceki session yok",
   "sessionPicker.resume.title": "Bir session'ı sürdür ({count}):",

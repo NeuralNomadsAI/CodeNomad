@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "הניקוי לא אושר. ייתכן שהתוסף אינו זמין, שהניקוי בזמן אמת מושבת או שההודעה השתנתה. יש לטעון מחדש את ההודעה לפני ניסיון נוסף.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "אין סשנים קודמים",
   "sessionPicker.resume.title": "המשך סשן ({count}):",

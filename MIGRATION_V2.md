@@ -12,6 +12,16 @@ The incremental comparison with official OpenCode Desktop V2, including closed f
 
 ## Native V2 Adoption
 
+### Draft session-pruning replacement
+
+This branch replaces the removed `session.messageUpdate` callers with the narrow
+CodeNomad plugin RPC experiment described in [SESSION_PRUNING_RPC.md](dev-docs/SESSION_PRUNING_RPC.md).
+The historical capability tables below describe the earlier beta integration, not
+current deletion availability on this draft. Live pruning is deliberately blocked;
+the plugin only supports read-only previews and SQL mutation tests are in-memory.
+Do not treat this branch as restoring release-ready cleanup or install its plugin
+on the shared daemon without explicit approval and the documented safety gates.
+
 - Use native locations and `SessionInfo.location` as the authority for workspace, session, file, event, Shell, PTY, and Git worktree ownership.
 - Use native APIs for projects, sessions, messages, prompts, commands, models, agents, providers, MCP, permissions, Forms, files, VCS, instructions, Shells, and PTYs.
 - Use native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.

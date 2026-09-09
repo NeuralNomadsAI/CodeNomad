@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "クリーンアップは確認されませんでした。プラグインが利用できない、稼働中のクリーンアップが無効、またはメッセージが変更された可能性があります。再試行する前にメッセージを再読み込みしてください。",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "以前のセッションはありません",
   "sessionPicker.resume.title": "セッションを再開 ({count}):",

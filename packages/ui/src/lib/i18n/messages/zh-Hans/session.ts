@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "session.pruning.blocked": "清理尚未确认。插件可能不可用、运行期间的清理可能已禁用，或消息已更改。请重新加载消息后再试。",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "没有历史会话",
   "sessionPicker.resume.title": "继续会话（{count}）：",
