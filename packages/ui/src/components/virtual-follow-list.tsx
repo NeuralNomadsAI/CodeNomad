@@ -1,10 +1,12 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { remapVirtualMeasurements } from "./virtual-follow-measurements"
+import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
 const EXPLICIT_BOTTOM_PIN_SETTLE_FRAMES = 2
-const MEASUREMENT_RESET_SSR_COUNT = 8
+const MEASUREMENT_PROBE_COUNT = 8
 const TOP_SCROLL_EPSILON_PX = 0
 const EXPLICIT_BOTTOM_PIN_MAX_FRAMES = 90
 const USER_SCROLL_INTENT_WINDOW_MS = 600
@@ -67,7 +69,7 @@ export interface VirtualFollowListState {
 export interface VirtualFollowListProps<T> {
   items: Accessor<T[]>
   getKey: (item: T, index: number) => string
-  renderItem: (item: T, index: number) => JSX.Element
+  renderItem: (item: T, index: Accessor<number>) => JSX.Element
   getAnchorId?: (key: string) => string
   overscanPx?: number
   streamingActive?: Accessor<boolean>
@@ -112,7 +114,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const [showScrollTopButton, setShowScrollTopButton] = createSignal(false)
   const [showScrollBottomButton, setShowScrollBottomButton] = createSignal(false)
   const [activeKey, setActiveKey] = createSignal<string | null>(null)
-  const [itemKeyMeasurementEpoch, setItemKeyMeasurementEpoch] = createSignal(0)
+  const [measurementAuthority, setMeasurementAuthority] = createSignal<{ cache?: VirtualizerHandle["cache"]; probes: number[]; pendingProbeKeys: string[] }>({ probes: [], pendingProbeKeys: [] })
   const [virtualItems, setVirtualItems] = createSignal<T[]>(props.items().slice())
   const [shiftVirtualItems, setShiftVirtualItems] = createSignal(false)
 
@@ -125,7 +127,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const holdTargetKey = () => props.autoPinHoldTargetKey?.() ?? null
   const externalSuspendAutoPinToBottom = () => props.suspendAutoPinToBottom?.() ?? false
   const explicitBottomPinIntent = () => props.explicitBottomPinIntent?.() ?? null
-  const measurementAuthority = createMemo(() => ({ key: itemKeyMeasurementEpoch() }))
   const holdTargetTopThresholdPx = () => props.autoPinHoldTopThresholdPx ?? DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX
   const autoScroll = createMemo(() => isAutoFollowing(followMode()))
   const scrollButtonsCount = createMemo(() => (showScrollTopButton() ? 1 : 0) + (showScrollBottomButton() ? 1 : 0))
@@ -157,6 +158,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
   let virtualItemKeys = virtualItems().map((item, index) => props.getKey(item, index))
+  let plannedItems = virtualItems().slice()
+  let plannedKeys = virtualItemKeys.slice()
   let windowShiftGeneration = 0
   let virtualContentResizeObserver: ResizeObserver | null = null
   let observedVirtualContent: HTMLElement | null = null
@@ -169,6 +172,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function cancelActiveScrollRestore() {
+    readerSettlement.cancel()
     const onCancelled = cancelRestore
     if (!onCancelled) return
     invalidateScrollRestore()
@@ -202,6 +206,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
   }
 
+  const readerSettlement = createVirtualReaderSettlement({
+    enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
+    getAnchor: () => scrollElement() ? findTopVisibleAnchor(scrollElement()!) ?? undefined : undefined,
+    align: (anchor) => {
+      const element = scrollElement(), item = itemElements.get(anchor.key)
+      if (!element || !item?.isConnected) return
+      const delta = item.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
+      if (Math.abs(delta) < 1) return
+      markProgrammaticScroll()
+      element.scrollTop += delta
+    },
+  })
+
   function markUserScrollIntent(direction: "up" | "down" | null) {
     props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
@@ -211,6 +228,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       dispatchFollowEvent({ type: "user-scroll", direction: "up", atBottom: isActuallyAtBottom() })
     } else if (direction === "down" && isActuallyAtBottom()) {
       dispatchFollowEvent({ type: "user-scroll", direction: "down", atBottom: true })
+    }
+    const element = scrollElement()
+    if (element) {
+      // Publish intent before notifying scroll listeners: otherwise old follow
+      // state can arm a programmatic pin and suppress user boundary navigation.
+      // Synchronize the live offset before replacing Virtua's pending operation.
+      element.dispatchEvent(new Event("scroll"))
+      virtuaHandle()?.scrollBy(0)
     }
   }
 
@@ -275,11 +300,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || items.length === 0) return
     const offset = handle?.scrollOffset ?? element.scrollTop
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-    if (handle && shouldAdvanceBottomPin(offset, maxOffset)) {
+    if (shouldAdvanceBottomPin(offset, maxOffset)) {
       markProgrammaticScroll()
-      handle.scrollToIndex(items.length - 1, { align: "end", smooth: !immediate })
-    } else if (!handle && shouldAdvanceBottomPin(offset, maxOffset)) {
-      scrollToOffset(maxOffset, true)
+      element.scrollTo({ top: maxOffset, behavior: immediate ? "instant" : "smooth" })
     }
     pinDomBottomAfterLayout()
   }
@@ -290,7 +313,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handle = virtuaHandle()
     const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
     const offset = handle?.scrollOffset ?? element.scrollTop
-    if (shouldAdvanceBottomPin(offset, maxOffset)) scrollToOffset(maxOffset, true)
+    if (shouldAdvanceBottomPin(offset, maxOffset)) {
+      // Virtua's imperative scroll reasserts its target on later measurements
+      // and has no public cancellation API. Bottom settlement is already owned
+      // here, so keep its writes synchronous and gate every later frame on follow.
+      markProgrammaticScroll()
+      element.scrollTop = maxOffset
+      scrollController.recordProgrammaticOffset(element.scrollTop, true)
+    }
     if (remainingFrames <= 0) return
     requestAnimationFrame(() => pinDomBottomAfterLayout(remainingFrames - 1))
   }
@@ -344,6 +374,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function handleScroll() {
+    readerSettlement.notify()
     updateScrollStateFromDom()
     props.onScroll?.(captureScrollSnapshot())
 
@@ -412,6 +443,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function flushContentRendered() {
+    readerSettlement.notify()
     pendingContentRenderedFrame = null
     if (restartAnchorRestore) {
       restartAnchorRestore()
@@ -558,6 +590,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function restoreScrollSnapshot(snapshot: VirtualFollowScrollSnapshot, opts?: RestoreScrollSnapshotOptions) {
+    readerSettlement.cancel()
     const element = scrollElement()
     if (!element) {
       opts?.fallback?.()
@@ -897,10 +930,39 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       return { items, keys: items.map((item, index) => props.getKey(item, index)) }
     },
     ({ items: nextItems, keys: nextItemKeys }) => {
+      // Equivalent source reprojections are not new window plans. In particular,
+      // they must not invalidate a rolling adjustment waiting for its first RAF.
+      if (nextItems.length === plannedItems.length && nextItems.every((item, index) =>
+        item === plannedItems[index] && nextItemKeys[index] === plannedKeys[index])) return
+      plannedItems = nextItems.slice()
+      plannedKeys = nextItemKeys.slice()
       const shiftGeneration = ++windowShiftGeneration
 
       const change = classifyVirtualItemKeyChange(virtualItemKeys, nextItemKeys)
+      // A short append also needs measured probes: a hidden native metadata row
+      // estimated at the mean height of a tall answer can pin beyond every row.
+      // Keep large page loads and rolling-window shifts on their bounded path.
+      // Escaped readers must retain their DOM gesture target: remounting an
+      // existing tool scroller cancels a held native middle-button drag.
+      const appendedCount = nextItemKeys.length - virtualItemKeys.length
+      const measureAppend = autoScroll() && virtualItemKeys.length > 0 && appendedCount > 0
+        && appendedCount <= MEASUREMENT_PROBE_COUNT && change.shiftedStartCount === 0
+      const resetMeasurements = change.resetMeasurements || measureAppend
+      const measurementCache = resetMeasurements
+        ? remapVirtualMeasurements(virtualItemKeys, nextItemKeys, virtuaHandle()?.cache, autoScroll(), measurementAuthority().pendingProbeKeys)
+        : undefined
+      const viewport = resetMeasurements ? scrollElement()?.getBoundingClientRect() : undefined
+      // Visible rows and pending measurements have separate lifetimes: many
+      // visible rows must never evict a zero-seeded insertion before its measure.
+      const visibleKeys = resetMeasurements && viewport
+        ? new Set(Array.from(itemElements).filter(([, element]) => {
+            const rect = element.getBoundingClientRect()
+            return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
+          }).map(([key]) => key))
+        : new Set<string>()
       if (change.shiftedStartCount > 0) {
+        const reader = !autoScroll() ? readerSettlement.capture() : undefined
+        if (reader?.anchor && !nextItemKeys.includes(reader.anchor.key)) readerSettlement.cancel()
         const retainedCount = virtualItemKeys.length - change.shiftedStartCount
         setShiftVirtualItems(false)
         setVirtualItems([...virtualItems(), ...nextItems.slice(retainedCount)])
@@ -910,16 +972,30 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
           setShiftVirtualItems(true)
           setVirtualItems(nextItems.slice())
           virtualItemKeys = nextItemKeys
+          // Shift mode adjusts for every subsequent measurement, including a
+          // streaming tail below an escaped reader, until scrolling becomes idle.
+          // Release that end-relative mode through the public relative operation:
+          // zero follows the current offset, never a captured pre-gesture target.
+          // Keep the keyed DOM intact for a held nested middle-button drag.
+          requestAnimationFrame(() => {
+            if (shiftGeneration !== windowShiftGeneration) return
+            virtuaHandle()?.scrollBy(0)
+            readerSettlement.settle(reader)
+          })
         })
-      } else {
+    } else {
         setShiftVirtualItems(false)
         setVirtualItems(nextItems.slice())
         virtualItemKeys = nextItemKeys
       }
 
-      if (change.resetMeasurements) {
+      if (resetMeasurements) {
         itemElements.clear()
-        setItemKeyMeasurementEpoch((epoch) => epoch + 1)
+        setMeasurementAuthority({
+          cache: measurementCache?.cache,
+          pendingProbeKeys: measurementCache?.probes.map(index => nextItemKeys[index]) ?? [],
+          probes: [...(measurementCache?.probes ?? []), ...nextItemKeys.flatMap((key, index) => visibleKeys.has(key) ? [index] : [])],
+        })
       }
       if (change.endChanged && autoScroll()) api.notifyContentRendered()
     },
@@ -928,6 +1004,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(() => props.resetKey?.(), (nextKey) => {
     if (nextKey === lastResetKey) return
+    readerSettlement.cancel()
     lastResetKey = nextKey
     invalidateScrollRestore()
     lastHandledExplicitBottomPinToken = null
@@ -942,11 +1019,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setShiftVirtualItems(false)
     setVirtualItems(items.slice())
     virtualItemKeys = items.map((item, index) => props.getKey(item, index))
+    plannedItems = items.slice()
+    plannedKeys = virtualItemKeys.slice()
     itemElements.clear()
   }))
 
   createEffect(on(isActive, (active) => {
     if (!active) {
+      readerSettlement.cancel()
       if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
       pendingExplicitBottomPinFrame = null
       clearExplicitBottomPin()
@@ -967,6 +1047,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const observer = new ResizeObserver(() => {
       const nextHeight = element.clientHeight
       if (nextHeight === previousHeight) return
+      readerSettlement.cancel()
       if (!isActive() || previousHeight <= 0 || nextHeight <= 0) {
         previousHeight = nextHeight
         return
@@ -1002,6 +1083,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   onCleanup(() => {
     invalidateScrollRestore()
+    readerSettlement.cancel()
     clearExplicitBottomPin()
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     if (pendingExplicitBottomPinFrame !== null) cancelAnimationFrame(pendingExplicitBottomPinFrame)
@@ -1029,15 +1111,25 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         onClick={props.onClick}
       >
         {props.renderBeforeItems?.()}
+        {/* Client-only: keep bounded measurement probes, not an SSR range that
+            stays pinned until a real scroll event (short threads cannot scroll). */}
         <Show keyed when={measurementAuthority()}>
-          {(_authority) => (
+          {(authority) => (
             <Virtualizer
+              cache={authority.cache}
               ref={setVirtuaHandle}
               scrollRef={scrollElement()}
               data={virtualItems()}
               shift={shiftVirtualItems()}
               bufferSize={props.overscanPx ?? 400}
-              ssrCount={Math.min(virtualItems().length, MEASUREMENT_RESET_SSR_COUNT)}
+              keepMounted={[...new Set([
+                ...Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => index),
+                // A disjoint older page is entered at its bottom. Its first
+                // records may all be hidden native metadata, so head probes
+                // alone cannot render the destination before the scroll event.
+                ...Array.from({ length: Math.min(virtualItems().length, MEASUREMENT_PROBE_COUNT) }, (_, index) => virtualItems().length - 1 - index),
+                ...authority.probes.filter(index => index < virtualItems().length),
+              ])]}
               onScroll={handleScroll}
             >
               {(item, index) => {
@@ -1051,7 +1143,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
                       if (itemElements.get(key) === element) itemElements.delete(key)
                     })
                   }}
-                >{props.renderItem(item, index())}</div>
+                >{props.renderItem(item, index)}</div>
               }}
             </Virtualizer>
           )}

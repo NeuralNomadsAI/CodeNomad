@@ -27,7 +27,9 @@ export function isLatestWindow(window?: MessageWindowState): boolean {
 
 export function windowFromSnapshot(snapshot?: MessageWindowSnapshot | null): MessageWindowState {
   const newerCursors = sanitizeNewerCursors(snapshot?.newerCursors)
-  if (snapshot?.windowIsLatest === false || snapshot?.windowCursor) {
+  // An explicit latest flag wins over stale cursors saved by older builds.
+  // Cursor-only legacy snapshots still restore their history window.
+  if (snapshot?.windowIsLatest === false || (snapshot?.windowIsLatest !== true && snapshot?.windowCursor)) {
     return {
       kind: "history",
       resumeCursor: snapshot.windowCursor,
