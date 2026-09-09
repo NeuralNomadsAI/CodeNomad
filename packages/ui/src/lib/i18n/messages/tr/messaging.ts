@@ -126,7 +126,7 @@ export const messagingMessages = {
   "messageItem.status.generating": "Oluşturuluyor...",
   "messageItem.status.sending": "Gönderiliyor...",
   "messageItem.status.failedToSend": "Mesaj gönderilemedi",
-  "messagePart.actions.delete": "Parçayı Sil",
+  "messagePart.actions.delete": "Sil",
   "messagePart.actions.deleting": "Siliniyor...",
   "messagePart.actions.deleteFailedTitle": "Silme başarısız",
   "messagePart.actions.deleteFailedMessage": "Öğe silinemedi",
