@@ -208,6 +208,12 @@ async function setWorktreeSlugForParentSession(
   const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === normalizedSlug)
   if (!worktree) throw new Error(`Worktree not found: ${normalizedSlug}`)
 
+  // Controlled selectors can report their current option while metadata loads.
+  // Do not turn that reconciliation into a family move and native move echoes.
+  const currentDirectory = sessions().get(instanceId)?.get(rootSessionId)?.location.directory
+  const targetDirectory = worktree.serviceDirectory ?? worktree.directory
+  if (currentDirectory && normalizeDirectory(currentDirectory) === normalizeDirectory(targetDirectory)) return
+
   const key = `${instanceId}:${rootSessionId}`
   const previous = familyMoveRequests.get(key)
   const moveFamily = options.moveFamily ?? ((id: string, sessionId: string, worktreeSlug: string) =>

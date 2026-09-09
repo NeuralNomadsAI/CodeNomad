@@ -41,7 +41,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { tGlobal } from "../lib/i18n"
 
@@ -211,7 +211,11 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
     return directories.some((candidate) => normalizeSessionDirectory(candidate) === normalized) ? [instance.id] : []
   })
 
-  if (targetInstanceIds.length === 1 && targetInstanceIds[0] === sourceInstanceId) {
+  // A location can be open in several instances. Keep the native event with
+  // its source whenever that source still owns the destination instead of
+  // assigning it to an arbitrary duplicate view.
+  const sourceOwnsLocation = targetInstanceIds.includes(sourceInstanceId)
+  if (sourceOwnsLocation) {
     withSession(sourceInstanceId, sessionId, (session) => {
       session.location = location
       session.projectID = data.projectID
@@ -224,7 +228,8 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
     }
   }
 
-  for (const instanceId of new Set([sourceInstanceId, ...targetInstanceIds])) {
+  const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
+  for (const instanceId of new Set(affectedInstanceIds)) {
     const pending = movedSessionRefreshTimers.get(instanceId)
     if (pending) clearTimeout(pending)
     movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
@@ -317,7 +322,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const instanceSessions = new Map(prev.get(instanceId))
       const existing = instanceSessions.get(sessionId)
       const compacting = existing?.status === "compacting"
       const candidate: Session = {
@@ -350,6 +355,9 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     reconcilePendingSessionIndicators(instanceId)
+
+    const published = updatedInstanceSessions?.get(sessionId)
+    if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
     if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
 
@@ -404,6 +412,17 @@ function handleSessionUpdate(
     withSession(instanceId, event.data.sessionID, (session) => {
       session.revert = revert ?? undefined
     })
+    if (event.type === "session.revert.cleared") {
+      // The staged tail is still owned by OpenCode, but no longer resident.
+      // Clearing the marker alone cannot render it again.
+      const sessionId = event.data.sessionID
+      invalidateSessionMessageLoad(instanceId, sessionId)
+      if (activeSessionId().get(instanceId) === sessionId) {
+        void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+          log.error("Failed to reload messages after clearing revert", error)
+        })
+      }
+    }
     return
   }
 

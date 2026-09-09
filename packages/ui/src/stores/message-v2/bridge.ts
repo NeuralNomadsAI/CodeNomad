@@ -52,7 +52,9 @@ export function seedSessionMessagesV2(
     id: metadata.id,
     title: metadata.title,
     parentId: metadata.parentId ?? null,
-    revert: (session as Session)?.revert ?? undefined,
+    // Transcript-only projections have no authority over session metadata.
+    // A full session snapshot can explicitly clear a staged revert.
+    ...("revert" in session ? { revert: session.revert ?? null } : {}),
   })
 
   const normalizedMessages = messages.map((message) => ({
