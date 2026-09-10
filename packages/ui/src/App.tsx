@@ -17,6 +17,7 @@ import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
+import { reloadWorktrees } from "./stores/worktrees"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
@@ -324,6 +325,7 @@ const App: Component = () => {
                 sessionError = error
               }
               await Promise.all([
+                reloadWorktrees(id),
                 syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
                 refreshVolatileInstanceState(id),
                 syncLoadedSessionInboxes(id),

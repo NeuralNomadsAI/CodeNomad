@@ -1,4 +1,5 @@
 import type { Session } from "../types/session"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 export type SessionThread = {
   session: Session
@@ -15,6 +16,46 @@ export type VisibleSessionRow = {
   isLastChild: boolean
   hasChildren: boolean
   expanded: boolean
+}
+
+export type SessionFamilySort = "activity" | "name" | "worktree"
+
+type SessionFamilyProjection = {
+  matchesSession?: (session: Session) => boolean
+  worktreeDirectory?: string
+  sort: SessionFamilySort
+  getWorktreeLabel: (directory: string) => string
+}
+
+function someSession(thread: SessionThread, predicate: (session: Session) => boolean): boolean {
+  return predicate(thread.session) || thread.children.some((child) => someSession(child, predicate))
+}
+
+export function projectSessionFamilies(
+  threads: SessionThread[],
+  options: SessionFamilyProjection,
+): SessionThread[] {
+  const worktreeDirectory = normalizeSessionDirectory(options.worktreeDirectory)
+  const projected = threads.filter((thread) => {
+    if (options.matchesSession && !someSession(thread, options.matchesSession)) return false
+    if (!worktreeDirectory) return true
+    return someSession(
+      thread,
+      (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory,
+    )
+  })
+
+  return [...projected].sort((left, right) => {
+    if (options.sort === "activity") {
+      return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
+    }
+    if (options.sort === "name") {
+      return (left.session.title ?? "").localeCompare(right.session.title ?? "") || left.session.id.localeCompare(right.session.id)
+    }
+    const leftLabel = options.getWorktreeLabel(left.session.location?.directory ?? "")
+    const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
+    return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
+  })
 }
 
 export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {

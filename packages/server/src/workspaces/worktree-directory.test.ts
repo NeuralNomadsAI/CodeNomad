@@ -38,6 +38,7 @@ test("resolves nested and junction paths to their canonical owning worktree", as
 
   assert.equal(resolved?.slug, "doomed")
   assert.equal(resolved?.directory, await realpath(path.join(worktree, "nested")))
+  assert.equal(resolved?.worktreeDirectory, await realpath(worktree))
   assert.equal((await resolveOwnedWorktreePath({
     workspaceId,
     workspacePath: root,

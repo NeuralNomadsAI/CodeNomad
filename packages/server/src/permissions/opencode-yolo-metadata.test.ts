@@ -92,8 +92,8 @@ describe("OpenCode Yolo persistence", () => {
       },
     ])
     assert.deepEqual(listInputs, [
-      { directory: "/repo", limit: 10_000, cursor: undefined },
-      { directory: "/repo", limit: 10_000, cursor: "page-2" },
+      { directory: "/repo", limit: 10_000 },
+      { cursor: "page-2" },
     ])
   })
 

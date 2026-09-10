@@ -10,6 +10,81 @@ import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActi
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
+  it("applies the complete moved location before reconciliation", () => {
+    const instanceId = "native-session-moved"
+    const sessionId = "session"
+    const client = { session: { list: async () => ({ data: [], cursor: {} }), active: async () => ({}) } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/worktree", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "idle", retry: null,
+      idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+      projectID: "old-project", subpath: "old", location: { directory: "/old" }, time: { created: 1, updated: 1 },
+    } as any]])))
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "moved", created: 2, type: "session.moved",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: {
+          sessionID: sessionId,
+          projectID: "new-project",
+          subpath: "apps/web",
+          location: { directory: "/worktree", workspaceID: "workspace-2" },
+        },
+      })
+
+      const moved = sessions().get(instanceId)?.get(sessionId)
+      assert.deepEqual(moved?.location, { directory: "/worktree", workspaceID: "workspace-2" })
+      assert.equal(moved?.projectID, "new-project")
+      assert.equal(moved?.subpath, "apps/web")
+    } finally {
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("does not infer a cross-instance owner from a shared directory", async () => {
+    const sourceId = "native-session-source"
+    const duplicateId = "native-session-duplicate"
+    const sessionId = "session"
+    const client = { session: { list: async () => ({ data: [], cursor: {} }), active: async () => ({}) } } as any
+    for (const instanceId of [sourceId, duplicateId]) {
+      ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+      addInstance({ id: instanceId, folder: "/shared", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    }
+    setSessions((previous) => new Map(previous).set(sourceId, new Map([[sessionId, {
+      id: sessionId, instanceId: sourceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "idle", retry: null,
+      idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+      projectID: "project", location: { directory: "/old" }, time: { created: 1, updated: 1 },
+    } as any]])))
+
+    try {
+      handleNativeSessionEvent(sourceId, {
+        id: "moved", created: 2, type: "session.moved",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId, projectID: "project", location: { directory: "/shared", workspaceID: "unknown" } },
+      })
+      assert.equal(Boolean(sessions().get(duplicateId)?.has(sessionId)), false)
+      await delay(20)
+      assert.equal(Boolean(sessions().get(duplicateId)?.has(sessionId)), false)
+    } finally {
+      setSessions((previous) => {
+        const next = new Map(previous)
+        next.delete(sourceId)
+        next.delete(duplicateId)
+        return next
+      })
+      for (const instanceId of [sourceId, duplicateId]) {
+        removeInstance(instanceId, { authoritative: false })
+        sdkManager.destroyClientsForInstance(instanceId)
+      }
+    }
+  })
+
   it("projects text immediately, coalesces compaction deltas, and keeps terminal state authoritative", async () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"

@@ -49,7 +49,9 @@ export function createOpencodeYoloPersistence(
     const sessions: SessionInfo[] = []
     let cursor: string | undefined
     do {
-      const page = await client.session.list({ directory, limit: SESSION_LIST_LIMIT, cursor })
+      const page = await client.session.list(cursor
+        ? { cursor }
+        : { directory, limit: SESSION_LIST_LIMIT })
       sessions.push(...page.data)
       cursor = page.cursor.next ?? undefined
     } while (cursor)

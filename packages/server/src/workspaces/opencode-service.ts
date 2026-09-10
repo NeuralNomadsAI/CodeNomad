@@ -69,7 +69,10 @@ export class OpenCodeSharedService {
     serviceOptions?: OpenCodeSharedServiceOptions,
   ): Promise<LocationGetOutput> {
     const result = await this.withClient(serviceOptions, (client) => client.location.get({
-      location: { directory: location.directory },
+      location: {
+        directory: location.directory,
+        ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
+      },
     }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
     if (
       !result

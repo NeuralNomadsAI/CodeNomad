@@ -575,6 +575,34 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("scopes typed plugin events to the owner of their required native location", async () => {
+    const events = [{
+      id: "rpc-event",
+      created: 1,
+      type: "rpc.example.updated",
+      location: { directory: "/repo-b", workspaceID: "workspace-b" },
+      data: { itemID: "item" },
+    }] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
+    const { manager, sessionGets } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 0)
+      assert.equal(received[0].instanceId, "b")
+      assert.equal(received[0].event.type, "rpc.example.updated")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("broadcasts safe global locationless service events", async () => {
     const events = [
       { type: "agent.updated", data: {} },

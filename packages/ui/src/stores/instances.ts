@@ -383,6 +383,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
       sessionError = error
     }
     await Promise.all([
+      reloadWorktrees(instanceId),
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
       syncLoadedSessionInboxes(instanceId),

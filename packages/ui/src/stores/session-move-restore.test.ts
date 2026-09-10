@@ -10,6 +10,8 @@ import { handleNativeSessionEvent } from "./session-events.ts"
 import { getSessionListIds, prependSessionListId, sessions, setSessions } from "./session-state.ts"
 import { ensureWorktreesLoaded, setWorktreeSlugForParentSession } from "./worktrees.ts"
 
+const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
+
 function setup(id: string, folder: string) {
   const session = {
     id: "restored", instanceId: id, parentId: null, title: "restored", agent: "build",
@@ -46,28 +48,43 @@ it("keeps a restored session in each duplicate-folder instance after a same-dire
     } as any)
     assert.ok(sessions().get(second.session.instanceId)?.has("restored"), "The event is not an exclusive transfer to the first matching instance")
     assert.equal(store.getMessageWindow("restored"), window, "Do not clear the historical message window")
-    await new Promise<void>((resolve) => setImmediate(resolve))
+    await delay(150)
     assert.ok(sessions().get(second.session.instanceId)?.has("restored"), "Catalog settlement must not remove the restored selection")
     assert.deepEqual(getSessionListIds(second.session.instanceId), ["restored"])
   } finally { first.cleanup(); second.cleanup() }
 })
 
-it("does not send session.move when worktree option hydration reselects the current directory", async () => {
+it("does not move a session family when worktree option hydration reselects the current directory", async () => {
   const fixture = setup("worktree-selection-noop", "C:\\Repo\\")
   const original = serverApi.fetchWorktrees
   const moves: string[] = []
-  fixture.client.session.move = async (input: { directory: string }) => { moves.push(input.directory) }
+  let destination = fixture.session.location.directory
   serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
     { slug: "root", directory: "c:/repo" },
     { slug: "feature", directory: "c:/repo/.worktrees/feature" },
   ] }) as any
+  const moveOptions = {
+    moveFamily: async (_instanceId: string, rootSessionId: string, slug: string) => {
+      moves.push(`${rootSessionId}:${slug}`)
+      destination = slug === "root" ? "c:/repo" : "c:/repo/.worktrees/feature"
+    },
+    refreshSessions: async () => {
+      setSessions((previous) => {
+        const next = new Map(previous)
+        const current = new Map(next.get(fixture.session.instanceId))
+        current.set(fixture.session.id, { ...current.get(fixture.session.id)!, location: { directory: destination } })
+        next.set(fixture.session.instanceId, current)
+        return next
+      })
+    },
+  }
   try {
     await ensureWorktreesLoaded(fixture.session.instanceId)
-    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "root")
+    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "root", moveOptions)
     assert.deepEqual(moves, [], "Controlled option initialization is not a move request")
-    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "feature")
-    assert.deepEqual(moves, ["c:/repo/.worktrees/feature"], "A real directory change still moves the session")
-    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "feature")
+    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "feature", moveOptions)
+    assert.deepEqual(moves, ["restored:feature"], "A real directory change still moves the session family")
+    await setWorktreeSlugForParentSession(fixture.session.instanceId, "restored", "feature", moveOptions)
     assert.equal(moves.length, 1)
   } finally { serverApi.fetchWorktrees = original; fixture.cleanup() }
 })
@@ -88,7 +105,7 @@ it("keeps an in-project move in the source instance when another tab opens that 
       data: { sessionID: "restored", location: { directory: "/repo/.worktrees/feature" } },
     } as any)
     assert.equal(sessions().get(root.session.instanceId)?.get("restored")?.location.directory, "/repo/.worktrees/feature")
-    await new Promise<void>((resolve) => setImmediate(resolve))
+    await delay(150)
     assert.deepEqual(getSessionListIds(root.session.instanceId), ["restored"])
   } finally { serverApi.fetchWorktrees = original; worktree.cleanup(); root.cleanup() }
 })
@@ -102,9 +119,9 @@ it("still removes the old instance projection when the session really leaves its
       id: "different-location", type: "session.moved", created: 1,
       data: { sessionID: "restored", location: { directory: "/other" } },
     } as any)
+    await delay(150)
     assert.equal(sessions().get(source.session.instanceId)?.has("restored") ?? false, false)
     assert.equal(sessions().get(target.session.instanceId)?.get("restored")?.location.directory, "/other")
-    await new Promise<void>((resolve) => setImmediate(resolve))
     assert.deepEqual(getSessionListIds(source.session.instanceId), [])
     assert.deepEqual(getSessionListIds(target.session.instanceId), ["restored"])
   } finally { source.cleanup(); target.cleanup() }
