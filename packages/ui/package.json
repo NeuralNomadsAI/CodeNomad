@@ -8,6 +8,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
+    "test:browser": "node --import tsx --test --test-concurrency=1 tests/browser/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -42,6 +43,7 @@
     "@types/debug": "^4.1.13",
     "@vite-pwa/assets-generator": "^1.0.2",
     "autoprefixer": "10.4.21",
+    "playwright": "1.63.0",
     "postcss": "8.5.6",
     "tailwindcss": "3",
     "typescript": "^5.3.0",
