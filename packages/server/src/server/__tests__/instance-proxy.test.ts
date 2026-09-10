@@ -368,7 +368,7 @@ describe("instance proxy location enforcement", () => {
     assert.match(JSON.parse(response.body).url, /\/api\/location\?location%5Bdirectory%5D=%2Frepo/)
   })
 
-  it("allows updates to messages in owned sessions", async () => {
+  it("blocks the removed message replacement API even for owned sessions", async () => {
     const { app, requestCount, sessionGets } = await harness()
     const response = await app.inject({
       method: "PATCH",
@@ -376,10 +376,16 @@ describe("instance proxy location enforcement", () => {
       payload: { content: [{ type: "text", text: "kept" }] },
     })
 
-    assert.equal(response.statusCode, 200)
-    assert.deepEqual(JSON.parse(response.body).body, { content: [{ type: "text", text: "kept" }] })
-    assert.deepEqual(sessionGets, ["session"])
-    assert.equal(requestCount(), 1)
+    assert.equal(response.statusCode, 403)
+    assert.deepEqual(sessionGets, [])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("does not expose generic RPC through the instance proxy", async () => {
+    const { app, requestCount } = await harness()
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/rpc/arbitrary/run", payload: { input: {} } })
+    assert.equal(response.statusCode, 403)
+    assert.equal(requestCount(), 0)
   })
 
   it("allows owned native VCS reads and rejects foreign locations", async () => {

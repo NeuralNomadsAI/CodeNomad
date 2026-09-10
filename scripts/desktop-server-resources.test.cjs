@@ -27,10 +27,11 @@ test("integrity-pins the full server production closure in the root lock", () =>
 
   assert.ok(closure.size > 100)
   assert.equal(lock.packages["node_modules/fastify"].version, "4.29.1")
-  assert.equal(lock.packages["node_modules/undici"].version, "6.22.0")
+  assert.equal(lock.packages["node_modules/undici"].version, "6.28.1")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
   assert.ok(closure.has("packages/remote-control-protocol"))
+  assert.equal(closure.has("node_modules/@opencode/plugin"), false, "the opt-in pruning plugin API is not a server production dependency")
 })
 
 test("stages prebuilt workspace packages without install lifecycle scripts", (t) => {
@@ -51,6 +52,13 @@ test("stages prebuilt workspace packages without install lifecycle scripts", (t)
   const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
   assert.equal(manifest.scripts, undefined)
   assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export {}\n")
+})
+
+test("rejects an unpinned production dependency despite an otherwise valid lock", () => {
+  const root = path.resolve(__dirname, "..")
+  const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"))
+  delete lock.packages["node_modules/undici"].integrity
+  assert.throws(() => validateServerProductionLock(lock), /does not integrity-pin node_modules\/undici/)
 })
 
 test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
