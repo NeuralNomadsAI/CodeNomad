@@ -2,18 +2,18 @@ import { randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
-import { AUDITED_RUNTIME, storageKey, validateClaimFence } from "./claim-fence"
+import { storageKey, validateClaimFence } from "./claim-fence"
 import { pruneTransaction } from "./transaction"
 import { pruneRequestSchema, type PruneResult } from "./contract"
+import { pruningDatabasePath } from "./database-path"
 
-// Only the explicitly enabled, version-gated plugin calls this service.
+// Only an explicit pruning RPC calls this service; loading the plugin never prunes.
 // No database access is exposed through CodeNomad's HTTP broker.
 export async function pruneBoundMessage(
   ctx: Plugin.Context, input: unknown, signal: AbortSignal,
 ): Promise<PruneResult> {
   const request = pruneRequestSchema.parse(input)
-  if (ctx.app.version !== AUDITED_RUNTIME) return { status: "blocked", reason: "unsupported_storage" }
-  const configured = ctx.options.databasePath
+  const configured = pruningDatabasePath(ctx.options.databasePath, ctx.app.channel)
   if (typeof configured !== "string" || !path.isAbsolute(configured)
     || (process.platform === "win32" && configured.replaceAll("/", "\\").startsWith("\\\\"))) {
     return { status: "blocked", reason: "unsupported_storage" }
@@ -36,7 +36,7 @@ export async function pruneBoundMessage(
       db.exec("PRAGMA busy_timeout=0")
       try {
         return pruneTransaction(db, request, () => validateClaimFence(db, request.sessionID, {
-          version: ctx.app.version, key: storageKey(key), nonce,
+          key: storageKey(key), nonce,
           directory: session.location.directory, projectID: session.projectID,
           workspaceID: session.location.workspaceID,
         }), storageKey("pruning/receipt/"))

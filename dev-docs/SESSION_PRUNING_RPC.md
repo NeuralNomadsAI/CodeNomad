@@ -3,12 +3,14 @@
 ## Status and safety boundary
 
 This replaces CodeNomad's two removed `session.messageUpdate` call sites without
-forking OpenCode. The explicitly installed plugin defaults to read-only preview.
-`options.mode: "prune"` enables the version-gated mutation path; it does **not**
-bypass the storage/execution/ownership checks. Unsupported or absent plugins
+forking OpenCode. A native local plugin entry registers `preview` and `prune`.
+No extra write-enable option or runtime version allowlist is required. Each pruning
+request checks storage/execution/ownership. Unsupported or absent plugins
 produce a localized failure, never a legacy API fallback or optimistic deletion.
 
-The experimental write path currently accepts **only `0.0.0-beta-19419`**.
+The write path has **no runtime-version allowlist**. Compatible storage, ownership,
+the fresh database challenge and native execution claims determine whether a request
+can proceed. The initial validation used `0.0.0-beta-19419`, not a required version.
 It was exercised locally with the official Windows x64 executable, generated sessions,
 two HTTP clients and a local mock provider. The independently installed package also
 passed native CI on Windows, Linux and macOS in run `34424614579`. This is not a
@@ -16,8 +18,8 @@ compatibility promise for future betas, every provider, WSL, arbitrary DB schema
 or third-party writers.
 The native desktop and interactive TUI release checks listed below remain separate.
 
-No plugin was installed on the user's shared daemon. No real database was changed.
-The existing desktop executable/profile and primary checkout remain untouched.
+The original implementation was validated with isolated synthetic data only.
+The PR's Tauri build was subsequently launched manually for interactive use.
 
 ## Why this exists
 
@@ -43,12 +45,18 @@ compatibility proof. This prototype rejects incomplete messages.
 - `revision.ts`: browser-safe canonical content hashing.
 - `planner.ts`: completed-assistant checks and technical-part-only selection.
 - `preview-store.ts`: explicit read-only database access, including history before compaction.
+- `database-path.ts`: daemon-side OpenCode data-directory/environment conventions, with an optional path override.
 - `transaction.ts`: synchronous content-only CAS and atomic idempotency receipt.
-- `claim-fence.ts`: pinned native execution-claim and database-identity checks.
-- `service.ts`: explicitly configured connection and a fresh `ctx.storage` challenge.
+- `claim-fence.ts`: native execution-claim and database-identity checks.
+- `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
-- `plugin.ts`: native RPC registration, opt-in gate and post-commit notifications.
+- `plugin.ts`: native RPC registration and post-commit notifications.
+- `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry.
 - `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
+
+`pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
+automatic provisioning and backend leases. The server build bundles the payload
+and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
 
 The UI keeps individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
@@ -84,20 +92,22 @@ re-read or retry the **same** request, not assume no mutation occurred.
 
 - UI/server client lock refreshed to the last `@opencode-ai/client@beta` publication,
   `beta-19271`. The published low-level `rpc.call` transport is used by the broker.
-- Plugin definition typechecked/tested against `@opencode/plugin@0.0.0-beta-19419`,
-  a development-only dependency; no plugin payload is auto-installed or added as
-  a production dependency. Migration of the rest of CodeNomad to `@opencode/client`
+- Plugin definition uses `@opencode/plugin@beta` with reproducible workspace lock resolution,
+   a development-only dependency bundled into the shipped plugin payload. No npm
+   installation is performed at app startup. Migration of the rest of CodeNomad to `@opencode/client`
   is separate work. The native integration test uses the actual `beta-19271` client
-  against the official `beta-19419` runtime, including RPC and custom events.
+  against an explicitly supplied official runtime, including RPC and custom events.
+  The native test and TUI cache tests do not impose a beta-number allowlist.
 - In that plugin contract, `ctx.session.message` and `ctx.db` do not exist.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
   driver **inside the official compiled runtime**, not an embedded SDK substitute.
   The 30 plugin/SQLite/TUI-companion unit tests also pass on Node 22.
 - The module has a packable manifest with `index.ts` and `./tui` entrypoints.
   Local configuration must target the **directory**, not `plugin.ts`.
-- Installation is manual and opt-in. Do not put an auto-loaded entry in this
-  worktree's `.opencode/plugins`, restart the shared service, or update the runtime
-  as a side effect of installation. See [deployment](SESSION_PRUNING_DEPLOYMENT.md).
+- An automatically provisioned entry in the global OpenCode `plugins` directory is
+  discovered for all projects. Its small lifecycle module remains loaded; pruning
+  RPCs exist only while CodeNomad is present. See [deployment](SESSION_PRUNING_DEPLOYMENT.md). No daemon upgrade or
+  restart is performed by pruning commands.
 
 ## Coordination and remaining validation
 

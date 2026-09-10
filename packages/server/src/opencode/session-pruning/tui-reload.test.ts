@@ -49,7 +49,7 @@ test("TUI companion rejects foreign locations, malformed events and unknown sess
   reload.dispose()
 })
 
-test("TUI reload regressions against the pinned published beta-19419 Solid cache", () => {
+test("TUI reload regressions against the installed published Solid cache", () => {
   // Keep Solid's browser conditions out of the server test process. Resolve the
   // native client from the pinned plugin dependency, not a checkout, global
   // install, copied cache implementation, or a network install during tests.
@@ -61,7 +61,7 @@ test("TUI reload regressions against the pinned published beta-19419 Solid cache
   ], { encoding: "utf8", timeout: 30_000, env })
   assert.ifError(result.error)
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-  assert.match(result.stdout, /control: beta-19419/, "The child must actually execute its native-cache tests")
+  assert.match(result.stdout, /control: invalidate\/sync/, "The child must actually execute its native-cache tests")
 })
 
 test("TUI companion refuses a cache without public pagination coordination", () => {

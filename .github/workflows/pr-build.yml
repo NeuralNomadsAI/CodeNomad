@@ -88,7 +88,7 @@ jobs:
           New-Item -ItemType Directory -Force $sandbox | Out-Null
           $package = npm pack ./packages/server/src/opencode/session-pruning --pack-destination $sandbox --json | ConvertFrom-Json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@0.0.0-beta-19419' --ignore-scripts --no-audit --no-fund
+          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@beta' --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "PRUNING_NATIVE_INSTALL=$sandbox" >> $env:GITHUB_ENV
       - name: Test the installed plugin with an isolated official runtime
@@ -100,6 +100,12 @@ jobs:
           $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode2$extension"
           $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
           node scripts/test-session-pruning-native.mjs $cli $plugin
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:pruning --workspace @neuralnomads/codenomad
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-pruning-native.mjs $cli
       - name: Upload opt-in plugin package
         if: success()
         uses: actions/upload-artifact@v4

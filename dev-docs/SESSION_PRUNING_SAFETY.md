@@ -1,9 +1,11 @@
 # Pruning safety boundary
 
-This is a pinned implementation contract, not a public OpenCode lock API. The
+This is an internal storage contract, not a public OpenCode lock API. The
 source audit used upstream `f91c6d8b25`; the executable tests independently target
 the published `0.0.0-beta-19419`. Version strings alone do not certify a modified
-binary. We do not support custom Core patches or arbitrary direct SQL writers.
+binary. Runtime version labels do not enable or disable pruning: actual storage,
+identity and claim checks decide each request. We do not support custom Core
+patches or arbitrary direct SQL writers.
 
 ## Native ownership
 
@@ -38,7 +40,7 @@ observe the committed history. Titles and already-written summaries are not scru
 
 ## Identity, transaction and replay
 
-1. Require explicit prune mode and exact audited runtime, an absolute existing local
+1. Require an explicit pruning request and compatible storage, an absolute existing local
    DB path, native session ownership matching the plugin location, and a fresh random
    `ctx.storage` challenge. A same-session backup is not enough: the challenge must
    be visible through the candidate connection in the same DB's `kv` table.

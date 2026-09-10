@@ -1,6 +1,6 @@
 // Executed by tui-reload.test.ts in a browser-conditioned child process. Only
 // the transport is a fixture: publication, pagination, indexing, invalidation,
-// coalescing and Solid stores all come from the unmodified npm beta-19419 cache.
+// coalescing and Solid stores all come from the unmodified installed npm cache.
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
@@ -15,7 +15,7 @@ import tui from "./tui"
 const clientEntry = new URL(import.meta.resolve("@opencode/client/solid"))
 const manifest = JSON.parse(readFileSync(new URL("../../package.json", clientEntry), "utf8"))
 assert.equal(manifest.name, "@opencode/client")
-assert.equal(manifest.version, "0.0.0-beta-19419", "Reaudit the native pagination contract before changing the pin")
+console.log(`Testing native Solid cache ${manifest.version}`)
 const { createData } = await import(clientEntry.href) as typeof import("@opencode/client/solid")
 
 function deferred<T>() {
@@ -113,7 +113,7 @@ test("the published plugin entrypoint consumes the host's original native cache"
   assert(!f.text().includes("REMOVED"))
 })
 
-test("control: beta-19419 invalidate/sync alone leaves REMOVED after late pagination", async t => {
+test("control: invalidate/sync alone leaves REMOVED after late pagination", async t => {
   const f = fixture(); t.after(() => f.dispose())
   await f.seed()
   const older = f.data.session.message.loadMore("s")

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
-import { AUDITED_RUNTIME, validateClaimFence, type StorageIdentity } from "./claim-fence"
+import { validateClaimFence, type StorageIdentity } from "./claim-fence"
 import { pruneTransaction } from "./transaction"
 import { revision } from "./planner"
 import { storageDirectory } from "./storage-path"
 
-const identity: StorageIdentity = { version: AUDITED_RUNTIME, directory: "/work", projectID: "p", key: "binding", nonce: "fresh" }
+const identity: StorageIdentity = { directory: "/work", projectID: "p", key: "binding", nonce: "fresh" }
 const content = [{ type: "reasoning", text: "remove" }, { type: "text", text: "retain" }]
 const input = { sessionID: "s", messageID: "m", revision: revision(content), indexes: [0] }
 function fixture() {
@@ -53,9 +53,15 @@ for (const [label, sql] of [
   } finally { db.close() }
 })
 
-test("unknown runtime versions remain blocked even with an identical schema", () => {
+test("missing native claim storage rolls back without a content write or receipt", () => {
   const db = fixture()
-  try { assert.deepEqual(run(db, { ...identity, version: "0.0.0-beta-99999" }), { status: "blocked", reason: "unsupported_storage" }) }
+  try {
+    db.exec("ALTER TABLE session_v2 RENAME COLUMN time_suspended TO missing_claim")
+    assert.equal(run(db).status, "blocked")
+    assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM session_message").get()!.data as string).content, content)
+    assert.equal(db.prepare("SELECT count(*) AS n FROM kv WHERE key LIKE 'receipt/%'").get()!.n, 0)
+    assert.equal(db.isTransaction, false)
+  }
   finally { db.close() }
 })
 

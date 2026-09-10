@@ -1,85 +1,72 @@
-# Explicit pruning-plugin deployment
+# Bundled pruning-plugin lifecycle
 
-No automatic install, runtime upgrade or service restart is part of CodeNomad's
-pruning commands. This remains experimental and defaults to read-only. Review
-[safety](SESSION_PRUNING_SAFETY.md) and the remaining validation in
-[SESSION_PRUNING_RPC.md](SESSION_PRUNING_RPC.md) before enabling writes.
+CodeNomad ships its pruning plugin with the shared server used by Tauri and
+Electron. No user npm install, beta-number allowlist or write-enable option is
+required. Loading the plugin does not delete anything.
 
-## Build an installable package
+## Build and automatic provisioning
 
-From the repository root, with an existing absolute output directory:
+`npm run build:pruning --workspace @neuralnomads/codenomad` bundles the native
+plugin and its dependencies into `packages/server/dist/plugins/session-pruning/plugin.mjs`.
+The normal server build includes this step. Both desktop packagers copy the same
+artifact into `resources/server/dist/plugins/session-pruning/`.
+
+At server startup, CodeNomad copies this immutable, content-addressed payload to
+the CodeNomad data directory (`~/.local/share/codenomad/session-pruning/`, respecting
+`XDG_DATA_HOME`). It provisions a small managed entry at
+`~/.config/opencode/plugins/codenomad-session-pruning.ts`, respecting
+`XDG_CONFIG_HOME` and `OPENCODE_CONFIG_DIR`. Existing user-authored entries are
+preserved. No configuration document is rewritten.
+
+The entry imports the copied payload, never a checkout, worktree or application
+installation path. CodeNomad upgrades publish a new hash-named payload and
+atomically update the entry. Identical launches do not rewrite it. Normal OpenCode
+plugin discovery/reload handles the entry; CodeNomad never restarts the shared daemon.
+
+For a WSL workspace, the same backend provisions inside the selected distro's
+Linux directories before opening the native location. Windows uses UNC filesystem
+access; the native entry contains Linux paths. WSL runtime validation remains a
+separate release check.
+
+## Presence and shutdown
+
+- Each CodeNomad backend owns a unique presence file outside watched config paths,
+  refreshed every 2 seconds. All windows of that backend share it.
+- The native module registers pruning RPCs when at least one fresh presence exists.
+- Closing one window/backend leaves other backends' presence intact. Closing the
+  last backend removes its presence; RPC disposal follows within the 2-second check.
+- A crash leaves a stale file: it expires after 15 seconds, plus up to one check
+  interval. Reopening CodeNomad automatically registers RPC again.
+- Plugin unload serializes pending registration and disposal, so it cannot recreate
+  RPC after cleanup. Lease expiration never modifies content or stops OpenCode.
+
+The small module remains visible in OpenCode's plugin list while inactive. It
+registers no model tools, commands or model hooks. While active its RPCs belong to
+the shared daemon and are discoverable by its other clients. Deletions affect the
+shared session; third-party clients may need to reload their cached transcript.
+
+## Database selection and mutations
+
+The plugin resolves the daemon-side path from `XDG_DATA_HOME`, `OPENCODE_DB`,
+channel-specific filenames and `OPENCODE_DISABLE_CHANNEL_DB`. No per-project path
+is normally needed. A fresh `ctx.storage` challenge verifies the selected file
+before a write. The only mutation trigger is an explicit pruning request.
+
+Selection revisions, session ownership and native execution claims are checked in
+the transaction. A committed receipt makes retrying the same selection idempotent.
+Pruning never interrupts native execution, clears claims or rewrites checkpoints.
+It does not run VACUUM or restore databases.
+
+## Isolated verification
 
 ```powershell
-npm pack ./packages/server/src/opencode/session-pruning --pack-destination C:/isolated-packages
+npm run build:pruning --workspace @neuralnomads/codenomad
+node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
+node scripts/test-session-pruning-native.mjs C:/isolated-cli/opencode2.exe
 ```
 
-Install the resulting `.tgz` into a dedicated plugin installation directory with
-`npm install <absolute-tgz-path> --ignore-scripts`. This installs the pinned plugin
-API and Zod independently of CodeNomad. Nothing is published to npm. The package
-contains source TS entrypoints supported by OpenCode, no fixture DB, and no Core fork.
-
-Run the isolated native test against that installed directory:
-
-```powershell
-node scripts/test-session-pruning-native.mjs C:/isolated-cli/opencode2.exe C:/isolated-plugins/node_modules/@neuralnomads/codenomad-session-pruning
-```
-
-The CLI must be exactly beta-19419. This command runs a private server with generated
-data and a local provider, and never uses the ordinary background-service discovery.
-
-## Activation, only after explicit approval
-
-Before using any real session: obtain agreement from users of the shared daemon,
-make and verify a coherent backup, and validate restart/read/resume on an isolated
-copy. If stopping the daemon is needed for backup/installation, schedule that as
-separate maintenance; it affects TUI and other clients too. Do not silently restart
-or upgrade a running service just to meet this plugin's version gate.
-
-Merge an entry into the appropriate OpenCode `opencode.json(c)` **without replacing
-existing configuration**. Start with preview (omit `mode`, or use `"preview"`):
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": [
-    {
-      "package": "C:/isolated-plugins/node_modules/@neuralnomads/codenomad-session-pruning",
-      "options": {
-        "databasePath": "C:/explicitly-approved-state/opencode.db",
-        "mode": "preview"
-      }
-    }
-  ]
-}
-```
-
-These are placeholders, not the current user's database path. The package value is
-a **directory**. A `plugin.ts` file configured as a package is rejected by beta-19419.
-Database paths are interpreted on the **daemon's** OS, never the browser's. The fresh
-storage challenge rejects a mistaken snapshot or different daemon DB for mutation.
-
-After the deployment gates and backup are satisfied, an operator may change only
-`mode` to `"prune"`. Busy/unsupported sessions still refuse the operation; this is
-not a force flag. A runtime update automatically closes the exact-version write gate
-until that version is audited and tested. Never relax it to `startsWith("beta")`.
-
-The `./tui` companion is exposed beside the main plugin for native automatic loading.
-Remote TUI clients must have the package available locally as described by the V2 CLI
-plugin documentation. Other unmodified clients must reload history after pruning;
-receiving custom events does not teach them how to invalidate their caches.
-
-## Failure and recovery
-
-- Not confirmed / timeout: re-read the message. Retry the identical revision/indices
-  to recover an acknowledgement; do not assume the DB was unchanged.
-- Busy: let native work settle and retry; the plugin never interrupts it for you.
-- Unsupported storage/version: leave writes disabled. Do not delete event rows,
-  triggers or native claims to bypass the gate.
-- Disable: return to preview or remove only this plugin entry through the normal
-  plugin/config workflow. This does not undo prior deletions.
-- Restore: requires a separately approved, all-clients maintenance window and a
-  validated backup. No automatic replacement of the active DB is supplied.
-
-Deleting technical blocks is not universal database repair and does not perform
-VACUUM. Credentials, unrelated conversations, legacy V1 parts and retained events
-must never be copied into bug reports or package artifacts.
+The native fixture uses a private daemon, config, database and mock provider. It
+exercises the shipped bundle through automatic discovery, then preview/prune,
+concurrent execution, receipts, subscribers, payloads, history, forks, restart and
+the presence lifecycle. An optional second argument tests an independently packed
+source plugin directory instead. Tests never discover or modify the shared daemon.

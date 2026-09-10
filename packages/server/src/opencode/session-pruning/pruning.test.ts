@@ -140,18 +140,19 @@ test("refuses file-backed writes, but supports explicit read-only preview", asyn
   } finally { db.close(); await rm(dir, { recursive: true, force: true }) }
 })
 
-test("plugin defaults to read-only and ignores an obsolete bypass flag", async () => {
+test("loading the plugin registers RPC without reading or writing a database", async () => {
   let handlers: any
   let disposed = false
   const cleanup = await plugin.setup({
-    location: { directory: "/work" }, options: { allowLiveWrites: true, databasePath: "DO_NOT_OPEN" },
+    location: { directory: "/work" }, options: {},
     rpc: { register: async (definition: any, implementation: any) => {
       assert.equal(definition.id, "codenomad.session-pruning")
       handlers = implementation
       return { dispose: () => { disposed = true } }
     } },
   } as any)
-  assert.deepEqual(await handlers.prune(input()), { status: "blocked", reason: "maintenance_required" })
+  assert.equal(typeof handlers.prune, "function")
+  assert.equal(typeof handlers.preview, "function")
   await cleanup?.()
   assert.equal(disposed, true)
 })

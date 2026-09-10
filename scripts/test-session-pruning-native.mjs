@@ -8,24 +8,40 @@ import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { OpenCode } from "@opencode-ai/client"
+import { tsImport } from "tsx/esm/api"
 
 const cli = process.argv[2]
-if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the isolated beta-19419 CLI executable")
-assert.equal(execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2 v/, ""), "0.0.0-beta-19419")
+if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
+const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2 v/, "")
 const pluginDirectory = process.argv[3] ?? fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/", import.meta.url))
 if (!path.isAbsolute(pluginDirectory)) throw new Error("Plugin directory must be absolute")
-const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-pruning-native-"))
+const temporaryRoot = path.join(os.tmpdir(), "opencode")
+await mkdir(temporaryRoot, { recursive: true })
+const root = await mkdtemp(path.join(temporaryRoot, "codenomad-pruning-native-"))
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE_") && !key.startsWith("XDG_")))
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 Object.assign(env, {
   USERPROFILE: root, HOME: root, OPENCODE_TEST_HOME: root,
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "test.db"),
   OPENCODE_SERVER_PASSWORD: "isolated-pruning-fixture", OPENCODE_CONFIG_PROJECT_DISABLE: "1",
-  OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FILEWATCHER: "1", OPENCODE_DISABLE_FFF: "1",
+  OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
 })
 await mkdir(env.OPENCODE_CONFIG_DIR)
+const bundled = !process.argv[3]
+let closePresence
+let openPresence
+if (bundled) {
+  const { installPruningPresence } = await tsImport("../packages/server/src/opencode/pruning-installation.ts", import.meta.url)
+  const { readFile } = await import("node:fs/promises")
+  const bundle = await readFile(new URL("../packages/server/dist/plugins/session-pruning/plugin.mjs", import.meta.url))
+  openPresence = () => installPruningPresence(bundle, { config: env.OPENCODE_CONFIG_DIR, data: path.join(root, "codenomad") })
+} else {
+  await mkdir(path.join(env.OPENCODE_CONFIG_DIR, "plugins"))
+  await writeFile(path.join(env.OPENCODE_CONFIG_DIR, "plugins", "codenomad-session-pruning.ts"),
+    `export { default } from ${JSON.stringify(pathToFileURL(path.join(pluginDirectory, "index.ts")).href)}\n`)
+}
 await mkdir(path.join(root, "plugin"))
 const requests = []
 let primaryCount = 0
@@ -73,7 +89,7 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   providers: { fixture: { package: "@opencode/ai/providers/openai-compatible", settings: {
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only",
   }, models: { fixture: {} } } },
-  plugins: [path.join(root, "plugin"), { package: pluginDirectory, options: { databasePath: env.OPENCODE_DB, mode: "prune" } }],
+  plugins: [path.join(root, "plugin")],
 })
 let output = ""
 function start() {
@@ -104,9 +120,12 @@ try {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   } })
   const client = makeClient()
-  assert.equal((await client.health.get()).version, "0.0.0-beta-19419")
+  assert.equal((await client.health.get()).version, runtimeVersion)
+  console.log(`Testing official runtime ${runtimeVersion}`)
   const location = { directory: root }
   const session = await client.session.create({ location })
+  // Install after the daemon and location exist: desktop startup must not need a restart.
+  if (bundled) closePresence = await openPresence()
   await until(async () => {
     const plugins = (await client.plugin.list({ location })).data
     const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
@@ -191,8 +210,36 @@ try {
   assert.deepEqual((await restarted.session.message({ sessionID: session.id, messageID: target.id })).content, [])
   assert.deepEqual((await restarted.session.message({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await restarted.session.context({ sessionID: fork.id }), contextBefore)
+  if (bundled) {
+    const preview = () => restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "preview", location, input: { sessionID: session.id, messageID: target.id } })
+    await preview()
+    const closeSecond = await openPresence()
+    await closePresence()
+    await delay(2_200)
+    await preview() // Another CodeNomad backend keeps RPC registered.
+    await closeSecond()
+    await until(async () => {
+      try { await preview(); return false } catch (error) {
+        assert.match(JSON.stringify(error), /rpc|not.found/i)
+        return true
+      }
+    })
+    closePresence = await openPresence()
+    await until(async () => { try { await preview(); return true } catch { return false } })
+    await closePresence()
+    const { writeFile, rm } = await import("node:fs/promises")
+    const crashLease = path.join(root, "codenomad", "session-pruning", "presence", "dead.lease")
+    await writeFile(crashLease, "") // A crashed backend leaves a lease with no heartbeat.
+    await preview()
+    await until(async () => { try { await preview(); return false } catch { return true } })
+    await rm(crashLease)
+    assert.deepEqual((await restarted.session.message({ sessionID: session.id, messageID: target.id })).content, [])
+    console.log("PASS: shipped bundle, automatic discovery, multiple backends, final close disposes RPC, reopening restores RPC")
+    console.log("PASS: installation on an already-running daemon and crash expiry without stopping OpenCode")
+  }
   console.log("PASS: native plugin preview/prune RPC, active-claim refusal, idempotent retry, two subscribers, competing prompt, next model payload, fork isolation, pre-compaction history and restart")
 } finally {
+  await closePresence?.()
   streams.abort(); releaseProvider?.()
   if (db?.isTransaction) db.exec("ROLLBACK")
   db?.close()

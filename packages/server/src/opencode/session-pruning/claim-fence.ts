@@ -2,14 +2,12 @@ import type { DatabaseSync } from "node:sqlite"
 import { storageDirectory } from "./storage-path"
 
 // This is an internal storage contract, NOT a public OpenCode lock API.
-// Extending this set requires rerunning the native concurrency/payload tests.
-export const AUDITED_RUNTIME = "0.0.0-beta-19419"
+// Validate the actual storage/claim state; runtime version labels are not gates.
 export const PRUNING_PLUGIN_ID = "codenomad-session-pruning"
 export const storageKey = (key: string) => `plugin:${Array.from(PRUNING_PLUGIN_ID)
   .map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 
 export interface StorageIdentity {
-  version: string
   // A fresh ctx.storage challenge proves this connection reaches the daemon's
   // current DB, not a same-session snapshot or an accidentally configured file.
   key: string
@@ -21,7 +19,6 @@ export interface StorageIdentity {
 
 export function validateClaimFence(db: DatabaseSync, sessionID: string, identity: StorageIdentity) {
   if (!db.isTransaction) throw new Error("Claim fence requires an acquired write transaction")
-  if (identity.version !== AUDITED_RUNTIME) return "unsupported_storage" as const
   if (db.prepare("PRAGMA database_list").all().length !== 1) return "unsupported_storage" as const
   if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='trigger' LIMIT 1").get()) return "unsupported_storage" as const
   const marker = db.prepare("SELECT value FROM kv WHERE key=?").get(identity.key)

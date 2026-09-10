@@ -4,11 +4,11 @@ import { messageTargetSchema, pruneRequestSchema, pruningRpcDefinition } from ".
 import { previewContent } from "./planner"
 import { readPruningPreview } from "./preview-store"
 import { pruneBoundMessage } from "./service"
-import { AUDITED_RUNTIME } from "./claim-fence"
+import { pruningDatabasePath } from "./database-path"
 
 export const SessionPruningRpc = Rpc.define(pruningRpcDefinition)
 
-// Explicit opt-in entry point; not auto-installed or imported by server startup.
+// Native local-plugin entry point. Only a user's pruning RPC changes content.
 export default Plugin.define({
   id: "codenomad-session-pruning",
   async setup(ctx) {
@@ -21,15 +21,14 @@ export default Plugin.define({
         if (session.location.directory !== ctx.location.directory) return { status: "blocked", reason: "not_deletable" } as const
         // Plugin Context does not expose session.message in beta-19398. Read
         // the explicit DB in query-only mode, including pre-compaction history.
-        const data = await readPruningPreview(ctx.options.databasePath, target, session.location.directory)
+        const data = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, session.location.directory)
         const preview = data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const
         return preview.status === "preview"
-          ? { ...preview, liveMutation: ctx.options.mode === "prune" && ctx.app.version === AUDITED_RUNTIME }
+          ? { ...preview, liveMutation: true }
           : preview
       },
       prune: async (input, call) => {
         pruneRequestSchema.parse(input)
-        if (ctx.options.mode !== "prune") return { status: "blocked", reason: "maintenance_required" } as const
         const result = await pruneBoundMessage(ctx, input, call.signal)
         if (result.status === "pruned") {
           // Retrying the same input returns its atomic receipt and re-emits the
