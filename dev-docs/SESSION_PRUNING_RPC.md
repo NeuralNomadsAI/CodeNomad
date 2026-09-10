@@ -9,9 +9,11 @@ bypass the storage/execution/ownership checks. Unsupported or absent plugins
 produce a localized failure, never a legacy API fallback or optimistic deletion.
 
 The experimental write path currently accepts **only `0.0.0-beta-19419`**.
-It was exercised with the official Windows x64 executable, generated sessions,
-two HTTP clients and a local mock provider. This is not a compatibility promise
-for future betas, every provider, WSL, arbitrary DB schemas or third-party writers.
+It was exercised locally with the official Windows x64 executable, generated sessions,
+two HTTP clients and a local mock provider. The independently installed package also
+passed native CI on Windows, Linux and macOS in run `34424614579`. This is not a
+compatibility promise for future betas, every provider, WSL, arbitrary DB schemas
+or third-party writers.
 The native desktop and interactive TUI release checks listed below remain separate.
 
 No plugin was installed on the user's shared daemon. No real database was changed.
@@ -113,7 +115,7 @@ fork isolation, pre-compaction deletion without summary changes, and server rest
 Unit tests cover rollback and client projection/read races. No actual provider
 token savings are claimed: the mock's usage numbers are synthetic.
 
-Still required before general availability: native WSL/Linux/macOS runs, interactive
+Still required before general availability: native WSL runs, interactive
 TUI and two desktop-window/scroll verification, provider-specific continuation-state
 and budget coverage, dedicated bulk progress/cancel UI and installation/capability UI.
 Do not describe these as passed on the strength of HTTP or mocked cache tests.
