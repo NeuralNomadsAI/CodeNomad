@@ -17,10 +17,11 @@
     "codenomad": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs",
+    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run build:pruning",
+    "build:pruning": "node ./scripts/build-session-pruning.mjs",
     "build:ui": "npm run build --prefix ../ui",
     "prepare-ui": "node ./scripts/copy-ui-dist.mjs",
-    "dev": "cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
+    "dev": "npm run build:pruning && cross-env CODENOMAD_DEV=1 CODENOMAD_SERVER_PASSWORD=codenomad-dev CLI_UI_DEV_SERVER=http://localhost:3000 CLI_HTTPS=false CLI_HTTP=true tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -40,6 +41,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "esbuild": "^0.25.12",
+    "@opencode/plugin": "beta",
     "@types/node-forge": "^1.3.14",
     "@types/yauzl": "^2.10.0",
     "cross-env": "^7.0.3",

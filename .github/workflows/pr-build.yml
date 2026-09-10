@@ -51,6 +51,7 @@ jobs:
       - tests
       - tests-tauri-windows
       - tests-opencode-compatibility
+      - tests-session-pruning-native
       - tests-tauri-macos
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
@@ -61,6 +62,60 @@ jobs:
       actions_artifacts_retention_days: 7
       actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false
+
+  tests-session-pruning-native:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install browser for native pruning UI checks
+        run: npx --workspace @codenomad/ui playwright install --with-deps chromium
+      - name: Pack and install outside the checkout
+        shell: pwsh
+        run: |
+          $sandbox = Join-Path $env:RUNNER_TEMP 'pruning-native-install'
+          New-Item -ItemType Directory -Force $sandbox | Out-Null
+          $package = npm pack ./packages/server/src/opencode/session-pruning --pack-destination $sandbox --json | ConvertFrom-Json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@beta' --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "PRUNING_NATIVE_INSTALL=$sandbox" >> $env:GITHUB_ENV
+      - name: Test the installed plugin with an isolated official runtime
+        shell: pwsh
+        run: |
+          $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
+          $arch = node -p "process.arch"
+          $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
+          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode2$extension"
+          $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
+          node scripts/test-session-pruning-native.mjs $cli $plugin
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:pruning --workspace @neuralnomads/codenomad
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-pruning-native.mjs $cli --ui
+      - name: Upload opt-in plugin package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-pruning-plugin-${{ matrix.os }}
+          path: ${{ runner.temp }}/pruning-native-install/*.tgz
+          if-no-files-found: error
+          retention-days: 7
 
   tests:
     needs: authorize
@@ -176,9 +231,13 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/opencode-data.test.ts
+          packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
+          packages/ui/src/stores/session-pruning-events.test.ts
+          packages/ui/src/stores/session-pruning-projection.test.ts
+          packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts

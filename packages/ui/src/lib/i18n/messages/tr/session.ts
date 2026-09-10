@@ -1,4 +1,10 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "Oturum veya depolama alanı meşgul. Geçerli işlem bitince temizlemeyi yeniden deneyin.",
+  "session.pruning.unavailable": "Temizleme eklentisi kullanılamıyor veya yanıt vermedi. CodeNomad'i yeniden açıp tekrar deneyin.",
+  "session.pruning.conflict": "Mesaj seçildikten sonra değişti. Yeniden yükleyip içeriği tekrar seçin.",
+  "session.pruning.not_deletable": "Bu içerik silinemez. Yalnızca bu oturumdaki tamamlanmış araçlar ve düşünceler kaldırılabilir.",
+  "session.pruning.unsupported_storage": "Temizleme eklentisi bu oturumun depolama alanını doğrulayamadı. Temizleme reddedildi.",
+  "session.pruning.blocked": "Temizlik doğrulanmadı. Eklenti kullanılamıyor, çalışma sırasında temizlik devre dışı veya mesaj değişmiş olabilir. Yeniden denemeden önce mesajı yeniden yükleyin.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "Önceki session yok",
   "sessionPicker.resume.title": "Bir session'ı sürdür ({count}):",
