@@ -1,7 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
 import { isLoopbackHost, isWildcardHost } from "../network-host"
- 
 
 interface RouteDeps {
   serverMeta: ServerMeta

@@ -9,19 +9,20 @@
       "packages/server",
       "packages/ui",
       "packages/electron-app",
-      "packages/tauri-app"
+      "packages/tauri-app",
+      "packages/remote-control-protocol"
     ]
   },
   "scripts": {
     "dev": "npm run dev --workspace @neuralnomads/codenomad-electron-app",
     "dev:electron": "npm run dev --workspace @neuralnomads/codenomad-electron-app",
     "dev:tauri": "npm run dev --workspace @codenomad/tauri-app",
-    "build": "npm run build --workspace @neuralnomads/codenomad-electron-app",
+    "build": "npm run build --workspace @codenomad/remote-control-protocol && npm run build --workspace @neuralnomads/codenomad-electron-app",
     "build:tauri": "npm run build --workspace @codenomad/tauri-app",
     "build:ui": "npm run build --workspace @codenomad/ui",
     "build:mac-x64": "npm run build:mac-x64 --workspace @neuralnomads/codenomad-electron-app",
     "build:binaries": "npm run build:binaries --workspace @neuralnomads/codenomad-electron-app",
-    "typecheck": "npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
+    "typecheck": "npm run typecheck --workspace @codenomad/remote-control-protocol && npm run typecheck --workspace @codenomad/ui && npm run typecheck --workspace @neuralnomads/codenomad-electron-app",
     "bumpVersion": "node ./scripts/bump-version.js"
   },
   "dependencies": {

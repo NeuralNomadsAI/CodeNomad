@@ -21,7 +21,6 @@ import {
   type DeveloperModeState,
 } from "../lib/native/developer-mode"
 import { isOsNotificationSupportedSync } from "../lib/os-notifications"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getUnreadToastCountSignal, showToastNotification } from "../lib/notifications"
 import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
@@ -361,16 +360,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               </Show>
             </div>
 
-            <Show when={canOpenRemoteWindows()}>
-              <button
-                class="new-tab-button tab-remote-button"
-                onClick={() => openSettings("remote")}
-                title={t("instanceTabs.remote.title")}
-                aria-label={t("instanceTabs.remote.ariaLabel")}
-              >
-                <MonitorUp class="w-4 h-4" />
-              </button>
-            </Show>
+            <button
+              class="new-tab-button tab-remote-button"
+              onClick={() => openSettings("remote")}
+              title={t("instanceTabs.remote.title")}
+              aria-label={t("instanceTabs.remote.ariaLabel")}
+            >
+              <MonitorUp class="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>

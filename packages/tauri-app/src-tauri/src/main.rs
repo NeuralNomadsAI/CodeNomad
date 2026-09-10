@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(any(windows, test))]
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -68,12 +68,14 @@ pub struct AppState {
     remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
     remote_window_operations: RemoteWindowOperationLocks,
     remote_proxy_cleanup_claims: Mutex<HashSet<String>>,
+    approved_auxiliary_closes: Mutex<HashSet<String>>,
     pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
+    keep_alive_for_remote_control: AtomicBool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1412,6 +1414,125 @@ fn is_final_application_window<'a>(
     !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
 }
 
+async fn remote_control_enabled(app: &AppHandle) -> bool {
+    let Some(access) = app.state::<AppState>().manager.local_cli_access() else {
+        return false;
+    };
+    let Ok(mut url) = Url::parse(&access.base_url) else {
+        return false;
+    };
+    url.set_path("/api/remote-control/status");
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(2));
+    if url.scheme() == "https" {
+        let Ok(local_cert) = cert_manager::ensure_local_cert() else {
+            return false;
+        };
+        let Ok(ca_cert) = reqwest::Certificate::from_der(&local_cert.ca_cert_der) else {
+            return false;
+        };
+        builder = builder.add_root_certificate(ca_cert);
+    }
+    let Ok(client) = builder.build() else {
+        return false;
+    };
+    let Ok(response) = client
+        .get(url)
+        .header(
+            reqwest::header::COOKIE,
+            format!("{}={}", access.cookie_name, access.session_cookie),
+        )
+        .send()
+        .await
+    else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|value| value.get("enabled").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn consume_approved_auxiliary_close(app: &AppHandle, label: &str) -> bool {
+    app.state::<AppState>()
+        .approved_auxiliary_closes
+        .lock()
+        .ok()
+        .is_some_and(|mut labels| labels.remove(label))
+}
+
+fn dispatch_approved_auxiliary_close(app: &AppHandle, label: &str) {
+    let approved = app
+        .state::<AppState>()
+        .approved_auxiliary_closes
+        .lock()
+        .ok()
+        .is_some_and(|mut labels| labels.insert(label.to_string()));
+    if !approved {
+        return;
+    }
+    let dispatched = app
+        .get_webview_window(label)
+        .is_some_and(|window| window.close().is_ok());
+    if !dispatched {
+        let _ = consume_approved_auxiliary_close(app, label);
+    }
+}
+
+fn request_final_application_window_close(app: AppHandle, label: String, local_window: bool) {
+    tauri::async_runtime::spawn(async move {
+        let keep_alive = remote_control_enabled(&app).await;
+        app.state::<AppState>()
+            .keep_alive_for_remote_control
+            .store(keep_alive, Ordering::SeqCst);
+        let windows = app.webview_windows();
+        let still_final = is_final_application_window(
+            &label,
+            windows
+                .keys()
+                .filter(|candidate| !shutdown::local_window_close_in_flight(&app, candidate))
+                .map(String::as_str),
+        );
+        if should_shutdown_after_last_window(keep_alive, still_final) {
+            shutdown::request(app);
+        } else if local_window {
+            shutdown::request_local_window_close(app, label);
+        } else {
+            dispatch_approved_auxiliary_close(&app, &label);
+        }
+    });
+}
+
+fn should_shutdown_after_last_window(
+    keep_alive_for_remote_control: bool,
+    is_final_window: bool,
+) -> bool {
+    is_final_window && !keep_alive_for_remote_control
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LocalCloseEventAction {
+    Allow,
+    Prevent,
+    Continue,
+}
+
+fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalCloseEventAction {
+    match consumed {
+        Some(true) => LocalCloseEventAction::Allow,
+        Some(false) => LocalCloseEventAction::Prevent,
+        None if in_flight => LocalCloseEventAction::Prevent,
+        None => LocalCloseEventAction::Continue,
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1512,12 +1633,14 @@ fn main() {
             remote_profiles: Mutex::new(HashMap::new()),
             remote_window_operations: RemoteWindowOperationLocks::default(),
             remote_proxy_cleanup_claims: Mutex::new(HashSet::new()),
+            approved_auxiliary_closes: Mutex::new(HashSet::new()),
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
+            keep_alive_for_remote_control: AtomicBool::new(false),
         })
         .on_page_load(|webview, payload| {
             if identity::local_window_id(webview.label()).is_ok()
@@ -1735,6 +1858,14 @@ fn main() {
                     return;
                 }
                 api.prevent_exit();
+                if app_handle.webview_windows().is_empty()
+                    && app_handle
+                        .state::<AppState>()
+                        .keep_alive_for_remote_control
+                        .load(Ordering::SeqCst)
+                {
+                    return;
+                }
                 shutdown::request(app_handle.clone());
             }
             tauri::RunEvent::WindowEvent {
@@ -1798,21 +1929,25 @@ fn main() {
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
                 if local_window {
-                    match shutdown::consume_local_window_close(&app_handle, &label) {
-                        Some(true) => return,
-                        Some(false) => {
+                    let consumed = shutdown::consume_local_window_close(&app_handle, &label);
+                    let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
+                    match local_close_event_action(consumed, in_flight) {
+                        LocalCloseEventAction::Allow => return,
+                        LocalCloseEventAction::Prevent => {
                             api.prevent_close();
                             return;
                         }
-                        None => {}
+                        LocalCloseEventAction::Continue => {}
                     }
+                } else if consume_approved_auxiliary_close(&app_handle, &label) {
+                    return;
                 }
                 let windows = app_handle.webview_windows();
                 let final_window =
                     is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
                     api.prevent_close();
-                    shutdown::request(app_handle.clone());
+                    request_final_application_window_close(app_handle.clone(), label, local_window);
                     return;
                 }
                 if local_window {
@@ -1825,6 +1960,8 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                shutdown::local_window_destroyed(&app_handle, &label);
+                let _ = consume_approved_auxiliary_close(&app_handle, &label);
                 if let Ok(window_id) = identity::local_window_id(&label) {
                     app_handle
                         .state::<local_windows::LocalWindows>()
@@ -1845,6 +1982,16 @@ fn main() {
                 update_workspace_menu_state(&app_handle);
                 update_fullscreen_shortcut(&app_handle);
                 if !app_handle.webview_windows().is_empty() {
+                    return;
+                }
+
+                if !should_shutdown_after_last_window(
+                    app_handle
+                        .state::<AppState>()
+                        .keep_alive_for_remote_control
+                        .load(Ordering::SeqCst),
+                    true,
+                ) {
                     return;
                 }
 
@@ -2162,9 +2309,10 @@ fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetada
 mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
-        is_allowed_local_origin, is_final_application_window, require_http_url,
-        rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
-        should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
+        is_allowed_local_origin, is_final_application_window, local_close_event_action,
+        require_http_url, rollback_remote_window_metadata, run_update_with_fallback,
+        should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
+        should_shutdown_after_last_window, titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
         RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
@@ -2186,6 +2334,29 @@ mod menu_tests {
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
         ));
+    }
+
+    #[test]
+    fn remote_control_keeps_the_backend_alive_without_application_windows() {
+        assert!(!should_shutdown_after_last_window(true, true));
+        assert!(should_shutdown_after_last_window(false, true));
+        assert!(!should_shutdown_after_last_window(false, false));
+    }
+
+    #[test]
+    fn approved_local_close_wins_over_its_in_flight_marker() {
+        assert_eq!(
+            local_close_event_action(Some(true), true),
+            LocalCloseEventAction::Allow
+        );
+        assert_eq!(
+            local_close_event_action(None, true),
+            LocalCloseEventAction::Prevent
+        );
+        assert_eq!(
+            local_close_event_action(None, false),
+            LocalCloseEventAction::Continue
+        );
     }
 
     #[test]

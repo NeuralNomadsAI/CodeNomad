@@ -6,6 +6,7 @@ import path from "node:path"
 import test from "node:test"
 import {
   AUTOMATION_BRIDGE_PATH,
+  automationBridgeDirectory,
   automationBridgeDirectories,
   createAutomationBridgeRegistration,
   parseDeveloperAction,
@@ -48,6 +49,23 @@ async function collectTools(): Promise<ToolDefinition[]> {
 
 function closeServer(server: http.Server | undefined): Promise<void> {
   return new Promise((resolve) => server?.close(() => resolve()) ?? resolve())
+}
+
+function useTemporaryAutomationBridgeRoot(root: string): () => void {
+  const previous = {
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
+    XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+    WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME,
+  }
+  process.env.LOCALAPPDATA = root
+  process.env.XDG_RUNTIME_DIR = root
+  delete process.env.WSL_DISTRO_NAME
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 }
 
 test("validates Developer Mode actions", () => {
@@ -100,8 +118,7 @@ test("removes only the generated legacy global plugin shim", async () => {
 
 test("restart waits for a new native generation and returns a fresh inspection", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-restart-"))
-  const previousLocalAppData = process.env.LOCALAPPDATA
-  process.env.LOCALAPPDATA = root
+  const restoreAutomationBridgeRoot = useTemporaryAutomationBridgeRoot(root)
   const definitions: ToolDefinition[] = []
   let removeOld: (() => Promise<void>) | undefined
   let removeNew: (() => Promise<void>) | undefined
@@ -162,16 +179,14 @@ test("restart waits for a new native generation and returns a fresh inspection",
     await closeServer(newServer)
     await closeServer(preexistingServer)
     await Promise.all(distractorServers.map(closeServer))
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
-    else process.env.LOCALAPPDATA = previousLocalAppData
+    restoreAutomationBridgeRoot()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("keeps inspected targets isolated per plugin setup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-isolation-"))
-  const previousLocalAppData = process.env.LOCALAPPDATA
-  process.env.LOCALAPPDATA = root
+  const restoreAutomationBridgeRoot = useTemporaryAutomationBridgeRoot(root)
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
@@ -190,16 +205,14 @@ test("keeps inspected targets isolated per plugin setup", async () => {
   } finally {
     await removeBridge?.()
     await closeServer(server)
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
-    else process.env.LOCALAPPDATA = previousLocalAppData
+    restoreAutomationBridgeRoot()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("pins parallel sessions to their independently inspected bridges", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-sessions-"))
-  const previousLocalAppData = process.env.LOCALAPPDATA
-  process.env.LOCALAPPDATA = root
+  const restoreAutomationBridgeRoot = useTemporaryAutomationBridgeRoot(root)
   const removals: Array<() => Promise<void>> = []
   const servers: http.Server[] = []
   try {
@@ -220,20 +233,14 @@ test("pins parallel sessions to their independently inspected bridges", async ()
   } finally {
     await Promise.all(removals.map((remove) => remove()))
     await Promise.all(servers.map(closeServer))
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
-    else process.env.LOCALAPPDATA = previousLocalAppData
+    restoreAutomationBridgeRoot()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("prunes stale registry pressure before limiting discovery", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-stale-"))
-  const previousLocalAppData = process.env.LOCALAPPDATA
-  const previousXdgRuntimeDir = process.env.XDG_RUNTIME_DIR
-  const previousWslDistroName = process.env.WSL_DISTRO_NAME
-  process.env.LOCALAPPDATA = root
-  process.env.XDG_RUNTIME_DIR = root
-  delete process.env.WSL_DISTRO_NAME
+  const restoreAutomationBridgeRoot = useTemporaryAutomationBridgeRoot(root)
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
@@ -242,7 +249,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
       : { result: { target: { id: "live", title: "Live", url: "http://app.test" }, nodes: [], diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
-    const directory = automationBridgeDirectories()[0]
+    const directory = automationBridgeDirectory()
     assert.equal(path.dirname(path.dirname(directory)), root)
     const base = Date.now() + 10_000
     for (let index = 0; index < 70; index += 1) {
@@ -262,12 +269,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
   } finally {
     await removeBridge?.()
     await closeServer(server)
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
-    else process.env.LOCALAPPDATA = previousLocalAppData
-    if (previousXdgRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR
-    else process.env.XDG_RUNTIME_DIR = previousXdgRuntimeDir
-    if (previousWslDistroName === undefined) delete process.env.WSL_DISTRO_NAME
-    else process.env.WSL_DISTRO_NAME = previousWslDistroName
+    restoreAutomationBridgeRoot()
     await rm(root, { recursive: true, force: true })
   }
 })

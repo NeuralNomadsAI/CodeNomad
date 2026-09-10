@@ -10,6 +10,7 @@
 @import "./components/env-vars.css";
 @import "./components/directory-browser.css";
 @import "./components/remote-access.css";
+@import "./components/remote-control.css";
 @import "./components/permission-notification.css";
 @import "./components/form-request.css";
 @import "./components/form-request-options.css";

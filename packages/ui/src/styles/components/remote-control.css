@@ -1,0 +1,104 @@
+.remote-control-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-base);
+  background: var(--surface-secondary);
+}
+
+.remote-control-status strong,
+.remote-control-device strong {
+  color: var(--text-primary);
+}
+
+.remote-control-status p,
+.remote-control-device p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.remote-control-status-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  background: var(--text-subtle);
+}
+
+.remote-control-status[data-state="connected"] .remote-control-status-dot {
+  background: var(--status-success, #3fb950);
+}
+
+.remote-control-status[data-state="connecting"] .remote-control-status-dot,
+.remote-control-status[data-state="reconnecting"] .remote-control-status-dot {
+  background: var(--status-warning, #d29922);
+}
+
+.remote-control-status[data-state="error"] .remote-control-status-dot {
+  background: var(--status-danger, #f85149);
+}
+
+.remote-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.remote-control-pairing {
+  align-items: flex-start;
+}
+
+.remote-control-qr,
+.remote-control-qr-loading {
+  width: 180px;
+  height: 180px;
+  align-self: center;
+  border: 1px solid var(--border-base);
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.remote-control-qr-loading {
+  padding: 72px;
+  color: var(--text-secondary);
+  background: var(--surface-secondary);
+}
+
+.remote-control-link {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-base);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.remote-control-devices {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-base);
+}
+
+.remote-control-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.remote-control-device:last-child {
+  border-bottom: 0;
+}
+
+.remote-spin {
+  animation: remote-spin 1s linear infinite;
+}
+
+@keyframes remote-spin {
+  to { transform: rotate(360deg); }
+}

@@ -525,17 +525,15 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             >
               <Settings class="w-4 h-4" />
             </button>
-            <Show when={canUseRemoteServerWindows()}>
-              <button
-                type="button"
-                class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-                onClick={() => openSettings("remote")}
-                aria-label={t("instanceTabs.remote.ariaLabel")}
-                title={t("instanceTabs.remote.title")}
-              >
-                <MonitorUp class="w-4 h-4" />
-              </button>
-            </Show>
+            <button
+              type="button"
+              class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
+              onClick={() => openSettings("remote")}
+              aria-label={t("instanceTabs.remote.ariaLabel")}
+              title={t("instanceTabs.remote.title")}
+            >
+              <MonitorUp class="w-4 h-4" />
+            </button>
             <Show when={props.onClose}>
               <button
                 type="button"

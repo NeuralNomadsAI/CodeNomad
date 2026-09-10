@@ -38,6 +38,8 @@ import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metad
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge, removeLegacyAutomationPlugin } from "./opencode/automation-plugin"
+import { loadOrCreateRemoteControlIdentity } from "./remote-control/identity"
+import { RemoteControlManager } from "./remote-control/manager"
 
 const require = createRequire(import.meta.url)
 
@@ -45,6 +47,7 @@ const packageJson = require("../package.json") as { version: string }
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const DEFAULT_UI_STATIC_DIR = path.resolve(__dirname, "../public")
+const DEFAULT_REMOTE_CONTROL_RELAY_URL = "https://remote.codenomad.neuralnomads.ai"
 
 interface CliOptions {
   host: string
@@ -472,6 +475,14 @@ async function main() {
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
+  const remoteControlSession = authManager.createSession(options.authUsername)
+  const remoteControlManager = new RemoteControlManager({
+    identity: loadOrCreateRemoteControlIdentity(configDir),
+    relayUrl: process.env.CODENOMAD_REMOTE_CONTROL_RELAY_URL ?? DEFAULT_REMOTE_CONTROL_RELAY_URL,
+    localUrl: () => serverMeta.localUrl,
+    localCookie: () => `${authManager.getCookieName()}=${encodeURIComponent(remoteControlSession.id)}`,
+    logger: logger.child({ component: "remote-control" }),
+  })
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
@@ -504,6 +515,7 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
@@ -532,6 +544,7 @@ async function main() {
         authManager,
         clientConnectionManager,
         remoteProxySessionManager,
+        remoteControlManager,
         yoloManager,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
@@ -647,6 +660,7 @@ async function main() {
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
+          stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
