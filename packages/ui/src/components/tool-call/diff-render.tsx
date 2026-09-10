@@ -1,11 +1,11 @@
-import { Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
+import { Show, Suspense, createEffect, createMemo, createSignal, lazy, onMount, type Accessor, type JSXElement } from "solid-js"
 import type { ToolState } from "../../types/tool-state"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { AlignJustify, Copy, Split, WrapText } from "lucide-solid"
 import type { RenderCache } from "../../types/message"
 import type { DiffViewMode } from "../../stores/preferences"
 import type { DiffPayload, DiffRenderOptions, ToolScrollHelpers } from "./types"
-import { getRelativePath } from "./utils"
+import { getRelativePath, limitToolOutputForRender, shouldRenderDiffPayloadAsPlainText } from "./utils"
 import { getCacheEntry } from "../../lib/global-cache"
 import { copyToClipboard } from "../../lib/clipboard"
 
@@ -65,6 +65,8 @@ export function createDiffContentRenderer(params: {
   }
 
   function renderDiffContent(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null {
+    const renderedDiffText = limitToolOutputForRender(payload.diffText)
+    const diffWasTruncated = shouldRenderDiffPayloadAsPlainText(payload)
     const relativePath = payload.filePath ? getRelativePath(payload.filePath) : ""
     const toolbarLabel = options?.label || (relativePath
       ? params.t("toolCall.diff.label.withPath", { path: relativePath })
@@ -100,7 +102,7 @@ export function createDiffContentRenderer(params: {
       const cached = getCacheEntry<RenderCache>(cacheEntryParams)
       if (
         cached
-        && cached.text === payload.diffText
+        && cached.text === renderedDiffText
         && cached.theme === themeKey
         && cached.mode === currentMode()
         && cached.wrap === currentWrap()
@@ -127,6 +129,10 @@ export function createDiffContentRenderer(params: {
         ? params.t("toolCall.diff.disableWordWrap")
         : params.t("toolCall.diff.enableWordWrap")
     const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
+    const copyFullDiff = async () => {
+      const copiedDiff = payload.copyText ?? payload.diffText
+      if (await copyToClipboard(copiedDiff)) options?.onFullDiffAccess?.(copiedDiff)
+    }
 
     const handleDiffRendered = () => {
       params.handleScrollRendered()
@@ -146,40 +152,44 @@ export function createDiffContentRenderer(params: {
             <button
               type="button"
               class="file-viewer-toolbar-icon-button"
-              onClick={() => void copyToClipboard(payload.diffText)}
+              onClick={() => void copyFullDiff()}
               aria-label={copyPatchTitle()}
               title={copyPatchTitle()}
             >
               <Copy class="h-4 w-4" aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              class="file-viewer-toolbar-icon-button icon-toggle"
-              onClick={() => handleModeChange(nextViewMode())}
-              aria-label={viewModeTitle()}
-              aria-pressed={currentMode() === "split"}
-              title={viewModeTitle()}
-            >
-              {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
-            </button>
-            <button
-              type="button"
-              class="file-viewer-toolbar-icon-button icon-toggle"
-              onClick={() => setWordWrapEnabled((enabled) => !enabled)}
-              aria-label={wordWrapTitle()}
-              aria-pressed={wordWrapEnabled()}
-              title={wordWrapTitle()}
-            >
-              <WrapText class="h-4 w-4" aria-hidden="true" />
-            </button>
+            <Show when={!diffWasTruncated}>
+              <button
+                type="button"
+                class="file-viewer-toolbar-icon-button icon-toggle"
+                onClick={() => handleModeChange(nextViewMode())}
+                aria-label={viewModeTitle()}
+                aria-pressed={currentMode() === "split"}
+                title={viewModeTitle()}
+              >
+                {nextViewMode() === "split" ? <Split class="h-4 w-4" aria-hidden="true" /> : <AlignJustify class="h-4 w-4" aria-hidden="true" />}
+              </button>
+              <button
+                type="button"
+                class="file-viewer-toolbar-icon-button icon-toggle"
+                onClick={() => setWordWrapEnabled((enabled) => !enabled)}
+                aria-label={wordWrapTitle()}
+                aria-pressed={wordWrapEnabled()}
+                title={wordWrapTitle()}
+              >
+                <WrapText class="h-4 w-4" aria-hidden="true" />
+              </button>
+            </Show>
           </div>
         </div>
-        {cachedHtml() ? (
+        {diffWasTruncated ? (
+          <pre class="tool-call-diff-fallback">{renderedDiffText}</pre>
+        ) : cachedHtml() ? (
           <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
         ) : (
-          <Suspense fallback={<pre class="tool-call-diff-fallback">{payload.diffText}</pre>}>
+          <Suspense fallback={<pre class="tool-call-diff-fallback">{renderedDiffText}</pre>}>
             <LazyToolCallDiffViewer
-              diffText={payload.diffText}
+              diffText={renderedDiffText}
               filePath={payload.filePath}
               theme={themeKey}
               mode={currentMode()}

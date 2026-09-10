@@ -6,6 +6,7 @@ export type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 export interface DiffPayload {
   diffText: string
+  copyText?: string
   filePath?: string
 }
 
@@ -37,6 +38,7 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  onFullDiffAccess?: (diffText: string) => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs
    * within the same tool call (e.g. apply_patch).
@@ -103,6 +105,8 @@ export interface ToolOutputChrome {
   title?: string
   language?: string
   copyText?: string | null
+  getCopyText?: () => string | null
+  hasCopyText?: boolean
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

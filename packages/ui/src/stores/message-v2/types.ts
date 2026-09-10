@@ -46,6 +46,7 @@ export interface SessionRecord {
 
 export interface PendingPartEntry {
   messageId: string
+  sessionId?: string
   part: ClientPart
   receivedAt: number
 }

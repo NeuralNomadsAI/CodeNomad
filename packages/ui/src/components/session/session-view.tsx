@@ -25,6 +25,7 @@ import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
+import { messagesLoaded } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
@@ -343,6 +344,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     isActive: () => Boolean(props.isActive),
     instanceId: () => props.instanceId,
     session,
+    shouldLoad: () => {
+      const id = session()?.id
+      return Boolean(id && !messagesLoaded().get(props.instanceId)?.has(id))
+    },
     loadMessages,
     waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     onError: (error) => log.error("Failed to load messages", error),

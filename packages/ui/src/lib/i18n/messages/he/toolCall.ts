@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "מפרט ספרייה...",
 
   "toolCall.renderer.bash.title.timeout": "פסק זמן: {timeout}",
+  "toolCall.output.truncated": "[הפלט קוצר לצורך תצוגה; יש להעתיק כדי לגשת לפלט המלא]",
+  "toolCall.output.tooLarge": "הפלט המובנה לא מוצג מכיוון שהוא גדול מדי.",
+  "toolCall.task.steps.truncated": "מוצגים {count} השלבים האחרונים; שלבים קודמים הושמטו.",
   "toolCall.renderer.read.detail.offset": "היסט: {offset}",
   "toolCall.renderer.read.detail.limit": "מגבלה: {limit}",
 

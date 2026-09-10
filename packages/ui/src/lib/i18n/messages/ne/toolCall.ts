@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "डाइरेक्टरी सूचीबद्ध गर्दै...",
 
   "toolCall.renderer.bash.title.timeout": "समय समाप्त: {timeout}",
+  "toolCall.output.truncated": "[प्रदर्शनका लागि आउटपुट छोट्याइएको छ; पूर्ण आउटपुटका लागि प्रतिलिपि गर्नुहोस्]",
+  "toolCall.output.tooLarge": "संरचित आउटपुट धेरै ठूलो भएकाले प्रदर्शन गरिएको छैन।",
+  "toolCall.task.steps.truncated": "पछिल्ला {count} चरणहरू देखाइँदैछन्; पुराना चरणहरू हटाइएका छन्।",
   "toolCall.renderer.read.detail.offset": "अफसेट: {offset}",
   "toolCall.renderer.read.detail.limit": "सीमा: {limit}",
 
