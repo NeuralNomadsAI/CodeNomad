@@ -1586,7 +1586,7 @@ describe("session request authority", () => {
     }
   })
 
-  it("loads root, child, and grandchild from a flat project inventory with cursor-only continuations", async () => {
+  it("loads current and migrated descendants from complete project and directory inventories", async () => {
     const instanceId = "project-descendants"
     const { client, cleanup } = setup(instanceId)
     const requests: any[] = []
@@ -1598,16 +1598,23 @@ describe("session request authority", () => {
       if (input.cursor === "root-page-2") {
         return { data: [apiSession("later")], cursor: {} }
       }
-      if (input.cursor === "inventory-page-2") {
+      if (input.cursor === "project-inventory-page-2") {
         return { data: [apiSession("grandchild", "child")], cursor: {} }
+      }
+      if (input.cursor === "directory-inventory-page-2") {
+        return { data: [{ ...apiSession("legacy-child", "root"), projectID: "global" }], cursor: {} }
       }
       if (input.parentID === null) return {
         data: [{ ...apiSession("root"), metadata: { owner: "native" } }],
         cursor: { next: "root-page-2" },
       }
+      if (input.project === "project") return {
+        data: [apiSession("root"), apiSession("child", "root")],
+        cursor: { next: "project-inventory-page-2" },
+      }
       return {
         data: [apiSession("root"), apiSession("child", "root")],
-        cursor: { next: "inventory-page-2" },
+        cursor: { next: "directory-inventory-page-2" },
       }
     }
 
@@ -1617,18 +1624,22 @@ describe("session request authority", () => {
       assert.deepEqual(sessions().get(instanceId)?.get("root")?.metadata, { owner: "native" })
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.equal(sessions().get(instanceId)?.get("legacy-child")?.projectID, "global")
       assert.equal(requests[0].directory, "/work")
       assert.equal("project" in requests[0], false)
       assert.equal(requests[0].parentID, null)
       assert.equal(requests[1].project, "project")
       assert.equal("directory" in requests[1], false)
+      assert.deepEqual(requests[2], { cursor: "project-inventory-page-2", limit: 200 })
+      assert.equal(requests[3].directory, "/work")
+      assert.equal("project" in requests[3], false)
+      assert.deepEqual(requests[4], { cursor: "directory-inventory-page-2", limit: 200 })
       assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
-      assert.deepEqual(requests[2], { cursor: "inventory-page-2", limit: 200 })
 
       await loadMoreSessions(instanceId)
-      assert.deepEqual(requests[3], { cursor: "root-page-2", limit: 200 })
+      assert.deepEqual(requests[5], { cursor: "root-page-2", limit: 200 })
       assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
-      assert.equal(requests.length, 4)
+      assert.equal(requests.length, 6)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
     } finally {

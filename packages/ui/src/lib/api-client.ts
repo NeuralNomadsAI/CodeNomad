@@ -1,4 +1,6 @@
 import type {
+  PruneRequest,
+  PruneResult,
   BinaryValidationResult,
   ConfigFileContentRequest,
   ConfigFileContentResponse,
@@ -171,6 +173,11 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
+      method: "POST", body: JSON.stringify(input),
+    })
+  },
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },

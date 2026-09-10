@@ -373,9 +373,10 @@ export function useCommands(options: UseCommandsOptions) {
           })
           if (!confirmed) return
           const failed = await executeSessionTechnicalPartDeletion(plan)
-          if (failed > 0) {
-            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed }), {
+          if (failed.length > 0) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length }), {
               title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+              detail: Array.from(new Set(failed)).join("\n"),
               variant: "error",
             })
           }
