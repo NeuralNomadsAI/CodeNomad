@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Darstellungsmodus",
   "settings.appearance.palette.auto": "Auto",
-  "settings.appearance.palette.independent": "Speichere eine helle und eine dunkle Palette. Auto folgt dem System mit diesen Auswahlen; die Register unten wählen nur die zu bearbeitende Palette.",
+  "settings.appearance.palette.independent": "Speichere eine Palette pro Erscheinungsbild. Auto folgt dem System und zeigt die passende Palette an.",
   "settings.appearance.palette.soft": "Sanfte Farbtöne",
   "settings.appearance.palette.legacy": "Ursprüngliche Paletten",
   "settings.appearance.palette.mist": "Nebel",

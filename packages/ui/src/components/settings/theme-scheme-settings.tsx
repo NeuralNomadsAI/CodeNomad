@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { useTheme } from "../../lib/theme"
 import type { AppearanceMode } from "../../lib/appearance-preferences"
 import { isDefaultCustomColors, nextColorSchemePresetName } from "../../lib/color-scheme-presets"
 import { showConfirmDialog } from "../../stores/alerts"
@@ -45,6 +46,7 @@ interface PaletteOption {
 export const ThemeSchemeSettings: Component = () => {
   const { t } = useI18n()
   const config = useConfig()
+  const theme = useTheme()
   const [draftColors, setDraftColors] = createSignal<ColorSchemeColors>({ ...DEFAULT_CUSTOM_COLORS })
   const [appearance, setAppearance] = createSignal<"light" | "dark">("dark")
   const [filter, setFilter] = createSignal<"light" | "dark">("dark")
@@ -118,8 +120,8 @@ export const ThemeSchemeSettings: Component = () => {
   })
 
   createEffect(() => {
-    const mode = config.themePreference()
-    if (mode !== "system" && !dirty() && !saving()) setFilter(mode)
+    const resolved = theme.isDark() ? "dark" : "light"
+    if (!dirty() && !saving()) setFilter(resolved)
   })
 
   const confirmDiscardIfDirty = async () => !dirty() || showConfirmDialog(
@@ -261,13 +263,6 @@ export const ThemeSchemeSettings: Component = () => {
     }
   }
 
-  const changeFilter = async (next: "light" | "dark") => {
-    if (saving() || filter() === next || !(await confirmDiscardIfDirty())) return
-    setDirty(false)
-    setCreating(false)
-    setFilter(next)
-  }
-
   const changeMode = async (mode: AppearanceMode) => {
     if (saving() || !(await confirmDiscardIfDirty())) return
     setSaving(true)
@@ -306,98 +301,81 @@ export const ThemeSchemeSettings: Component = () => {
           </div>
         </div>
         <p class="settings-card-subtitle">{t("settings.appearance.palette.independent")}</p>
-        <div class="theme-scheme-toolbar">
-          <Show when={config.themePreference() === "system"}>
-          <div class="theme-scheme-appearance-options" aria-label={t("settings.appearance.colorScheme.custom.appearance")}>
-            <For each={["light", "dark"] as const}>{(option) => (
-              <button
-                type="button"
-                class="theme-scheme-appearance-option"
-                data-selected={filter() === option ? "true" : "false"}
-                aria-pressed={filter() === option}
-                disabled={saving()}
-                onClick={() => void changeFilter(option)}
-              >
-                {t(`settings.appearance.colorScheme.custom.appearance.${option}`)}
-              </button>
-            )}</For>
-          </div>
-          </Show>
-        <select
-          class="selector-input theme-scheme-picker"
-          value={editingOption()?.key ?? ""}
-          disabled={saving()}
-          aria-label={t("settings.appearance.colorScheme.title")}
-          onChange={(event) => {
-            const select = event.currentTarget
-            const option = options().find((candidate) => candidate.key === select.value)
-            if (!option) return
-            void selectOption(option).then(() => { select.value = editingKey() })
-          }}
-        >
-          <For each={filteredOptions()}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
-        </select>
-        </div>
-        <Show when={editingOption()} keyed>{(option) => (
-          <div class="theme-scheme-card" title={option.description}>
-            <Show when={creating()} fallback={<span class="theme-scheme-name">{option.name}</span>}>
+        <div class="theme-scheme-workbench">
+          <div class="theme-scheme-controls">
+            <select
+              class="selector-input theme-scheme-picker"
+              value={editingOption()?.key ?? ""}
+              disabled={saving()}
+              aria-label={t("settings.appearance.colorScheme.title")}
+              onChange={(event) => {
+                const select = event.currentTarget
+                const option = options().find((candidate) => candidate.key === select.value)
+                if (!option) return
+                void selectOption(option).then(() => { select.value = editingKey() })
+              }}
+            >
+              <For each={filteredOptions()}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
+            </select>
+            <Show when={creating()}>
               <label class="theme-scheme-name-editor">
                 <span>{t("settings.appearance.colorScheme.custom.name")}</span>
                 <input class="selector-input" value={draftName()} maxLength={80} onInput={(event) => setDraftName(event.currentTarget.value)} />
               </label>
             </Show>
-            <span class="theme-scheme-swatches">
-              <For each={COLOR_FIELDS}>{(field) => {
-                const color = () => colorsFor(option)[field.key]
-                const label = () => t(field.labelKey)
-                return (
-                  <label class="theme-scheme-swatch" title={`${label()} · ${color()}`}>
-                    <input
-                      type="color"
-                      disabled={saving()}
-                      value={color()}
-                      aria-label={`${option.name} · ${label()} · ${color()}`}
-                      onInput={(event) => {
-                        const input = event.currentTarget
-                        void updateColor(option, field.key, input.value).then((updated) => {
-                          if (!updated) input.value = color()
-                        })
-                      }}
-                    />
-                    <span>{label()}</span>
-                  </label>
-                )
-              }}</For>
-            </span>
+            <div class="theme-scheme-actions">
+              <Show when={editingOption()?.presetId}>
+                <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
+                  {t("settings.appearance.colorScheme.custom.delete")}
+                </button>
+              </Show>
+              <Show when={savedBuiltinOverride()}>
+                <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void resetBuiltin()}>
+                  {t("settings.appearance.colorScheme.custom.reset")}
+                </button>
+              </Show>
+              <Show when={!creating()}>
+                <button type="button" class="selector-button selector-button-secondary" disabled={saving()} onClick={startNewPreset}>
+                  {t("settings.appearance.colorScheme.custom.new")}
+                </button>
+              </Show>
+              <Show when={dirty()}>
+                <button type="button" class="selector-button selector-button-primary" disabled={!validDraft() || saving() || (creating() && !draftName().trim())} onClick={() => void savePreset()}>
+                  {t("settings.appearance.colorScheme.custom.save")}
+                </button>
+              </Show>
+            </div>
+            <Show when={saveFailed()}>
+              <p class="theme-scheme-warning" role="alert">{t("settings.appearance.colorScheme.custom.saveError")}</p>
+            </Show>
           </div>
-        )}</Show>
-      </div>
-
-      <div class="theme-scheme-editor">
-        <Show when={saveFailed()}>
-          <p class="theme-scheme-warning" role="alert">{t("settings.appearance.colorScheme.custom.saveError")}</p>
-        </Show>
-        <div class="theme-scheme-actions">
-          <Show when={editingOption()?.presetId}>
-            <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
-              {t("settings.appearance.colorScheme.custom.delete")}
-            </button>
-          </Show>
-          <Show when={savedBuiltinOverride()}>
-            <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void resetBuiltin()}>
-              {t("settings.appearance.colorScheme.custom.reset")}
-            </button>
-          </Show>
-          <Show when={!creating()}>
-               <button type="button" class="selector-button selector-button-secondary" disabled={saving()} onClick={startNewPreset}>
-                 {t("settings.appearance.colorScheme.custom.new")}
-               </button>
-          </Show>
-          <Show when={dirty()}>
-            <button type="button" class="selector-button selector-button-primary" disabled={!validDraft() || saving() || (creating() && !draftName().trim())} onClick={() => void savePreset()}>
-              {t("settings.appearance.colorScheme.custom.save")}
-            </button>
-          </Show>
+          <Show when={editingOption()} keyed>{(option) => (
+            <div class="theme-scheme-card" title={option.description}>
+              <span class="theme-scheme-swatches">
+                <For each={COLOR_FIELDS}>{(field) => {
+                  const color = () => colorsFor(option)[field.key]
+                  const label = () => t(field.labelKey)
+                  return (
+                    <label class="theme-scheme-swatch" title={`${label()} · ${color()}`}>
+                      <input
+                        type="color"
+                        disabled={saving()}
+                        value={color()}
+                        aria-label={`${option.name} · ${label()} · ${color()}`}
+                        onInput={(event) => {
+                          const input = event.currentTarget
+                          void updateColor(option, field.key, input.value).then((updated) => {
+                            if (!updated) input.value = color()
+                          })
+                        }}
+                      />
+                      <span>{label()}</span>
+                    </label>
+                  )
+                }}</For>
+              </span>
+            </div>
+          )}</Show>
         </div>
       </div>
     </div>

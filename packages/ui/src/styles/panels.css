@@ -1,4 +1,5 @@
 @import "./panels/tabs.css";
+@import "./components/tab-scroll.css";
 @import "./panels/empty-loading.css";
 @import "./panels/modal.css";
 @import "./panels/panel-shell.css";

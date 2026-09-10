@@ -5,20 +5,11 @@
   flex: 0 0 var(--panel-header-height);
   min-height: var(--panel-header-height);
   background-color: var(--surface-shade-light);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
   border-bottom: 0;
   position: relative;
   padding-inline: 0;
   padding-block: 0;
-}
-
-.right-panel-tab-bar::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 1px;
-  background-color: var(--tab-border);
-  z-index: 0;
 }
 
 .right-panel-tab-bar .tab-container {
@@ -32,12 +23,8 @@
 .right-panel-tab-bar .tab-scroll {
   position: relative;
   z-index: 1;
-  @apply flex-1;
   width: auto;
   min-width: 0;
-  align-self: flex-start;
-  padding-top: 1px;
-  margin-bottom: -1px;
 }
 
 /* Shortcuts on the left side - match left drawer icon colors */
@@ -54,7 +41,7 @@
   cursor: grab;
   outline: none;
   border: 1px solid var(--tab-border);
-  margin-inline-end: -1px;
+  border-inline-start-width: 0;
   border-radius: 0;
   z-index: 1;
 }
@@ -81,7 +68,7 @@
   z-index: 2;
 }
 
-.right-panel-tab-draggable:first-child .right-panel-tab-active {
+.right-panel-tab-draggable:first-child .right-panel-tab {
   border-inline-start: 1px solid var(--tab-border);
 }
 
@@ -395,7 +382,6 @@
 
 .git-change-section-count {
   @apply text-[10px] px-1.5 py-0.5 shrink-0;
-  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-muted);
   border: 1px solid var(--border-base);
@@ -959,15 +945,6 @@
 .status-tab-container .right-panel-accordion-content :is(.border, .status-process-card) {
   border-width: 1px;
   border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
-}
-
-.right-panel-tab-active::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  height: 1px;
-  background-color: var(--surface-secondary);
 }
 
 .section-label {

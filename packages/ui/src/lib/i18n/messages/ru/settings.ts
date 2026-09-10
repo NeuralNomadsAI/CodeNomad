@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Режим оформления",
   "settings.appearance.palette.auto": "Авто",
-  "settings.appearance.palette.independent": "Сохраните светлую и тёмную палитры отдельно. Авто выбирает между ними по системе; вкладки ниже выбирают только палитру для редактирования.",
+  "settings.appearance.palette.independent": "Сохраните палитру для каждого режима оформления. Авто следует настройкам системы и показывает соответствующую палитру.",
   "settings.appearance.palette.soft": "Мягкие тона",
   "settings.appearance.palette.legacy": "Исходные палитры",
   "settings.appearance.palette.mist": "Туман",

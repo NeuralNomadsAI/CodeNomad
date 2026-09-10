@@ -29,7 +29,6 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
 
   return (
     <div class="settings-section-stack">
-      <ThemeSchemeSettings />
       <div class="settings-card">
         <div class="settings-card-header">
           <div>
@@ -40,6 +39,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         </div>
         <LocaleSelector />
       </div>
+      <ThemeSchemeSettings />
 
       <Show when={props.showStartupState !== false}><StartupStateSettingsCard /></Show>
 

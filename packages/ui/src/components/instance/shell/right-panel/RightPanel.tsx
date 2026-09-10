@@ -11,6 +11,7 @@ import {
 import IconButton from "@suid/material/IconButton"
 import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
 import { Settings2 } from "lucide-solid"
+import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
@@ -279,8 +280,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               <Settings2 class="h-4 w-4" />
             </IconButton>
           </div>
-          <div class="tab-scroll">
-            <div class="tab-strip">
+          <TabScroll>
               <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}>
                 <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleTabDragEnd}>
                   <DragDropSensors>
@@ -304,8 +304,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                   </DragDropSensors>
                 </DragDropProvider>
               </div>
-            </div>
-          </div>
+          </TabScroll>
         </div>
       </div>
 

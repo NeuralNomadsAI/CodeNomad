@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "מצב תצוגה",
   "settings.appearance.palette.auto": "אוטומטי",
-  "settings.appearance.palette.independent": "שמרו ערכה בהירה וערכה כהה. המצב האוטומטי בוחר ביניהן לפי המערכת; הלשוניות למטה בוחרות רק איזו ערכה לערוך.",
+  "settings.appearance.palette.independent": "שמרו ערכת צבעים לכל מצב תצוגה. המצב האוטומטי עוקב אחר המערכת ומציג את הערכה המתאימה.",
   "settings.appearance.palette.soft": "גוונים רכים",
   "settings.appearance.palette.legacy": "ערכות צבעים מקוריות",
   "settings.appearance.palette.mist": "ערפל",

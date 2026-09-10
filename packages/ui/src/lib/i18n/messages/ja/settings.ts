@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "外観モード",
   "settings.appearance.palette.auto": "自動",
-  "settings.appearance.palette.independent": "ライト用とダーク用のパレットを個別に保存します。自動はシステムに合わせて選択します。下のタブは編集するパレットだけを切り替えます。",
+  "settings.appearance.palette.independent": "外観ごとにパレットを保存します。自動モードではシステムに合わせて対応するパレットを表示します。",
   "settings.appearance.palette.soft": "柔らかな色調",
   "settings.appearance.palette.legacy": "従来のパレット",
   "settings.appearance.palette.mist": "霧",

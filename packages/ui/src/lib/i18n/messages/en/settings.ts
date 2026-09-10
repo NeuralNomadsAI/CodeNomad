@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Appearance mode",
   "settings.appearance.palette.auto": "Auto",
-  "settings.appearance.palette.independent": "Save a light palette and a dark palette. Auto follows the system using these choices; the tabs below only select which palette to edit.",
+  "settings.appearance.palette.independent": "Save a palette for each appearance. Auto follows the system and shows the matching palette.",
   "settings.appearance.palette.soft": "Soft tones",
   "settings.appearance.palette.legacy": "Original palettes",
   "settings.appearance.palette.mist": "Mist",

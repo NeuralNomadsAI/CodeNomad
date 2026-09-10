@@ -181,8 +181,8 @@
   --button-padding-y: 0.5rem;
   --button-padding-x: 0.75rem;
   --button-radius: 0;
-  --chip-radius: 0;
-  --pill-radius: 0;
+  --chip-radius: 999px;
+  --pill-radius: var(--chip-radius);
   
   /* Typography tokens */
   --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;

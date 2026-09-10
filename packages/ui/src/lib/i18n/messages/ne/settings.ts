@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "रूप मोड",
   "settings.appearance.palette.auto": "स्वतः",
-  "settings.appearance.palette.independent": "उज्यालो र अँध्यारो रङ योजना अलग-अलग सुरक्षित गर्नुहोस्। स्वतः मोडले प्रणालीअनुसार छान्छ; तलका ट्याबहरूले सम्पादन गर्ने योजना मात्र छान्छन्।",
+  "settings.appearance.palette.independent": "हरेक देखावटका लागि रङ योजना सुरक्षित गर्नुहोस्। स्वतः मोडले प्रणालीअनुसार सम्बन्धित रङ योजना देखाउँछ।",
   "settings.appearance.palette.soft": "नरम रङहरू",
   "settings.appearance.palette.legacy": "मौलिक रङ योजनाहरू",
   "settings.appearance.palette.mist": "कुहिरो",

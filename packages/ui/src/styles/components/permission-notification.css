@@ -169,7 +169,6 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   padding: 0.1rem 0.4rem;
-  border-radius: 0;
   border: 1px solid var(--session-status-permission-fg);
   background: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);

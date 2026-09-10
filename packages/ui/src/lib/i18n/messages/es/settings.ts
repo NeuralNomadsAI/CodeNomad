@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Modo de apariencia",
   "settings.appearance.palette.auto": "Auto",
-  "settings.appearance.palette.independent": "Guarda una paleta clara y otra oscura. Auto sigue el sistema usando estas opciones; las pestañas inferiores solo eligen la paleta que se edita.",
+  "settings.appearance.palette.independent": "Guarda una paleta para cada apariencia. Auto sigue el sistema y muestra la paleta correspondiente.",
   "settings.appearance.palette.soft": "Tonos suaves",
   "settings.appearance.palette.legacy": "Paletas originales",
   "settings.appearance.palette.mist": "Bruma",

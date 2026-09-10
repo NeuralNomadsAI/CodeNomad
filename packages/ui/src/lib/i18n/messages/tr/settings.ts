@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Görünüm modu",
   "settings.appearance.palette.auto": "Otomatik",
-  "settings.appearance.palette.independent": "Açık ve koyu paletleri ayrı kaydedin. Otomatik mod sistemin seçimini izler; aşağıdaki sekmeler yalnızca düzenlenecek paleti seçer.",
+  "settings.appearance.palette.independent": "Her görünüm için bir palet kaydedin. Otomatik mod sistemi izler ve ilgili paleti gösterir.",
   "settings.appearance.palette.soft": "Yumuşak tonlar",
   "settings.appearance.palette.legacy": "Özgün paletler",
   "settings.appearance.palette.mist": "Sis",

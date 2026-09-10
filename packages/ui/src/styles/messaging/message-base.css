@@ -257,7 +257,6 @@
 .message-step-usage-chip {
   @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
   min-height: 22px;
-  border-radius: 0;
   color: var(--icon-button-hover-color);
   font-weight: var(--font-weight-semibold);
   line-height: 1;
@@ -284,7 +283,6 @@
   align-self: center;
   flex: 0 0 auto;
   line-height: 1;
-  border-radius: 0;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
 }

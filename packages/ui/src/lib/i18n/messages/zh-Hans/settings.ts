@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "外观模式",
   "settings.appearance.palette.auto": "自动",
-  "settings.appearance.palette.independent": "分别保存浅色和深色配色。自动模式根据系统在两者之间切换；下方选项卡仅选择要编辑的配色。",
+  "settings.appearance.palette.independent": "为每种外观保存配色。自动模式跟随系统并显示相应的配色。",
   "settings.appearance.palette.soft": "柔和色调",
   "settings.appearance.palette.legacy": "原有配色",
   "settings.appearance.palette.mist": "薄雾",

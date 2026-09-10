@@ -1,7 +1,7 @@
 export const settingsMessages = {
   "settings.appearance.palette.mode": "Mode d’apparence",
   "settings.appearance.palette.auto": "Auto",
-  "settings.appearance.palette.independent": "Mémorisez une palette claire et une palette sombre. Auto choisit entre les deux selon le système ; les onglets ci-dessous servent uniquement à les régler.",
+  "settings.appearance.palette.independent": "Mémorisez une palette par mode d’apparence. Auto suit le système et affiche la palette correspondante.",
   "settings.appearance.palette.soft": "Tonalités douces",
   "settings.appearance.palette.legacy": "Palettes historiques",
   "settings.appearance.palette.mist": "Brume",

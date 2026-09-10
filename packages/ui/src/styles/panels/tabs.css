@@ -6,18 +6,9 @@
 
 .tab-bar-instance {
   background-color: var(--surface-secondary);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
   position: relative;
   border-bottom: 0;
-}
-
-.tab-bar-instance::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 1px;
-  background-color: var(--tab-border);
-  pointer-events: none;
 }
 
 .tab-bar-session {
@@ -33,38 +24,20 @@
   overflow-x: auto;
   touch-action: pan-x;
   -webkit-overflow-scrolling: touch;
-  transform: scaleY(-1);
 }
 
 .tab-bar-instance .tab-scroll {
   position: relative;
   z-index: 1;
-  flex: 1 1 auto;
   min-width: 0;
   width: auto;
   overflow-y: hidden;
-  padding-top: 1px;
-  margin-bottom: -1px;
 }
 
 .tab-bar-instance .tab-container {
   padding-block: 0;
   /* Preserve the previous strip's outer height, including its baseline. */
   height: calc(var(--chrome-height) + var(--space-xs) + var(--scrollbar-size) + 1px);
-}
-
-.tab-bar-instance .tab-scroll,
-.right-panel-tab-bar .tab-scroll {
-  height: calc(100% + 1px);
-  /* scaleY(-1) places this gutter and the horizontal scrollbar above the tabs. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
-  align-self: flex-start;
-  scrollbar-width: auto;
-  /* Override the global forced native scrollbar colors so WebKit honors the
-     token-sized scrollbar and its shared thumb/track styles. */
-  scrollbar-color: auto !important;
 }
 
 :is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-strip, .tab-strip-tabs, .tab-draggable, .right-panel-tab-draggable) {
@@ -79,10 +52,6 @@
   height: calc(var(--chrome-height) + var(--space-xs) - 1px);
 }
 
-:is(.tab-bar-instance, .right-panel-tab-bar) .tab-scroll::-webkit-scrollbar {
-  height: var(--scrollbar-size);
-}
-
 .tab-bar-instance .tab-draggable > div {
   height: 100%;
   display: flex;
@@ -91,10 +60,6 @@
 :is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-base, .tab-pill, .right-panel-tab) {
   height: 100%;
   padding-block: 0;
-}
-
-.tab-scroll .tab-strip {
-  transform: scaleY(-1);
 }
 
 .tab-bar-actions {
@@ -125,7 +90,6 @@
   @apply flex-shrink-0;
   user-select: none;
   transition: transform 140ms ease, opacity 140ms ease;
-  will-change: transform;
 }
 
 .tab-draggable-active {
@@ -165,7 +129,7 @@
   font-family: var(--font-family-sans);
   outline: none;
   border: 1px solid var(--tab-border);
-  margin-inline-end: -1px;
+  border-inline-start-width: 0;
   border-radius: 0;
 }
 
@@ -192,17 +156,8 @@
   position: relative;
 }
 
-.tab-bar-instance .tab-draggable:first-child :is(.tab-active, .tab-pill-active) {
+.tab-bar-instance .tab-draggable:first-child :is(.tab-base, .tab-pill) {
   border-inline-start: 1px solid var(--tab-border);
-}
-
-.tab-bar-instance .tab-active::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  height: 1px;
-  background: inherit;
 }
 
 .tab-inactive {
@@ -320,7 +275,7 @@
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
   border: 1px solid var(--tab-border);
-  margin-inline-end: -1px;
+  border-inline-start-width: 0;
   border-radius: 0;
   outline: none;
 }
@@ -332,10 +287,10 @@
 }
 
 .tab-pill-active {
-  background-color: var(--tab-active-bg);
+  background-color: var(--surface-shade-light);
   color: var(--tab-active-text);
   border-top: 1px solid var(--tab-border);
-  border-bottom-color: transparent;
+  border-bottom-color: var(--surface-shade-light);
 }
 
 .tab-pill-button {

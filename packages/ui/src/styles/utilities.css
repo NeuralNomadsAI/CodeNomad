@@ -114,7 +114,6 @@
   min-height: 24px;
   padding-inline: var(--space-sm);
   border: 1px solid var(--border-base);
-  border-radius: 0;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
