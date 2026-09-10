@@ -1,0 +1,376 @@
+[
+  {
+    "index": 1,
+    "id": "classic",
+    "name": "Classic · dark",
+    "appearance": "dark",
+    "title": "CodeNomad — release summary and session status",
+    "file": "01-classic.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "CodeNomad",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:55:07.001Z"
+  },
+  {
+    "index": 2,
+    "id": "mist",
+    "name": "Mist · dark",
+    "appearance": "dark",
+    "title": "OpenCode — database repair review and contribution guide",
+    "file": "02-mist.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "opencode",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:55:59.330Z"
+  },
+  {
+    "index": 3,
+    "id": "slate",
+    "name": "Slate · dark",
+    "appearance": "dark",
+    "title": "Gaffer — VFX architecture review and command palette",
+    "file": "03-slate.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "gaffer",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:52:37.336Z"
+  },
+  {
+    "index": 4,
+    "id": "clay",
+    "name": "Clay · dark",
+    "appearance": "dark",
+    "title": "Blender — branch comparison and message-content options",
+    "file": "04-clay.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "blender",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:52:42.569Z"
+  },
+  {
+    "index": 5,
+    "id": "sage",
+    "name": "Sage · dark",
+    "appearance": "dark",
+    "title": "OpenWork — multi-agent task review and model picker",
+    "file": "05-sage.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "openwork",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:59:38.638Z"
+  },
+  {
+    "index": 6,
+    "id": "basalt",
+    "name": "Basalt",
+    "appearance": "dark",
+    "title": "CodeNomad — Git diff alongside the release conversation",
+    "file": "06-basalt.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "CodeNomad",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:56:07.018Z"
+  },
+  {
+    "index": 7,
+    "id": "fjord",
+    "name": "Fjord",
+    "appearance": "dark",
+    "title": "Gaffer — integration architecture and agent picker",
+    "file": "07-fjord.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "gaffer",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:52:51.875Z"
+  },
+  {
+    "index": 8,
+    "id": "lichen",
+    "name": "Lichen",
+    "appearance": "dark",
+    "title": "OpenCode — session search and documentation preview",
+    "file": "08-lichen.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "opencode",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:37.577Z"
+  },
+  {
+    "index": 9,
+    "id": "velvet",
+    "name": "Velvet",
+    "appearance": "dark",
+    "title": "OpenWork — multi-agent review and panel customization",
+    "file": "09-velvet.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "openwork",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:41.243Z"
+  },
+  {
+    "index": 10,
+    "id": "ember",
+    "name": "Ember",
+    "appearance": "dark",
+    "title": "CodeNomad — subagent hierarchy, selection controls and task plan",
+    "file": "10-ember.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "CodeNomad",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:56:10.599Z"
+  },
+  {
+    "index": 11,
+    "id": "light",
+    "name": "Classic · light",
+    "appearance": "light",
+    "title": "General settings — appearance modes and original light colors",
+    "file": "11-light.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "CodeNomad",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:45.751Z"
+  },
+  {
+    "index": 12,
+    "id": "porcelain",
+    "name": "Mist · light",
+    "appearance": "light",
+    "title": "Chat settings — visibility and initial expansion of content",
+    "file": "12-porcelain.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "blender",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:47.642Z"
+  },
+  {
+    "index": 13,
+    "id": "dawn",
+    "name": "Slate · light",
+    "appearance": "light",
+    "title": "Notification settings — session events and sound preferences",
+    "file": "13-dawn.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "opencode",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:49.756Z"
+  },
+  {
+    "index": 14,
+    "id": "parchment",
+    "name": "Clay · light",
+    "appearance": "light",
+    "title": "Speech settings — transcription, playback and voice controls",
+    "file": "14-parchment.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "openwork",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:53:53.914Z"
+  },
+  {
+    "index": 15,
+    "id": "linen",
+    "name": "Linen",
+    "appearance": "light",
+    "title": "CodeNomad — selected subagent and contribution documentation",
+    "file": "15-linen.png",
+    "window": "workspace",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "CodeNomad",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:58:28.293Z"
+  },
+  {
+    "index": 16,
+    "id": "iris",
+    "name": "Iris",
+    "appearance": "light",
+    "title": "OpenCode settings — runtime discovery and configuration",
+    "file": "16-iris.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "gaffer",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:56:20.083Z"
+  },
+  {
+    "index": 17,
+    "id": "sage-light",
+    "name": "Sage · light",
+    "appearance": "light",
+    "title": "Advanced settings — desktop window behavior",
+    "file": "17-sage-light.png",
+    "window": "settings",
+    "projectTabs": [
+      "CodeNomad",
+      "opencode",
+      "gaffer",
+      "blender",
+      "openwork"
+    ],
+    "activeProject": "blender",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-10T10:54:00.517Z"
+  }
+]
