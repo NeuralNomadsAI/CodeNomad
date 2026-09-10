@@ -28,6 +28,7 @@ type TranscriptEntry = {
   rotating: boolean
   rotationGeneration: number
   needsAuthoritativeResync: boolean
+  preserveNativePageOnResync: boolean
   resyncing: boolean
   resyncGeneration: number
   freshEntry?: DataEntry
@@ -192,6 +193,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     rotating: false,
     rotationGeneration: 0,
     needsAuthoritativeResync: false,
+    preserveNativePageOnResync: false,
     resyncing: false,
     resyncGeneration: 0,
     retryCount: 0,
@@ -411,6 +413,7 @@ async function resyncAuthoritativeTranscript(
     previous.dispose()
 
     transcript.onResynced?.(fresh.data)
+    if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
   } catch {
     if (!isResyncCurrent(instanceId, sessionId, transcript, generation, fresh)) return
     transcript.resyncing = false
@@ -600,6 +603,10 @@ export function invalidateOpenCodeSessionContent(instanceId: string, sessionId: 
   invalidateTranscript(transcript)
   transcript.entry.dispose()
   transcript.entry = createDataEntry(instanceId, transcript.directory)
+  // The pruning handler (or the next session open) reloads the native UI page
+  // together with its cursors. SDK reconciliation still repairs its independent
+  // projection, but its 20-message seed cannot replace that 200-message page.
+  transcript.preserveNativePageOnResync = true
   collapseTranscriptQueue(instanceId, sessionId, transcript)
 }
 
@@ -623,8 +630,14 @@ export function projectOpenCodeMessages(
   preserveOmitted = true,
   confirmPending = true,
 ): void {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (transcript && (transcript.entry.data !== data || transcript.needsAuthoritativeResync || transcript.resyncing)) return
   const source = data.session.message.list(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE)
   const store = messageStoreBus.getOrCreate(instanceId)
+  // During pruning reconciliation, only loadMessages owns native page
+  // membership and pagination. The SDK seed may update resident messages, not
+  // discard omitted history while retaining the larger page's cursor.
+  if (transcript?.preserveNativePageOnResync && store.getMessageWindow(sessionId)) preserveOmitted = true
   if (source.length) {
     const normalized = source.map((item) => normalizeSessionMessage(sessionId, item))
     seedSessionMessagesV2(

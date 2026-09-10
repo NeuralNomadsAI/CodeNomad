@@ -227,6 +227,7 @@ jobs:
           packages/ui/src/stores/session-actions.test.ts
           packages/ui/src/stores/session-pruning-events.test.ts
           packages/ui/src/stores/session-pruning-projection.test.ts
+          packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts

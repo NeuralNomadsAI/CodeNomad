@@ -6,6 +6,8 @@ import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
+import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
+import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
@@ -599,6 +601,16 @@ function applyUpdatedMessage(instanceId: string, sessionId: string, source: Sess
   store.setMessageInfo(info.id, info)
 }
 
+function technicalPartIdentity(part: ClientPart | undefined): string | undefined {
+  if (part?.type === "tool") return canonicalContent({ type: part.type, id: part.id })
+  if (part?.type !== "reasoning") return undefined
+  // Only strip client decoration. In particular, opaque provider state and
+  // absent timestamps are identity evidence, not wildcards. Canonicalization
+  // tolerates object key reordering without weakening the payload comparison.
+  const { id, sessionID, messageID, renderCache, pendingPermission, ...content } = part
+  return canonicalContent(content)
+}
+
 async function deleteSelectedMessageTechnicalParts(
   instanceId: string,
   sessionId: string,
@@ -609,10 +621,19 @@ async function deleteSelectedMessageTechnicalParts(
   const targets = Array.from(new Set(partIds)).map((partId) => ({
     partId,
     part: record?.parts[partId]?.data,
+    identity: technicalPartIdentity(record?.parts[partId]?.data),
   }))
   if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
     || targets.length === 0
     || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
+    throw new Error(tGlobal("session.pruning.blocked"))
+  }
+
+  const originalIdentities = record.partIds.map((id) => technicalPartIdentity(record.parts[id]?.data))
+  if (targets.some(({ identity }) => identity === undefined
+    || originalIdentities.filter((candidate) => candidate === identity).length !== 1)) {
+    // A duplicate in the selected snapshot stays ambiguous even if another
+    // client removes one occurrence before our read. Never select its survivor.
     throw new Error(tGlobal("session.pruning.blocked"))
   }
 
@@ -622,17 +643,9 @@ async function deleteSelectedMessageTechnicalParts(
     if (message.type !== "assistant" || !message.time.completed) {
       throw new Error(tGlobal("session.pruning.blocked"))
     }
+    const freshIdentities = normalizeSessionMessage(sessionId, message).message.parts.map(technicalPartIdentity)
     const indexes = new Set(targets.map((selected) => {
-      const part = selected.part!
-      const time = part.time as { created?: number; completed?: number } | undefined
-      const matches = message.content.flatMap((candidate, index) => {
-        if (candidate.type !== part.type) return []
-        if (candidate.type === "tool" && part.type === "tool") return candidate.id === part.id ? [index] : []
-        if (candidate.type !== "reasoning" || part.type !== "reasoning") return []
-        return candidate.text === part.text
-          && (time?.created === undefined || candidate.time?.created === time.created)
-          && (time?.completed === undefined || candidate.time?.completed === time.completed) ? [index] : []
-      })
+      const matches = freshIdentities.flatMap((identity, index) => identity === selected.identity ? [index] : [])
       // Local array positions can be stale after another client's prune. Never
       // guess between duplicate reasoning blocks without a stable identity.
       return matches.length === 1 ? matches[0] : -1

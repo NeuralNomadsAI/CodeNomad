@@ -24,6 +24,7 @@ import { getModelThinkingSelection, setModelThinkingSelection } from "./preferen
 import { sessions, setProviders, setSessions } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -304,6 +305,52 @@ describe("plugin RPC message pruning", () => {
     assert.equal(calls, 0)
   })
 
+  for (const variant of ["opaque-state", "identical", "missing-time", "changed-state"] as const) {
+    it(`does not send a destructive RPC for a stale reasoning selection (${variant})`, async () => {
+      const messageId = `stale-reasoning-${variant}`
+      const first = { type: "reasoning", text: "", state: { provider: { opaque: "FIRST" } } }
+      const second = variant === "identical" ? structuredClone(first)
+        : { ...first, state: { provider: { opaque: "SECOND" } } }
+      const original = {
+        id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second],
+      } as any
+      const fresh = variant === "missing-time" ? [{ ...first, time: { created: 1, completed: 2 } }]
+        : variant === "changed-state" ? [{ ...first, state: { provider: { opaque: "CHANGED" } } }]
+        : [second]
+      seed({ session: { message: async () => ({ ...original, content: fresh }) } })
+      const normalized = normalizeSessionMessage(sessionId, original).message
+      const store = messageStoreBus.getOrCreate(instanceId)
+      store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+      let calls = 0
+      serverApi.pruneSessionMessage = async () => { calls++; throw new Error("Destructive RPC must not be called") }
+
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /Cleanup was not confirmed/)
+
+      assert.equal(calls, 0)
+      assert.deepEqual(store.getMessage(messageId)?.partIds, normalized.parts.map(part => part.id))
+    })
+  }
+
+  it("matches a surviving reasoning block with its full state despite key and index reordering", async () => {
+    const messageId = "surviving-reasoning"
+    const first = { type: "reasoning", text: "", state: { provider: "p", opaque: "FIRST" } }
+    const second = { type: "reasoning", text: "", state: { provider: "p", opaque: "SECOND" } }
+    const original = { id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second] } as any
+    const fresh = { ...original, content: [{ ...second, state: { opaque: "SECOND", provider: "p" } }] }
+    seed({ session: { message: async () => fresh } })
+    const normalized = normalizeSessionMessage(sessionId, original).message
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+    let calls = 0
+    serverApi.pruneSessionMessage = async (_owner, input) => {
+      calls++
+      assert.deepEqual(input.indexes, [0])
+      assert.equal(input.revision, await contentRevision(fresh.content))
+      return { status: "blocked", reason: "maintenance_required" }
+    }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[1].id!))
+    assert.equal(calls, 1)
+  })
+
   it("removes one terminal assistant part and projects the updated response", async () => {
     const messageId = "assistant-message"
     const content = [
@@ -430,11 +477,11 @@ describe("plugin RPC message pruning", () => {
       role: "assistant",
       status: "complete",
       parts: [
-        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before" },
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
         { id: "tool-before", type: "tool", tool: "bash" },
         { id: `${messageId}-text-2`, type: "text", text: "response" },
         { id: "tool-after", type: "tool", tool: "bash" },
-        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after" },
+        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
       ],
     })
 
