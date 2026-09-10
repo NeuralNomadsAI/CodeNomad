@@ -78,7 +78,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Install browser for native pruning UI checks
