@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import { attachScrollGestureRouting } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, BOTTOM_FOLLOW_EPSILON_PX, canScrollInDirection, classifyVirtualItemKeyChange, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottom, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldAdvanceBottomPin, shouldNavigateAtBoundary, VirtualScrollController, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
@@ -157,6 +158,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let explicitBottomPinResolver: ((settlement: VirtualBottomSettlement) => void) | null = null
   let localBottomPinSequence = 0
   let programmaticScrollUntil = 0
+  let pendingVirtuaScroll = false
   let virtualItemKeys = virtualItems().map((item, index) => props.getKey(item, index))
   let plannedItems = virtualItems().slice()
   let plannedKeys = virtualItemKeys.slice()
@@ -230,10 +232,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       dispatchFollowEvent({ type: "user-scroll", direction: "down", atBottom: true })
     }
     const element = scrollElement()
-    if (element) {
-      // Publish intent before notifying scroll listeners: otherwise old follow
-      // state can arm a programmatic pin and suppress user boundary navigation.
-      // Synchronize the live offset before replacing Virtua's pending operation.
+    if (element && pendingVirtuaScroll) {
+      // Replace an outstanding imperative operation once, not on every wheel
+      // or key repeat: scrollBy(0) itself creates a new measurement-time pin.
+      pendingVirtuaScroll = false
       element.dispatchEvent(new Event("scroll"))
       virtuaHandle()?.scrollBy(0)
     }
@@ -286,6 +288,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const nextOffset = Math.min(Math.max(offset, 0), maxOffset)
     markProgrammaticScroll()
     if (handle) {
+      pendingVirtuaScroll = true
       handle.scrollTo(nextOffset)
     } else {
       element.scrollTop = nextOffset
@@ -333,6 +336,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     }
     if (!handle) return
     markProgrammaticScroll()
+    pendingVirtuaScroll = true
     handle.scrollToIndex(0, { align: "start", smooth: true })
   }
 
@@ -342,6 +346,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     markProgrammaticScroll()
     // Large smooth jumps over dynamically measured items can leave Virtua's
     // mounted range behind the viewport. Semantic navigation must land first.
+    pendingVirtuaScroll = true
     virtuaHandle()?.scrollToIndex(index, { align: opts.block, smooth: false })
   }
 
@@ -653,6 +658,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === snapshot.anchorKey)
         if (index !== -1) {
           markProgrammaticScroll()
+          pendingVirtuaScroll = true
           virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: opts?.behavior === "smooth" })
           const stabilizer = new AnchorRestoreStabilizer()
           restartAnchorRestore = () => {
@@ -680,6 +686,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const index = virtualItems().findIndex((item, i) => props.getKey(item, i) === key)
     if (index === -1) return false
     markProgrammaticScroll()
+    pendingVirtuaScroll = true
     virtuaHandle()?.scrollToIndex(index, { align: "start", smooth: false })
     return true
   }
@@ -801,7 +808,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       lastTouchY = null
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
-      if (!isActive()) return
+      if (!isActive() || event.defaultPrevented) return
       if (!SCROLL_INTENT_KEYS.has(event.key)) return
       const target = event.target as HTMLElement | null
       const intent = getKeyboardScrollIntent({
@@ -811,6 +818,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         textEditing: Boolean(target?.closest(TEXT_EDITING_KEY_TARGET_SELECTOR)),
       })
       if (!intent) return
+      const direction = intent.type === "top" ? "up" : intent.type === "bottom" ? "down" : intent.direction
+      if (nestedScrollerConsumes(event.target, direction)) return
       if (intent.type === "bottom") {
         event.preventDefault()
         jumpToBottom(true)
@@ -823,6 +832,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       markUserScrollIntent(intent.direction)
     }
+    const detachGestureRouting = attachScrollGestureRouting(element)
     element.addEventListener("wheel", handleWheelIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
     element.addEventListener("pointermove", handlePointerMove)
@@ -834,6 +844,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     element.addEventListener("touchcancel", handleTouchEnd, { passive: true })
     element.addEventListener("keydown", handleKeyIntent)
     detachScrollIntentListeners = () => {
+      detachGestureRouting()
       element.removeEventListener("wheel", handleWheelIntent)
       element.removeEventListener("pointerdown", handlePointerIntent)
       element.removeEventListener("pointermove", handlePointerMove)

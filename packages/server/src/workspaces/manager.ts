@@ -69,6 +69,7 @@ interface WorkspaceManagerOptions {
   eventBus: EventBus
   logger: Logger
   sharedService?: SharedService
+  prepareSessionPruning?: (launch: ServiceLaunchSpec, environment: NodeJS.ProcessEnv) => Promise<void>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -528,6 +529,7 @@ export class WorkspaceManager {
       const startupEnvironment = launch.kind === "wsl"
         ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
         : this.serviceStartupEnvironment()
+      await this.options.prepareSessionPruning?.(launch, startupEnvironment)
       const serviceOptions: OpenCodeSharedServiceOptions = {
         kind: "lifecycle",
         identity: launch.kind === "host"

@@ -23,6 +23,7 @@ import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerYoloRoutes } from "./routes/yolo"
+import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
@@ -343,6 +344,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: proxyLogger,
   })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
+  registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence })
 
 
@@ -1269,7 +1271,6 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["GET", /^\/api\/session(?:\/active)?$/],
     ["POST", /^\/api\/session(?:\/import)?$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
-    ["PATCH", /^\/api\/session\/[^/]+\/message\/[^/]+$/],
     ["GET", /^\/api\/session\/[^/]+\/inbox$/],
     ["GET", /^\/api\/session\/[^/]+\/(?:permission|form)$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],

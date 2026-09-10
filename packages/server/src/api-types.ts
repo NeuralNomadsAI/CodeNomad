@@ -550,3 +550,4 @@ export type {
   RecentFolder,
   OpenCodeBinary,
 }
+export type { PruneRequest, PruneResult } from "./opencode/session-pruning/contract"

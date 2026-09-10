@@ -36,6 +36,7 @@ import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 import { NativeParent } from "./native-parent"
+import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge, removeLegacyAutomationPlugin } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
@@ -370,12 +371,19 @@ async function main() {
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
+  const pruningLifecycle = new PruningLifecycle()
+  const prepareSessionPruning: PruningLifecycle["start"] = async (...args) => {
+    try { await pruningLifecycle.start(...args) }
+    catch (error) { logger.error({ err: error }, "Failed to load the bundled session-pruning plugin") }
+  }
+  await prepareSessionPruning()
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
     settings,
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
+    prepareSessionPruning,
   })
   const nativeParent = new NativeParent()
   if (nativeParent.available) {
@@ -641,6 +649,7 @@ async function main() {
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
+            await pruningLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()
