@@ -1,4 +1,9 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "La sesión o su almacenamiento está ocupado. Espera a que termine la operación actual y vuelve a intentar la limpieza.",
+  "session.pruning.unavailable": "El complemento de limpieza no está disponible o no respondió. Vuelve a abrir CodeNomad e inténtalo de nuevo.",
+  "session.pruning.conflict": "El mensaje cambió desde su selección. Recárgalo y vuelve a seleccionar el contenido.",
+  "session.pruning.not_deletable": "Este contenido no se puede eliminar. Solo se pueden quitar las herramientas y los razonamientos terminados de esta sesión.",
+  "session.pruning.unsupported_storage": "El complemento de limpieza no pudo validar el almacenamiento de esta sesión. Se rechazó la limpieza.",
   "session.pruning.blocked": "No se confirmó la limpieza. El plugin puede no estar disponible, la limpieza en vivo puede estar desactivada o el mensaje puede haber cambiado. Recarga el mensaje antes de reintentar.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "No hay sesiones anteriores",

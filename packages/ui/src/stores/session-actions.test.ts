@@ -269,9 +269,13 @@ describe("plugin RPC message pruning", () => {
     store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
     ] })
-    for (const reason of ["unavailable", "maintenance_required", "conflict"] as const) {
+    const reasons = { unavailable: /plugin is unavailable/, maintenance_required: /storage is busy/, conflict: /message changed/, not_deletable: /cannot be deleted/, unsupported_storage: /could not validate/ } as const
+    for (const reason of Object.keys(reasons) as Array<keyof typeof reasons>) {
       serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
-      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"))
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), reasons[reason])
+      const failures = await executeSessionTechnicalPartDeletion({ instanceId, sessionId, messageIds: [messageId], toolCount: 1, reasoningCount: 0 })
+      assert.equal(failures.length, 1)
+      assert.match(failures[0], reasons[reason])
       assert.ok(store.getMessage(messageId)?.parts["tool-1"])
     }
     serverApi.pruneSessionMessage = async () => { throw new Error("Lost acknowledgement") }
@@ -301,7 +305,7 @@ describe("plugin RPC message pruning", () => {
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
     ] })
-    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /Cleanup was not confirmed/)
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /message changed/)
     assert.equal(calls, 0)
   })
 
@@ -324,7 +328,7 @@ describe("plugin RPC message pruning", () => {
       let calls = 0
       serverApi.pruneSessionMessage = async () => { calls++; throw new Error("Destructive RPC must not be called") }
 
-      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /Cleanup was not confirmed/)
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /message changed/)
 
       assert.equal(calls, 0)
       assert.deepEqual(store.getMessage(messageId)?.partIds, normalized.parts.map(part => part.id))
@@ -576,7 +580,7 @@ describe("plugin RPC message pruning", () => {
       reasoningCount: 1,
       messageIds: ["assistant-1", "assistant-2"],
     })
-    assert.equal(failed, 0)
+    assert.deepEqual(failed, [])
     assert.deepEqual(updates, [
       { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
       { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },

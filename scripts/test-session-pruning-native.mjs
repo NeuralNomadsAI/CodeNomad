@@ -15,7 +15,9 @@ import { tsImport } from "tsx/esm/api"
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
 const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2 v/, "")
-const pluginDirectory = process.argv[3] ?? fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/", import.meta.url))
+const ui = process.argv.includes("--ui")
+const pluginArgument = process.argv[3] === "--ui" ? undefined : process.argv[3]
+const pluginDirectory = pluginArgument ?? fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/", import.meta.url))
 if (!path.isAbsolute(pluginDirectory)) throw new Error("Plugin directory must be absolute")
 const temporaryRoot = path.join(os.tmpdir(), "opencode")
 await mkdir(temporaryRoot, { recursive: true })
@@ -29,7 +31,7 @@ Object.assign(env, {
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
 })
 await mkdir(env.OPENCODE_CONFIG_DIR)
-const bundled = !process.argv[3]
+const bundled = !pluginArgument
 let closePresence
 let openPresence
 if (bundled) {
@@ -45,6 +47,8 @@ if (bundled) {
 await mkdir(path.join(root, "plugin"))
 const requests = []
 let primaryCount = 0
+let toolSteps = 1
+let probeName = "prune_probe"
 let held
 let releaseProvider
 const provider = createServer(async (request, response) => {
@@ -62,7 +66,7 @@ const provider = createServer(async (request, response) => {
     response.end(JSON.stringify({ id: "aux", choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }))
     return
   }
-  const tool = kind === "primary" && primaryCount++ === 0
+  const tool = kind === "primary" && primaryCount++ < toolSteps
   response.setHeader("Content-Type", "text/event-stream")
   const chunk = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({
     id: "fixture", object: "chat.completion.chunk", model: "fixture",
@@ -72,7 +76,7 @@ const provider = createServer(async (request, response) => {
   chunk({ role: "assistant" })
   if (tool) {
     chunk({ reasoning_content: "REASONING_PRUNING_CANARY" })
-    chunk({ tool_calls: [{ index: 0, id: "fixture-call", type: "function", function: { name: "prune_probe", arguments: "{}" } }] })
+    chunk({ tool_calls: Array.from({ length: probeName === "bash" ? 2 : 1 }, (_, index) => ({ index, id: `fixture-call-${primaryCount}-${index}`, type: "function", function: { name: probeName, arguments: "{}" } })) })
   } else chunk({ content: text })
   chunk({}, tool ? "tool_calls" : "stop")
   response.end("data: [DONE]\n\n")
@@ -82,6 +86,7 @@ await writeFile(path.join(root, "plugin", "index.ts"), `
 export default { id:'pruning-test-fixture', async setup(ctx) {
   await ctx.session.hook('http.request', event => event.request.headers.set('x-pruning-test-kind', event.kind))
   await ctx.tool.transform(editor => editor.add({ name:'prune_probe', description:'Fixture', input:{type:'object',properties:{}}, options:{codemode:false}, execute:async()=>({content:'TOOL_PRUNING_CANARY'}) }))
+  ${ui ? "await ctx.tool.transform(editor => editor.add({ name:'bash', description:'Isolated inert fixture', input:{type:'object',properties:{}}, options:{codemode:false}, execute:async()=>({content:'TOOL_PRUNING_CANARY'}) }))" : ""}
 } }
 `)
 env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
@@ -144,6 +149,27 @@ try {
   const messages = (await client.message.list({ sessionID: session.id, limit: 100, order: "asc" })).data
   const target = messages.find(message => message.type === "assistant" && message.content.some(part => part.type === "tool"))
   assert(target)
+  if (ui) {
+    const { testPruningUI } = await import("./test-session-pruning-ui.mjs")
+    await testPruningUI({ client, baseUrl, root, location, busy: async (sessionID) => {
+      held = new Promise(resolve => { releaseProvider = resolve })
+      const before = requests.length
+      await client.session.prompt({ sessionID, text: "Keep this request in flight" })
+      await until(() => requests.slice(before).some(item => item.kind === "primary"))
+      return async () => {
+        releaseProvider(); held = undefined
+        await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+      }
+    }, generate: async (sessionID) => {
+      primaryCount = 0
+      toolSteps = 2
+      probeName = "bash"
+      try {
+        await client.session.prompt({ sessionID, text: "Use the inert fixture tools, then conclude" })
+        await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+      } finally { toolSteps = 1; probeName = "prune_probe" }
+    } })
+  }
   const fork = await client.session.fork({ sessionID: session.id, boundary: { type: "before", messageID: messages.at(-1).id } })
   const forkTarget = (await client.message.list({ sessionID: fork.id, limit: 100, order: "asc" })).data.find(message => message.type === "assistant")
   assert.deepEqual(forkTarget.content, target.content)

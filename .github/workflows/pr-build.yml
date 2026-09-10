@@ -81,6 +81,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Install browser for native pruning UI checks
+        run: npx --workspace @codenomad/ui playwright install --with-deps chromium
       - name: Pack and install outside the checkout
         shell: pwsh
         run: |
@@ -105,7 +107,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          node scripts/test-session-pruning-native.mjs $cli
+          node scripts/test-session-pruning-native.mjs $cli --ui
       - name: Upload opt-in plugin package
         if: success()
         uses: actions/upload-artifact@v4
@@ -228,6 +230,7 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/opencode-data.test.ts
+          packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts

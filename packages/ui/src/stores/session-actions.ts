@@ -626,7 +626,7 @@ async function deleteSelectedMessageTechnicalParts(
   if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
     || targets.length === 0
     || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
-    throw new Error(tGlobal("session.pruning.blocked"))
+    throw new Error(tGlobal("session.pruning.not_deletable"))
   }
 
   const originalIdentities = record.partIds.map((id) => technicalPartIdentity(record.parts[id]?.data))
@@ -634,14 +634,14 @@ async function deleteSelectedMessageTechnicalParts(
     || originalIdentities.filter((candidate) => candidate === identity).length !== 1)) {
     // A duplicate in the selected snapshot stays ambiguous even if another
     // client removes one occurrence before our read. Never select its survivor.
-    throw new Error(tGlobal("session.pruning.blocked"))
+    throw new Error(tGlobal("session.pruning.conflict"))
   }
 
   return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) {
-      throw new Error(tGlobal("session.pruning.blocked"))
+      throw new Error(tGlobal("session.pruning.not_deletable"))
     }
     const freshIdentities = normalizeSessionMessage(sessionId, message).message.parts.map(technicalPartIdentity)
     const indexes = new Set(targets.map((selected) => {
@@ -651,7 +651,7 @@ async function deleteSelectedMessageTechnicalParts(
       return matches.length === 1 ? matches[0] : -1
     }))
     if (indexes.has(-1)) {
-      throw new Error(tGlobal("session.pruning.blocked"))
+      throw new Error(tGlobal("session.pruning.conflict"))
     }
 
     await pruneMessageContent(instanceId, sessionId, message, [...indexes], (updated) => applyUpdatedMessage(instanceId, sessionId, updated))
@@ -670,7 +670,7 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
   await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
-    if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.blocked"))
+    if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.not_deletable"))
     const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
     if (content.length === message.content.length) return
     const indexes = message.content.flatMap((part, index) => part.type === "tool" || part.type === "reasoning" ? [index] : [])
@@ -732,16 +732,16 @@ async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: s
   return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
 }
 
-async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<number> {
-  let failed = 0
+async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<string[]> {
+  const failures: string[] = []
   for (const messageId of plan.messageIds) {
     try {
       await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
-    } catch {
-      failed += 1
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
     }
   }
-  return failed
+  return failures
 }
 
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {

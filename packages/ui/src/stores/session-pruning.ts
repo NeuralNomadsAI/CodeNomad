@@ -17,7 +17,7 @@ export async function pruneMessageContent(
     sessionID: sessionId, messageID: message.id, indexes,
     revision: await contentRevision(message.content),
   })
-  if (result.status !== "pruned") throw new Error(tGlobal("session.pruning.blocked"))
+  if (result.status !== "pruned") throw new Error(tGlobal(`session.pruning.${result.reason}`))
   // Never project a client-generated remainder or a plugin's message snapshot.
   // Re-read the native history after commit (and after future RPC invalidations).
   invalidateOpenCodeSessionContent(instanceId, sessionId)

@@ -70,3 +70,22 @@ exercises the shipped bundle through automatic discovery, then preview/prune,
 concurrent execution, receipts, subscribers, payloads, history, forks, restart and
 the presence lifecycle. An optional second argument tests an independently packed
 source plugin directory instead. Tests never discover or modify the shared daemon.
+
+To exercise the rendered UI through the real HTTP broker and bundled plugin:
+
+```powershell
+# Use an installed Playwright Chromium, or set CODENOMAD_BROWSER_PATH to Edge/Chrome.
+node scripts/test-session-pruning-native.mjs C:/isolated-cli/opencode2.exe --ui
+```
+
+The UI fixture seeds only workspace chrome/preferences. Native messages, selection,
+deletion handlers, RPC writes and reloads use the private runtime. Screenshots are
+retained with the isolated fixture. A busy native execution claim refuses cleanup;
+the UI displays that reason rather than suggesting the plugin is disabled. The
+session-wide action retains distinct failure details as well as the failed count.
+
+The UI store distinguishes omitted parts (metadata-only updates) from an explicit
+empty parts array (authoritative replacement). Both direct post-prune reads and
+history hydration clear the last tool/reasoning when the native content is empty.
+Retained reasoning-only messages stay visible when thoughts are enabled, even
+though the navigation timeline does not create a separate tick for them.

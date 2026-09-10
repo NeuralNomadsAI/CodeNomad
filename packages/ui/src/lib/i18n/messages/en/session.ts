@@ -1,4 +1,9 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "The session or its storage is busy. Wait for the current operation to finish, then retry cleanup.",
+  "session.pruning.unavailable": "The cleanup plugin is unavailable or did not respond. Reopen CodeNomad and retry.",
+  "session.pruning.conflict": "The message changed since it was selected. Reload it and select the content again.",
+  "session.pruning.not_deletable": "The selected content cannot be deleted. Only completed tools and reasoning in this session can be removed.",
+  "session.pruning.unsupported_storage": "The cleanup plugin could not validate this session's storage. Cleanup was refused.",
   "session.pruning.blocked": "Cleanup was not confirmed. The pruning plugin may be unavailable, live cleanup may be disabled, or the message may have changed. Reload the message before retrying.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "No previous sessions",

@@ -1,4 +1,9 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "सत्र वा यसको भण्डारण व्यस्त छ। हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",
+  "session.pruning.unavailable": "सफाइ प्लगइन उपलब्ध छैन वा प्रतिक्रिया दिएन। CodeNomad फेरि खोलेर प्रयास गर्नुहोस्।",
+  "session.pruning.conflict": "चयन गरेपछि सन्देश परिवर्तन भयो। यसलाई पुनः लोड गरेर सामग्री फेरि चयन गर्नुहोस्।",
+  "session.pruning.not_deletable": "यो सामग्री मेटाउन सकिँदैन। यस सत्रका पूरा भएका उपकरण र तर्क मात्र हटाउन सकिन्छ।",
+  "session.pruning.unsupported_storage": "सफाइ प्लगइनले यस सत्रको भण्डारण प्रमाणित गर्न सकेन। सफाइ अस्वीकार गरियो।",
   "session.pruning.blocked": "सफाइ पुष्टि भएन। प्लगइन उपलब्ध नहुन सक्छ, चलिरहेको अवस्थामा सफाइ बन्द हुन सक्छ वा सन्देश परिवर्तन भएको हुन सक्छ। फेरि प्रयास गर्नुअघि सन्देश पुनः लोड गर्नुहोस्।",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "कुनै अघिल्लो सत्रहरू छैनन्",
