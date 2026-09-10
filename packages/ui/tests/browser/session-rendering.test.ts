@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection"].find(name => req.url?.includes(name)) ?? "session"
+          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection", "scroll-input"].find(name => req.url?.includes(name)) ?? "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -514,13 +514,12 @@ for (const operation of ["append", "roll"]) test(`middle-button scrolling owns n
     assert.equal(await output.locator("..").getAttribute("data-item-index"), operation === "roll" ? "28" : "29",
       "Keeping the keyed child must not freeze its shifted index")
     try {
-      // Native middle autoscroll can begin well after pointerdown, then continue
-      // outside the child. Simulate its scroll ticks, not a wheel event: this
-      // exercises the real nested/outer follow controllers and renderer writes.
+      // Delay motion beyond the intent deadline, then drive the actual drag.
+      // Do not write scrollTop: controller-only simulation hid the old MMB bug.
       const started = await page.evaluate(() => performance.now())
       await page.waitForFunction(start => performance.now() - start > 800, started)
       await page.mouse.move(bounds.x + 650, bounds.y + 30)
-      await output.evaluate(el => { el.scrollTop = 900 })
+      await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 1200)
       await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
       let before = await output.evaluate(el => el.scrollTop)
       for (let i = 0; i < 5; i++) {
@@ -534,6 +533,173 @@ for (const operation of ["append", "roll"]) test(`middle-button scrolling owns n
       assert.equal(state.innerFollow, false)
       assert.equal(state.outerFollow, false)
     } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+test("native MMB drag started inside output keeps scrolling output outside its bounds", async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const box = (await output.boundingBox())!
+    const before = await page.evaluate(() => (window as any).fixture.snapshot())
+    await page.mouse.move(box.x + 100, box.y + 140)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + box.width + 60, box.y + 40, { steps: 10 })
+      await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? Infinity) < 1000, undefined, { timeout: 3000 })
+      const after = await page.evaluate(() => (window as any).fixture.snapshot())
+      assert.ok(Math.abs(after.outerTop - before.outerTop) < 2, "A child-owned drag must not move the transcript")
+    } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+for (const key of ["ArrowUp", "PageUp"]) test(`native repeated ${key} keeps moving the transcript`, async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const stream = page.locator(".message-stream")
+    await stream.focus()
+    const before = await stream.evaluate(el => el.scrollTop)
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.down(key)
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+    }
+    await page.keyboard.up(key)
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const after = await stream.evaluate(el => el.scrollTop)
+    assert.ok(before - after > (key === "ArrowUp" ? 200 : 1500), `${key} did not progress: ${before} -> ${after}`)
+  })
+})
+
+test("real shell output accepts native MMB drag without moving its transcript", async () => {
+  await open("scroll-input", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await page.locator('[data-virtual-follow-key="tool-29"] .tool-call-header').click()
+    const output = page.locator('[data-virtual-follow-key="tool-29"] .tool-call-markdown')
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(`new Promise(resolve => { let n = 60; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const box = (await output.boundingBox())!
+    const before = await page.evaluate(() => (window as any).fixture.snapshot())
+    await page.mouse.move(box.x + 100, Math.max(box.y + 50, 50))
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + box.width + 60, Math.min(box.y + 200, 650), { steps: 10 })
+      await page.waitForFunction(() => (document.querySelector('[data-virtual-follow-key="tool-29"] .tool-call-markdown')?.scrollTop ?? 0) > 100, undefined, { timeout: 3000 })
+      const after = await page.evaluate(() => (window as any).fixture.snapshot())
+      assert.ok(Math.abs(after.outerTop - before.outerTop) < 2, "Child drag moved transcript")
+    } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+for (const key of ["ArrowUp", "PageUp"]) test(`real shell transcript repeated ${key} keeps progressing`, async () => {
+  await open("scroll-input", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await page.locator('[data-virtual-follow-key="tool-29"] .tool-call-header').click()
+    await page.locator('[data-virtual-follow-key="tool-29"] .tool-call-markdown').waitFor({ state: "visible" })
+    await page.evaluate(`new Promise(resolve => { let n = 60; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const stream = page.locator(".message-stream")
+    await stream.focus()
+    const before = await stream.evaluate(el => el.scrollTop)
+    for (let i = 0; i < 24; i++) {
+      await page.keyboard.down(key)
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+    }
+    await page.keyboard.up(key)
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const after = await stream.evaluate(el => el.scrollTop)
+    assert.ok(before - after > (key === "ArrowUp" ? 500 : 1500), `${key} did not progress: ${before} -> ${after}`)
+  })
+})
+
+test("a wheel gesture started in the transcript is not stolen by a passing shell", async () => {
+  await open("scroll-input", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await page.locator('[data-virtual-follow-key="tool-29"] .tool-call-header').click()
+    const output = page.locator('[data-virtual-follow-key="tool-29"] .tool-call-markdown')
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(`new Promise(resolve => { let n = 60; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    await output.evaluate(el => { el.scrollTop = 1000 })
+    const stream = page.locator(".message-stream")
+    const box = (await output.boundingBox())!
+    const before = await stream.evaluate(el => el.scrollTop)
+    // Keep the cursor stationary below the output: scrolling upward brings
+    // that output under it, just as in the reported regression.
+    await page.mouse.move(box.x + 100, box.y + box.height + 20)
+    await page.mouse.wheel(0,-80)
+    await page.evaluate(`new Promise(resolve => requestAnimationFrame(resolve))`)
+    for (let i = 0; i < 5; i++) {
+      await page.mouse.wheel(0, -80)
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(resolve))`)
+    }
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const after = await stream.evaluate(el => el.scrollTop)
+    assert.ok(before - after > 350, `Shell stole the ongoing wheel gesture: ${before} -> ${after}`)
+  })
+})
+
+test("MMB started in the transcript stays there over a shell and stops on release", async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const box = (await output.boundingBox())!
+    const before = await page.evaluate(() => (window as any).fixture.snapshot())
+    await page.mouse.move(box.x + 100, box.y + box.height + 25)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + 100, box.y + 120, { steps: 10 })
+      await page.waitForFunction(before => (window as any).fixture.snapshot().outerTop < before - 80, before.outerTop)
+      assert.equal(await output.evaluate(el => el.scrollTop), before.savedTop, "The shell must not steal a transcript drag")
+    } finally { await page.mouse.up({ button: "middle" }) }
+    const stopped = await page.evaluate(() => (window as any).fixture.snapshot().outerTop)
+    await page.evaluate(`new Promise(resolve => { let n = 20; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().outerTop), stopped)
+  })
+})
+
+for (const key of ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"]) test(`focused shell owns ${key} without moving the transcript`, async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    await output.evaluate(el => { el.tabIndex = 0; el.scrollTop = 700; el.focus() })
+    const before = await page.evaluate(() => (window as any).fixture.snapshot().outerTop)
+    await page.keyboard.press(key)
+    const up = ["ArrowUp", "PageUp", "Home"].includes(key)
+    await page.waitForFunction(up => {
+      const top = document.querySelector("[data-nested-output]")!.scrollTop
+      return up ? top < 695 : top > 705
+    }, up)
+    await page.evaluate(`new Promise(resolve => { let n = 20; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().outerTop), before)
+  })
+})
+
+test("a new wheel gesture can select the shell, then chain to its ancestor at the edge", async () => {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    const output = page.locator("[data-nested-output]")
+    await output.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    await output.evaluate(el => { el.scrollTop = 120 })
+    const box = (await output.boundingBox())!
+    const before = await page.evaluate(() => (window as any).fixture.snapshot().outerTop)
+    await page.mouse.move(box.x + 100, box.y + 100)
+    await page.mouse.wheel(0, -80)
+    await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 100)
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().outerTop), before)
+    await page.mouse.wheel(0, -80)
+    await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop === 0)
+    await page.mouse.wheel(0, -160)
+    await page.waitForFunction(before => (window as any).fixture.snapshot().outerTop < before - 80, before)
   })
 })
 
@@ -559,5 +725,94 @@ test("nested scroll ownership cancels an already queued bottom write and can exp
       el.dispatchEvent(new Event("scroll"))
     })
     assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, true)
+  })
+})
+
+async function openScrollableOutput(run: (page: Page) => Promise<void>) {
+  await open("nested-scroll", async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await page.locator("[data-nested-output]").waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.renderOutput())
+    await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop > 1000)
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    await run(page)
+  })
+}
+
+async function makeHorizontalCode(page: Page) {
+  await page.locator("[data-nested-output] pre").evaluate(el => {
+    el.style.overflow = "auto"
+    const code = el.querySelector("code")!
+    code.style.display = "block"
+    code.style.width = "1800px"
+    code.style.height = "1600px"
+  })
+}
+
+test("MMB selects independent axes when horizontal code is inside a vertical shell", async () => {
+  await openScrollableOutput(async page => {
+    await makeHorizontalCode(page)
+    const output = page.locator("[data-nested-output]")
+    const box = (await output.boundingBox())!
+    const before = await page.locator(".message-stream").evaluate(el => el.scrollTop)
+    await page.mouse.move(box.x + 100, box.y + 140)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + 250, box.y + 40, { steps: 10 })
+      await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 1100, undefined, { timeout: 3000 })
+      assert.ok(await output.locator("pre").evaluate(el => el.scrollLeft) > 50, "Code must still pan horizontally")
+      assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), before)
+    } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+test("hiding a session cancels its captured MMB gesture instead of resuming it on return", async () => {
+  await openScrollableOutput(async page => {
+    const stream = page.locator(".message-stream")
+    const output = page.locator("[data-nested-output]")
+    const box = (await output.boundingBox())!
+    await page.mouse.move(box.x + 100, box.y + 140)
+    await page.mouse.down({ button: "middle" })
+    try {
+      await page.mouse.move(box.x + 100, box.y + 40)
+      await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 1300)
+      await stream.evaluate(el => { el.style.display = "none" })
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+      assert.equal(await stream.evaluate(el => el.style.cursor), "", "Hidden pane retained its active gesture")
+      await stream.evaluate(el => { el.style.display = "" })
+      const stopped = await output.evaluate(el => el.scrollTop)
+      await page.evaluate(`new Promise(resolve => { let n = 20; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+      assert.equal(await output.evaluate(el => el.scrollTop), stopped)
+    } finally { await page.mouse.up({ button: "middle" }) }
+  })
+})
+
+test("a descendant's prevented Home cannot trigger transcript navigation", async () => {
+  await openScrollableOutput(async page => {
+    const output = page.locator("[data-nested-output]")
+    await output.evaluate(el => {
+      el.scrollTop = 0
+      el.tabIndex = 0
+      el.addEventListener("keydown", event => event.preventDefault())
+      el.focus()
+    })
+    const before = await page.locator(".message-stream").evaluate(el => el.scrollTop)
+    await page.keyboard.press("Home")
+    await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), before)
+  })
+})
+
+test("Shift-wheel remains horizontal after a transcript wheel gesture", async () => {
+  await openScrollableOutput(async page => {
+    await makeHorizontalCode(page)
+    const output = page.locator("[data-nested-output]")
+    const box = (await output.boundingBox())!
+    await page.mouse.move(box.x + 100, box.y + box.height + 20)
+    await page.mouse.wheel(0, -80)
+    await page.mouse.move(box.x + 100, box.y + 120)
+    await page.keyboard.down("Shift")
+    try { await page.mouse.wheel(0, 200) } finally { await page.keyboard.up("Shift") }
+    await page.waitForFunction(() => document.querySelector("[data-nested-output] pre")!.scrollLeft > 50, undefined, { timeout: 3000 })
   })
 })

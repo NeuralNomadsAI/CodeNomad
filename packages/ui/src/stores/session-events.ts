@@ -12,6 +12,7 @@ import type {
   TuiToastShow,
 } from "@opencode-ai/client"
 import { getLogger } from "../lib/logger"
+import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
   getPermissionId,
@@ -84,6 +85,7 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
 }
 
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+  if (handlePruningEvent(instanceId, event)) return
   switch (event.type) {
     case "form.created":
     case "form.replied":
