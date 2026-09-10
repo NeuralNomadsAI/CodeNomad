@@ -20,6 +20,8 @@
 - Right-panel base-canvas button rollover overrides live in `styles/panels/control-hover.css`; do not substitute the secondary surface merely to show hover.
 
 ## Coding Principles
+
+- Session pruning is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`; see `dev-docs/SESSION_PRUNING_RPC.md`. Bundle it with the shared server for both desktop hosts and provision through normal native plugin discovery. RPC registrations follow backend presence; clean shutdown removes that backend's lease and crashes expire. Loading never deletes content. Deletion occurs only on an explicit pruning request, without an extra enable-write switch or beta-number gate. Keep generic RPC proxy access closed. Writes validate actual storage, a fresh daemon-storage identity challenge and the native durable execution claim inside a synchronous SQLite transaction. Run isolated native concurrency/payload and client-cache regressions; tests must never target the shared daemon or a user's database.
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.
 - Uphold DRY: share helpers via dedicated modules before copy/pasting logic across stores, components, or scripts.
 - Enforce single responsibility; split large files when concerns diverge (state, actions, API, events, etc.).

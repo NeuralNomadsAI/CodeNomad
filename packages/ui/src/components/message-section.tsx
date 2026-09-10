@@ -30,7 +30,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode-ai/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -102,6 +102,11 @@ export default function MessageSection(props: MessageSectionProps) {
       if (record.role !== "assistant") {
         return true
       }
+
+      // The navigation timeline omits reasoning-only segments. The transcript
+      // must still show retained thoughts after their neighbouring tools are pruned.
+      if (preferences().showThinkingBlocks
+        && buildRecordDisplayData(props.instanceId, record).orderedParts.some(reasoningHasRenderableContent)) return true
 
       const info = resolvedStore.getMessageInfo(messageId)
       if (!info || info.role !== "assistant") {

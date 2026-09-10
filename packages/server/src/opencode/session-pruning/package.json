@@ -1,0 +1,20 @@
+{
+  "name": "@neuralnomads/codenomad-session-pruning",
+  "version": "0.1.0-experimental.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./rpc": "./contract.ts",
+    "./tui": "./tui.ts"
+  },
+  "files": [
+    "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "planner.ts", "plugin.ts",
+    "preview-store.ts", "revision.ts", "service.ts", "storage-path.ts",
+    "transaction.ts", "tui.ts", "tui-reload.ts"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "beta",
+    "zod": "^3.25.76"
+  }
+}

@@ -951,12 +951,13 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("processes a rotation-boundary side-effect event exactly once", async () => {
+  it("projects a rotation-boundary model selection with exactly one authoritative message fetch", async () => {
     const instanceId = "opencode-data-single-side-effect"
     const sessionId = "session"
     sseManager.seedStatus(instanceId, "connected")
     const client = getRootClient(instanceId)
     let reads = 0
+    let applied = 0
     ;(client.session as any).message = async ({ messageID }: { messageID: string }) => {
       reads += 1
       return { id: messageID, type: "model-switched", model: { providerID: "provider", id: "next" }, time: { created: 500 } }
@@ -982,11 +983,15 @@ describe("OpenCode data projection", () => {
         } as any)
       }
       data = applyOpenCodeDataEvent(instanceId, "/work", { id: "model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
-        (next) => projectOpenCodeMessages(instanceId, sessionId, next))
+        (next) => { applied += 1; projectOpenCodeMessages(instanceId, sessionId, next) })
       projectOpenCodeMessages(instanceId, sessionId, data)
       await new Promise<void>((resolve) => setImmediate(resolve))
 
+      // With a connected transport, beta-19271 inserts the event immediately
+      // and refreshes its authoritative message once. Rotation must not replay
+      // the event and duplicate that SDK-owned refresh.
       assert.equal(reads, 1)
+      assert.equal(applied, 1)
       assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("model"))
     } finally {
       destroyOpenCodeData(instanceId)
