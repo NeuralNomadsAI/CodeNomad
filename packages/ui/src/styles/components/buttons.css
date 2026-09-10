@@ -1,23 +1,11 @@
 /* Button component styles */
 .MuiTouchRipple-root,
 .MuiTouchRipple-ripple,
-.MuiTouchRipple-child,
-.MuiSwitch-switchBase,
-.MuiSwitch-thumb,
-.MuiSwitch-track {
+.MuiTouchRipple-child {
   border-radius: 0 !important;
 }
 
-/* Explicit round exceptions requested for Yolo and overlay navigation. */
-.yolo-mode-switch .MuiSwitch-switchBase,
-.yolo-mode-switch .MuiSwitch-thumb {
-  border-radius: 50% !important;
-}
-
-.yolo-mode-switch .MuiSwitch-track {
-  border-radius: 999px !important;
-}
-
+/* Explicit round exception requested for overlay navigation. */
 .session-header-drawer-toggle .MuiIconButton-root {
   border-radius: 50% !important;
 }

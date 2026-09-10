@@ -1,0 +1,11 @@
+/* Shared SUID switch geometry for Yolo and MCP service enable controls.
+   Keep the same track and thumb in checked, disabled and pending states;
+   each caller retains its semantic color and accessible input behavior. */
+.MuiSwitch-switchBase,
+.MuiSwitch-thumb {
+  border-radius: 50% !important;
+}
+
+.MuiSwitch-track {
+  border-radius: 999px !important;
+}

@@ -11,7 +11,7 @@
 - Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
 - Session hierarchy geometry lives in `styles/components/session-tree.css`; connector axes follow the parent expander at every depth, including selection mode, RTL and touch layouts.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
-- Explicit round exceptions: the Yolo switch, overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
+- Explicit round exceptions: Yolo and MCP switches (shared `styles/components/switches.css` geometry), overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
 - The message-content popup and Chat settings share `components/transcript-visibility.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`.
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
