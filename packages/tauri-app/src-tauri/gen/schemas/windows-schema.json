@@ -345,6 +345,42 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the browser_target_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-action",
+          "markdownDescription": "Enables the browser_target_action command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_target_claim_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-claim-open",
+          "markdownDescription": "Enables the browser_target_claim_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_target_register command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-register",
+          "markdownDescription": "Enables the browser_target_register command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_target_release_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-release-open",
+          "markdownDescription": "Enables the browser_target_release_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_target_unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-unregister",
+          "markdownDescription": "Enables the browser_target_unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the browser_target_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browser-target-update",
+          "markdownDescription": "Enables the browser_target_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cli_get_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cli-get-status",
@@ -523,6 +559,42 @@
           "type": "string",
           "const": "allow-window-control",
           "markdownDescription": "Enables the window_control command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-action",
+          "markdownDescription": "Denies the browser_target_action command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_claim_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-claim-open",
+          "markdownDescription": "Denies the browser_target_claim_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_register command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-register",
+          "markdownDescription": "Denies the browser_target_register command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_release_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-release-open",
+          "markdownDescription": "Denies the browser_target_release_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_unregister command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-unregister",
+          "markdownDescription": "Denies the browser_target_unregister command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the browser_target_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browser-target-update",
+          "markdownDescription": "Denies the browser_target_update command without any pre-configured scope."
         },
         {
           "description": "Denies the cli_get_status command without any pre-configured scope.",

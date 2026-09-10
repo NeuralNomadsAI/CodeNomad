@@ -190,6 +190,7 @@ jobs:
           packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/server-meta.test.ts
           packages/ui/src/lib/trailing-resync.test.ts

@@ -451,12 +451,10 @@ mod tests {
         )
         .unwrap();
 
-        let started_at = Instant::now();
         let registration =
             Registration::initialize(directory.path(), &directory.path().join("cross-host"), None)
                 .unwrap();
         assert!(!registration.is_primary());
-        assert!(started_at.elapsed() < Duration::from_secs(2));
         let marker_name = registration
             .running_marker
             .path

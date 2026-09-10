@@ -30,6 +30,12 @@ import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import {
+  claimNativeBrowserOpen,
+  onNativeBrowserOpen,
+  releaseNativeBrowserOpen,
+  selectBrowserOpenOwner,
+} from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
 import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
 import {
@@ -60,9 +66,11 @@ import {
   createSession,
   fetchSessions,
   loadMessages,
+  setActiveSessionFromList,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { openSessionPreview } from "./stores/session-previews"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -262,6 +270,8 @@ const App: Component = () => {
   })
 
   onMount(() => {
+    let disposed = false
+    let browserOpenUnsubscribe = () => {}
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
@@ -273,7 +283,53 @@ const App: Component = () => {
         })
       }
     }, 30_000)
+    const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
+      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      let owners = findOwners()
+      if (owners.length === 0) {
+        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        owners = findOwners()
+      }
+      const activeTab = activeAppTab()
+      const owner = selectBrowserOpenOwner(
+        owners,
+        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+      )
+      if (disposed || !owner) {
+        if (!disposed) log.warn("Failed to route agent-requested web preview", {
+          sessionID,
+          owners: owners.map((instance) => instance.id),
+          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+        })
+        return
+      }
+      if (!await claimNativeBrowserOpen(requestID)) return
+      try {
+        const instance = owner
+        await openSessionPreview(sessionID, url, instance.folder)
+        if (disposed) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
+        setShowFolderSelection(false)
+        selectInstanceTab(instance.id)
+        setActiveSessionFromList(instance.id, sessionID)
+      } catch (error) {
+        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
+        })
+        throw error
+      }
+    }
+    void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
+      void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else browserOpenUnsubscribe = cleanup
+    }).catch((error) => log.warn("Failed to listen for native browser open requests", { error }))
     onCleanup(() => {
+      disposed = true
+      browserOpenUnsubscribe()
       window.removeEventListener("resize", handleResize)
       window.clearInterval(livenessTimer)
     })

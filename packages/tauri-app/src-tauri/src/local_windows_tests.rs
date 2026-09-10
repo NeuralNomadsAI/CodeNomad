@@ -54,3 +54,10 @@ fn remote_focus_never_falls_through_to_background_local() {
     assert_eq!(select_local_label(None, Some(&local)), Some(local.clone()));
     assert_eq!(select_local_label(Some(&local), None), Some(local));
 }
+
+#[test]
+fn browser_children_are_not_top_level_focus_targets() {
+    let local = format!("local-{}", id(1));
+    assert!(is_primary_webview_label(&local, &local));
+    assert!(!is_primary_webview_label("browser-registration", &local));
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { getBrowserFramePolicy, getPreviewFrameSource } from "./browser-frame-security.ts"
+import { getBrowserFramePolicy, getPreviewFrameSource, isLoopbackPreviewUrl, normalizeBrowserPreviewUrl } from "./browser-frame-security.ts"
 
 describe("getBrowserFramePolicy", () => {
   it("isolates local native frames from the parent bridge", () => {
@@ -32,5 +32,25 @@ describe("getBrowserFramePolicy", () => {
     assert.equal(getPreviewFrameSource({ host: "web", windowContext: "remote" }, preview, "https://app.example/"), preview.proxyUrl)
     assert.equal(getPreviewFrameSource({ host: "tauri", windowContext: "local" }, preview, "https://localhost:9898/"), preview.proxyUrl)
     assert.equal(getPreviewFrameSource({ host: "tauri", windowContext: "local" }, preview, "http://192.168.1.10:9899/"), preview.proxyUrl)
+  })
+})
+
+describe("isLoopbackPreviewUrl", () => {
+  it("separates local previews from public browser pages", () => {
+    assert.equal(isLoopbackPreviewUrl("http://localhost:3000/app"), true)
+    assert.equal(isLoopbackPreviewUrl("localhost:5173"), true)
+    assert.equal(isLoopbackPreviewUrl("http://127.0.0.8:5173/"), true)
+    assert.equal(isLoopbackPreviewUrl("127.0.0.1:5173/app"), true)
+    assert.equal(isLoopbackPreviewUrl("[::1]:4173"), true)
+    assert.equal(isLoopbackPreviewUrl("https://github.com/"), false)
+  })
+})
+
+describe("normalizeBrowserPreviewUrl", () => {
+  it("defaults public hosts to HTTPS and loopback hosts to HTTP", () => {
+    assert.equal(normalizeBrowserPreviewUrl("github.com"), "https://github.com/")
+    assert.equal(normalizeBrowserPreviewUrl("localhost:5173/app"), "http://localhost:5173/app")
+    assert.throws(() => normalizeBrowserPreviewUrl("file:///tmp/index.html"))
+    assert.throws(() => normalizeBrowserPreviewUrl("https://user:pass@example.com"))
   })
 })

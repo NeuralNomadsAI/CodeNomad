@@ -71,6 +71,11 @@ declare global {
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
+    unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
+    claimBrowserOpen?: (requestID: string) => Promise<boolean>
+    releaseBrowserOpen?: (requestID: string) => Promise<boolean>
+    onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {

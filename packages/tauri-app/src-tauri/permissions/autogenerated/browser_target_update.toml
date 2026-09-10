@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-target-update"
+description = "Enables the browser_target_update command without any pre-configured scope."
+commands.allow = ["browser_target_update"]
+
+[[permission]]
+identifier = "deny-browser-target-update"
+description = "Denies the browser_target_update command without any pre-configured scope."
+commands.deny = ["browser_target_update"]
