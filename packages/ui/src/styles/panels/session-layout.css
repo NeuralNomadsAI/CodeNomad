@@ -803,7 +803,7 @@
   gap: 0.25rem;
   padding: 0.125rem 0.5rem;
   border-radius: var(--pill-radius);
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in oklab, currentColor 28%, transparent);
   min-height: 22px;
   line-height: 1;
 }
@@ -825,7 +825,6 @@
 .status-indicator.session-yolo-mode {
   color: var(--session-yolo-accent);
   background-color: color-mix(in oklab, var(--session-yolo-accent) 14%, transparent);
-  border-color: color-mix(in oklab, var(--session-yolo-accent) 28%, transparent);
 }
 
 .status-indicator.session-yolo-mode .status-dot {
@@ -835,14 +834,12 @@
 .status-indicator.worktree-indicator {
   color: var(--text-primary);
   background-color: color-mix(in oklab, var(--text-secondary) 14%, transparent);
-  border-color: color-mix(in oklab, var(--text-secondary) 24%, transparent);
   text-transform: none;
   letter-spacing: 0.02em;
 }
 
 .session-item-active .status-indicator.worktree-indicator {
   background-color: color-mix(in oklab, var(--text-primary) 12%, transparent);
-  border-color: color-mix(in oklab, var(--text-primary) 20%, transparent);
 }
 
 .status-indicator.worktree-indicator .worktree-indicator-label {

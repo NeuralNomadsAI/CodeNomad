@@ -81,7 +81,7 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-primary);
-  opacity: 0.5;
+  opacity: 0.65;
   transition: opacity 0.2s ease, transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   overflow: hidden;
   user-select: none;

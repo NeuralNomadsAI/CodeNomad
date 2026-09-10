@@ -2,16 +2,12 @@ import { Popover } from "@kobalte/core/popover"
 import IconButton from "@suid/material/IconButton"
 import { Dynamic } from "solid-js/web"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { Brain, BookOpen, CheckSquare, ChevronDown, ChevronRight, Eye, EyeOff, FileEdit, Globe, ListFilter, Pencil, Search, Terminal, Wrench, X } from "lucide-solid"
+import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { useConfig, type VisibilityPreference } from "../stores/preferences"
+import { getMessageContentIcon } from "./message-content-icons"
 import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows } from "./transcript-visibility"
-
-const contentIcons: Record<string, typeof Wrench> = {
-  thinking: Brain, bash: Terminal, read: BookOpen, write: FileEdit, edit: Pencil,
-  patch: Wrench, apply_patch: Wrench, webfetch: Globe, glob: Search, grep: Search, todowrite: CheckSquare,
-}
 
 export default function TranscriptFilters() {
   const { t } = useI18n()
@@ -48,7 +44,7 @@ export default function TranscriptFilters() {
               const expansionLabel = () => t(mode() === "expanded" ? "transcriptFilters.collapse" : "transcriptFilters.expand", { name: row.label })
               return (
                 <div class="transcript-filter-row" role="group" aria-label={row.label}>
-                  <Dynamic component={contentIcons[row.key] ?? Wrench} class="w-4 h-4" aria-hidden="true" />
+                  <Dynamic component={getMessageContentIcon(row.key)} class="w-4 h-4" aria-hidden="true" />
                   <span class="transcript-filter-label" title={row.label}>{row.label}</span>
                   <button type="button" class="window-icon-button" aria-label={visibilityLabel()} title={visibilityLabel()} aria-pressed={mode() !== "hidden"} aria-disabled={saving()}
                     onClick={() => {

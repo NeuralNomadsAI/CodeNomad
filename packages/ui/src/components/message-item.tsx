@@ -557,8 +557,9 @@ export default function MessageItem(props: MessageItemProps) {
                     {speakerLabel()}
                   </span>
                 }>
-                  <span class="inline-flex items-center" role="img" aria-label={speakerLabel()} title={speakerLabel()}>
+                  <span class="inline-flex items-center gap-1">
                     <User class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    {speakerLabel()}
                   </span>
                 </Show>
               </span>
@@ -578,6 +579,10 @@ export default function MessageItem(props: MessageItemProps) {
               </span>
             </Show>
           </div>
+
+          <Show when={isUser() && userMenuState() === "queue"}>
+            <span class="message-queued-badge">{t("messageItem.status.queued")}</span>
+          </Show>
 
           <div
             class="message-item-actions"
@@ -695,10 +700,6 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
-        <Show when={isUser() && userMenuState() === "queue"}>
-          <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
-        </Show>
-
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
@@ -801,12 +802,6 @@ export default function MessageItem(props: MessageItemProps) {
               </Portal>
             )
           }}
-        </Show>
-
-        <Show when={isUser() && userMenuState() === "queue"}>
-          <div class="message-sending">
-            <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
-          </div>
         </Show>
 
         <Show when={props.record.status === "error"}>

@@ -279,10 +279,11 @@
   color: var(--text-muted);
 }
 
-
-
 .message-queued-badge {
-  @apply inline-block font-bold px-3 py-1 mb-3 text-xs tracking-wide;
+  @apply inline-flex items-center font-bold px-3 py-1 text-xs tracking-wide;
+  align-self: center;
+  flex: 0 0 auto;
+  line-height: 1;
   border-radius: 0;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
@@ -298,11 +299,6 @@
 
 .message-generating {
   @apply text-sm italic py-2;
-  color: var(--text-muted);
-}
-
-.message-sending {
-  @apply text-xs italic mt-1;
   color: var(--text-muted);
 }
 

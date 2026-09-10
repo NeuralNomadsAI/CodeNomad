@@ -23,39 +23,6 @@ export function isToolStateError(state: ToolState): state is ToolStateError {
   return state.status === "error"
 }
 
-export function getToolIcon(tool: string): string {
-  switch (tool) {
-    case "bash":
-      return "⚡"
-    case "edit":
-      return "✏️"
-    case "read":
-      return "📖"
-    case "write":
-      return "📝"
-    case "glob":
-      return "🔍"
-    case "grep":
-      return "🔎"
-    case "webfetch":
-      return "🌐"
-    case "task":
-      return "🎯"
-    case "todowrite":
-      return "📋"
-    case "question":
-      return "❓"
-    case "list":
-      return "📁"
-    case "patch":
-      return "🔧"
-    case "apply_patch":
-      return "🔧"
-    default:
-      return "🔧"
-  }
-}
-
 export function getToolName(tool: string): string {
   switch (tool) {
     case "bash":
