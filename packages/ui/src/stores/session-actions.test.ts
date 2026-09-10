@@ -300,7 +300,7 @@ describe("plugin RPC message pruning", () => {
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
     ] })
-    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /changed before deletion/)
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /Cleanup was not confirmed/)
     assert.equal(calls, 0)
   })
 

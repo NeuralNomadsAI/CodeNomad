@@ -64,8 +64,8 @@ test("does not bypass worktree deletion fence", async () => {
   } finally { await app.close() }
 })
 
-test("missing plugin, malformed response and wrong message never report success", async () => {
-  for (const options of [{ fail: true }, { output: {} }, { output: { status: "pruned", messageID: "other", revision: "a".repeat(64), removedCount: 1 } }]) {
+test("missing plugin, malformed response, wrong message or count never report success", async () => {
+  for (const options of [{ fail: true }, { output: {} }, { output: { status: "pruned", messageID: "other", revision: "a".repeat(64), removedCount: 1 } }, { output: { status: "pruned", messageID: "m", revision: "a".repeat(64), removedCount: 2 } }]) {
     const { app, fence } = fixture(options)
     try {
       const response = await app.inject({ method: "POST", url, payload })

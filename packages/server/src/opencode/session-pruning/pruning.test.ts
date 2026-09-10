@@ -99,7 +99,7 @@ test("rejects stale revisions, text selections, out-of-range and wrong ownership
 })
 
 test("rejects replacement content, duplicate indexes and oversized selections at the contract", () => {
-  for (const invalid of [{ ...input(), content: [] }, input([]), input([1, 1]), input([-1]), input(Array.from({ length: 4097 }, (_, i) => i))]) {
+  for (const invalid of [{ ...input(), content: [] }, input([]), input([1, 1]), input([-1]), input(Array.from({ length: 100_002 }, (_, i) => i))]) {
     assert.equal(pruneRequestSchema.safeParse(invalid).success, false)
   }
 })
@@ -112,6 +112,18 @@ test("retained events and triggers fail closed rather than silently corrupt repl
     db.exec("DELETE FROM event; CREATE TRIGGER guard AFTER UPDATE ON session_message BEGIN SELECT 1; END")
     assert.equal(pruneIsolatedMessage(db, input(), "/work").status, "blocked")
     assert.deepEqual(stored(db), data)
+  } finally { db.close() }
+})
+
+test("whole-message cleanup supports more than 4096 technical parts", () => {
+  const db = fixture()
+  try {
+    const content = [...Array.from({ length: 5000 }, () => ({ type: "reasoning", text: "remove" })), { type: "text", text: "keep" }]
+    db.prepare("UPDATE session_message SET data=?").run(JSON.stringify({ ...data, content }))
+    const result = pruneIsolatedMessage(db, { ...input(), revision: revision(content), indexes: Array.from({ length: 5000 }, (_, i) => i) }, "/work")
+    assert.equal(result.status, "pruned")
+    if (result.status === "pruned") assert.equal(result.removedCount, 5000)
+    assert.deepEqual(stored(db).content, [content.at(-1)])
   } finally { db.close() }
 })
 
@@ -128,7 +140,7 @@ test("refuses file-backed writes, but supports explicit read-only preview", asyn
   } finally { db.close(); await rm(dir, { recursive: true, force: true }) }
 })
 
-test("plugin registers real RPC contract and cannot enable live writes via options", async () => {
+test("plugin defaults to read-only and ignores an obsolete bypass flag", async () => {
   let handlers: any
   let disposed = false
   const cleanup = await plugin.setup({

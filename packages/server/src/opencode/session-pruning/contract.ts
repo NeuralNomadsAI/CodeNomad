@@ -6,7 +6,7 @@ const id = z.string().min(1).max(256)
 export const messageTargetSchema = z.object({ sessionID: id, messageID: id }).strict()
 export const pruneRequestSchema = messageTargetSchema.extend({
   revision: z.string().regex(/^[a-f0-9]{64}$/),
-  indexes: z.array(z.number().int().min(0).max(100_000)).min(1).max(4096)
+  indexes: z.array(z.number().int().min(0).max(100_000)).min(1).max(100_001)
     .refine((values) => new Set(values).size === values.length),
 }).strict()
 export type PruneRequest = z.infer<typeof pruneRequestSchema>
@@ -25,7 +25,7 @@ export type PruneResult = z.infer<typeof pruneResultSchema>
 export const prunePreviewSchema = z.union([
   z.object({
     status: z.literal("preview"), revision: z.string().regex(/^[a-f0-9]{64}$/),
-    liveMutation: z.literal(false),
+    liveMutation: z.boolean(),
     parts: z.array(z.object({ index: z.number().int().nonnegative(), type: z.enum(["tool", "reasoning"]), bytes: z.number().int().nonnegative() })),
   }).strict(),
   pruningBlockedSchema,

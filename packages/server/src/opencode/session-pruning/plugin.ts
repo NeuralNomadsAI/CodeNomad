@@ -3,6 +3,8 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { messageTargetSchema, pruneRequestSchema, pruningRpcDefinition } from "./contract"
 import { previewContent } from "./planner"
 import { readPruningPreview } from "./preview-store"
+import { pruneBoundMessage } from "./service"
+import { AUDITED_RUNTIME } from "./claim-fence"
 
 export const SessionPruningRpc = Rpc.define(pruningRpcDefinition)
 
@@ -20,13 +22,23 @@ export default Plugin.define({
         // Plugin Context does not expose session.message in beta-19398. Read
         // the explicit DB in query-only mode, including pre-compaction history.
         const data = await readPruningPreview(ctx.options.databasePath, target, session.location.directory)
-        return data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const
+        const preview = data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const
+        return preview.status === "preview"
+          ? { ...preview, liveMutation: ctx.options.mode === "prune" && ctx.app.version === AUDITED_RUNTIME }
+          : preview
       },
-      prune: async (input) => {
+      prune: async (input, call) => {
         pruneRequestSchema.parse(input)
-        // No idle check / plugin-local mutex can prevent a TUI prompt racing
-        // this mutation. Do not expose a config switch bypassing this gate.
-        return { status: "blocked", reason: "maintenance_required" } as const
+        if (ctx.options.mode !== "prune") return { status: "blocked", reason: "maintenance_required" } as const
+        const result = await pruneBoundMessage(ctx, input, call.signal)
+        if (result.status === "pruned") {
+          // Retrying the same input returns its atomic receipt and re-emits the
+          // notification. An emission failure cannot undo a committed write.
+          await registration.events.emit("pruned", {
+            sessionID: input.sessionID, messageID: input.messageID, revision: result.revision,
+          }).catch(() => {})
+        }
+        return result
       },
     })
     return () => registration.dispose()

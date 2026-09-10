@@ -2,6 +2,7 @@ import { PRUNING_EVENT, prunedEventSchema } from "../../../server/src/opencode/s
 import { activeSessionId, invalidateSessionMessageLoad, sessions } from "./session-state"
 import { loadMessages } from "./session-api"
 import { getLogger } from "../lib/logger"
+import { invalidateOpenCodeSessionContent } from "./opencode-data"
 
 const refreshing = new Map<string, { dirty: boolean }>()
 const log = getLogger("sse")
@@ -12,6 +13,7 @@ export function handlePruningEvent(instanceId: string, event: { type: string; da
   if (!parsed.success) return true
   const sessionId = parsed.data.sessionID
   if (!sessions().get(instanceId)?.has(sessionId)) return true
+  invalidateOpenCodeSessionContent(instanceId, sessionId)
   invalidateSessionMessageLoad(instanceId, sessionId)
   if (activeSessionId().get(instanceId) !== sessionId) return true
   const key = `${instanceId}\0${sessionId}`

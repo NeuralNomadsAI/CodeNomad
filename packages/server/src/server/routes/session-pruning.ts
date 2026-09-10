@@ -10,7 +10,7 @@ interface RouteDeps {
 
 export function registerSessionPruningRoutes(app: FastifyInstance, deps: RouteDeps): void {
   for (const method of ["preview", "prune"] as const) {
-    app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-pruning/${method}`, { bodyLimit: 64 * 1024 }, async (request, reply) => {
+    app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-pruning/${method}`, { bodyLimit: 1024 * 1024 }, async (request, reply) => {
       const input = (method === "prune" ? pruneRequestSchema : messageTargetSchema).safeParse(request.body)
       if (!input.success) return reply.code(400).send({ error: "Invalid pruning request" })
       const client = await deps.workspaceManager.getSharedServiceClient()
@@ -30,7 +30,8 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: RouteDe
         }, { signal: AbortSignal.timeout(15_000) })
         const output = (method === "prune" ? pruneResultSchema : prunePreviewSchema).safeParse(result.output)
         if (!output.success) return { status: "blocked", reason: "unavailable" }
-        if (output.data.status === "pruned" && output.data.messageID !== input.data.messageID) {
+        if (output.data.status === "pruned" && (output.data.messageID !== input.data.messageID
+          || !("indexes" in input.data) || !Array.isArray(input.data.indexes) || output.data.removedCount !== input.data.indexes.length)) {
           return { status: "blocked", reason: "unavailable" }
         }
         return output.data

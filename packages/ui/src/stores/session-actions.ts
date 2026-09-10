@@ -2,6 +2,7 @@ import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMe
 import { isSessionBusyError } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
+import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
@@ -612,14 +613,14 @@ async function deleteSelectedMessageTechnicalParts(
   if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
     || targets.length === 0
     || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
-    throw new Error("Message part is not deletable")
+    throw new Error(tGlobal("session.pruning.blocked"))
   }
 
   return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) {
-      throw new Error("Message content changed before deletion")
+      throw new Error(tGlobal("session.pruning.blocked"))
     }
     const indexes = new Set(targets.map((selected) => {
       const part = selected.part!
@@ -637,11 +638,10 @@ async function deleteSelectedMessageTechnicalParts(
       return matches.length === 1 ? matches[0] : -1
     }))
     if (indexes.has(-1)) {
-      throw new Error("Message content changed before deletion")
+      throw new Error(tGlobal("session.pruning.blocked"))
     }
 
-    const updated = await pruneMessageContent(instanceId, sessionId, message, [...indexes])
-    applyUpdatedMessage(instanceId, sessionId, updated)
+    await pruneMessageContent(instanceId, sessionId, message, [...indexes], (updated) => applyUpdatedMessage(instanceId, sessionId, updated))
   })
 }
 
@@ -657,12 +657,11 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
   await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
-    if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
+    if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.blocked"))
     const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
     if (content.length === message.content.length) return
     const indexes = message.content.flatMap((part, index) => part.type === "tool" || part.type === "reasoning" ? [index] : [])
-    const updated = await pruneMessageContent(instanceId, sessionId, message, indexes)
-    applyUpdatedMessage(instanceId, sessionId, updated)
+    await pruneMessageContent(instanceId, sessionId, message, indexes, (updated) => applyUpdatedMessage(instanceId, sessionId, updated))
   })
 }
 

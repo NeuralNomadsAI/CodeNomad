@@ -12,7 +12,7 @@
 
 ## Coding Principles
 
-- The draft session-pruning experiment is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`; see `dev-docs/SESSION_PRUNING_RPC.md`. Do not auto-install it, open generic RPC proxy access, or enable file-backed mutations. The default plugin only previews explicitly configured storage; mutation tests use isolated in-memory SQLite until coordination with OpenCode execution and client caches is validated.
+- Session pruning is a narrow, explicit opt-in V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`; see `dev-docs/SESSION_PRUNING_RPC.md`. Never auto-install it or open generic RPC proxy access. Live writes require the audited runtime, a fresh daemon-storage identity challenge and the native durable execution-claim fence inside a synchronous SQLite transaction. Do not relax version gates without rerunning the isolated native concurrency/payload and client-cache tests. Tests must never target the shared daemon or a user's database.
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.
 - Uphold DRY: share helpers via dedicated modules before copy/pasting logic across stores, components, or scripts.
 - Enforce single responsibility; split large files when concerns diverge (state, actions, API, events, etc.).

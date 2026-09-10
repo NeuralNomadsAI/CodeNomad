@@ -587,6 +587,22 @@ export function getOpenCodeMessageRevision(instanceId: string, sessionId: string
   return messageRevisions.get(messageRevisionKey(instanceId, sessionId)) ?? 0
 }
 
+export function invalidateOpenCodeSessionContent(instanceId: string, sessionId: string): void {
+  const key = messageRevisionKey(instanceId, sessionId)
+  bumpMutationRevision(key)
+  messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
+  fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
+  entries.get(instanceId)?.data.session.message.invalidate(sessionId)
+  const transcript = transcriptEntries.get(key)
+  if (!transcript) return
+  // Discard both pending rotations and the old SDK projection. Invalidating
+  // just the visible page allows the next native event to restore stale parts.
+  invalidateTranscript(transcript)
+  transcript.entry.dispose()
+  transcript.entry = createDataEntry(instanceId, transcript.directory)
+  collapseTranscriptQueue(instanceId, sessionId, transcript)
+}
+
 export function getOpenCodeMutationRevision(instanceId: string, sessionId: string): number {
   return mutationRevision(messageRevisionKey(instanceId, sessionId))[0]()
 }

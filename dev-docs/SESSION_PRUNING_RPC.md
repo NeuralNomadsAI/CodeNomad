@@ -1,17 +1,18 @@
-# Session content pruning through a V2 plugin (DRAFT)
+# Session content pruning through a V2 plugin
 
 ## Status and safety boundary
 
-This is a replacement-in-progress for CodeNomad's two `session.messageUpdate`
-call sites, **not a release-ready restoration of deletion**. On this branch,
-cleanup uses the CodeNomad RPC broker and reports a localized failure while the
-plugin is absent or live mutation is blocked. There is no legacy API fallback.
+This replaces CodeNomad's two removed `session.messageUpdate` call sites without
+forking OpenCode. The explicitly installed plugin defaults to read-only preview.
+`options.mode: "prune"` enables the version-gated mutation path; it does **not**
+bypass the storage/execution/ownership checks. Unsupported or absent plugins
+produce a localized failure, never a legacy API fallback or optimistic deletion.
 
-The default plugin always refuses mutations. It can preview completed assistant
-content using an explicitly configured SQLite filename, opened read-only.
-No runtime flag enables writes. The SQL pruning engine only accepts an isolated
-in-memory database without attachments, triggers, or retained events for the target
-session. This restriction must not be relaxed just because an idle check succeeds.
+The experimental write path currently accepts **only `0.0.0-beta-19419`**.
+It was exercised with the official Windows x64 executable, generated sessions,
+two HTTP clients and a local mock provider. This is not a compatibility promise
+for future betas, every provider, WSL, arbitrary DB schemas or third-party writers.
+The native desktop and interactive TUI release checks listed below remain separate.
 
 No plugin was installed on the user's shared daemon. No real database was changed.
 The existing desktop executable/profile and primary checkout remain untouched.
@@ -40,16 +41,22 @@ compatibility proof. This prototype rejects incomplete messages.
 - `revision.ts`: browser-safe canonical content hashing.
 - `planner.ts`: completed-assistant checks and technical-part-only selection.
 - `preview-store.ts`: explicit read-only database access, including history before compaction.
-- `isolated-store.ts`: transactional SQL experiment with content revision checks.
-- `plugin.ts`: native `Plugin.define` / `Rpc.define` registration, read-only preview,
-  unconditional live-write gate, registration disposal.
+- `transaction.ts`: synchronous content-only CAS and atomic idempotency receipt.
+- `claim-fence.ts`: pinned native execution-claim and database-identity checks.
+- `service.ts`: explicitly configured connection and a fresh `ctx.storage` challenge.
+- `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
+- `plugin.ts`: native RPC registration, opt-in gate and post-commit notifications.
+- `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
 
 The UI keeps individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
 content/time match, then sends indexes plus a canonical SHA-256 content revision.
 Ambiguous reasoning or stale content fails closed. It never submits replacement text.
-Selections are bounded to 4,096 parts per request; larger per-message selections
-currently fail rather than silently truncating or partially applying.
+Selections allow up to 100,001 unique indices (0–100,000), within a 1 MiB broker
+body and 16 MiB stored-message budget. Larger messages fail closed. A 5,000-part
+regression test covers the previous 4,096 limit. Bulk cleanup remains a sequence
+of per-message transactions, **not** an all-session transaction; existing UI failure
+counts report partial completion. There is no bulk progress/cancel UI in this PR.
 
 `POST /api/workspaces/:id/session-pruning/{preview,prune}` validates workspace
 ownership from the native session location and participates in the worktree deletion
@@ -57,61 +64,74 @@ fence. It pins `codenomad.session-pruning`, the method and runtime location; arb
 RPC remains blocked by the instance proxy. The removed PATCH route is also blocked.
 The existing server authentication middleware protects these new routes.
 
-After a future successful commit, the caller re-reads native history rather than
-projecting a synthesized response. The contract reserves `rpc.codenomad.session-pruning.pruned`
-with session/message IDs and revision. The UI recognizes that exact event, invalidates
-the session load and coalesces active-session reloads. Existing instance-event routing
-and reconnect reconciliation are retained. **No mutation events are emitted by the
-default plugin yet**, because it cannot commit. The TUI does not automatically know
-this custom event; cross-client behavior remains a release gate.
+After commit the caller re-reads native history, never a synthesized remainder.
+`rpc.codenomad.session-pruning.pruned` contains session/message IDs and the content
+revision. The UI invalidates both message-load authority and its native SDK transcript,
+including pending rotations, then coalesces active-session reloads. Late reads cannot
+overwrite a newer pruning invalidation. Reconnect uses authoritative reconciliation.
+The optional TUI companion invalidates/synchronizes its public message cache and
+reconciles loaded sessions on reconnect. Unmodified third-party clients do not know
+this event and may display cached history until they reload.
+
+The receipt and content change commit together; an identical retry returns the same
+receipt and re-emits the event. Receipts contain no deleted content. Event delivery
+is best-effort: failure cannot roll back a committed prune. A timed-out caller must
+re-read or retry the **same** request, not assume no mutation occurred.
 
 ## Version and loading notes
 
 - UI/server client lock refreshed to the last `@opencode-ai/client@beta` publication,
   `beta-19271`. The published low-level `rpc.call` transport is used by the broker.
-- Plugin definition typechecked/tested against `@opencode/plugin@0.0.0-beta-19398`,
+- Plugin definition typechecked/tested against `@opencode/plugin@0.0.0-beta-19419`,
   a development-only dependency; no plugin payload is auto-installed or added as
   a production dependency. Migration of the rest of CodeNomad to `@opencode/client`
-  is separate work. Cross-version RPC interoperability needs native verification.
+  is separate work. The native integration test uses the actual `beta-19271` client
+  against the official `beta-19419` runtime, including RPC and custom events.
 - In that plugin contract, `ctx.session.message` and `ctx.db` do not exist.
-- SQLite adapter tests use Node 25.2.1's `node:sqlite`; driver availability must be
-  validated inside supported OpenCode runtime distributions, including WSL.
-- For a future **explicitly approved test location**, use a local TS entry importing
-  `packages/server/src/opencode/session-pruning/plugin.ts` from this checkout, with
-  its development dependencies installed. Configure `options.databasePath` to an
-  absolute test-copy filename. Never use the measurement's pruned DB as a live DB.
-- Standalone plugin packaging, installation UX and location activation are not
-  implemented. Do not add an auto-loaded entry to this worktree's `.opencode/plugins`.
+- SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
+  driver **inside the official compiled runtime**, not an embedded SDK substitute.
+  The 30 plugin/SQLite/TUI-companion unit tests also pass on Node 22.
+- The module has a packable manifest with `index.ts` and `./tui` entrypoints.
+  Local configuration must target the **directory**, not `plugin.ts`.
+- Installation is manual and opt-in. Do not put an auto-loaded entry in this
+  worktree's `.opencode/plugins`, restart the shared service, or update the runtime
+  as a side effect of installation. See [deployment](SESSION_PRUNING_DEPLOYMENT.md).
 
-## Required before leaving draft
+## Coordination and remaining validation
 
-- [ ] Establish an OpenCode-coordinated execution/mutation boundary (not a plugin mutex,
-  a UI idle flag, or `BEGIN IMMEDIATE` alone). Cover prompt, queue, tools, compaction,
-  move, revert, background execution and other clients.
-- [ ] Version/schema gates, exact session ownership inside that boundary, backup and
-  recovery strategy, compare-and-swap/retry semantics, and idempotent acknowledgement.
-- [ ] Connect the validated storage adapter to the plugin's prune handler and emit
-  invalidations only after commit; notification failure must not hide committed writes.
-- [ ] Establish handling for retained durable events and replay. Do not copy the
-  offline measurement's event deletion into production. V1 tables are separate maintenance.
-- [ ] Test subsequent model payloads, tool/result pairing, provider state, token
-  budgeting and compaction. Stored summaries are not retroactively scrubbed.
-- [ ] Test two CodeNomad windows, disconnected clients, native projection caches and
-  the official TUI, including stale-read races and selection/scroll stability.
-- [ ] Resolve large single-message selection limits and bulk progress/cancellation.
-- [ ] Native plugin RPC smoke test against the target published beta on host and WSL.
-- [ ] Explicit opt-in deployment and capability UI with Electron/Tauri parity.
-- [ ] Keep physical VACUUM separate, consented and coordinated with all DB users.
+See [the audited boundary](SESSION_PRUNING_SAFETY.md). `BEGIN IMMEDIATE` alone
+is not sufficient: the native runner commits `time_suspended` **before** reading
+history, and clears it only at terminal settlement. We check that marker under
+the acquired write lock; we never set or release it ourselves. A busy connection
+returns immediately rather than deadlocking native async transactions on the same
+event loop. Moved ownership, staged revert/compaction, retained aggregate events,
+remote event ownership, attachments and triggers fail closed.
+
+Verified: real preview/prune RPC, active-generation refusal, both prompt/transaction
+orderings, retry receipts, two event subscribers, next primary request payload,
+fork isolation, pre-compaction deletion without summary changes, and server restart.
+Unit tests cover rollback and client projection/read races. No actual provider
+token savings are claimed: the mock's usage numbers are synthetic.
+
+Still required before general availability: native WSL/Linux/macOS runs, interactive
+TUI and two desktop-window/scroll verification, provider-specific continuation-state
+and budget coverage, dedicated bulk progress/cancel UI and installation/capability UI.
+Do not describe these as passed on the strength of HTTP or mocked cache tests.
+Physical VACUUM, V1 cleanup and repair are separate maintenance work.
 
 ## Checks
 
 ```powershell
-node --import tsx --test packages/server/src/opencode/session-pruning/pruning.test.ts packages/server/src/server/routes/session-pruning.test.ts packages/server/src/server/__tests__/instance-proxy.test.ts
-node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts
+node --import tsx --test packages/server/src/opencode/session-pruning/*.test.ts packages/server/src/server/routes/session-pruning.test.ts packages/server/src/server/__tests__/instance-proxy.test.ts
+node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
+node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
 npm run typecheck --workspace @neuralnomads/codenomad
 npm run typecheck --workspace @codenomad/ui
 npm run build --workspace @codenomad/ui
 ```
 
 UI store tests retain application timers; `--test-force-exit` terminates those after
-the assertions finish. This is not a live mutation, model-context or native GUI test.
+the assertions finish. The separate native test creates its own DB/config/home,
+starts `serve --port 0` directly (never service discovery), supplies a local provider,
+and terminates only its own child. It retains its synthetic fixture/logs for inspection.
+An optional third argument tests an independently installed plugin package directory.
