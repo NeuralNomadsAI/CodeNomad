@@ -51,8 +51,8 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/fixture?session=${session.id}`)
     await page.waitForFunction(() => Boolean(window.fixture), { timeout: 30_000 })
     await page.evaluate(() => window.fixture.preferences())
-    await page.evaluate(() => window.fixture.reload())
     await page.waitForFunction(() => window.fixture.eventsReady())
+    await page.evaluate(() => window.fixture.reload())
     await generate(session.id)
     await page.waitForFunction(() => window.fixture.snapshot().filter(message => message.role === "assistant").length >= 6 && window.fixture.snapshot().every(message => message.status === "complete"))
     await page.screenshot({ path: path.join(root, "ui-before.png"), fullPage: true })
@@ -139,7 +139,9 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       assert.deepEqual(current, original.type === "assistant" ? { ...original, content: original.content.filter(part => !["tool", "reasoning"].includes(part.type)) } : original)
     }
     await page.reload()
-    await page.waitForFunction(() => Boolean(window.fixture))
+    // The real app opens its history after the shared event transport connects.
+    // Do the same here: server.connected retires pre-connection load authority.
+    await page.waitForFunction(() => window.fixture?.eventsReady())
     await page.evaluate(() => window.fixture.reload())
     await page.getByText("Retain this conclusion", { exact: true }).first().waitFor()
     assert.equal(await page.locator(".tool-call, .message-reasoning-card").count(), 0)
