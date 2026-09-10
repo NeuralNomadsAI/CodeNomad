@@ -18,7 +18,7 @@ description: |
 
 - The only OpenCode client dependency is the experimental `@opencode-ai/client@beta` protocol. Server and UI follow that dependency together; refresh the client lock before API audits or release validation. The runtime CLI is managed independently and startup has no exact version gate. The public `@opencode-ai/sdk` describes an alternative embedded host.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode-ai/client` declarations.
-- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The reviewed project-local Developer Mode adapter is the sole narrow exception; see `dev-docs/DEVELOPER_MODE.md`.
+- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The only reviewed project-local definitions are Developer Mode (`codenomad.automation`) and native session coordination (`codenomad.missions`); see `dev-docs/DEVELOPER_MODE.md` and `dev-docs/MISSIONS.md`.
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
 - OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. Question request/reply/reject routes are compatibility-only; new interruption flows use `client.form.*`. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
@@ -48,6 +48,7 @@ description: |
 - Yolo: `packages/server/src/permissions/`, `packages/server/src/server/routes/yolo.ts`
 - Desktop hosts: `packages/electron-app/electron/main/`, `packages/electron-app/electron/preload/index.cjs`, `packages/tauri-app/src-tauri/src/`
 - Developer Mode: `.opencode/plugins/codenomad-automation.ts`, `packages/server/src/opencode/automation-plugin.ts`, `packages/server/src/developer-cdp.ts`
+- Missions: `.opencode/plugins/codenomad-missions.ts`, `packages/server/src/missions/`, `packages/server/src/opencode/missions-plugin.ts`
 
 ## Rules
 
@@ -67,7 +68,7 @@ description: |
 | Public `@opencode-ai/sdk` examples | Installed experimental `@opencode-ai/client` declarations |
 | One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
-| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; the reviewed project-local Developer Mode adapter only for desktop feedback |
+| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; only the reviewed project-local Automation and Missions definitions |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 
