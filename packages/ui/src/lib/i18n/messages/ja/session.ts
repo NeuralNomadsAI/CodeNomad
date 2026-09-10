@@ -1,4 +1,10 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "セッションまたはストレージが使用中です。現在の処理が完了してから、クリーンアップを再試行してください。",
+  "session.pruning.unavailable": "クリーンアッププラグインが利用できないか、応答しませんでした。CodeNomadを開き直して再試行してください。",
+  "session.pruning.conflict": "選択後にメッセージが変更されました。再読み込みして内容を選択し直してください。",
+  "session.pruning.not_deletable": "この内容は削除できません。このセッションの完了済みのツールと推論のみ削除できます。",
+  "session.pruning.unsupported_storage": "クリーンアッププラグインがこのセッションのストレージを検証できませんでした。クリーンアップは拒否されました。",
+  "session.pruning.blocked": "クリーンアップは確認されませんでした。プラグインが利用できない、稼働中のクリーンアップが無効、またはメッセージが変更された可能性があります。再試行する前にメッセージを再読み込みしてください。",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "以前のセッションはありません",
   "sessionPicker.resume.title": "セッションを再開 ({count}):",

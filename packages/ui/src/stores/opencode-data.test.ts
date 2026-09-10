@@ -922,11 +922,12 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("processes a rotation-boundary side-effect event exactly once", async () => {
+  it("projects a rotation-boundary model selection once without a redundant message fetch", async () => {
     const instanceId = "opencode-data-single-side-effect"
     const sessionId = "session"
     const client = getRootClient(instanceId)
     let reads = 0
+    let applied = 0
     ;(client.session as any).message = async ({ messageID }: { messageID: string }) => {
       reads += 1
       return { id: messageID, type: "model-switched", model: { providerID: "provider", id: "next" }, time: { created: 500 } }
@@ -952,11 +953,14 @@ describe("OpenCode data projection", () => {
         } as any)
       }
       data = applyOpenCodeDataEvent(instanceId, "/work", { id: "model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
-        (next) => projectOpenCodeMessages(instanceId, sessionId, next))
+        (next) => { applied += 1; projectOpenCodeMessages(instanceId, sessionId, next) })
       projectOpenCodeMessages(instanceId, sessionId, data)
       await new Promise<void>((resolve) => setImmediate(resolve))
 
-      assert.equal(reads, 1)
+      // beta-19271 projects this self-contained event synchronously; the
+      // obsolete HTTP-fetch expectation predates the client lock refresh.
+      assert.equal(reads, 0)
+      assert.equal(applied, 1)
       assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("model"))
     } finally {
       destroyOpenCodeData(instanceId)

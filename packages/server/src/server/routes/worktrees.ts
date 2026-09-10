@@ -382,10 +382,9 @@ async function refreshOpenCodeWorktrees(
   try {
     const client = await manager.getSharedServiceClient()
     const signal = AbortSignal.timeout(5_000)
-    const resolved = await client.location.get({
+    await client.worktree.refresh({
       location: { directory: location.directory, workspace: location.workspaceID },
     }, { signal })
-    await client.worktree.refresh({ projectID: resolved.project.id }, { signal })
   } catch (error) {
     logger.warn({ err: error }, "Failed to refresh OpenCode worktrees")
   }

@@ -2,8 +2,12 @@ import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMe
 import { isSessionBusyError } from "@opencode-ai/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
+import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
+import { pruneMessageContent } from "./session-pruning"
+import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
+import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
@@ -589,6 +593,16 @@ function applyUpdatedMessage(instanceId: string, sessionId: string, source: Sess
   store.setMessageInfo(info.id, info)
 }
 
+function technicalPartIdentity(part: ClientPart | undefined): string | undefined {
+  if (part?.type === "tool") return canonicalContent({ type: part.type, id: part.id })
+  if (part?.type !== "reasoning") return undefined
+  // Only strip client decoration. In particular, opaque provider state and
+  // absent timestamps are identity evidence, not wildcards. Canonicalization
+  // tolerates object key reordering without weakening the payload comparison.
+  const { id, sessionID, messageID, renderCache, pendingPermission, ...content } = part
+  return canonicalContent(content)
+}
+
 async function deleteSelectedMessageTechnicalParts(
   instanceId: string,
   sessionId: string,
@@ -599,44 +613,40 @@ async function deleteSelectedMessageTechnicalParts(
   const targets = Array.from(new Set(partIds)).map((partId) => ({
     partId,
     part: record?.parts[partId]?.data,
+    identity: technicalPartIdentity(record?.parts[partId]?.data),
   }))
   if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
     || targets.length === 0
     || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
-    throw new Error("Message part is not deletable")
+    throw new Error(tGlobal("session.pruning.not_deletable"))
+  }
+
+  const originalIdentities = record.partIds.map((id) => technicalPartIdentity(record.parts[id]?.data))
+  if (targets.some(({ identity }) => identity === undefined
+    || originalIdentities.filter((candidate) => candidate === identity).length !== 1)) {
+    // A duplicate in the selected snapshot stays ambiguous even if another
+    // client removes one occurrence before our read. Never select its survivor.
+    throw new Error(tGlobal("session.pruning.conflict"))
   }
 
   return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) {
-      throw new Error("Message content changed before deletion")
+      throw new Error(tGlobal("session.pruning.not_deletable"))
     }
-    const currentRecord = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+    const freshIdentities = normalizeSessionMessage(sessionId, message).message.parts.map(technicalPartIdentity)
     const indexes = new Set(targets.map((selected) => {
-      const part = selected.part!
-      const currentIndex = currentRecord?.partIds.indexOf(selected.partId) ?? -1
-      if (currentIndex >= 0) return currentIndex
-      const time = part.time as { created?: number; completed?: number } | undefined
-      return message.content.findIndex((candidate) => {
-        if (candidate.type !== part.type) return false
-        if (candidate.type === "tool" && part.type === "tool") return candidate.id === part.id
-        if (candidate.type !== "reasoning" || part.type !== "reasoning") return false
-        return candidate.text === part.text
-          && candidate.time?.created === time?.created
-          && candidate.time?.completed === time?.completed
-      })
+      const matches = freshIdentities.flatMap((identity, index) => identity === selected.identity ? [index] : [])
+      // Local array positions can be stale after another client's prune. Never
+      // guess between duplicate reasoning blocks without a stable identity.
+      return matches.length === 1 ? matches[0] : -1
     }))
     if (indexes.has(-1)) {
-      throw new Error("Message content changed before deletion")
+      throw new Error(tGlobal("session.pruning.conflict"))
     }
 
-    const updated = await client.session.messageUpdate({
-      sessionID: sessionId,
-      messageID: messageId,
-      content: message.content.filter((_, index) => !indexes.has(index)),
-    })
-    applyUpdatedMessage(instanceId, sessionId, updated)
+    await pruneMessageContent(instanceId, sessionId, message, [...indexes], (updated) => applyUpdatedMessage(instanceId, sessionId, updated))
   })
 }
 
@@ -652,11 +662,11 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
   await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
     const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
-    if (message.type !== "assistant" || !message.time.completed) throw new Error("Message is not complete")
+    if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.not_deletable"))
     const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
     if (content.length === message.content.length) return
-    const updated = await client.session.messageUpdate({ sessionID: sessionId, messageID: messageId, content })
-    applyUpdatedMessage(instanceId, sessionId, updated)
+    const indexes = message.content.flatMap((part, index) => part.type === "tool" || part.type === "reasoning" ? [index] : [])
+    await pruneMessageContent(instanceId, sessionId, message, indexes, (updated) => applyUpdatedMessage(instanceId, sessionId, updated))
   })
 }
 
@@ -714,16 +724,16 @@ async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: s
   return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
 }
 
-async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<number> {
-  let failed = 0
+async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<string[]> {
+  const failures: string[] = []
   for (const messageId of plan.messageIds) {
     try {
       await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
-    } catch {
-      failed += 1
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
     }
   }
-  return failed
+  return failures
 }
 
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {

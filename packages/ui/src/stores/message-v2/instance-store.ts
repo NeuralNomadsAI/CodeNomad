@@ -517,7 +517,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
-    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts?.length).map((item) => item.id))
+    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts !== undefined).map((item) => item.id))
 
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
@@ -907,7 +907,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function normalizeParts(messageId: string, parts: ClientPart[] | undefined) {
-    if (!parts || parts.length === 0) {
+    // Omitted parts are a metadata-only update. An explicit empty snapshot is
+    // authoritative too: pruning the last technical part must clear the cache.
+    if (!parts) {
       return null
     }
     const map: MessageRecord["parts"] = {}

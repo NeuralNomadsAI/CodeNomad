@@ -1,4 +1,10 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "Die Sitzung oder ihr Speicher ist beschäftigt. Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
+  "session.pruning.unavailable": "Das Bereinigungs-Plugin ist nicht verfügbar oder hat nicht geantwortet. Öffne CodeNomad erneut und versuche es noch einmal.",
+  "session.pruning.conflict": "Die Nachricht wurde seit der Auswahl geändert. Lade sie neu und wähle den Inhalt erneut aus.",
+  "session.pruning.not_deletable": "Dieser Inhalt kann nicht gelöscht werden. Nur abgeschlossene Werkzeuge und Überlegungen dieser Sitzung können entfernt werden.",
+  "session.pruning.unsupported_storage": "Das Bereinigungs-Plugin konnte den Speicher dieser Sitzung nicht validieren. Die Bereinigung wurde abgelehnt.",
+  "session.pruning.blocked": "Die Bereinigung wurde nicht bestätigt. Das Plugin ist möglicherweise nicht verfügbar, die Live-Bereinigung deaktiviert oder die Nachricht wurde geändert. Laden Sie die Nachricht vor einem erneuten Versuch neu.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "Keine vorherigen Sitzungen",
   "sessionPicker.resume.title": "Sitzung fortsetzen ({count}):",

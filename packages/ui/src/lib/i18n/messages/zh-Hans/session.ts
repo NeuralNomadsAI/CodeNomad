@@ -1,4 +1,10 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "会话或其存储正忙。请等待当前操作完成后重试清理。",
+  "session.pruning.unavailable": "清理插件不可用或未响应。请重新打开 CodeNomad 后重试。",
+  "session.pruning.conflict": "消息在选中后已更改。请重新加载并再次选择内容。",
+  "session.pruning.not_deletable": "无法删除此内容。只能移除此会话中已完成的工具和推理。",
+  "session.pruning.unsupported_storage": "清理插件无法验证此会话的存储。清理已被拒绝。",
+  "session.pruning.blocked": "清理尚未确认。插件可能不可用、运行期间的清理可能已禁用，或消息已更改。请重新加载消息后再试。",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "没有历史会话",
   "sessionPicker.resume.title": "继续会话（{count}）：",

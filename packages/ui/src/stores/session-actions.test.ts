@@ -23,6 +23,8 @@ import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setProviders, setSessions } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -30,6 +32,7 @@ const storageMethods = {
   fetchConfigOwner: serverApi.fetchConfigOwner,
   fetchStateOwner: serverApi.fetchStateOwner,
   patchStateOwner: serverApi.patchStateOwner,
+  pruneSessionMessage: serverApi.pruneSessionMessage,
 }
 let testUiState: Record<string, any> = {}
 
@@ -52,6 +55,23 @@ after(() => {
 })
 
 function seed(client: any): void {
+  if (client.session?.applyPrune) {
+    const read = client.session.message
+    const committed = new Map<string, any>()
+    client.session.message = async (input: any) => committed.get(input.messageID) ?? read(input)
+    serverApi.pruneSessionMessage = async (owner, input) => {
+      assert.equal(owner, instanceId)
+      assert.deepEqual(Object.keys(input).sort(), ["indexes", "messageID", "revision", "sessionID"])
+      const message = await client.session.message(input)
+      assert.equal(input.revision, await contentRevision(message.content))
+      const updated = await client.session.applyPrune({
+        sessionID: input.sessionID, messageID: input.messageID,
+        content: message.content.filter((_: unknown, index: number) => !input.indexes.includes(index)),
+      })
+      committed.set(input.messageID, updated)
+      return { status: "pruned", messageID: input.messageID, revision: await contentRevision(updated.content), removedCount: input.indexes.length }
+    }
+  }
   const session = {
     id: sessionId,
     instanceId,
@@ -82,6 +102,7 @@ async function selectVariant(modelId: string, variant: string): Promise<void> {
 }
 
 afterEach(() => {
+  serverApi.pruneSessionMessage = storageMethods.pruneSessionMessage
   setSessions(new Map())
   setProviders(new Map())
   removeInstance(instanceId, { authoritative: false })
@@ -239,7 +260,101 @@ describe("session interruption", () => {
   })
 })
 
-describe("native message content mutation", () => {
+describe("plugin RPC message pruning", () => {
+  it("keeps the local message when the plugin blocks or its acknowledgement is lost", async () => {
+    const messageId = "blocked-prune"
+    const content = [{ type: "tool", id: "tool-1", state: { status: "completed" } }, { type: "text", text: "keep" }]
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
+    ] })
+    const reasons = { unavailable: /plugin is unavailable/, maintenance_required: /storage is busy/, conflict: /message changed/, not_deletable: /cannot be deleted/, unsupported_storage: /could not validate/ } as const
+    for (const reason of Object.keys(reasons) as Array<keyof typeof reasons>) {
+      serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), reasons[reason])
+      const failures = await executeSessionTechnicalPartDeletion({ instanceId, sessionId, messageIds: [messageId], toolCount: 1, reasoningCount: 0 })
+      assert.equal(failures.length, 1)
+      assert.match(failures[0], reasons[reason])
+      assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+    }
+    serverApi.pruneSessionMessage = async () => { throw new Error("Lost acknowledgement") }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), /Lost acknowledgement/)
+    assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+  })
+
+  it("resolves a tool by identity rather than a stale local array position", async () => {
+    const messageId = "stale-selection"
+    const content = [{ type: "text", text: "new text" }, { type: "tool", id: "tool-1", state: { status: "completed" } }]
+    let selected: number[] = []
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    serverApi.pruneSessionMessage = async (_owner, input) => { selected = input.indexes; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"))
+    assert.deepEqual(selected, [1])
+  })
+
+  it("refuses ambiguous reasoning instead of deleting another occurrence", async () => {
+    const messageId = "ambiguous-selection"
+    const content = [{ type: "reasoning", text: "same" }, { type: "reasoning", text: "same" }]
+    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    let calls = 0
+    serverApi.pruneSessionMessage = async () => { calls++; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /message changed/)
+    assert.equal(calls, 0)
+  })
+
+  for (const variant of ["opaque-state", "identical", "missing-time", "changed-state"] as const) {
+    it(`does not send a destructive RPC for a stale reasoning selection (${variant})`, async () => {
+      const messageId = `stale-reasoning-${variant}`
+      const first = { type: "reasoning", text: "", state: { provider: { opaque: "FIRST" } } }
+      const second = variant === "identical" ? structuredClone(first)
+        : { ...first, state: { provider: { opaque: "SECOND" } } }
+      const original = {
+        id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second],
+      } as any
+      const fresh = variant === "missing-time" ? [{ ...first, time: { created: 1, completed: 2 } }]
+        : variant === "changed-state" ? [{ ...first, state: { provider: { opaque: "CHANGED" } } }]
+        : [second]
+      seed({ session: { message: async () => ({ ...original, content: fresh }) } })
+      const normalized = normalizeSessionMessage(sessionId, original).message
+      const store = messageStoreBus.getOrCreate(instanceId)
+      store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+      let calls = 0
+      serverApi.pruneSessionMessage = async () => { calls++; throw new Error("Destructive RPC must not be called") }
+
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /message changed/)
+
+      assert.equal(calls, 0)
+      assert.deepEqual(store.getMessage(messageId)?.partIds, normalized.parts.map(part => part.id))
+    })
+  }
+
+  it("matches a surviving reasoning block with its full state despite key and index reordering", async () => {
+    const messageId = "surviving-reasoning"
+    const first = { type: "reasoning", text: "", state: { provider: "p", opaque: "FIRST" } }
+    const second = { type: "reasoning", text: "", state: { provider: "p", opaque: "SECOND" } }
+    const original = { id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second] } as any
+    const fresh = { ...original, content: [{ ...second, state: { opaque: "SECOND", provider: "p" } }] }
+    seed({ session: { message: async () => fresh } })
+    const normalized = normalizeSessionMessage(sessionId, original).message
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+    let calls = 0
+    serverApi.pruneSessionMessage = async (_owner, input) => {
+      calls++
+      assert.deepEqual(input.indexes, [0])
+      assert.equal(input.revision, await contentRevision(fresh.content))
+      return { status: "blocked", reason: "maintenance_required" }
+    }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[1].id!))
+    assert.equal(calls, 1)
+  })
+
   it("removes one terminal assistant part and projects the updated response", async () => {
     const messageId = "assistant-message"
     const content = [
@@ -263,7 +378,7 @@ describe("native message content mutation", () => {
         time: { created: 1, completed: 3 },
         content,
       }),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updateInput = input
         return {
           id: messageId,
@@ -318,7 +433,7 @@ describe("native message content mutation", () => {
     }
     seed({ session: {
       message: async () => structuredClone(remote),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         remote = { ...remote, content: input.content }
         return structuredClone(remote)
       },
@@ -355,7 +470,7 @@ describe("native message content mutation", () => {
     let updateInput: any
     seed({ session: {
       message: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updateInput = input
         return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
       },
@@ -366,11 +481,11 @@ describe("native message content mutation", () => {
       role: "assistant",
       status: "complete",
       parts: [
-        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before" },
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
         { id: "tool-before", type: "tool", tool: "bash" },
         { id: `${messageId}-text-2`, type: "text", text: "response" },
         { id: "tool-after", type: "tool", tool: "bash" },
-        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after" },
+        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
       ],
     })
 
@@ -394,7 +509,7 @@ describe("native message content mutation", () => {
     const updates: any[] = []
     seed({ session: {
       message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
-      messageUpdate: async (input: any) => {
+      applyPrune: async (input: any) => {
         updates.push(input)
         return { ...messages.get(input.messageID), content: input.content }
       },
@@ -447,7 +562,7 @@ describe("native message content mutation", () => {
       } },
       session: {
         message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
-        messageUpdate: async (input: any) => {
+        applyPrune: async (input: any) => {
           updates.push(input)
           return { ...messages.get(input.messageID), content: input.content }
         },
@@ -465,7 +580,7 @@ describe("native message content mutation", () => {
       reasoningCount: 1,
       messageIds: ["assistant-1", "assistant-2"],
     })
-    assert.equal(failed, 0)
+    assert.deepEqual(failed, [])
     assert.deepEqual(updates, [
       { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
       { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },

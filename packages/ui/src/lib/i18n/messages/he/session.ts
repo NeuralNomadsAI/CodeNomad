@@ -1,4 +1,10 @@
 export const sessionMessages = {
+  "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",
+  "session.pruning.unavailable": "תוסף הניקוי אינו זמין או שלא הגיב. יש לפתוח את CodeNomad מחדש ולנסות שוב.",
+  "session.pruning.conflict": "ההודעה השתנתה מאז שנבחרה. יש לטעון אותה מחדש ולבחור את התוכן שוב.",
+  "session.pruning.not_deletable": "לא ניתן למחוק תוכן זה. ניתן להסיר רק כלים וחשיבה שהסתיימו בסשן זה.",
+  "session.pruning.unsupported_storage": "תוסף הניקוי לא הצליח לאמת את האחסון של הסשן הזה. הניקוי נדחה.",
+  "session.pruning.blocked": "הניקוי לא אושר. ייתכן שהתוסף אינו זמין, שהניקוי בזמן אמת מושבת או שההודעה השתנתה. יש לטעון מחדש את ההודעה לפני ניסיון נוסף.",
   "sessionPicker.title": "OpenCode • {folder}",
   "sessionPicker.empty.noPrevious": "אין סשנים קודמים",
   "sessionPicker.resume.title": "המשך סשן ({count}):",
