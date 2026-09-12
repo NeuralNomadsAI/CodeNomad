@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "Message content",
+  "transcriptFilters.description": "Show or hide content, then choose whether it starts expanded. These settings apply to all conversations.",
+  "transcriptFilters.show": "Show {name}",
+  "transcriptFilters.hide": "Hide {name}",
+  "transcriptFilters.expand": "Expand {name}",
+  "transcriptFilters.collapse": "Collapse {name}",
   "messageListHeader.sidebar.openSessionListAriaLabel": "Open session list",
   "messageListHeader.metrics.usedLabel": "Used",
   "messageListHeader.metrics.availableLabel": "Avail",

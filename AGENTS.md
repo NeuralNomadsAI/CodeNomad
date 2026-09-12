@@ -7,8 +7,20 @@
 - Prefer smaller, focused style files (≈150 lines or less) over large monoliths. Split by component or feature area if a file grows beyond that size.
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
 - Use the shared `.window-*` primitives from `src/styles/components/window.css` for dialog, popover, and floating-window headers, toolbars, bodies, footers, titles, and actions.
+- Keep agent, model, and thinking controls in the composer footer via `PromptContextControls`; adapt that footer with the named `prompt-composer` container rather than viewport-only breakpoints.
+- Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
+- Session hierarchy geometry lives in `styles/components/session-tree.css`; connector axes follow the parent expander at every depth, including selection mode, RTL and touch layouts.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
+- Explicit round exceptions: Yolo and MCP switches (shared `styles/components/switches.css` geometry), overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
+- Tags and numeric/context/token labels also use rounded geometry via `--chip-radius` (`--pill-radius` is an alias). Register badge variants in `styles/components/badges.css`; use `.badge-shape` for utility-styled labels rather than adding a local radius.
+- The message-content popup and Chat settings share `components/transcript-visibility.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`.
+- Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
+- Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`, with references in `dev-docs/PALETTE_SOURCES.md`. Keep selection independent of participant identity, and keep transcript/composer surfaces distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
+- Palette settings follow the resolved appearance in Auto mode. Keep the picker/actions beside the two-row swatch grid, stacking via the `palette-settings` container at narrow widths. Swatch styles live in `styles/components/theme-scheme-swatches.css`.
+- Appearance mode and the saved light/dark selections are independent (`lib/appearance-preferences.ts`). Message/tool cards use the muted surface, inset output and the composer use the base canvas, and preferences use the same secondary surface as the main panels. Use `--surface-hover-overlay` for a subtle local rollover; preserve selected backgrounds beneath that overlay instead of replacing them with a generic panel color.
+- Right-panel base-canvas button rollover overrides live in `styles/panels/control-hover.css`; do not substitute the secondary surface merely to show hover.
+- Project and right-panel tabs share `components/tab-scroll.tsx` and `styles/components/tab-scroll.css`. Keep their native scrollbar above upright content without mirrored transforms, negative border overlaps or permanent compositing hints. Validate shared scrollbar styling and adjoining edges at fractional zoom in the browser and isolated Electron renderer fixtures (`tests/browser/tab-chrome.test.ts`).
 
 ## Coding Principles
 

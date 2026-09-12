@@ -132,7 +132,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
               }
               const statusDotStyle = () => (isPending() ? { background: "var(--status-warning)" } : undefined)
               return (
-                <div class="px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                <div class="px-2 py-1.5 border bg-surface-secondary border-base">
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-primary font-medium truncate">{server.name}</span>
                       <div class="flex items-center gap-3 flex-shrink-0">
@@ -195,7 +195,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         <div class="space-y-1.5">
           <For each={plugins()}>
             {(plugin) => (
-              <div class="px-2 py-1.5 rounded border bg-surface-secondary border-base">
+              <div class="px-2 py-1.5 border bg-surface-secondary border-base">
                 <div class="text-xs text-primary font-medium break-words whitespace-normal">{plugin}</div>
               </div>
             )}

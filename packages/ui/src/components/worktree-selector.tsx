@@ -508,7 +508,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
               <Show when={deleteTarget()}>
                 {(target) => (
-                  <div class="rounded-lg border border-base bg-surface-secondary px-3 py-2">
+                  <div class="border border-base bg-surface-secondary px-3 py-2">
                     <p class="text-sm text-primary">
                       Worktree <span class="font-semibold font-mono">&quot;{target().slug}&quot;</span>
                     </p>
@@ -571,7 +571,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
               <Show when={displayDeleteError()}>
                 {(message) => (
-                  <div class="rounded-lg border border-danger bg-danger/10 p-3 flex flex-col gap-2">
+                  <div class="border border-danger bg-danger/10 p-3 flex flex-col gap-2">
                     <div class="flex flex-col gap-1">
                       <p class="text-xs font-medium text-danger uppercase tracking-wide">
                         {t("instanceShell.worktree.delete.error.title")}
@@ -593,7 +593,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       </Show>
                     </div>
 
-                    <pre class="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all rounded border border-danger/30 bg-surface-primary px-3 py-2 text-xs text-primary select-text leading-5">{message()}</pre>
+                    <pre class="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all border border-danger/30 bg-surface-primary px-3 py-2 text-xs text-primary select-text leading-5">{message()}</pre>
 
                     <div class="grid grid-cols-2 gap-2">
                       <button

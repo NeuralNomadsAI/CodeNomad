@@ -77,7 +77,6 @@
   font-size: calc(var(--font-size-xs) - 1px);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  border-radius: var(--radius-full);
   padding: var(--space-2xs) var(--space-sm);
   background-color: var(--surface-hover);
   color: var(--text-muted);
@@ -111,7 +110,6 @@
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  border-radius: var(--radius-full);
   padding: var(--space-2xs) var(--space-sm);
   background-color: var(--surface-hover);
   color: var(--text-muted);

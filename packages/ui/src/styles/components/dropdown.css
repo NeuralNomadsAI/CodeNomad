@@ -1,6 +1,6 @@
 /* Dropdown utilities */
 .dropdown-surface {
-  @apply absolute w-full rounded-md shadow-lg z-50;
+  @apply absolute w-full shadow-lg z-50;
   background-color: var(--surface-base);
   border: 1px solid var(--border-base);
 }
@@ -57,7 +57,7 @@
 }
 
 .dropdown-badge {
-  @apply rounded px-1.5 py-0.5 text-xs font-normal;
+  @apply px-1.5 py-0.5 text-xs font-normal;
   background-color: var(--accent-primary);
   color: var(--text-inverted);
 }

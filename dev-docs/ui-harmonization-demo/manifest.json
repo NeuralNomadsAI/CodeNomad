@@ -1,0 +1,240 @@
+[
+  {
+    "index": 1,
+    "id": "classic",
+    "name": "Classic",
+    "appearance": "dark",
+    "file": "01-classic.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:04:48.053Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 2,
+    "id": "mist",
+    "name": "Mist",
+    "appearance": "dark",
+    "file": "02-mist.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:04:45.492Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 3,
+    "id": "slate",
+    "name": "Slate",
+    "appearance": "dark",
+    "file": "03-slate.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:03:35.135Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 4,
+    "id": "clay",
+    "name": "Clay",
+    "appearance": "dark",
+    "file": "04-clay.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:04:51.800Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 5,
+    "id": "sage",
+    "name": "Sage",
+    "appearance": "dark",
+    "file": "05-sage.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:04:56.464Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 6,
+    "id": "basalt",
+    "name": "Basalt",
+    "appearance": "dark",
+    "file": "06-basalt.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:05:00.371Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 7,
+    "id": "fjord",
+    "name": "Fjord",
+    "appearance": "dark",
+    "file": "07-fjord.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:10:14.842Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 8,
+    "id": "lichen",
+    "name": "Lichen",
+    "appearance": "dark",
+    "file": "08-lichen.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:05.896Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 9,
+    "id": "velvet",
+    "name": "Velvet",
+    "appearance": "dark",
+    "file": "09-velvet.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:10.799Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 10,
+    "id": "ember",
+    "name": "Ember",
+    "appearance": "dark",
+    "file": "10-ember.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:14.809Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 11,
+    "id": "light",
+    "name": "Classic",
+    "appearance": "light",
+    "file": "11-light.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:18.706Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 12,
+    "id": "porcelain",
+    "name": "Mist",
+    "appearance": "light",
+    "file": "12-porcelain.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:22.840Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 13,
+    "id": "dawn",
+    "name": "Slate",
+    "appearance": "light",
+    "file": "13-dawn.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:06:26.683Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 14,
+    "id": "parchment",
+    "name": "Clay",
+    "appearance": "light",
+    "file": "14-parchment.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:09:04.504Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 15,
+    "id": "linen",
+    "name": "Linen",
+    "appearance": "light",
+    "file": "15-linen.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:10:18.640Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 16,
+    "id": "iris",
+    "name": "Iris",
+    "appearance": "light",
+    "file": "16-iris.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:10:13.109Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  },
+  {
+    "index": 17,
+    "id": "sage-light",
+    "name": "Sage",
+    "appearance": "light",
+    "file": "17-sage-light.png",
+    "window": "workspace",
+    "size": {
+      "width": 1584,
+      "height": 1031
+    },
+    "capturedAt": "2026-09-12T14:09:16.305Z",
+    "sourceCommit": "bfc07ecd89d75bb943590a18869658a574aced70"
+  }
+]

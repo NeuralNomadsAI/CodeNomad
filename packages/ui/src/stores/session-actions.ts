@@ -42,15 +42,22 @@ function serializeSessionAction<T>(instanceId: string, sessionId: string, action
   return settled
 }
 
-function admitSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
+function admitSessionAction<T>(
+  instanceId: string,
+  sessionId: string,
+  action: () => Promise<T>,
+  options?: { optimisticGeneration?: boolean },
+): Promise<T> {
   return serializeSessionAction(instanceId, sessionId, async () => {
-    const admission = beginSessionGenerationAdmission(instanceId, sessionId)
+    const admission = options?.optimisticGeneration === false
+      ? undefined
+      : beginSessionGenerationAdmission(instanceId, sessionId)
     try {
       const result = await action()
-      admission.complete()
+      admission?.complete()
       return result
     } catch (error) {
-      admission.rollback()
+      admission?.rollback()
       throw error
     }
   })
@@ -408,7 +415,7 @@ async function executeCustomCommand(
     const client = getRootClient(instanceId)
     await syncVoiceModeInstruction(client, instanceId, sessionId)
     await client.session.command({ sessionID: sessionId, command: commandName, text: args, delivery: "steer" })
-  })
+  }, { optimisticGeneration: false })
 }
 
 async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {

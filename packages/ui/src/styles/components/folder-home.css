@@ -58,7 +58,7 @@
 .folder-home-actions-column .button-primary {
   min-height: 3rem;
   padding: 0.75rem 1.5rem;
-  border-radius: 0.5rem;
+  border-radius: 0;
 }
 
 .folder-home-open-instance-button {
@@ -67,7 +67,7 @@
   align-items: center;
   padding: 0.125rem 0.5rem;
   border: 1px solid var(--border-base);
-  border-radius: 9999px;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-secondary);
   font-size: 0.625rem;

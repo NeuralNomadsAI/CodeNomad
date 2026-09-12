@@ -1,10 +1,12 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, untrack } from "solid-js"
+import { Dynamic } from "solid-js/web"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getDefaultToolAction, getToolName, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { loadMessages } from "../../../stores/session-api"
 import { loading, messagesLoaded } from "../../../stores/session-state"
+import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 
 interface TaskSummaryItem {
@@ -437,7 +439,7 @@ export const taskRenderer: ToolRenderer = {
                     <div class="tool-call-task-summary">
                       <For each={legacyItems()}>
                         {(item) => {
-                          const icon = getToolIcon(item.tool)
+                          const icon = getMessageContentIcon(item.tool)
                           const description = describeToolTitle(item)
                           const toolLabel = getToolName(item.tool)
                           const status = normalizeStatus(item.status ?? item.state?.status)
@@ -449,7 +451,9 @@ export const taskRenderer: ToolRenderer = {
                           const statusAttr = status ?? "pending"
                           return (
                             <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
-                              <span class="tool-call-task-icon">{icon}</span>
+                              <span class="tool-call-task-icon inline-flex flex-shrink-0">
+                                <Dynamic component={icon} class="w-3.5 h-3.5" aria-hidden="true" />
+                              </span>
                               <span class="tool-call-task-label">{toolLabel}</span>
                               <span class="tool-call-task-separator" aria-hidden="true">—</span>
                               <span class="tool-call-task-text">{description}</span>

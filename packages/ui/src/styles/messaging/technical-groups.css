@@ -21,7 +21,7 @@
 }
 
 .message-technical-group-toggle:hover {
-  background-color: var(--surface-hover);
+  background-color: var(--message-part-hover);
 }
 
 .message-technical-group-toggle:focus-visible {

@@ -187,6 +187,9 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       type: "compaction",
       auto: source.reason === "auto",
       text: "summary" in source ? source.summary : source.error.message,
+      ...(source.status === "completed"
+        ? { model: source.model, providerState: source.providerState }
+        : {}),
       sessionID: sessionId,
       messageID: source.id,
     } as ClientPart]

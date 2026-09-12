@@ -104,6 +104,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     if (!(await confirmSettingsDiscard())) return
     await props.onSectionChange?.(sectionId)
     setActiveSettingsSection(sectionId)
+    settingsScroll?.scrollTo({ top: 0 })
   }
 
   const handleCloseSettings = async () => {
@@ -117,6 +118,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     if (phoneQuery()) setWindowPosition({ x: 0, y: 0 })
   })
   let settingsShell: HTMLDivElement | undefined
+  let settingsScroll: HTMLDivElement | undefined
   let dragStart: { x: number; y: number; pointerX: number; pointerY: number; minX: number; maxX: number; minY: number; maxY: number } | undefined
 
   const handleDragStart = (event: PointerEvent) => {
@@ -157,7 +159,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
             <Show when={props.standalone}><h1 class="sr-only">{t("settings.title")}</h1></Show>
 
             <aside class="settings-screen-nav">
-              <div class="settings-screen-compact-bar">
+              <div class="window-toolbar settings-screen-compact-bar">
                 <span class="settings-screen-compact-icon-wrap">
                   <Settings class="settings-screen-nav-icon" />
                 </span>
@@ -207,7 +209,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 </div>
                 <Show when={!props.standalone}><button
                   type="button"
-                  class="selector-button selector-button-secondary settings-screen-close settings-screen-compact-close"
+                  class="window-icon-button settings-screen-close settings-screen-compact-close"
                   onClick={() => void handleCloseSettings()}
                   aria-label={t("settings.close")}
                   title={t("settings.close")}
@@ -217,7 +219,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
               </div>
 
               <div
-                class="settings-screen-nav-header settings-screen-drag-handle"
+                class="window-header settings-screen-nav-header settings-screen-drag-handle"
                 onPointerDown={handleDragStart}
                 onPointerMove={handleDragMove}
                 onPointerUp={handleDragEnd}
@@ -228,7 +230,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                     <Settings class="settings-screen-nav-icon" />
                   </span>
                   <div>
-                    <h2 class="settings-screen-title">{t("settings.title")}</h2>
+                    <h2 class="window-title settings-screen-title">{t("settings.title")}</h2>
                   </div>
                 </div>
               </div>
@@ -279,7 +281,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 </button></Show>
               </header>
 
-              <div class="window-body settings-screen-scroll">{renderSection()}</div>
+              <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
             </div>
     </>
   )

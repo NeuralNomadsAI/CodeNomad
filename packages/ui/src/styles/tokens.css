@@ -5,12 +5,15 @@
   --surface-primary: var(--surface-base);
   --surface-secondary: #f5f5f5;
   --surface-muted: #f8fafc;
+  --surface-shade-light: color-mix(in oklab, var(--surface-secondary) 75%, var(--surface-base));
+  --surface-shade-strong: color-mix(in oklab, var(--surface-secondary) 25%, var(--surface-base));
   --surface-code: #f1f5f9;
   --surface-hover: #e0e0e0;
-  --surface-chrome: color-mix(in oklab, var(--surface-secondary) 58%, var(--surface-base));
+  --surface-chrome: var(--surface-shade-light);
   --surface-subtle: color-mix(in oklab, var(--surface-secondary) 36%, var(--surface-base));
   --surface-control: color-mix(in oklab, var(--surface-secondary) 72%, var(--surface-base));
-  --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 7%, var(--surface-chrome));
+  --surface-interactive-hover: color-mix(in oklab, var(--text-primary) 4%, var(--surface-secondary));
+  --surface-hover-overlay: color-mix(in oklab, var(--text-primary) 4%, transparent);
   --selection-neutral-bg: color-mix(in oklab, var(--text-primary) 7%, transparent);
   --selection-neutral-strong-bg: color-mix(in oklab, var(--text-primary) 10%, transparent);
   --markdown-table-row-odd: transparent;
@@ -41,7 +44,7 @@
   --status-warning: #ff9800;
   
   /* Message-specific tokens */
-  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 88%, var(--message-user-border));
+  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 94%, var(--message-user-border));
   --message-user-border: #2196f3;
   --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #d97706;
@@ -57,10 +60,11 @@
   --message-part-header-title-font-size: var(--font-size-sm);
   --message-part-header-title-font-weight: var(--font-weight-regular);
   --message-part-header-title-line-height: var(--line-height-normal);
+  --message-part-hover: var(--surface-hover-overlay);
 
-  /* Session list selection tints */
-  --session-user-active-bg: color-mix(in oklab, var(--surface-secondary) 85%, var(--message-user-border));
-  --session-assistant-active-bg: color-mix(in oklab, var(--surface-secondary) 85%, var(--message-assistant-border));
+  /* Selection is neutral; the icon alone identifies the participant. */
+  --session-user-active-bg: var(--list-item-highlight-bg-solid);
+  --session-assistant-active-bg: var(--list-item-highlight-bg-solid);
 
   /* Semantic component colors */
   --session-status-working-fg: #b45309;
@@ -134,14 +138,14 @@
   --button-primary-bg: var(--accent-primary);
   --button-primary-hover-bg: var(--accent-hover);
   --button-primary-text: var(--text-on-accent);
-  --tab-active-bg: var(--accent-primary);
-  --tab-active-hover-bg: var(--accent-hover);
-  --tab-active-text: var(--text-inverted);
-  --tab-inactive-bg: var(--surface-muted);
-  --tab-inactive-hover-bg: var(--surface-hover);
-  --tab-inactive-text: var(--text-secondary);
-  --tab-rail-bg: var(--surface-chrome);
-  --tab-border: var(--border-divider);
+  --tab-active-bg: var(--surface-base);
+  --tab-active-hover-bg: color-mix(in oklab, var(--text-primary) 4%, var(--surface-base));
+  --tab-active-text: var(--text-primary);
+  --tab-inactive-bg: var(--surface-secondary);
+  --tab-inactive-hover-bg: var(--surface-muted);
+  --tab-inactive-text: var(--text-muted);
+  --tab-rail-bg: var(--surface-secondary);
+  --tab-border: var(--border-base);
   --new-tab-bg: var(--surface-secondary);
   --new-tab-hover-bg: var(--surface-hover);
   --new-tab-text: var(--text-muted);
@@ -160,6 +164,7 @@
   --control-height-sm: 24px;
   --control-height: 28px;
   --selector-height: 36px;
+  --touch-target-size: 40px;
   --scrollbar-size: 8px;
   --icon-button-size: 26px;
   --icon-size: 14px;
@@ -175,9 +180,9 @@
   --radius-full: 0;
   --button-padding-y: 0.5rem;
   --button-padding-x: 0.75rem;
-  --button-radius: 0.5rem;
-  --chip-radius: 0.375rem;
-  --pill-radius: 9999px;
+  --button-radius: 0;
+  --chip-radius: 999px;
+  --pill-radius: var(--chip-radius);
   
   /* Typography tokens */
   --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -239,7 +244,7 @@
     --status-warning: #ff9800;
     
     /* Message-specific tokens */
-    --message-user-bg: #202734;
+    --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
     --message-user-border: #42a5f5;
     --message-assistant-bg: var(--message-tool-bg);
     --message-assistant-border: #d97706;
@@ -301,12 +306,6 @@
     --button-primary-bg: #3f3f46;
     --button-primary-hover-bg: #52525b;
     --button-primary-text: #f5f6f8;
-    --tab-active-bg: #3f3f46;
-    --tab-active-hover-bg: #52525b;
-    --tab-active-text: #f5f6f8;
-    --tab-inactive-bg: #2f2f36;
-    --tab-inactive-hover-bg: #3d3d45;
-    --tab-inactive-text: #d4d4d8;
   }
 }
 
@@ -345,7 +344,7 @@
   --status-warning: #ff9800;
   
   /* Message-specific tokens */
-  --message-user-bg: #202734;
+  --message-user-bg: color-mix(in oklab, var(--surface-secondary) 92%, var(--message-user-border));
   --message-user-border: #2196f3;
   --message-assistant-bg: var(--message-tool-bg);
   --message-assistant-border: #d97706;
@@ -405,12 +404,6 @@
   --button-primary-bg: #3f3f46;
   --button-primary-hover-bg: #52525b;
   --button-primary-text: #f5f6f8;
-  --tab-active-bg: #3f3f46;
-  --tab-active-hover-bg: #52525b;
-  --tab-active-text: #f5f6f8;
-  --tab-inactive-bg: #2f2f36;
-  --tab-inactive-hover-bg: #3d3d45;
-  --tab-inactive-text: #d4d4d8;
   --button-danger-text: var(--text-inverted);
   --message-error-bg: rgba(244, 67, 54, 0.12);
   --message-error-bg-strong: rgba(244, 67, 54, 0.2);

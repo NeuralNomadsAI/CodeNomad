@@ -1,4 +1,8 @@
-export const COLOR_SCHEME_IDS = ["system", "light", "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
+import { DARK_IDENTITY_COLORS, LIGHT_IDENTITY_COLORS, SOFT_COLOR_SCHEME_IDS, SOFT_COLOR_SCHEMES, SOFT_SYSTEM_DARK, SOFT_SYSTEM_LIGHT } from "./soft-color-schemes.ts"
+import { classicLightSurfaces } from "./classic-light-surfaces"
+import { classicDarkSurfaces } from "./classic-dark-surfaces"
+
+export const COLOR_SCHEME_IDS = ["system", "light", ...SOFT_COLOR_SCHEME_IDS, "classic", "basalt", "fjord", "lichen", "velvet", "ember", "custom"] as const
 
 export type ColorSchemeId = (typeof COLOR_SCHEME_IDS)[number]
 export type ColorSchemeAppearance = "system" | "light" | "dark"
@@ -88,19 +92,20 @@ export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
 export const LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
   surfaceBase: "#FFFFFF",
   surfaceSecondary: "#F5F5F5",
-  surfaceMuted: "#ECEFF3",
-  borderBase: "#D1D5DB",
+  surfaceMuted: "#F8FAFC",
+  borderBase: "#E0E0E0",
   textPrimary: "#111827",
-  textMuted: "#4B5563",
-  accentPrimary: "#005FCC",
+  textMuted: "#475569",
+  accentPrimary: "#0066FF",
   statusSuccess: "#237A43",
   statusWarning: "#9A6700",
   statusError: "#C62828",
-  userAccent: "#0066CC",
-  agentAccent: "#A44B00",
-  compactionAccent: "#7E22CE",
-  yoloAccent: "#005FCC",
+  ...LIGHT_IDENTITY_COLORS,
+  yoloAccent: "#0066FF",
 }
+
+export const SYSTEM_LIGHT_COLOR_SCHEME_COLORS = SOFT_SYSTEM_LIGHT
+export const SYSTEM_DARK_COLOR_SCHEME_COLORS = SOFT_SYSTEM_DARK
 
 export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   {
@@ -112,10 +117,11 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
   },
   {
     id: "light",
-    labelKey: "settings.appearance.colorScheme.option.light",
+    labelKey: "settings.appearance.colorScheme.option.codeNomadClassic",
     descriptionKey: "settings.appearance.colorScheme.description.light",
     appearance: "light",
     editable: false,
+    colors: LIGHT_COLOR_SCHEME_COLORS,
   },
   {
     id: "classic",
@@ -130,7 +136,7 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       borderBase: "#3A3A3A",
       textPrimary: "#CFD4DC",
       textMuted: "#999999",
-      accentPrimary: "#0080FF",
+      accentPrimary: "#4D7AFE",
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
@@ -140,13 +146,18 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       yoloAccent: "#0080FF",
     },
   },
+  ...SOFT_COLOR_SCHEMES,
   {
     id: "basalt",
     labelKey: "settings.appearance.colorScheme.option.basalt",
     descriptionKey: "settings.appearance.colorScheme.description.basalt",
     appearance: "dark",
     editable: false,
-    colors: DEFAULT_CUSTOM_COLORS,
+    colors: {
+      ...DEFAULT_CUSTOM_COLORS,
+      ...DARK_IDENTITY_COLORS,
+      userAccent: "#88EEFB",
+    },
   },
   {
     id: "fjord",
@@ -162,10 +173,10 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       textPrimary: "#E7EEF1",
       textMuted: "#A8B8BF",
       accentPrimary: "#67C9BA",
-      statusSuccess: "#72C497",
+      statusSuccess: "#8FC473",
       statusWarning: "#D8B36A",
       statusError: "#E28181",
-      ...DEFAULT_SEMANTIC_COLORS,
+      ...DARK_IDENTITY_COLORS,
       yoloAccent: "#67C9BA",
     },
   },
@@ -186,7 +197,7 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#77C49A",
       statusWarning: "#D6B36D",
       statusError: "#DF8580",
-      ...DEFAULT_SEMANTIC_COLORS,
+      ...DARK_IDENTITY_COLORS,
       yoloAccent: "#A9C47F",
     },
   },
@@ -207,7 +218,7 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusSuccess: "#78C59A",
       statusWarning: "#DDB46F",
       statusError: "#E28787",
-      ...DEFAULT_SEMANTIC_COLORS,
+      ...DARK_IDENTITY_COLORS,
       yoloAccent: "#E5A77D",
     },
   },
@@ -224,11 +235,11 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       borderBase: "#493D34",
       textPrimary: "#F1ECE7",
       textMuted: "#BDB1A6",
-      accentPrimary: "#D79A66",
+      accentPrimary: "#D99254",
       statusSuccess: "#78C296",
       statusWarning: "#D8AE62",
       statusError: "#DE817A",
-      ...DEFAULT_SEMANTIC_COLORS,
+      ...DARK_IDENTITY_COLORS,
       yoloAccent: "#D79A66",
     },
   },
@@ -274,7 +285,7 @@ function selectionFor(
   return {
     id,
     appearance,
-    ...(definition.colors ? { colors: copyColors(colors ?? definition.colors) } : {}),
+    ...(colors || definition.colors ? { colors: copyColors(colors ?? definition.colors!) } : {}),
   }
 }
 
@@ -283,7 +294,18 @@ export function normalizeColorScheme(value: unknown, legacyTheme?: unknown): Nor
 
   if (typeof id === "string" && COLOR_SCHEME_IDS.includes(id as ColorSchemeId)) {
     const schemeId = id as ColorSchemeId
-    if (schemeId !== "custom") return selectionFor(schemeId)
+    if (schemeId !== "custom") {
+      const colors = isRecord(value) ? normalizeColors(value.colors) : undefined
+      // Old System edits contain only one appearance. Preserve them as fixed
+      // colors rather than applying a light canvas with dark-mode rendering.
+      if (schemeId === "system" && colors) {
+        const appearance = isRecord(value) && (value.appearance === "light" || value.appearance === "dark")
+          ? value.appearance
+          : luminance(colors.surfaceBase) > 0.4 ? "light" : "dark"
+        return selectionFor("custom", colors, appearance)
+      }
+      return selectionFor(schemeId, colors)
+    }
     const colors = isRecord(value) ? normalizeColors(value.colors) ?? DEFAULT_CUSTOM_COLORS : DEFAULT_CUSTOM_COLORS
     const appearance = isRecord(value) && value.appearance === "light" ? "light" : "dark"
     return selectionFor("custom", colors, appearance)
@@ -292,6 +314,16 @@ export function normalizeColorScheme(value: unknown, legacyTheme?: unknown): Nor
   if (legacyTheme === "light") return selectionFor("light")
   if (legacyTheme === "dark") return selectionFor("classic")
   return selectionFor("system")
+}
+
+export function toColorSchemeMergePatch(preference: NormalizedColorScheme): Omit<NormalizedColorScheme, "colors"> & {
+  colors: ColorSchemeColors | null
+} {
+  const normalized = normalizeColorScheme(preference)
+  return {
+    ...normalized,
+    colors: normalized.colors ? { ...normalized.colors } : null,
+  }
 }
 
 const channel = (color: string, offset: number) => Number.parseInt(color.slice(offset, offset + 2), 16)
@@ -401,21 +433,37 @@ const APPLIED_PROPERTIES = [
   "--status-error-fg",
   "--message-user-bg",
   "--message-user-border",
+  "--message-assistant-bg",
   "--message-assistant-border",
+  "--message-tool-bg",
+  "--message-tool-border",
   "--session-status-compacting-fg",
   "--session-status-compacting-bg",
   "--session-yolo-accent",
+  "--tab-active-bg",
+  "--tab-active-hover-bg",
+  "--tab-active-text",
+  "--tab-inactive-bg",
+  "--tab-inactive-hover-bg",
+  "--tab-inactive-text",
+  "--tab-rail-bg",
+  "--tab-border",
+  "--new-tab-bg",
+  "--new-tab-hover-bg",
+  "--new-tab-text",
 ] as const
 
 function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(typeof APPLIED_PROPERTIES)[number], string> {
   const textOnAccent = textOnColor(colors.accentPrimary)
+  // Selection is a neutral surface state, not a participant's identity color.
+  const selection = colors.textMuted
   return {
     "--surface-base": colors.surfaceBase,
     "--surface-primary": colors.surfaceBase,
     "--surface-secondary": colors.surfaceSecondary,
     "--surface-muted": colors.surfaceMuted,
-    "--surface-code": colors.surfaceMuted,
-    "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, dark ? 0.12 : 0.08),
+    "--surface-code": colors.surfaceBase,
+    "--surface-hover": mix(colors.textPrimary, colors.surfaceSecondary, 0.04),
     "--border-base": colors.borderBase,
     "--border-secondary": mix(colors.borderBase, colors.surfaceSecondary, 0.72),
     "--border-muted": mix(colors.borderBase, colors.surfaceSecondary, 0.5),
@@ -430,9 +478,9 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--accent-hover": mix(dark ? "#FFFFFF" : "#000000", colors.accentPrimary, dark ? 0.14 : 0.18),
     "--focus-ring-color": colors.accentPrimary,
     "--focus-ring-offset": colors.surfaceBase,
-    "--list-item-highlight-bg": alpha(colors.accentPrimary, dark ? 0.2 : 0.1),
-    "--list-item-highlight-bg-solid": mix(colors.accentPrimary, colors.surfaceSecondary, dark ? 0.22 : 0.1),
-    "--list-item-highlight-border": alpha(colors.accentPrimary, dark ? 0.4 : 0.25),
+    "--list-item-highlight-bg": alpha(selection, dark ? 0.2 : 0.12),
+    "--list-item-highlight-bg-solid": mix(selection, colors.surfaceSecondary, dark ? 0.22 : 0.12),
+    "--list-item-highlight-border": alpha(selection, dark ? 0.4 : 0.25),
     "--attachment-chip-bg": alpha(colors.accentPrimary, 0.1),
     "--attachment-chip-text": colors.accentPrimary,
     "--attachment-chip-ring": alpha(colors.accentPrimary, dark ? 0.2 : 0.1),
@@ -441,9 +489,9 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--env-vars-bg": alpha(colors.accentPrimary, dark ? 0.2 : 0.1),
     "--env-vars-border": alpha(colors.accentPrimary, dark ? 0.3 : 0.2),
     "--env-vars-text": colors.accentPrimary,
-    "--dropdown-highlight-bg": alpha(colors.accentPrimary, dark ? 0.2 : 0.1),
-    "--selection-highlight-bg": alpha(colors.accentPrimary, dark ? 0.18 : 0.12),
-    "--selection-highlight-strong-bg": alpha(colors.accentPrimary, dark ? 0.28 : 0.18),
+    "--dropdown-highlight-bg": alpha(selection, dark ? 0.2 : 0.12),
+    "--selection-highlight-bg": alpha(selection, dark ? 0.22 : 0.16),
+    "--selection-highlight-strong-bg": alpha(selection, dark ? 0.32 : 0.24),
     "--status-success": colors.statusSuccess,
     "--status-warning": colors.statusWarning,
     "--status-error": colors.statusError,
@@ -458,12 +506,26 @@ function derivedProperties(colors: ColorSchemeColors, dark: boolean): Record<(ty
     "--status-starting-fg": colors.statusWarning,
     "--status-starting-bg": alpha(colors.statusWarning, 0.16),
     "--status-error-fg": colors.statusError,
-    "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.1 : 0.12),
+    "--message-user-bg": mix(colors.userAccent, colors.surfaceSecondary, dark ? 0.05 : 0.06),
     "--message-user-border": colors.userAccent,
+    "--message-assistant-bg": colors.surfaceMuted,
     "--message-assistant-border": colors.agentAccent,
+    "--message-tool-bg": colors.surfaceMuted,
+    "--message-tool-border": mix(colors.textMuted, colors.borderBase, 0.28),
     "--session-status-compacting-fg": colors.compactionAccent,
     "--session-status-compacting-bg": alpha(colors.compactionAccent, dark ? 0.28 : 0.18),
-    "--session-yolo-accent": colors.yoloAccent,
+    "--session-yolo-accent": colors.accentPrimary,
+    "--tab-active-bg": colors.surfaceBase,
+    "--tab-active-hover-bg": mix(colors.textPrimary, colors.surfaceBase, 0.04),
+    "--tab-active-text": colors.textPrimary,
+    "--tab-inactive-bg": colors.surfaceSecondary,
+    "--tab-inactive-hover-bg": mix(colors.textPrimary, colors.surfaceSecondary, 0.04),
+    "--tab-inactive-text": colors.textMuted,
+    "--tab-rail-bg": colors.surfaceSecondary,
+    "--tab-border": colors.borderBase,
+    "--new-tab-bg": colors.surfaceSecondary,
+    "--new-tab-hover-bg": colors.surfaceMuted,
+    "--new-tab-text": colors.textMuted,
   }
 }
 
@@ -481,9 +543,18 @@ export function applyColorScheme(
   if (scheme.appearance === "system") target.removeAttribute("data-theme")
   else target.setAttribute("data-theme", dark ? "dark" : "light")
 
-  if (scheme.colors && scheme.id !== "classic") {
-    for (const [property, value] of Object.entries(derivedProperties(scheme.colors, dark))) {
+  const colors = scheme.id === "system"
+    ? scheme.colors ?? (dark ? SYSTEM_DARK_COLOR_SCHEME_COLORS : SYSTEM_LIGHT_COLOR_SCHEME_COLORS)
+    : scheme.colors
+  if (colors) {
+    for (const [property, value] of Object.entries(derivedProperties(colors, dark))) {
       target.style.setProperty(property, value)
+    }
+    if (scheme.id === "light") {
+      for (const [property, value] of Object.entries(classicLightSurfaces(colors))) target.style.setProperty(property, value)
+    }
+    if (scheme.id === "classic") {
+      for (const [property, value] of Object.entries(classicDarkSurfaces(colors))) target.style.setProperty(property, value)
     }
   }
 

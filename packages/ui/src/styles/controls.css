@@ -1,4 +1,5 @@
 @import "./components/buttons.css";
+@import "./components/switches.css";
 @import "./components/window.css";
 @import "./components/native-titlebar.css";
 @import "./components/badges.css";
@@ -16,7 +17,9 @@
 @import "./components/toast-history.css";
 @import "./components/settings-screen.css";
 @import "./components/theme-scheme-settings.css";
+@import "./components/theme-scheme-swatches.css";
 @import "./components/settings-info.css";
 @import "./components/config-files-settings.css";
 @import "./components/provider-auth.css";
 @import "./components/provider-model-visibility.css";
+@import "./components/prompt-context-controls.css";

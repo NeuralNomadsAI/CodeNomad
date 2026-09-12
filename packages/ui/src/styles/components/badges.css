@@ -1,12 +1,28 @@
 /* Badge + status utilities */
+/* Shared geometry for tags and numeric labels, including caller-styled chips. */
+:is(.badge-shape,
+    .context-meter-values,
+    .metric-chip,
+    .message-step-usage-chip,
+    .message-queued-badge,
+    .dropdown-badge,
+    .selector-badge,
+    .settings-scope-badge,
+    .permission-center-item-chip,
+    .tool-call-todo-status,
+    .tool-call-todo-tag,
+    .git-change-section-count) {
+  border-radius: var(--chip-radius);
+}
+
 .neutral-badge {
-  @apply inline-flex items-center rounded px-1.5 py-0.5 text-xs font-normal;
+  @apply inline-flex items-center px-1.5 py-0.5 text-xs font-normal;
   background-color: var(--badge-neutral-bg);
   color: var(--badge-neutral-text);
 }
 
 .status-badge {
-  @apply inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium;
+  @apply inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium;
 }
 
 .status-badge.ready {

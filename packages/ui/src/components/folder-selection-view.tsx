@@ -608,7 +608,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
                 <div class="folder-home-list-panel panel flex flex-col flex-1">
                   <div class="panel-header !gap-0 !p-0">
-                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base rounded-t-lg rounded-b-none`}>
+                    <div class={`grid ${canUseRemoteServerWindows() ? "grid-cols-2" : "grid-cols-1"} gap-0 overflow-hidden border border-base`}>
                       <button
                         type="button"
                         class="border-r border-base px-4 py-3 text-left transition-colors"
@@ -741,7 +741,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   </button>
                                   <button
                                     onClick={() => removeRemoteServerProfile(server.id)}
-                                    class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
+                                    class="p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
                                     title={`${t("folderSelection.servers.remove")}: ${server.name}`}
                                     aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
                                   >
@@ -867,7 +867,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 <button
                                   onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
                                   disabled={isLoading()}
-                                  class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100 rounded"
+                                  class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
                                   title={t("folderSelection.recent.rename")}
                                   onMouseEnter={() => setRecentActionHovered(folder.path, true)}
                                   onMouseLeave={() => setRecentActionHovered(folder.path, false)}
@@ -882,7 +882,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     handleRemove(folder.path, e)
                                   }}
                                   disabled={isLoading()}
-                                  class="folder-home-row-action p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100 rounded"
+                                  class="folder-home-row-action p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
                                   title={t("folderSelection.recent.remove")}
                                   onMouseEnter={() => setRecentActionHovered(folder.path, true)}
                                   onMouseLeave={() => setRecentActionHovered(folder.path, false)}

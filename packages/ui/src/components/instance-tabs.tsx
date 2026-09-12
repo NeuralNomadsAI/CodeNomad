@@ -9,6 +9,7 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
+import TabScroll from "./tab-scroll"
 import KeyboardHint from "./keyboard-hint"
 import ToastHistoryPanel from "./toast-history-panel"
 import { Plus, MonitorUp, Bell, BellOff, Bug, Settings } from "lucide-solid"
@@ -24,7 +25,7 @@ import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getUnreadToastCountSignal, showToastNotification } from "../lib/notifications"
 import { useConfig } from "../stores/preferences"
-import { openSettings } from "../stores/settings-screen"
+import { openSettings, toggleSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
 
 interface InstanceTabsProps {
@@ -245,8 +246,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     <>
       <div class="tab-bar tab-bar-instance">
         <div class="tab-container">
-          <div class="tab-scroll">
-            <div class="tab-strip">
+          <TabScroll>
               <div class="tab-strip-tabs" role="tablist">
                 <Show
                   when={dragReorderEnabled()}
@@ -281,8 +281,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                   </DragDropProvider>
                 </Show>
               </div>
-            </div>
-          </div>
+          </TabScroll>
           <div class="tab-bar-actions">
             <Show when={props.tabs.length > 1}>
               <div class="tab-shortcuts">
@@ -305,7 +304,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
             <button
               class="new-tab-button"
-              onClick={() => openSettings("general")}
+              onClick={() => toggleSettings("general")}
               title={t("settings.open.title")}
               aria-label={t("settings.open.ariaLabel")}
             >

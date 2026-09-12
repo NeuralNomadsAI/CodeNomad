@@ -1,6 +1,11 @@
 @import "./panels/tabs.css";
+@import "./components/tab-scroll.css";
 @import "./panels/empty-loading.css";
 @import "./panels/modal.css";
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
+@import "./components/session-row-actions.css";
+@import "./components/session-tree.css";
+@import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
+@import "./panels/control-hover.css";

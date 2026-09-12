@@ -127,7 +127,7 @@ export default function MessagePart(props: MessagePartProps) {
 
     return (
       <details
-        class="rounded-md border border-base bg-transparent"
+        class="border border-base bg-transparent"
         onToggle={(event) => {
           const nextOpen = (event.currentTarget as HTMLDetailsElement).open
           if (nextOpen) {
@@ -135,7 +135,7 @@ export default function MessagePart(props: MessagePartProps) {
           }
         }}
       >
-        <summary class="flex items-center justify-between gap-3 cursor-pointer list-none rounded-md bg-surface-secondary px-3 py-1.5 select-none text-xs font-medium text-secondary [&::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between gap-3 cursor-pointer list-none bg-surface-secondary px-3 py-1.5 select-none text-xs font-medium text-secondary [&::-webkit-details-marker]:hidden">
           <span class="min-w-0 flex flex-1 items-center gap-2">
             <span>{t("messagePart.pastedText.summary")}</span>
             <span class="text-[11px] text-secondary/80">{lineCountLabel()}</span>
@@ -146,7 +146,7 @@ export default function MessagePart(props: MessagePartProps) {
             </span>
             <button
               type="button"
-              class="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-surface-tertiary"
+              class="inline-flex h-6 w-6 items-center justify-center text-secondary hover:bg-surface-tertiary"
               onClick={(event) => void handleCopy(event)}
               aria-label={t("messagePart.pastedText.copyAriaLabel")}
               title={t("messagePart.pastedText.copyAriaLabel")}

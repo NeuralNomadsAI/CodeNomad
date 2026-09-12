@@ -18,6 +18,7 @@ interface ActionOverflowMenuProps {
   label: string
   triggerClass?: string
   minItems?: number
+  onOpenChange?: (open: boolean) => void
 }
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
@@ -35,7 +36,10 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
 
   return (
     <Show when={hasItems()}>
-      <DropdownMenu placement="bottom-end" gutter={4} onOpenChange={(open) => { if (!open) clearHoveredItem() }}>
+      <DropdownMenu placement="bottom-end" gutter={4} onOpenChange={(open) => {
+        if (!open) clearHoveredItem()
+        props.onOpenChange?.(open)
+      }}>
         <DropdownMenu.Trigger
           class={`action-overflow-trigger ${props.triggerClass ?? ""}`.trim()}
           aria-label={props.label}

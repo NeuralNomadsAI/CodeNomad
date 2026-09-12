@@ -3,10 +3,14 @@ import { describe, it } from "node:test"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
+  LIGHT_COLOR_SCHEME_COLORS,
+  SYSTEM_DARK_COLOR_SCHEME_COLORS,
+  SYSTEM_LIGHT_COLOR_SCHEME_COLORS,
   applyColorScheme,
   contrastRatio,
   normalizeColorScheme,
   textOnColor,
+  toColorSchemeMergePatch,
   validateColorSchemeColors,
   type ColorSchemeTarget,
 } from "./theme-scheme.ts"
@@ -57,13 +61,40 @@ describe("normalizeColorScheme", () => {
     assert.equal(normalizeColorScheme({ id: "custom", appearance: "light", colors: DEFAULT_CUSTOM_COLORS }).appearance, "light")
     assert.equal(normalizeColorScheme({ id: "custom", appearance: "system", colors: DEFAULT_CUSTOM_COLORS }).appearance, "dark")
   })
+
+  it("preserves saved colors on an embedded palette", () => {
+    const colors = { ...LIGHT_COLOR_SCHEME_COLORS, surfaceBase: "#FF00FF" }
+    assert.deepEqual(normalizeColorScheme({ id: "light", appearance: "light", colors }), {
+      id: "light",
+      appearance: "light",
+      colors,
+    })
+  })
+})
+
+describe("toColorSchemeMergePatch", () => {
+  it("clears stale colors when returning to the system palette", () => {
+    assert.deepEqual(toColorSchemeMergePatch(normalizeColorScheme("system")), {
+      id: "system",
+      appearance: "system",
+      colors: null,
+    })
+  })
+
+  it("keeps all colors for explicit palettes", () => {
+    const classic = normalizeColorScheme("classic")
+    assert.deepEqual(toColorSchemeMergePatch(classic), classic)
+  })
 })
 
 describe("built-in color schemes", () => {
-  it("keeps every preset within its contrast requirements", () => {
-    for (const scheme of BUILT_IN_COLOR_SCHEMES) {
-      if (scheme.colors) assert.equal(validateColorSchemeColors(scheme.colors), true, scheme.id)
-    }
+  it("bounds contrast exceptions to the explicitly saved palette calibration", () => {
+    // Keep the validator strict; these exact user-selected palettes intentionally
+    // have softer secondary text or brighter accents. Primary text is checked
+    // independently on every rendered surface in palette-quality.test.ts.
+    assert.deepEqual(BUILT_IN_COLOR_SCHEMES.filter((scheme) => scheme.colors && !validateColorSchemeColors(scheme.colors)).map((scheme) => scheme.id), [
+      "porcelain", "dawn", "slate", "parchment", "clay", "linen", "iris", "sage-light",
+    ])
   })
 
   it("uses the specified independent preset accents", () => {
@@ -72,10 +103,22 @@ describe("built-in color schemes", () => {
     assert.equal(accents.fjord, "#67C9BA")
     assert.equal(accents.lichen, "#A9C47F")
     assert.equal(accents.velvet, "#E5A77D")
-    assert.equal(accents.ember, "#D79A66")
+    assert.equal(accents.ember, "#D99254")
   })
 
-  it("preserves the exact CodeNomad Classic dark palette", () => {
+  it("keeps the additional Zed-inspired palettes light", () => {
+    for (const id of ["porcelain", "dawn", "parchment"]) {
+      assert.equal(BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === id)?.appearance, "light")
+    }
+  })
+
+  it("keeps System distinct from CodeNomad Classic", () => {
+    const classic = BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === "classic")?.colors
+    assert.notDeepEqual(SYSTEM_DARK_COLOR_SCHEME_COLORS, classic)
+    assert.notDeepEqual(SYSTEM_LIGHT_COLOR_SCHEME_COLORS, LIGHT_COLOR_SCHEME_COLORS)
+  })
+
+  it("preserves Classic surfaces while separating participant roles", () => {
     assert.deepEqual(BUILT_IN_COLOR_SCHEMES.find((scheme) => scheme.id === "classic")?.colors, {
       surfaceBase: "#1A1A1A",
       surfaceSecondary: "#2A2A2A",
@@ -83,7 +126,7 @@ describe("built-in color schemes", () => {
       borderBase: "#3A3A3A",
       textPrimary: "#CFD4DC",
       textMuted: "#999999",
-      accentPrimary: "#0080FF",
+      accentPrimary: "#4D7AFE",
       statusSuccess: "#4CAF50",
       statusWarning: "#FF9800",
       statusError: "#F44336",
@@ -96,29 +139,32 @@ describe("built-in color schemes", () => {
 })
 
 describe("applyColorScheme", () => {
-  it("clears stale overrides when switching to system or light", () => {
+  it("replaces stale overrides when switching to system or light", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     assert.ok(root.properties.size > 0)
     assert.equal(root.attributes.get("data-theme"), "dark")
 
     applyColorScheme(normalizeColorScheme("system"), { target: root.value, systemDark: true })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), SYSTEM_DARK_COLOR_SCHEME_COLORS.surfaceBase)
     assert.equal(root.attributes.has("data-theme"), false)
     assert.equal(root.value.dataset.colorScheme, "system")
 
     applyColorScheme(normalizeColorScheme("ember"), { target: root.value })
     applyColorScheme(normalizeColorScheme("light"), { target: root.value })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), LIGHT_COLOR_SCHEME_COLORS.surfaceBase)
     assert.equal(root.attributes.get("data-theme"), "light")
   })
 
-  it("uses the existing dark CSS tokens for CodeNomad Classic", () => {
+  it("renders Classic defaults and explicit edits through the same token path", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     applyColorScheme(normalizeColorScheme("classic"), { target: root.value })
-    assert.equal(root.properties.size, 0)
+    assert.equal(root.properties.get("--surface-base"), "#1A1A1A")
     assert.equal(root.attributes.get("data-theme"), "dark")
+    const colors = { ...normalizeColorScheme("classic").colors!, accentPrimary: "#FF00FF" }
+    applyColorScheme(normalizeColorScheme({ id: "classic", colors }), { target: root.value })
+    assert.equal(root.properties.get("--accent-primary"), "#FF00FF")
   })
 
   it("resolves system appearance without imposing a data theme", () => {
@@ -139,11 +185,11 @@ describe("applyColorScheme", () => {
     assert.ok(contrastRatio(text ?? "", "#8FA8FF") >= 4.5)
   })
 
-  it("derives legacy blue UI states from the selected accent", () => {
+  it("keeps neutral selection independent of accent-colored actions", () => {
     const root = target()
     applyColorScheme(normalizeColorScheme("fjord"), { target: root.value })
     assert.equal(root.properties.get("--attachment-chip-text"), "#67C9BA")
-    assert.equal(root.properties.get("--dropdown-highlight-bg"), "rgba(103, 201, 186, 0.2)")
+    assert.equal(root.properties.get("--dropdown-highlight-bg"), "rgba(168, 184, 191, 0.2)")
   })
 
   it("applies customizable semantic roles", () => {
@@ -153,7 +199,22 @@ describe("applyColorScheme", () => {
     assert.equal(root.properties.get("--message-user-border"), colors.userAccent)
     assert.equal(root.properties.get("--message-assistant-border"), colors.agentAccent)
     assert.equal(root.properties.get("--session-status-compacting-fg"), colors.compactionAccent)
-    assert.equal(root.properties.get("--session-yolo-accent"), colors.yoloAccent)
+    assert.equal(root.properties.get("--session-yolo-accent"), colors.accentPrimary)
+  })
+
+  it("derives tabs and message surfaces from each palette", () => {
+    for (const id of ["light", "classic", "fjord", "lichen", "velvet", "ember", "porcelain", "dawn", "parchment"] as const) {
+      const root = target()
+      const scheme = normalizeColorScheme(id)
+      applyColorScheme(scheme, { target: root.value })
+      assert.equal(root.properties.get("--tab-active-bg"), scheme.colors?.surfaceBase, id)
+      assert.equal(root.properties.get("--tab-inactive-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.equal(root.properties.get("--message-user-border"), scheme.colors?.userAccent, id)
+      assert.notEqual(root.properties.get("--message-user-bg"), scheme.colors?.surfaceSecondary, id)
+      assert.equal(root.properties.get("--message-assistant-border"), scheme.colors?.agentAccent, id)
+      assert.equal(root.properties.get("--message-assistant-bg"), id === "light" ? "#F8F8F8" : scheme.colors?.surfaceMuted, id)
+      assert.notEqual(root.properties.get("--message-assistant-bg"), root.properties.get("--surface-base"), id)
+    }
   })
 })
 

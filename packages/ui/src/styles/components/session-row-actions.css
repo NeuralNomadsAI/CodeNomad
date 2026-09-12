@@ -1,0 +1,89 @@
+.session-item-actions {
+  position: relative;
+}
+
+.session-item-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: max-content;
+}
+
+.session-item-inline-actions .session-item-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+.session-item-actions :is(.session-item-close, .action-overflow-trigger) {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.session-item-inline-actions .session-item-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.session-item-actions :is(.session-item-close, .action-overflow-trigger):is(:hover, :focus-visible):not([aria-disabled="true"]) {
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.session-item-inline-actions .session-item-close:hover:not([aria-disabled="true"]) {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-item-inline-actions .session-item-close[aria-disabled="true"] {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.session-item-actions button:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+
+.session-item-overflow-actions {
+  display: none;
+}
+
+.session-item-overflow-actions .action-overflow-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.session-item-base[data-compact-actions="true"] .session-item-inline-actions {
+  position: absolute;
+  inset-inline-end: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.session-item-base[data-compact-actions="true"] .session-item-overflow-actions {
+  display: flex;
+}
+
+.session-item-base[data-compact-actions="false"] .session-item-badges,
+.session-item-base[data-compact-actions="false"] .worktree-indicator-label {
+  max-width: none;
+}
+
+.session-item-badges svg,
+.session-item-badges .status-dot {
+  flex-shrink: 0;
+}
+
+@media (pointer: coarse) {
+  .session-item-inline-actions .session-item-close,
+  .session-item-overflow-actions .action-overflow-trigger {
+    min-width: var(--touch-target-size);
+    min-height: var(--touch-target-size);
+  }
+}
