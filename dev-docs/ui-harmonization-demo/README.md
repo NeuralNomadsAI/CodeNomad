@@ -1,125 +1,27 @@
-# UI Harmonisation — visual demo
+# UI Harmonisation — palette gallery
 
-17 built-in palettes: **10 dark and 7 light**. Captured on 10 September 2026 in
-a separate native Tauri release instance of the UI Harmonisation worktree.
-The local build includes the follow-up tab-scroll refinements.
+17 built-in palettes, captured on **12 September 2026** from the native Tauri
+UI Harmonisation build with UI resources at `bfc07ecd`. English interface,
+five projects open; existing conversations retain their original language.
 
-The interface is in **English**; existing conversations retain their original
-language. Five real projects stay open throughout: **CodeNomad, OpenCode, Gaffer,
-Blender and OpenWork**. Workspace captures alternate the active project and
-session, right-panel tab, popover, selector or hierarchy state. Settings captures
-show the separate native Preferences window while those five projects remain open.
+Click a preview for the original **1584 × 1031 PNG**.
+[Offline gallery](index.html) · [Capture metadata](manifest.json)
 
-All screenshots are unretouched **1584 × 1031 PNGs**. Click a preview for the full
-image. These are presentation captures, not additional test results.
+## Dark
 
-- [Dark contact sheet](contact-dark.jpg)
-- [Light contact sheet](contact-light.jpg)
-- [Offline gallery](index.html) — download this directory and open `index.html`.
+| | | |
+| --- | --- | --- |
+| **Classic**<br>[<img src="01-classic.png" alt="Classic dark" width="240">](01-classic.png) | **Mist**<br>[<img src="02-mist.png" alt="Mist dark" width="240">](02-mist.png) | **Slate**<br>[<img src="03-slate.png" alt="Slate dark" width="240">](03-slate.png) |
+| **Clay**<br>[<img src="04-clay.png" alt="Clay dark" width="240">](04-clay.png) | **Sage**<br>[<img src="05-sage.png" alt="Sage dark" width="240">](05-sage.png) | **Basalt**<br>[<img src="06-basalt.png" alt="Basalt" width="240">](06-basalt.png) |
+| **Fjord**<br>[<img src="07-fjord.png" alt="Fjord" width="240">](07-fjord.png) | **Lichen**<br>[<img src="08-lichen.png" alt="Lichen" width="240">](08-lichen.png) | **Velvet**<br>[<img src="09-velvet.png" alt="Velvet" width="240">](09-velvet.png) |
+| **Ember**<br>[<img src="10-ember.png" alt="Ember" width="240">](10-ember.png) | | |
 
-## Dark palettes
+## Light
 
-### 01 · Classic · dark
+| | | |
+| --- | --- | --- |
+| **Classic**<br>[<img src="11-light.png" alt="Classic light" width="240">](11-light.png) | **Mist**<br>[<img src="12-porcelain.png" alt="Mist light" width="240">](12-porcelain.png) | **Slate**<br>[<img src="13-dawn.png" alt="Slate light" width="240">](13-dawn.png) |
+| **Clay**<br>[<img src="14-parchment.png" alt="Clay light" width="240">](14-parchment.png) | **Linen**<br>[<img src="15-linen.png" alt="Linen" width="240">](15-linen.png) | **Iris**<br>[<img src="16-iris.png" alt="Iris" width="240">](16-iris.png) |
+| **Sage**<br>[<img src="17-sage-light.png" alt="Sage light" width="240">](17-sage-light.png) | | |
 
-CodeNomad — release summary and session status.
-
-[![Classic · dark — CodeNomad — release summary and session status](01-classic.png)](01-classic.png)
-
-### 02 · Mist · dark
-
-OpenCode — database repair review and contribution guide.
-
-[![Mist · dark — OpenCode — database repair review and contribution guide](02-mist.png)](02-mist.png)
-
-### 03 · Slate · dark
-
-Gaffer — VFX architecture review and command palette.
-
-[![Slate · dark — Gaffer — VFX architecture review and command palette](03-slate.png)](03-slate.png)
-
-### 04 · Clay · dark
-
-Blender — branch comparison and message-content options.
-
-[![Clay · dark — Blender — branch comparison and message-content options](04-clay.png)](04-clay.png)
-
-### 05 · Sage · dark
-
-OpenWork — multi-agent task review and model picker.
-
-[![Sage · dark — OpenWork — multi-agent task review and model picker](05-sage.png)](05-sage.png)
-
-### 06 · Basalt
-
-CodeNomad — Git diff alongside the release conversation.
-
-[![Basalt — CodeNomad — Git diff alongside the release conversation](06-basalt.png)](06-basalt.png)
-
-### 07 · Fjord
-
-Gaffer — integration architecture and agent picker.
-
-[![Fjord — Gaffer — integration architecture and agent picker](07-fjord.png)](07-fjord.png)
-
-### 08 · Lichen
-
-OpenCode — session search and documentation preview.
-
-[![Lichen — OpenCode — session search and documentation preview](08-lichen.png)](08-lichen.png)
-
-### 09 · Velvet
-
-OpenWork — multi-agent review and panel customization.
-
-[![Velvet — OpenWork — multi-agent review and panel customization](09-velvet.png)](09-velvet.png)
-
-### 10 · Ember
-
-CodeNomad — subagent hierarchy, selection controls and task plan.
-
-[![Ember — CodeNomad — subagent hierarchy, selection controls and task plan](10-ember.png)](10-ember.png)
-
-## Light palettes
-
-### 11 · Classic · light
-
-General settings — appearance modes and original light colors.
-
-[![Classic · light — General settings — appearance modes and original light colors](11-light.png)](11-light.png)
-
-### 12 · Mist · light
-
-Chat settings — visibility and initial expansion of content.
-
-[![Mist · light — Chat settings — visibility and initial expansion of content](12-porcelain.png)](12-porcelain.png)
-
-### 13 · Slate · light
-
-Notification settings — session events and sound preferences.
-
-[![Slate · light — Notification settings — session events and sound preferences](13-dawn.png)](13-dawn.png)
-
-### 14 · Clay · light
-
-Speech settings — transcription, playback and voice controls.
-
-[![Clay · light — Speech settings — transcription, playback and voice controls](14-parchment.png)](14-parchment.png)
-
-### 15 · Linen
-
-CodeNomad — selected subagent and contribution documentation.
-
-[![Linen — CodeNomad — selected subagent and contribution documentation](15-linen.png)](15-linen.png)
-
-### 16 · Iris
-
-OpenCode settings — runtime discovery and configuration.
-
-[![Iris — OpenCode settings — runtime discovery and configuration](16-iris.png)](16-iris.png)
-
-### 17 · Sage · light
-
-Advanced settings — desktop window behavior.
-
-[![Sage · light — Advanced settings — desktop window behavior](17-sage-light.png)](17-sage-light.png)
-
+These are unretouched workspace captures, not additional test results.
