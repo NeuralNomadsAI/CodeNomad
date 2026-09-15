@@ -6,6 +6,7 @@ import {
   getWorkspaceCandidates,
   refreshWorkspaceCandidates,
   WORKSPACE_CANDIDATE_CACHE_TTL_MS,
+  WorkspaceSearchBusyError,
 } from "../search-cache"
 
 describe("workspace search cache", () => {
@@ -13,11 +14,35 @@ describe("workspace search cache", () => {
     clearWorkspaceSearchCache()
   })
 
-  it("expires cached candidates after the TTL", () => {
+  it("coalesces scans, bounds parallel I/O and does not refill an invalidated cache", async () => {
+    let release!: (entries: FileSystemEntry[]) => void
+    const gate = new Promise<FileSystemEntry[]>((resolve) => { release = resolve })
+    let calls = 0
+    const builder = () => { calls += 1; return gate }
+    const first = refreshWorkspaceCandidates("/workspace-one", "a", builder)
+    const duplicate = refreshWorkspaceCandidates("/workspace-one", "a", builder)
+    const second = refreshWorkspaceCandidates("/workspace-two", "b", builder)
+    try {
+      await assert.rejects(refreshWorkspaceCandidates("/workspace-three", "c", builder), WorkspaceSearchBusyError)
+      assert.equal(calls, 2)
+      clearWorkspaceSearchCache("/workspace-one")
+    } finally {
+      release([createEntry("needle")])
+    }
+    const results = await Promise.all([first, duplicate, second])
+    results[0][0].name = "mutated"
+    assert.equal(results[1][0].name, "needle")
+    assert.equal(getWorkspaceCandidates("/workspace-one", "a"), undefined)
+    assert.equal(getWorkspaceCandidates("/workspace-two", "b")?.[0].name, "needle")
+    await assert.rejects(refreshWorkspaceCandidates("/workspace-three", "c", () => Promise.reject(new Error("disk"))), /disk/)
+    assert.equal((await refreshWorkspaceCandidates("/workspace-three", "c", () => [createEntry("recovered")]))[0].name, "recovered")
+  })
+
+  it("expires cached candidates after the TTL", async () => {
     const workspacePath = "/tmp/workspace"
     const startTime = 1_000
 
-    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], startTime)
+    await refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], startTime)
 
     const beforeExpiry = getWorkspaceCandidates(
       workspacePath,
@@ -36,28 +61,28 @@ describe("workspace search cache", () => {
     assert.equal(afterExpiry, undefined)
   })
 
-  it("replaces cached entries when manually refreshed", () => {
+  it("replaces cached entries when manually refreshed", async () => {
     const workspacePath = "/tmp/workspace"
 
-    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
+    await refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
     const initial = getWorkspaceCandidates(workspacePath, "query-a", 5_001)
     assert.ok(initial)
     assert.equal(initial[0].name, "file-a")
 
-    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-b")], 6_000)
+    await refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-b")], 6_000)
     const refreshed = getWorkspaceCandidates(workspacePath, "query-a", 6_001)
     assert.ok(refreshed)
     assert.equal(refreshed[0].name, "file-b")
   })
 
-  it("does not reuse candidates across query scopes", () => {
+  it("does not reuse candidates across query scopes", async () => {
     const workspacePath = "/tmp/workspace"
 
-    refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
+    await refreshWorkspaceCandidates(workspacePath, "query-a", () => [createEntry("file-a")], 5_000)
     assert.equal(getWorkspaceCandidates(workspacePath, "query-a", 5_001)?.[0].name, "file-a")
     assert.equal(getWorkspaceCandidates(workspacePath, "query-b", 5_001), undefined)
 
-    refreshWorkspaceCandidates(workspacePath, "query-b", () => [createEntry("file-b")], 5_000)
+    await refreshWorkspaceCandidates(workspacePath, "query-b", () => [createEntry("file-b")], 5_000)
     assert.equal(getWorkspaceCandidates(workspacePath, "query-a", 5_001), undefined)
     assert.equal(getWorkspaceCandidates(workspacePath, "query-b", 5_001)?.[0].name, "file-b")
 

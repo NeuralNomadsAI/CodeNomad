@@ -338,22 +338,22 @@ export class WorkspaceManager {
     })?.id
   }
 
-  listFiles(workspaceId: string, relativePath = "."): FileSystemEntry[] {
+  async listFiles(workspaceId: string, relativePath = "."): Promise<FileSystemEntry[]> {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
     return browser.list(relativePath)
   }
 
-  searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions): FileSystemEntry[] {
+  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions): Promise<FileSystemEntry[]> {
     const workspace = this.requireWorkspace(workspaceId)
     return searchWorkspaceFiles(workspace.path, query, options)
   }
 
-  readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): WorkspaceFileResponse {
+  async readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
     const encoding = options?.encoding ?? "utf-8"
-    const contents = encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath)
+    const contents = await (encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath))
     return {
       workspaceId,
       relativePath,
@@ -362,11 +362,11 @@ export class WorkspaceManager {
     }
   }
 
-  readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): WorkspaceFileResponse {
+  async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })
     const encoding = options?.encoding ?? "utf-8"
-    const contents = encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath)
+    const contents = await (encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath))
     return {
       workspaceId,
       relativePath,
@@ -375,16 +375,16 @@ export class WorkspaceManager {
     }
   }
 
-  writeFile(workspaceId: string, relativePath: string, contents: string): void {
+  async writeFile(workspaceId: string, relativePath: string, contents: string): Promise<void> {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
-    browser.writeFile(relativePath, contents)
+    await browser.writeFile(relativePath, contents)
   }
 
-  writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): void {
+  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })
-    browser.writeFile(relativePath, contents)
+    await browser.writeFile(relativePath, contents)
   }
 
   async create(
