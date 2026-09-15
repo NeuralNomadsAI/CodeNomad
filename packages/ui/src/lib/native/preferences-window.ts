@@ -44,15 +44,15 @@ export function readPreferencesRequestFromUrl(url: string): NativePreferencesReq
   }
 }
 
-export async function openNativePreferences(request: NativePreferencesRequest): Promise<void> {
+export async function openNativePreferences(request: NativePreferencesRequest, toggle = false): Promise<void> {
   if (runtimeEnv.host === "electron") {
     const open = window.electronAPI?.openPreferences
     if (!open) throw new Error("Native Preferences is unavailable")
-    await open(request.section, { instanceId: request.instanceId, location: request.location })
+    await open(request.section, { instanceId: request.instanceId, location: request.location }, toggle)
     return
   }
   if (runtimeEnv.host === "tauri") {
-    await invoke("open_preferences_window", { request })
+    await invoke("open_preferences_window", { request, toggle })
     return
   }
   throw new Error("Native Preferences is unavailable")

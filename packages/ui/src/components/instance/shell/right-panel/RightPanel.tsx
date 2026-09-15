@@ -9,8 +9,9 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import MenuOpenIcon from "@suid/icons-material/MenuOpen"
+import ArrowForwardIcon from "@suid/icons-material/ArrowForward"
 import { Settings2 } from "lucide-solid"
+import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
@@ -58,6 +59,7 @@ const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => 
         type="button"
         role="tab"
         id={props.tabId}
+        data-tab-id={props.tab.id}
         class={`right-panel-tab ${props.active ? "right-panel-tab-active" : "right-panel-tab-inactive"}`}
         aria-selected={props.active}
         aria-controls={props.panelId}
@@ -263,7 +265,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               title={props.t("instanceShell.rightDrawer.toggle.close")}
               onClick={props.onCloseRightDrawer}
             >
-              <MenuOpenIcon fontSize="small" sx={{ transform: "scaleX(-1)" }} />
+              <ArrowForwardIcon fontSize="small" />
             </IconButton>
             <IconButton
               ref={customizationTriggerRef}
@@ -278,8 +280,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
               <Settings2 class="h-4 w-4" />
             </IconButton>
           </div>
-          <div class="tab-scroll">
-            <div class="tab-strip">
+          <TabScroll>
               <div class="tab-strip-tabs" role="tablist" aria-label={props.t("instanceShell.rightPanel.tabs.ariaLabel")}>
                 <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleTabDragEnd}>
                   <DragDropSensors>
@@ -303,8 +304,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                   </DragDropSensors>
                 </DragDropProvider>
               </div>
-            </div>
-          </div>
+          </TabScroll>
         </div>
       </div>
 

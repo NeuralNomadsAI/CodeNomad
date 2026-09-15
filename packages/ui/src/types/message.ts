@@ -1,4 +1,6 @@
 import type {
+  ModelRef,
+  SessionMessageProviderState,
   SessionStructuredError,
 } from "@opencode-ai/client"
 
@@ -17,7 +19,11 @@ interface TextMessagePart extends PartBase { type: "text"; text: string }
 interface ReasoningMessagePart extends PartBase { type: "reasoning"; text: string }
 interface FileMessagePart extends PartBase { type: "file"; filename?: string }
 interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?: ToolState }
-interface CompactionMessagePart extends PartBase { type: "compaction" }
+interface CompactionMessagePart extends PartBase {
+  type: "compaction"
+  model?: ModelRef
+  providerState?: SessionMessageProviderState
+}
 interface StepStartMessagePart extends PartBase { type: "step-start" }
 interface StepFinishMessagePart extends PartBase { type: "step-finish" }
 
@@ -77,6 +83,7 @@ export interface MessageInfo {
   role: "user" | "assistant"
   time: {
     created: number
+    streamed?: number
     completed?: number
   }
   mode?: string
