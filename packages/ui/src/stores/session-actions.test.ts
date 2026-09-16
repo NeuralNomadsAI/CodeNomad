@@ -497,7 +497,7 @@ describe("plugin RPC message pruning", () => {
     assert.ok(messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts["tool-after"])
   })
 
-  it("removes a technical group with one update per message", async () => {
+  it("awaits every message in a technical group, including its final native projection", async () => {
     const messages = new Map<string, any>([
       ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 2 }, content: [
         { type: "tool", id: "shell-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
@@ -509,10 +509,15 @@ describe("plugin RPC message pruning", () => {
       ] }],
     ])
     const updates: any[] = []
+    let releaseLast!: () => void
+    let lastStarted!: () => void
+    const lastGate = new Promise<void>(resolve => { releaseLast = resolve })
+    const lastReached = new Promise<void>(resolve => { lastStarted = resolve })
     seed({ session: {
       message: { get: async ({ messageID }: { messageID: string }) => messages.get(messageID) },
       applyPrune: async (input: any) => {
         updates.push(input)
+        if (input.messageID === "assistant-2") { lastStarted(); await lastGate }
         return { ...messages.get(input.messageID), content: input.content }
       },
     } })
@@ -527,10 +532,18 @@ describe("plugin RPC message pruning", () => {
       })
     }
 
-    await deleteTechnicalPartGroup(instanceId, sessionId, [
+    let completed = false
+    const deletion = deleteTechnicalPartGroup(instanceId, sessionId, [
       { messageId: "assistant-1", partId: "shell-1" },
       { messageId: "assistant-2", partId: "shell-2" },
-    ])
+    ]).then(() => { completed = true })
+    await lastReached
+    assert.equal(completed, false, "The first prune is not completion of the rendered group")
+    assert.equal(store.getMessage("assistant-1")?.parts["shell-1"], undefined)
+    assert.ok(store.getMessage("assistant-2")?.parts["shell-2"])
+    releaseLast()
+    await deletion
+    assert.equal(store.getMessage("assistant-2")?.parts["shell-2"], undefined)
 
     assert.deepEqual(updates.map((update) => [update.messageID, update.content]), [
       ["assistant-1", [{ type: "text", text: "first" }]],

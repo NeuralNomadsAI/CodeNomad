@@ -11,6 +11,7 @@ interface ShellOutputDialogProps {
   open: boolean
   instanceId: string
   directory: string
+  workspaceID?: string
   shell: ShellInfo | null
   onClose: () => void
 }
@@ -26,6 +27,7 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
   createEffect(() => {
     const shell = props.shell
     const directory = props.directory
+    const workspaceID = props.workspaceID
     if (!props.open || !shell || !directory) return
 
     let active = true
@@ -41,7 +43,7 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     }
     const poll = async () => {
       try {
-        const result = await shellStore.output(props.instanceId, directory, shell.id, cursor)
+        const result = await shellStore.output(props.instanceId, directory, shell.id, cursor, workspaceID)
         if (!active) return
         cursor = result.cursor
         if (result.output) {

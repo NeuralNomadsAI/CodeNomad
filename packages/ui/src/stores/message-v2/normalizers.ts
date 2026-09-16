@@ -88,6 +88,7 @@ function structuredError(error: { type: string; message: string; status?: number
 }
 
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
+  if (source.type === "idle") return source.outcome === "failed" || source.outcome === "interrupted" ? "error" : "complete"
   if (source.type === "assistant") {
     if (source.error) return "error"
     return source.time.completed ? "complete" : "streaming"
@@ -116,7 +117,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
     id: source.id,
     sessionID: sessionId,
     role,
-    time: source.time,
+    time: source.type === "idle" ? { ...source.time, completed: source.time.created } : source.time,
     ...(assistant
       ? {
           mode: assistant.agent,
@@ -181,6 +182,10 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         messageID: source.id,
       } as ClientPart)),
     ]
+  } else if (source.type === "idle") {
+    // Native execution control record, not assistant-authored transcript text.
+    // Keep its ID/time for cursor/anchor authority without rendering "idle".
+    parts = []
   } else if (source.type === "compaction") {
     parts = [{
       id: source.id,

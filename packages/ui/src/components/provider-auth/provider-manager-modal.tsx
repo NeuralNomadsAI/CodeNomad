@@ -18,7 +18,7 @@ import {
 } from "../../lib/provider-auth"
 import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
-import { toRequestLocation } from "../../stores/request-locations"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { getRootClient } from "../../stores/opencode-client"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
@@ -101,7 +101,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   const requestLocation = (location: LocationRef) => toRequestLocation(location)
   const isActiveCatalogLocation = (location: LocationRef) => {
     const active = currentCatalogLocation()
-    return active.directory === location.directory
+    return locationAuthorityKey(active) === locationAuthorityKey(location)
   }
 
   const providerNameById = createMemo(() => {
@@ -283,7 +283,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       return
     }
     const catalogLocation = currentCatalogLocation()
-    const catalogLocationKey = catalogLocation.directory
+    const catalogLocationKey = locationAuthorityKey(catalogLocation)
     if (loadedInstanceId === instanceId && loadedClient === authClient && loadedCatalogLocationKey === catalogLocationKey) return
     resetProviderData()
     loadedInstanceId = instanceId
@@ -312,9 +312,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     try {
       const location = { location: requestLocation(catalogLocation) }
       const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
-        authClient.provider.list(location),
-        authClient.model.list(location),
-        authClient.integration.list(location),
+        authClient.provider.list(location, requestLocationOptions(catalogLocation)),
+        authClient.model.list(location, requestLocationOptions(catalogLocation)),
+        authClient.integration.list(location, requestLocationOptions(catalogLocation)),
       ])
       if (!isCurrentLoad()) return
       const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data).map((provider) => ({
@@ -417,7 +417,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       key: apiKey().trim(),
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
       location: requestLocation(catalogLocation),
-    })
+    }, requestLocationOptions(catalogLocation))
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
     if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -431,7 +431,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       methodID: method.id,
       answer: getProviderAuthAnswer(selectedForm(), formAnswer()),
       location: requestLocation(catalogLocation),
-    })
+    }, requestLocationOptions(catalogLocation))
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const data = response.data
     if (!data) throw new Error(t("settings.providers.errors.noAuthorization"))
@@ -455,7 +455,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     while (true) {
       const result = await authClient.integration.oauth.status(
         { integrationID: providerId, attemptID: data.attemptID, location: requestLocation(catalogLocation) },
-        { signal: callbackAbortController.signal },
+        { ...requestLocationOptions(catalogLocation), signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
       if (result.data.status === "failed") throw new Error(result.data.message)
@@ -475,7 +475,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       integrationID: providerId,
       methodID: method.id,
       location: requestLocation(catalogLocation),
-    })
+    }, requestLocationOptions(catalogLocation))
     if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const attemptID = response.data.attemptID
     setCommandAttemptId(attemptID)
@@ -485,7 +485,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     while (true) {
       const result = await authClient.integration.command.status(
         { integrationID: providerId, attemptID, location: requestLocation(catalogLocation) },
-        { signal: callbackAbortController.signal },
+        { ...requestLocationOptions(catalogLocation), signal: callbackAbortController.signal },
       )
       if (result.data.status === "complete") break
       if (result.data.status === "failed") throw new Error(result.data.message)
@@ -554,7 +554,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         attemptID,
         code: code().trim(),
         location: requestLocation(catalogLocation),
-      })
+      }, requestLocationOptions(catalogLocation))
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -585,7 +585,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       if (disconnectMode !== "credential-remove") return
       await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({
         credentialID,
-      })))
+      }, requestLocationOptions(catalogLocation, { includeDirectory: true }))))
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
       if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
@@ -608,14 +608,14 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
         integrationID: providerId,
         attemptID,
         location: requestLocation(catalogLocation),
-      }).catch(() => undefined)
+      }, requestLocationOptions(catalogLocation)).catch(() => undefined)
     }
     if (providerId && commandAttemptID && authClient && catalogLocation) {
       void authClient.integration.command.cancel({
         integrationID: providerId,
         attemptID: commandAttemptID,
         location: requestLocation(catalogLocation),
-      }).catch(() => undefined)
+      }, requestLocationOptions(catalogLocation)).catch(() => undefined)
     }
     disposePendingAuth()
     setStage("prompts")

@@ -26,6 +26,7 @@ describe("worktree routes", () => {
       const workspace = { id: "workspace", path: temp, status: "ready" } as WorkspaceDescriptor
       const nativeSession = { id: "unloaded", projectID: "project", location: { directory: target }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
       const client = {
+        location: { get: async ({ location }: { location: { directory: string } }) => location },
         project: {
           list: async () => [{ id: "project", canonical: temp, sandboxes: [target], time: { created: 1, updated: 1 } }],
         },

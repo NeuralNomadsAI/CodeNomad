@@ -29,7 +29,7 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { buildV2RequestLocations, type RequestLocation } from "./request-locations"
+import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
@@ -190,9 +190,9 @@ type RequestAuthorityLocation = RequestLocation | { directory: string }
 
 function requestLocationKey(location?: RequestAuthorityLocation | string): string | undefined {
   if (!location) return undefined
-  if (typeof location === "string") return normalizeWorkspacePath(location)
+  if (typeof location === "string") return locationAuthorityKey({ directory: normalizeWorkspacePath(location) })
   if (!location.directory) return undefined
-  return normalizeWorkspacePath(location.directory)
+  return locationAuthorityKey({ ...location, directory: normalizeWorkspacePath(location.directory) })
 }
 
 function rememberRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
@@ -660,7 +660,7 @@ async function syncPendingPermissions(
     const scannedLocations = new Set<string>()
     const results = await allSettledBounded(locations, isCurrent, async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.permission.request.list({ location }, { signal })
+        instance.client!.permission.request.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
       ))
       return { location, response }
     })
@@ -674,6 +674,7 @@ async function syncPendingPermissions(
       log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
       const authority = {
         directory: response.location.directory || location.directory,
+        workspaceID: locationWorkspaceID(response.location),
       }
       const key = requestLocationKey(authority)
       if (!key) continue
@@ -734,7 +735,7 @@ async function syncPendingForms(
     const scannedLocations = new Set<string>()
     const results = await allSettledBounded(locations, isCurrent, async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.form.list({ location }, { signal })
+        instance.client!.form.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
       ))
       return { location, response }
     })
@@ -747,6 +748,7 @@ async function syncPendingForms(
       const { location, response } = result.value
       const authority = {
         directory: response.location.directory || location.directory,
+        workspaceID: locationWorkspaceID(response.location),
       }
       const key = requestLocationKey(authority)
       if (!key) continue

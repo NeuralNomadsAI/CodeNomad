@@ -6,6 +6,9 @@
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
+- Proxy authorization and forwarding share one acquired connection. A stale generation must be rejected at actual HTTP dispatch, including after asynchronous body preparation; late streams cannot invalidate a replacement connection.
+- Adapt legacy HTTP inbox timestamps before the native Solid reducer. Native `session.inbox.enqueued` is a different shape: its timestamp belongs to the event metadata and must not be treated as an HTTP inbox record.
+- Compatibility never retries a write using another contract after a 400/404/transport failure. Unknown version numbers are recognized through authenticated OpenAPI structure rather than an exact runtime-version gate.
 
 ## Location Is Authority
 

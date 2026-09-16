@@ -2,10 +2,13 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { evacuateWorktreeSessions, WorktreeDeletionFence } from "./worktree-session-evacuation"
+import { readLocationContext } from "../opencode/compatibility/location"
 
 function session(id: string, directory: string, parentID?: string): SessionInfo {
   return { id, parentID, projectID: "project", location: { directory }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
 }
+
+const location = { get: async ({ location }: { location: { directory: string } }) => location }
 
 describe("evacuateWorktreeSessions", () => {
   it("serializes deletion attempts for the same worktree", async () => {
@@ -67,6 +70,7 @@ describe("evacuateWorktreeSessions", () => {
     const state = new Map([root, child, grandchild].map((item) => [item.id, item]))
     let removed = false
     const client = {
+      location,
       project: {
         list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }],
       },
@@ -104,6 +108,7 @@ describe("evacuateWorktreeSessions", () => {
     let current = aliased
     let removed = false
     const client = {
+      location,
       project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
       session: {
         list: async () => ({ data: [current], cursor: {} }),
@@ -129,6 +134,7 @@ describe("evacuateWorktreeSessions", () => {
     let current = session("nested", "/repo/worktree/nested")
     let removed = false
     const client = {
+      location,
       project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
       session: {
         list: async () => ({ data: [current], cursor: {} }),
@@ -154,6 +160,7 @@ describe("evacuateWorktreeSessions", () => {
     const current = session("session", "/repo/worktree")
     const moves: string[] = []
     const client = {
+      location,
       project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
       session: {
         list: async () => ({ data: [current], cursor: {} }),
@@ -179,6 +186,7 @@ describe("evacuateWorktreeSessions", () => {
     let listCalls = 0
     let removed = false
     const client = {
+      location,
       project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: ["/repo/worktree"], time: { created: 1, updated: 1 } }] },
       session: {
         list: async () => {
@@ -197,5 +205,55 @@ describe("evacuateWorktreeSessions", () => {
 
     assert.equal(removed, false)
     assert.equal(current.location.directory, "/repo/worktree")
+  })
+
+  it("uses the resolved destination and restores exact legacy identity on rollback", async () => {
+    const original = { directory: "/repo/worktree", workspaceID: "native-original" }
+    const destination = { directory: "/repo", workspaceID: "native-root" }
+    const current = { ...session("session", original.directory), location: original }
+    const moves: unknown[] = []
+    const client = {
+      location: { get: async () => destination },
+      project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: [original.directory] }] },
+      session: {
+        list: async () => ({ data: [current], cursor: {} }),
+        active: async () => ({}),
+        move: async ({ directory }: { directory: string }, options?: { headers: Record<string, string> }) => {
+          const resolved = readLocationContext(options?.headers["x-codenomad-location"], "legacy")!
+          assert.equal(resolved.directory, directory)
+          moves.push(resolved)
+          current.location = { directory: resolved.directory, workspaceID: resolved.workspaceID! }
+        },
+      },
+    } as unknown as OpenCodeClient
+    await assert.rejects(evacuateWorktreeSessions({
+      client, projectDirectory: "/repo", targetDirectory: original.directory, rootDirectory: destination.directory,
+      remove: async () => { throw new Error("Git removal failed") },
+    }), /Git removal failed/)
+    assert.deepEqual(moves, [destination, original])
+    assert.deepEqual(current.location, original)
+  })
+
+  it("does not report rollback success when only the directory was restored", async () => {
+    const original = { directory: "/repo/worktree", workspaceID: "native-original" }
+    const current = { ...session("session", original.directory), location: original }
+    let moves = 0
+    const client = {
+      location,
+      project: { list: async () => [{ id: "project", canonical: "/repo", sandboxes: [original.directory] }] },
+      session: {
+        list: async () => ({ data: [current], cursor: {} }),
+        active: async () => ({}),
+        move: async ({ directory }: { directory: string }) => {
+          moves++
+          current.location = { directory, workspaceID: undefined! }
+        },
+      },
+    } as unknown as OpenCodeClient
+    await assert.rejects(evacuateWorktreeSessions({
+      client, projectDirectory: "/repo", targetDirectory: original.directory, rootDirectory: "/repo",
+      remove: async () => { throw new Error("Git removal failed") },
+    }), /could not be rolled back/)
+    assert.equal(moves, 2)
   })
 })

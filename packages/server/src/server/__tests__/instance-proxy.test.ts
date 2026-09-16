@@ -7,6 +7,7 @@ import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -118,6 +119,12 @@ async function harness(
   const manager: InstanceProxyWorkspaceManager = {
     get: () => ({ id: "workspace", path: workspacePath }) as never,
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
+    getSharedServiceConnection: async () => ({
+      endpoint: { url: `http://127.0.0.1:${address.port}` }, client,
+      fetch: createRuntimeFetch({ url: `http://127.0.0.1:${address.port}` }),
+      assertCurrent: () => {}, invalidate: () => { invalidations += 1 },
+      profile: async () => "modern",
+    }),
     invalidateSharedServiceConnection: () => { invalidations += 1 },
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getServiceDirectory: () => serviceDirectory,

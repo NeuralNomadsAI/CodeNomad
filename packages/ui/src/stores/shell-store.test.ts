@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { ShellInfo } from "@opencode/client"
-import { appendShellOutput, createShellStore, type ShellApi } from "./shell-store.ts"
+import { appendShellOutput, createShellApi, createShellStore, type ShellApi } from "./shell-store.ts"
+import { OpenCode } from "@opencode/client"
 
 const shell = (id: string, cwd = "/repo"): ShellInfo => ({
   id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 },
@@ -69,5 +70,44 @@ describe("shell store", () => {
     assert.equal(await store.remove("instance", "/repo", "shell"), false)
     assert.equal(store.getState("instance", "/repo").failed, false)
     assert.equal(store.getState("instance", "/repo").items.length, 1)
+  })
+
+  it("keeps same-directory native Shell states and refresh identities separate", async () => {
+    const lists: Array<string | undefined> = []
+    const removals: Array<string | undefined> = []
+    const store = createShellStore(() => ({
+      list: async (_directory, workspaceID) => { lists.push(workspaceID); return [shell(workspaceID!)] },
+      remove: async (_directory, _id, workspaceID) => { removals.push(workspaceID) },
+      output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }))
+    await store.load("instance", "/repo", "one")
+    await store.load("instance", "/repo", "two")
+    assert.equal(store.getState("instance", "/repo", "one").items[0].id, "one")
+    assert.equal(store.getState("instance", "/repo", "two").items[0].id, "two")
+    lists.length = 0
+    await store.refreshForEvent("instance", { type: "shell.created", location: { directory: "/repo", workspaceID: "two" } })
+    assert.deepEqual(lists, ["two"])
+    await store.remove("instance", "/repo", "one", "one")
+    assert.deepEqual(removals, ["one"])
+  })
+
+  it("generated Shell requests preserve workspace context and native output cursors", async () => {
+    const operations: string[] = []
+    const api = createShellApi(OpenCode.make({ baseUrl: "http://localhost", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      assert.deepEqual(JSON.parse(decodeURIComponent(request.headers.get("x-codenomad-location")!)), { directory: "/repo", workspaceID: "one" })
+      const url = new URL(request.url)
+      operations.push(request.method + url.pathname)
+      assert.equal(url.searchParams.get("location[directory]"), "/repo")
+      if (url.pathname.endsWith("/output")) {
+        assert.equal(url.searchParams.get("cursor"), "17")
+        return Response.json({ data: { output: "fixture", cursor: 29, size: 29, truncated: false } })
+      }
+      return request.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ data: [shell("one")] })
+    } }))
+    await api.list("/repo", "one")
+    assert.equal((await api.output("/repo", "one", 17, "one")).cursor, 29)
+    await api.remove("/repo", "one", "one")
+    assert.deepEqual(operations, ["GET/api/shell", "GET/api/shell/one/output", "DELETE/api/shell/one"])
   })
 })

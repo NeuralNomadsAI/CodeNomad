@@ -7,6 +7,10 @@ import {
 } from "@opencode/client"
 import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
+import { createRuntimeTransport } from "../opencode/compatibility/transport"
+import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
+import { normalizeRuntimeEvent } from "../opencode/compatibility/events"
+import { locationRequestOptions } from "../opencode/compatibility/location"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -22,9 +26,13 @@ export type OpenCodeSharedServiceOptions = {
   lifecycle: OpenCodeServiceLifecycle
 }
 
-interface ServiceConnection {
+export interface ServiceConnection {
   endpoint: Endpoint
   client: OpenCodeClient
+  fetch: typeof fetch
+  assertCurrent: () => void
+  invalidate: () => void
+  profile: (signal?: AbortSignal) => Promise<ContractProfile>
 }
 
 export interface OpenCodeSharedServiceDependencies {
@@ -43,6 +51,7 @@ export class OpenCodeSharedService {
   private readonly now: () => number
   private connectionValidatedAt?: number
   private generation = 0
+  private readonly negotiationControllers = new WeakMap<ServiceConnection, AbortController>()
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     headers: Service.headers,
@@ -59,6 +68,14 @@ export class OpenCodeSharedService {
     return this.connect(options, requestOptions?.deadlineAt).then(({ client }) => client)
   }
 
+  async fetch(): Promise<typeof fetch> {
+    return (await this.connect()).fetch
+  }
+
+  acquire(): Promise<ServiceConnection> {
+    return this.connect()
+  }
+
   async headers(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<ReturnType<typeof Service.headers>> {
     return this.dependencies.headers(await this.endpoint(options, requestOptions))
   }
@@ -68,10 +85,14 @@ export class OpenCodeSharedService {
     requestOptions?: RequestOptions,
     serviceOptions?: OpenCodeSharedServiceOptions,
   ): Promise<LocationGetOutput> {
-    if (location.workspaceID !== undefined) throw new Error("OpenCode V2 locations are identified by directory")
-    const result = await this.withClient(serviceOptions, (client) => client.location.get({
-      location: { directory: location.directory },
-    }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
+    const result = await this.withClient(serviceOptions, (client, connection) => {
+      if (location.workspaceID !== undefined && contractProfile(runtimeIdentity(connection.endpoint)) === "modern") {
+        throw new Error("OpenCode V2 locations are identified by directory")
+      }
+      return client.location.get({ location: { directory: location.directory } }, {
+        ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
+      })
+    }, requestOptions)
     if (
       !result
       || typeof result.directory !== "string"
@@ -93,7 +114,7 @@ export class OpenCodeSharedService {
       location: {
         directory: location.directory,
       },
-    }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
+    }, { ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}) }), requestOptions)
   }
 
   async subscribe(requestOptions?: RequestOptions, serviceOptions?: OpenCodeSharedServiceOptions): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -103,7 +124,7 @@ export class OpenCodeSharedService {
       const nativeRequestOptions = requestOptions?.signal ? { signal: requestOptions.signal } : undefined
       return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection)
     } catch (error) {
-      if (connection) this.invalidateConnection(connection)
+      if (connection && !requestOptions?.signal?.aborted) this.invalidateConnection(connection)
       throw error
     }
   }
@@ -137,7 +158,9 @@ export class OpenCodeSharedService {
     ) {
       return Promise.resolve(current)
     }
+    const generation = this.generation
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
+      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
       if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
         this.connectionValidatedAt = this.now()
         return current
@@ -145,6 +168,7 @@ export class OpenCodeSharedService {
       this.invalidateConnection(current)
       return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
     }, () => {
+      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
       this.invalidateConnection(current)
       return this.startConnection(deadlineAt)
     })
@@ -178,14 +202,41 @@ export class OpenCodeSharedService {
   private createConnection(endpoint: Endpoint, generation: number): ServiceConnection {
     const wildcard = new URL(endpoint.url).hostname === "0.0.0.0"
     const url = assertLoopbackServiceUrl(endpoint.url)
-    if (wildcard) endpoint = { ...endpoint, url: url.toString() }
-    const connection = {
+    if (wildcard) {
+      const identity = runtimeIdentity(endpoint)
+      endpoint = { ...endpoint, url: url.toString() }
+      if (identity) rememberRuntime(endpoint, identity)
+    }
+    const negotiation = new AbortController()
+    const transport = createRuntimeTransport(endpoint, (input, init) => {
+      // Preparation can await a request body. Fence the actual dispatch too.
+      connection.assertCurrent()
+      return globalThis.fetch(input, init)
+    }, negotiation.signal)
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      connection.assertCurrent()
+      return transport.fetch(input, init)
+    }
+    const connection: ServiceConnection = {
       endpoint,
+      fetch,
+      profile: async (signal?: AbortSignal) => {
+        connection.assertCurrent()
+        const profile = await transport.profile(signal)
+        connection.assertCurrent()
+        return profile
+      },
+      assertCurrent: () => {
+        if (this.connected !== connection) throw new Error("OpenCode connection changed; refresh before retrying")
+      },
+      invalidate: () => this.invalidateConnection(connection),
       client: this.dependencies.makeClient({
         baseUrl: endpoint.url,
         headers: this.dependencies.headers(endpoint),
+        fetch,
       }),
     }
+    this.negotiationControllers.set(connection, negotiation)
     if (generation === this.generation) {
       this.hasValidatedConnection = true
       this.connected = connection
@@ -197,32 +248,36 @@ export class OpenCodeSharedService {
 
   private async withClient<T>(
     options: OpenCodeSharedServiceOptions | undefined,
-    run: (client: OpenCodeClient) => Promise<T>,
+    run: (client: OpenCodeClient, connection: ServiceConnection) => Promise<T>,
     requestOptions?: RequestOptions,
   ): Promise<T> {
     let connection: ServiceConnection | undefined
     try {
       connection = await this.connect(options, requestOptions?.deadlineAt)
-      return await run(connection.client)
+      return await run(connection.client, connection)
     } catch (error) {
-      if (connection) this.invalidateConnection(connection)
+      if (connection && !requestOptions?.signal?.aborted) this.invalidateConnection(connection)
       throw error
     }
   }
 
   private async *invalidateAfterStream(events: AsyncIterable<OpenCodeEvent>, connection: ServiceConnection) {
     try {
-      yield* events
+      for await (const event of events) {
+        connection.assertCurrent()
+        yield normalizeRuntimeEvent(event)
+      }
     } finally {
       this.invalidateConnection(connection)
     }
   }
 
   private invalidateConnection(connection: ServiceConnection): void {
-    if (this.connected === connection) this.clear()
+    if (this.connected === connection) { this.generation += 1; this.clear() }
   }
 
   private clear(): void {
+    if (this.connected) this.negotiationControllers.get(this.connected)?.abort()
     this.connection = undefined
     this.connected = undefined
     this.healthCheck = undefined
@@ -231,6 +286,8 @@ export class OpenCodeSharedService {
 
   private sameEndpoint(left: Endpoint, right: Endpoint): boolean {
     return left.url === right.url
+      && runtimeIdentity(left)?.version === runtimeIdentity(right)?.version
+      && runtimeIdentity(left)?.pid === runtimeIdentity(right)?.pid
       && left.auth?.username === right.auth?.username
       && left.auth?.password === right.auth?.password
   }

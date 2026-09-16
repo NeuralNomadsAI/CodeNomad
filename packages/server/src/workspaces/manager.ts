@@ -31,6 +31,7 @@ import {
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
@@ -38,6 +39,8 @@ const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
 
 interface SharedService {
+  acquire?: () => Promise<import("./opencode-service").ServiceConnection>
+  fetch?: () => Promise<typeof fetch>
   endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
   client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
   headers: (options?: OpenCodeSharedServiceOptions, requestOptions?: { deadlineAt?: number }) => Promise<{ authorization: string } | undefined>
@@ -209,6 +212,15 @@ export class WorkspaceManager {
     return this.sharedService.client()
   }
 
+  getSharedServiceFetch(): Promise<typeof fetch> {
+    return this.sharedService.fetch ? this.sharedService.fetch() : Promise.resolve(globalThis.fetch)
+  }
+
+  async getSharedServiceConnection(id: string): Promise<import("./opencode-service").ServiceConnection | undefined> {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.acquire?.()
+  }
+
   invalidateSharedServiceConnection(): void {
     this.sharedService.invalidate?.()
   }
@@ -223,11 +235,24 @@ export class WorkspaceManager {
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
   }
 
-  async ownsLocation(id: string, location: LocationRef): Promise<boolean> {
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): Promise<boolean> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const requested = await this.resolveOwnedWorktree(record, location.directory)
-    return Boolean(requested && location.workspaceID === undefined)
+    const directory = await this.getServiceDirectoryForPath(id, location.directory)
+    if (!directory) return false
+    if (location.workspaceID === undefined) return true
+    // The directory fence alone cannot authorize a legacy native workspace.
+    // Resolve the pair with the selected runtime and require exact identity.
+    // Modern transports reject the context before making a native request.
+    try {
+      const requested = readLocationRef({ ...location, directory })
+      const resolved = readLocationRef(client
+        ? await client.location.get({ location: { directory } }, locationRequestOptions(requested))
+        : await this.sharedService.validateLocation(requested, undefined, record[WORKSPACE_STATE].serviceOptions))
+      return sameLocation(requested, resolved)
+    } catch {
+      return false
+    }
   }
 
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
@@ -532,13 +557,11 @@ export class WorkspaceManager {
           ),
         ])
         if (state.abortController.signal.aborted && locationResult.status === "fulfilled") {
-          cancelledLocation = {
-            directory: locationResult.value.directory,
-          }
+          cancelledLocation = readLocationRef(locationResult.value)
         }
         this.throwIfCancelled(record)
         if (locationResult.status === "fulfilled") {
-          record.location = { directory: locationResult.value.directory }
+          record.location = readLocationRef(locationResult.value)
           state.locationOwned = true
         }
         if (headersResult.status === "rejected") throw headersResult.reason
@@ -795,7 +818,7 @@ export class WorkspaceManager {
     if (leftRecord[WORKSPACE_STATE].serviceOptions?.identity !== rightRecord[WORKSPACE_STATE].serviceOptions?.identity) {
       return false
     }
-    return left.directory === right.directory
+    return sameLocation(left, right)
   }
 
   private async withLocationCreation<T>(operation: () => Promise<T>): Promise<T> {

@@ -4,6 +4,8 @@
 
 CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/status`, falling back only on HTTP 404 to earlier V2 `/api/health` with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. Discovery does not prove compatibility for other APIs. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
+Cross-runtime adaptation lives in `packages/server/src/opencode/compatibility/`. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Known published contracts select their serializer directly; unknown versions require authenticated bounded OpenAPI recognition before calls. Never add operation-specific retry fallbacks in UI stores or Yolo. See `dev-docs/OPENCODE_V2_COMPATIBILITY.md` for the evidence matrix and maintained issue register.
+
 - Promise client: `import { OpenCode } from "@opencode/client"`
 - Service authentication headers: `import { Service } from "@opencode/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
@@ -26,6 +28,8 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
 
 Native Forms own pending interruption state. Global Forms use `sessionID: "global"` and `x-opencode-directory: encodeURIComponent(directory)`; ordinary session Forms derive location from the session. Question tool output rendering is independent of pending Forms.
+
+Earlier V2 location identity must survive modern generated-client field selection. Use `locationRequestOptions` (server) / `requestLocationOptions` (UI) for the explicit private context channel; the proxy authorizes the complete pair, translates its directory, and the selected transport serializes the appropriate legacy slots. Modern public APIs still reject workspace selectors. Session move/rollback uses `moveSessionToLocation`, not a cast adding fields to the modern method input.
 
 Stable mutations use `permission.reply({ decision })`, `session.command({ name })`, `session.interrupt({ resume })`, `session.fork({ before? })`, `session.inbox.update({ delivery })` and `session.message.get(...)`. Credential removal is global and takes only `credentialID`. There is no plugin activation-wait endpoint; catalog reads and `plugin.updated` supply native state.
 

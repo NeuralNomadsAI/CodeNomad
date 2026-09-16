@@ -10,6 +10,8 @@ Server and UI pin the official `@opencode/client@2.0.4`; the bundled pruning plu
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
+The current cross-version issue register, published API-change timeline and connection-scoped compatibility architecture are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). The server integration module adapts earlier V2 requests/responses for both the guarded UI proxy and direct server callers; native regression runs cross the pinned client with beta-19271, 2.0.3, 2.0.4 and 2.0.5. Discovery success alone does not certify an older runtime's conversation, event or pruning contract.
+
 ## Native V2 Adoption
 
 ### Stable 2.0.4 contract (PR #695)

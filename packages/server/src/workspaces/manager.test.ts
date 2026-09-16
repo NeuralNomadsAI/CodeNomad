@@ -32,6 +32,7 @@ class ControlledSharedService {
   headerFailures = 0
   validationCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions }> = []
   debugLocations: LocationRef[] = []
+  resolvedLocation?: LocationRef
   shutdownCalls = 0
   shutdownGate?: ReturnType<typeof deferred<void>>
   shutdownTimeouts: number[] = []
@@ -76,6 +77,7 @@ class ControlledSharedService {
     const directory = location.directory
     return {
       directory,
+      ...this.resolvedLocation,
       project: { id: "project-1", directory, canonical: directory },
     }
   }
@@ -154,6 +156,48 @@ describe("workspace manager shared service lifecycle", () => {
       canonicalWorktreeIdentity("\\\\wsl$\\Ubuntu\\repo\\Foo", "win32"),
       canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\foo", "win32"),
     )
+  })
+
+  it("retains and validates native identity rather than authorizing an arbitrary owned-directory selector", async () => {
+    const service = new ControlledSharedService()
+    service.resolvedLocation = { directory: process.cwd(), workspaceID: "native-one" }
+    const { manager } = createHarness(service)
+    const { workspace } = await manager.create(process.cwd())
+    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation), true)
+    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-two" }), false)
+    service.resolvedLocation = { directory: path.join(process.cwd(), "foreign"), workspaceID: "native-one" }
+    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-one" }), false)
+    await manager.delete(workspace.id)
+    assert.deepEqual(service.evictionCalls[0].location, { directory: process.cwd(), workspaceID: "native-one" })
+  })
+
+  it("does not share lifecycle ownership between distinct legacy identities at one directory", async () => {
+    const service = new ControlledSharedService()
+    const { manager } = createHarness(service)
+    service.resolvedLocation = { directory: process.cwd(), workspaceID: "one" }
+    const first = await manager.create(process.cwd())
+    service.resolvedLocation = { directory: process.cwd(), workspaceID: "two" }
+    const second = await manager.create(process.cwd())
+    await manager.delete(first.workspace.id)
+    assert.deepEqual(service.evictionCalls.map(call => call.location.workspaceID), ["one"])
+    assert.ok(manager.get(second.workspace.id))
+    await manager.delete(second.workspace.id)
+    assert.deepEqual(service.evictionCalls.map(call => call.location.workspaceID), ["one", "two"])
+  })
+
+  it("uses the caller's pinned client for legacy location authorization", async () => {
+    const service = new ControlledSharedService()
+    const { manager } = createHarness(service)
+    const { workspace } = await manager.create(process.cwd())
+    const location = { directory: process.cwd(), workspaceID: "pinned-native" }
+    const calls = service.validationCalls.length
+    const client = { location: { get: async (_input: unknown, options: { headers: Record<string, string> }) => {
+      assert.deepEqual(JSON.parse(decodeURIComponent(options.headers["x-codenomad-location"])), location)
+      return location
+    } } } as unknown as OpenCodeClient
+    assert.equal(await manager.ownsLocation(workspace.id, location, client), true)
+    assert.equal(service.validationCalls.length, calls)
+    await manager.delete(workspace.id)
   })
 
   it("pins a bounded host CLI lifecycle with binary, platform, and startup environment identity", async () => {

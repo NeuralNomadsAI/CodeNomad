@@ -5,6 +5,7 @@ import { previewContent } from "./planner"
 import { readPruningPreview } from "./preview-store"
 import { pruneBoundMessage } from "./service"
 import { pruningDatabasePath } from "./database-path"
+import { readLocationRef, sameLocation } from "../compatibility/location"
 
 export const SessionPruningRpc = Rpc.define(pruningRpcDefinition)
 
@@ -18,10 +19,13 @@ export default Plugin.define({
         const session = await ctx.session.get({ sessionID: target.sessionID })
         // Location membership must be checked again inside the plugin: clients
         // other than CodeNomad may invoke this RPC directly.
-        if (session.location.directory !== ctx.location.directory) return { status: "blocked", reason: "not_deletable" } as const
+        const location = readLocationRef(session.location)
+        if (!sameLocation(location, readLocationRef(ctx.location)) || session.projectID !== ctx.location.project.id) {
+          return { status: "blocked", reason: "not_deletable" } as const
+        }
         // Plugin Context does not expose session.message in beta-19398. Read
         // the explicit DB in query-only mode, including pre-compaction history.
-        const data = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, session.location.directory)
+        const data = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, location, session.projectID)
         const preview = data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const
         return preview.status === "preview"
           ? { ...preview, liveMutation: true }

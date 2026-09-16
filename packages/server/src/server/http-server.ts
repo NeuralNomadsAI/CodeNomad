@@ -43,6 +43,10 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
+import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
+import { contractProfile, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
+import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext } from "../opencode/compatibility/location"
+import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
@@ -409,6 +413,8 @@ export function createHttpServer(deps: HttpServerDeps) {
 export interface InstanceProxyWorkspaceManager {
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
+  getSharedServiceConnection?(id: string): ReturnType<WorkspaceManager["getSharedServiceConnection"]>
+  getSharedServiceFetch?(): Promise<typeof globalThis.fetch>
   invalidateSharedServiceConnection?(): void
   getInstanceAuthorizationHeader(id: string): string | undefined
   getServiceDirectory?(id: string): string | undefined
@@ -416,7 +422,7 @@ export interface InstanceProxyWorkspaceManager {
   getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
-  ownsLocation(id: string, location: LocationRef): ReturnType<WorkspaceManager["ownsLocation"]>
+  ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): ReturnType<WorkspaceManager["ownsLocation"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -646,11 +652,18 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  const endpoint = await workspaceManager.getSharedServiceEndpoint(workspaceId)
+  const connection = await workspaceManager.getSharedServiceConnection?.(workspaceId)
+  const endpoint = connection?.endpoint ?? await workspaceManager.getSharedServiceEndpoint(workspaceId)
+  const clientForRequest = () => connection ? Promise.resolve(connection.client) : workspaceManager.getSharedServiceClient()
   if (!endpoint) {
     reply.code(502).send({ error: "OpenCode service is not ready" })
     return
   }
+
+  const profile = connection ? await connection.profile() : contractProfile(runtimeIdentity(endpoint))
+  let locationContext: LocationRef | undefined
+  try { locationContext = readLocationContext(request.headers[LOCATION_CONTEXT_HEADER], profile) }
+  catch { return reply.code(400).send({ error: "Invalid location context" }) }
 
   const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
   if (!targetUrl) {
@@ -663,12 +676,12 @@ async function proxyWorkspaceRequest(args: {
       reply.code(405).send({ error: "Method not allowed" })
       return
     }
-    const client = await workspaceManager.getSharedServiceClient()
+    const client = await clientForRequest()
     const active = await client.session.active()
     const entries = await Promise.all(Object.entries(active).map(async ([sessionId, status]) => {
       try {
         const session = await client.session.get({ sessionID: sessionId })
-        return await workspaceManager.ownsDirectory(workspaceId, session.location.directory) ? [sessionId, status] as const : null
+        return await workspaceManager.ownsLocation(workspaceId, session.location, client) ? [sessionId, status] as const : null
       } catch {
         return null
       }
@@ -677,7 +690,7 @@ async function proxyWorkspaceRequest(args: {
     return
   }
   if (pathname.replace(/\/+$/, "") === "/api/project") {
-    const projects = await (await workspaceManager.getSharedServiceClient()).project.list()
+    const projects = await (await clientForRequest()).project.list()
     const ownedProjects = await Promise.all(projects.map(async (project) => {
       if (!await workspaceManager.ownsDirectory(workspaceId, project.canonical)) return null
       const sandboxes = (await Promise.all(project.sandboxes.map(async (directory) => (
@@ -691,7 +704,7 @@ async function proxyWorkspaceRequest(args: {
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
     && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
-  const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
+  const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId, profile, connection?.client)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
     return
@@ -717,15 +730,24 @@ async function proxyWorkspaceRequest(args: {
         return
       }
     }
-    if (directory !== undefined) globalFormLocation = { directory }
+    if (locationContext && locationContext.directory !== (directory ?? serviceDirectory)) {
+      return reply.code(400).send({ error: "Conflicting Form location" })
+    }
+    if (directory !== undefined) globalFormLocation = { ...locationContext, directory }
   }
   const imported = prepareSessionImport(
     pathname,
     request.method,
     stripLocationSelectors(targetUrl, request.body, workspace.path, serviceDirectory),
     serviceDirectory,
+    profile,
   )
-  const requestLocations = readRequestDirectories(targetUrl, imported.body, workspace.path)
+  const requestLocations = readRequestLocations(targetUrl, imported.body, workspace.path, profile)
+  const explicitLocations = [...requestLocations.locations]
+  if (locationContext) {
+    requestLocations.directories.push(locationContext.directory)
+    requestLocations.locations.push(locationContext)
+  }
   if (globalFormLocation) {
     requestLocations.directories.push(globalFormLocation.directory)
     requestLocations.locations.push(globalFormLocation)
@@ -737,7 +759,7 @@ async function proxyWorkspaceRequest(args: {
   const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
   if (requestLocations.invalid
     || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))
-    || !(await allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations))) {
+    || !(await allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations, connection?.client))) {
     reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
     return
   }
@@ -751,6 +773,11 @@ async function proxyWorkspaceRequest(args: {
       return
     }
     translatedDirectories.set(directory, translated)
+  }
+  if (locationContext && explicitLocations.some(location =>
+    translatedDirectories.get(location.directory) !== translatedDirectories.get(locationContext!.directory)
+      || (location.workspaceID !== undefined && location.workspaceID !== locationContext!.workspaceID))) {
+    return reply.code(400).send({ error: "Conflicting location context" })
   }
   const fileListPath = readFileListPath(targetUrl, request.method, requestLocations.directories[0] ?? workspace.path)
   if (fileListPath.invalid) {
@@ -801,9 +828,13 @@ async function proxyWorkspaceRequest(args: {
   const promptBody = replacePromptFileUris(serviceBody, translatedPromptPaths)
 
   const requestedDirectory = requestLocations.directories[0]
-  const runtimeLocation = { directory: requestedDirectory ? translatedDirectories.get(requestedDirectory) ?? serviceDirectory : serviceDirectory }
+  const runtimeLocation = {
+    directory: requestedDirectory ? translatedDirectories.get(requestedDirectory) ?? serviceDirectory : serviceDirectory,
+    workspaceID: locationContext?.workspaceID ?? explicitLocations.find(location => location.directory === requestedDirectory)?.workspaceID,
+  }
+  const runtimeLocationOptions = locationRequestOptions(runtimeLocation)
   if (pathname.replace(/\/+$/, "") === "/api/pty" && request.method === "GET") {
-    const result = await (await workspaceManager.getSharedServiceClient()).pty.list({ location: runtimeLocation })
+    const result = await (await clientForRequest()).pty.list({ location: { directory: runtimeLocation.directory } }, runtimeLocationOptions)
     const ownership = await Promise.all(result.data.map((pty) => workspaceManager.ownsDirectory(workspaceId, pty.cwd)))
     reply.send({ ...result, data: result.data.filter((_, index) => ownership[index]) })
     return
@@ -812,7 +843,7 @@ async function proxyWorkspaceRequest(args: {
   const ptyId = getPtyRouteId(pathname)
   if (ptyId) {
     try {
-      const pty = await (await workspaceManager.getSharedServiceClient()).pty.get({ ptyID: ptyId, location: runtimeLocation })
+      const pty = await (await clientForRequest()).pty.get({ ptyID: ptyId, location: { directory: runtimeLocation.directory } }, runtimeLocationOptions)
       if (!(await workspaceManager.ownsDirectory(workspaceId, pty.data.cwd))) {
         reply.code(403).send({ error: "PTY does not belong to workspace" })
         return
@@ -827,7 +858,7 @@ async function proxyWorkspaceRequest(args: {
   }
 
   if (pathname.replace(/\/+$/, "") === "/api/shell" && request.method === "GET") {
-    const result = await (await workspaceManager.getSharedServiceClient()).shell.list({ location: runtimeLocation })
+    const result = await (await clientForRequest()).shell.list({ location: { directory: runtimeLocation.directory } }, runtimeLocationOptions)
     const ownership = await Promise.all(result.data.map((shell) => workspaceManager.ownsDirectory(workspaceId, shell.cwd)))
     reply.send({ ...result, data: result.data.filter((_, index) => ownership[index]) })
     return
@@ -836,7 +867,7 @@ async function proxyWorkspaceRequest(args: {
   const shellId = getShellRouteId(pathname)
   if (shellId) {
     try {
-      const shell = await (await workspaceManager.getSharedServiceClient()).shell.get({ id: shellId, location: runtimeLocation })
+      const shell = await (await clientForRequest()).shell.get({ id: shellId, location: { directory: runtimeLocation.directory } }, runtimeLocationOptions)
       if (!(await workspaceManager.ownsDirectory(workspaceId, shell.data.cwd))) {
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
@@ -854,7 +885,7 @@ async function proxyWorkspaceRequest(args: {
   if (sessionId && !isGlobalFormAction(pathname, request.method)) {
     let session
     try {
-      session = await (await workspaceManager.getSharedServiceClient()).session.get({ sessionID: sessionId })
+      session = await (await clientForRequest()).session.get({ sessionID: sessionId })
     } catch (error) {
       if (isInvalidRequestError(error)) {
         reply.code(400).send({ error: "Invalid session ID" })
@@ -866,7 +897,7 @@ async function proxyWorkspaceRequest(args: {
       }
       throw error
     }
-    if (!(await workspaceManager.ownsDirectory(workspaceId, session.location.directory))) {
+    if (!(await workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest()))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
@@ -890,6 +921,18 @@ async function proxyWorkspaceRequest(args: {
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
 
   try {
+    connection?.assertCurrent()
+    if (connection || workspaceManager.getSharedServiceFetch) {
+      const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
+      delete headers[LOCATION_CONTEXT_HEADER]
+      if (locationContext) Object.assign(headers, locationRequestOptions({ ...locationContext, directory: translatedDirectories.get(locationContext.directory)! }, { includeDirectory: true })?.headers)
+      if (globalFormLocation) headers["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
+      return await forwardRuntimeRequest({
+        request, reply, url: targetUrl.toString(), body, headers,
+        fetch: connection?.fetch ?? await workspaceManager.getSharedServiceFetch!(), release: releaseMutation,
+        invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
+      })
+    }
     return reply.from(targetUrl.toString(), {
       ...(body !== request.body ? { body } : {}),
       rewriteRequestHeaders: (_originalRequest, headers) => {
@@ -950,48 +993,6 @@ function appendIncomingQuery(targetUrl: URL, incomingUrl: string): URL {
   return targetUrl
 }
 
-function readRequestDirectories(
-  targetUrl: URL,
-  body: unknown,
-  defaultDirectory: string,
-): { directories: string[]; locations: LocationRef[]; invalid: boolean } {
-  const directories: string[] = []
-  const locations: LocationRef[] = []
-  let invalid = false
-  for (const key of ["location[directory]", "directory"]) {
-    for (const value of targetUrl.searchParams.getAll(key)) {
-      if (value.trim()) directories.push(value)
-      else invalid = true
-    }
-  }
-  const queryDirectories = targetUrl.searchParams.getAll("location[directory]")
-  if (queryDirectories.length > 1) invalid = true
-  if (targetUrl.searchParams.has("workspace") || targetUrl.searchParams.has("location[workspace]")
-    || targetUrl.searchParams.has("workspaceID") || targetUrl.searchParams.has("location[workspaceID]")) invalid = true
-
-  if (body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)) {
-    const input = body as Record<string, unknown>
-    if ("directory" in input) {
-      if (typeof input.directory === "string" && input.directory.trim()) directories.push(input.directory)
-      else invalid = true
-    }
-    if ("location" in input) {
-      const location = input.location
-      if (location && typeof location === "object" && !Array.isArray(location)) {
-        const source = location as Record<string, unknown>
-        const directory = source.directory
-        if (typeof directory === "string" && directory.trim()) directories.push(directory)
-        else invalid = true
-        if (source.workspace !== undefined || source.workspaceID !== undefined) invalid = true
-      } else if (location !== null && location !== undefined) {
-        invalid = true
-      }
-    }
-    if ("workspaceID" in input) invalid = true
-  }
-  return { directories, locations, invalid }
-}
-
 function readNativeCwd(
   targetUrl: URL,
   body: unknown,
@@ -1036,6 +1037,7 @@ function sanitizeInstanceProxyRequestHeaders(
     "authorization", "connection", "cookie", "forwarded", "host", "keep-alive", "proxy-authenticate",
     "proxy-authorization", "proxy-connection", "set-cookie", "te", "trailer", "transfer-encoding", "upgrade",
     "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+    LOCATION_CONTEXT_HEADER,
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())
@@ -1070,9 +1072,9 @@ async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, works
   return (await Promise.all(directories.map((directory) => manager.ownsDirectory(workspaceId, directory)))).every(Boolean)
 }
 
-async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[]) {
-  const unique = new Map(locations.map((location) => [location.directory, location]))
-  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location)))).every(Boolean)
+async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[], client?: OpenCodeClient) {
+  const unique = new Map(locations.map((location) => [JSON.stringify([location.directory, location.workspaceID]), location]))
+  return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location, client)))).every(Boolean)
 }
 
 async function allPathsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, paths: string[]) {
@@ -1120,17 +1122,19 @@ async function authorizeSessionList(
   method: string,
   manager: InstanceProxyWorkspaceManager,
   workspaceId: string,
+  profile: ContractProfile,
+  client?: OpenCodeClient,
 ): Promise<"allowed" | "invalid" | "foreign"> {
   if (method !== "GET" || targetUrl.pathname.replace(/\/+$/, "") !== "/api/session") return "allowed"
   const cursors = targetUrl.searchParams.getAll("cursor")
   if (cursors.length > 1) return "invalid"
   if (cursors.length === 1) {
-    const scope = decodeSessionListCursor(cursors[0])
+    const scope = decodeSessionListScope(cursors[0], profile)
     if (!scope) return "invalid"
-    for (const key of ["directory", "location[directory]", "project", "subpath"]) {
+    for (const key of ["directory", "location[directory]", "project", "subpath", ...(profile === "legacy" ? ["workspace", "location[workspace]"] : [])]) {
       targetUrl.searchParams.delete(key)
     }
-    return ownsSessionListScope(manager, workspaceId, scope)
+    return ownsSessionListScope(manager, workspaceId, scope, client)
   }
 
   const projects = targetUrl.searchParams.getAll("project")
@@ -1146,44 +1150,7 @@ async function authorizeSessionList(
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { project, subpath })
-}
-
-type SessionListScope = {
-  directory?: string
-  project?: string
-  subpath?: string
-}
-
-function decodeSessionListCursor(cursor: string): SessionListScope | null {
-  if (!cursor || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null
-    if (value.workspace !== undefined || value.workspaceID !== undefined) return null
-    const anchor = value.anchor as Record<string, unknown> | undefined
-    if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)
-      || typeof anchor.id !== "string" || !anchor.id
-      || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
-      || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
-    if (value.search !== undefined && typeof value.search !== "string") return null
-    if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
-    if (value.parentID !== undefined && value.parentID !== null && typeof value.parentID !== "string") return null
-    if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
-      return { directory: value.directory }
-    }
-    if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
-      if (value.subpath === undefined) {
-        return { project: value.project }
-      }
-      if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) {
-        return { project: value.project, subpath: value.subpath }
-      }
-    }
-    return null
-  } catch {
-    return null
-  }
+  return ownsSessionListScope(manager, workspaceId, { project, subpath, workspaceID: targetUrl.searchParams.get("workspace") ?? undefined }, client)
 }
 
 function isSafeRelativePath(value: string): boolean {
@@ -1194,20 +1161,21 @@ async function ownsSessionListScope(
   manager: InstanceProxyWorkspaceManager,
   workspaceId: string,
   scope: SessionListScope,
+  client?: OpenCodeClient,
 ): Promise<"allowed" | "foreign"> {
   if (scope.directory) {
-    const owned = await manager.ownsDirectory(workspaceId, scope.directory)
+    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory, workspaceID: scope.workspaceID }, client)
     return owned ? "allowed" : "foreign"
   }
   if (!scope.project) return "foreign"
-  const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
+  const project = (await (client ?? await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
     ? project.canonical
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  const owned = await manager.ownsDirectory(workspaceId, directory)
+  const owned = await manager.ownsLocation(workspaceId, { directory, workspaceID: scope.workspaceID }, client)
   return owned ? "allowed" : "foreign"
 }
 
@@ -1431,53 +1399,10 @@ function replacePromptFileUris(body: unknown, replacements: ReadonlyMap<string, 
   }
 }
 
-function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
+function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string, profile: ContractProfile) {
   const result = { body, directories: [] as string[], locations: [] as LocationRef[], invalid: false }
   if (pathname !== "/api/experimental/session/import" || method !== "POST") return result
-  if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
-    result.invalid = true
-    return result
-  }
-
-  const input = body as Record<string, unknown>
-  const addLocation = (owner: Record<string, unknown>, key: string) => {
-    const value = owner[key]
-    if (value === null || value === undefined) {
-      owner[key] = { directory }
-      result.directories.push(directory)
-      return
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value) || Buffer.isBuffer(value)) {
-      result.invalid = true
-      return
-    }
-    const location = value as Record<string, unknown>
-    if (location.directory === null || location.directory === undefined) location.directory = directory
-    if (typeof location.directory !== "string" || !location.directory.trim()) {
-      result.invalid = true
-      return
-    }
-    result.directories.push(location.directory)
-    if (location.workspace !== undefined || location.workspaceID !== undefined) result.invalid = true
-  }
-
-  addLocation(input, "location")
-  if (input.info && typeof input.info === "object" && !Array.isArray(input.info) && !Buffer.isBuffer(input.info)) {
-    addLocation(input.info as Record<string, unknown>, "location")
-  }
-
-  if (Array.isArray(input.messages)) {
-    for (const value of input.messages) {
-      if (!value || typeof value !== "object" || Array.isArray(value) || Buffer.isBuffer(value)) continue
-      const message = value as Record<string, unknown>
-      if (message.type !== "location-switched") continue
-      addLocation(message, "location")
-      if (message.previous && typeof message.previous === "object" && !Array.isArray(message.previous) && !Buffer.isBuffer(message.previous)) {
-        addLocation(message.previous as Record<string, unknown>, "location")
-      }
-    }
-  }
-  return result
+  return prepareLocationImport(body, directory, profile)
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {

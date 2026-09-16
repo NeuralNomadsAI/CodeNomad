@@ -94,6 +94,14 @@ describe("form interruption lifecycle", () => {
     }), { headers: { "x-opencode-directory": "%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready" } })
   })
 
+  it("preserves global legacy Form identity in the validated context channel", () => {
+    const location = { directory: "/worktree", workspaceID: "workspace-one" }
+    const options = formRequestOptions({ ...form, sessionID: "global", location })!
+    assert.equal(options.headers["x-opencode-directory"], "%2Fworktree")
+    assert.deepEqual(JSON.parse(decodeURIComponent(options.headers["x-codenomad-location"])), location)
+    assert.equal(formRequestOptions({ ...form, location }), undefined)
+  })
+
   it("routes global replies and cancellations through their list location", async () => {
     const instanceId = "global-form-response-location"
     const globalForm = {
@@ -171,6 +179,30 @@ describe("form interruption lifecycle", () => {
     } finally {
       removeInstance(instanceId)
     }
+  })
+
+  it("does not reconcile one legacy Form location from another same-directory scan", async () => {
+    const instanceId = "same-directory-form-identities"
+    const directory = "/workspace"
+    const seen = new Set<string | undefined>()
+    const list = async (_input: unknown, options?: { headers?: Record<string, string> }) => {
+      const context = options?.headers?.["x-codenomad-location"]
+      const location = context ? JSON.parse(decodeURIComponent(context)) : { directory }
+      seen.add(location.workspaceID)
+      if (location.workspaceID === "two") throw new Error("second native location unavailable")
+      return { location, data: [] }
+    }
+    addInstance({ id: instanceId, folder: directory, status: "ready", client: {
+      permission: { request: { list } }, form: { list },
+    } } as any)
+    try {
+      for (const workspaceID of ["one", "two"]) addPendingForm(instanceId, {
+        ...form, id: workspaceID, sessionID: "global", location: { directory, workspaceID },
+      })
+      await assert.rejects(syncPendingRequests(instanceId))
+      assert.deepEqual(seen, new Set([undefined, "one", "two"]))
+      assert.deepEqual(getFormQueue(instanceId).map(entry => entry.id), ["two"])
+    } finally { removeInstance(instanceId) }
   })
 
   it("preserves form settlement tombstones when one location scan fails", async () => {

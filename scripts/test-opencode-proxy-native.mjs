@@ -7,7 +7,7 @@ import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
 
 // Called only by the isolated native fixture; no discovery or user storage.
-export async function testNativeProxy({ client, baseUrl, root, authorization }) {
+export async function testNativeProxy({ client, baseUrl, root, authorization, runtimeFetch, connection, exercise }) {
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
   const { createInstanceFetch } = await tsImport("../packages/ui/src/lib/sdk-manager.ts", import.meta.url)
   const app = Fastify()
@@ -17,9 +17,11 @@ export async function testNativeProxy({ client, baseUrl, root, authorization }) 
     workspaceManager: {
       get: () => ({ id: "native", path: root }),
       getSharedServiceEndpoint: async () => ({ url: baseUrl }),
+      ...(connection ? { getSharedServiceConnection: async () => connection } : {}),
       getInstanceAuthorizationHeader: () => authorization,
       getServiceDirectory: () => root,
       getSharedServiceClient: async () => client,
+      ...(runtimeFetch ? { getSharedServiceFetch: async () => runtimeFetch } : {}),
       getWorktreeIdentityForPath: async (_id, directory) => owns(directory) ? root : undefined,
       ownsDirectory: async (_id, directory) => owns(directory),
       ownsLocation: async (_id, location) => owns(location.directory) && location.workspaceID === undefined,
@@ -74,9 +76,19 @@ export async function testNativeProxy({ client, baseUrl, root, authorization }) 
         assert.ok(!(await proxy.form.list({ location })).data.some(item => item.id === form.id))
       }
     }
+    await exercise?.(proxy, sessionID)
+    // Export remains a direct native read; it is deliberately not added to the
+    // guarded UI allowlist merely for this fixture.
+    const exported = await client.session.export({ sessionID })
+    await proxy.session.remove({ sessionID })
+    const restored = await proxy.session.import({ ...exported, location })
+    assert.equal(restored.id, sessionID)
+    assert.equal((await proxy.message.list({ sessionID, limit: 100 })).data.length, exported.messages.length)
     console.log("PASS: generated stable client through real proxy: catalogs, sessions, native cursors, active envelope, instructions, wait and session/global Forms")
   } finally {
-    for (const session of created) await client.session.remove({ sessionID: session.id })
-    await app.close()
+    // Import can fail after its source has already been removed. Cleanup must
+    // neither replace that failure with a 404 nor leave the HTTP listener open.
+    try { await Promise.allSettled(created.map(session => client.session.remove({ sessionID: session.id }))) }
+    finally { await app.close() }
   }
 }

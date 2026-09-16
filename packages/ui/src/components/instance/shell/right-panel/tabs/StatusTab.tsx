@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
-import type { ShellInfo } from "@opencode/client"
+import type { LocationRef, ShellInfo } from "@opencode/client"
 import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
@@ -85,13 +85,13 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
-  const shellDirectory = createMemo(() => props.activeSession()?.location.directory ?? props.instance.folder)
-  const shellState = createMemo(() => shellStore.getState(props.instanceId, shellDirectory()))
-  const [outputShell, setOutputShell] = createSignal<ShellInfo | null>(null)
+  const shellLocation = createMemo(() => props.activeSession()?.location ?? { directory: props.instance.folder })
+  const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
+  const [outputShell, setOutputShell] = createSignal<{ shell: ShellInfo; location: LocationRef; instanceId: string } | null>(null)
 
   createEffect(on(
-    () => [props.instanceId, shellDirectory()] as const,
-    ([instanceId, directory]) => void shellStore.load(instanceId, directory),
+    () => [props.instanceId, shellLocation().directory, shellLocation().workspaceID] as const,
+    ([instanceId, directory, workspaceID]) => void shellStore.load(instanceId, directory, workspaceID),
   ))
 
   const renderYoloModeSection = () => {
@@ -145,6 +145,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   }
 
   const removeShell = async (shellId: string, command: string, running: boolean) => {
+    const instanceId = props.instanceId
+    const location = { ...shellLocation() }
     const confirmed = await showConfirmDialog(
       props.t("instanceShell.backgroundProcesses.remove.message", { title: command }),
       {
@@ -154,7 +156,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           : "instanceShell.backgroundProcesses.actions.remove"),
       },
     )
-    if (confirmed && !await shellStore.remove(props.instanceId, shellDirectory(), shellId)) {
+    if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
       showToastNotification({ message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
     }
   }
@@ -198,7 +200,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                       <button
                         type="button"
                         class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
-                        onClick={() => setOutputShell(shell)}
+                        onClick={() => setOutputShell({ shell, location: { ...shellLocation() }, instanceId: props.instanceId })}
                       >
                         <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
                         {props.t("instanceShell.backgroundProcesses.actions.output")}
@@ -303,9 +305,10 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       </Accordion.Root>
       <ShellOutputDialog
         open={Boolean(outputShell())}
-        instanceId={props.instanceId}
-        directory={shellDirectory()}
-        shell={outputShell()}
+        instanceId={outputShell()?.instanceId ?? props.instanceId}
+        directory={outputShell()?.location.directory ?? shellLocation().directory}
+        workspaceID={outputShell()?.location.workspaceID}
+        shell={outputShell()?.shell ?? null}
         onClose={() => setOutputShell(null)}
       />
     </div>

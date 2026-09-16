@@ -15,7 +15,7 @@ describe("createOpencodePermissionReplier", () => {
     const workspaceManager = {
       get: () => ({ path: "/repo" }),
       getSharedServiceClient: async () => client,
-      ownsDirectory: async () => false,
+      ownsLocation: async () => false,
     } as unknown as WorkspaceManager
     const replier = createOpencodePermissionReplier({ workspaceManager })
 

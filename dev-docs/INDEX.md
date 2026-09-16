@@ -20,6 +20,10 @@ Executive summary of the entire project - **start here!**
 
 Incremental comparison with official OpenCode Desktop V2, including parity, closed defects, remaining correctness work, runtime upgrade scope, and optional feature gaps.
 
+### [OPENCODE_V2_COMPATIBILITY.md](OPENCODE_V2_COMPATIBILITY.md)
+
+September 2026 published API-contract census, verified compatibility failures, connection-scoped adapter proposal, support targets and cross-runtime acceptance roadmap. Start here for OpenCode upgrade and backward-compatibility work.
+
 ### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
 
 Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.

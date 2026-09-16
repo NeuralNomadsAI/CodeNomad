@@ -6,6 +6,7 @@ import { assertLoopbackServiceUrl } from "./service-state"
 import { isOpenCodeServiceCommandUnavailable } from "./opencode-cli-compatibility"
 import type { OpenCodeServiceLifecycle } from "./opencode-service"
 import type { SpawnSpec } from "./spawn"
+import { rememberRuntime } from "../opencode/compatibility/runtime"
 
 export const MAX_SERVICE_OUTPUT_BYTES = 64 * 1024
 const MAX_ERROR_CHARS = 1_024
@@ -150,6 +151,8 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     if (!(kind === "status" ? isServiceStatusResponse(payload) : isServiceHealthResponse(payload))) {
       throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
+    const { version, pid } = payload as { version: string; pid: number }
+    rememberRuntime(endpoint, { version, pid, discovery: kind })
   }
 
   private async fetchServiceStatus(endpoint: Endpoint, kind: "status" | "health", deadlineAt: number): Promise<Response> {

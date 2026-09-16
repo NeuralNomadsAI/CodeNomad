@@ -81,7 +81,7 @@ import {
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
-import { toRequestLocation } from "./request-locations"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 
 const log = getLogger("api")
@@ -144,7 +144,7 @@ function invalidateMessageHistoryTraversal(instanceId: string, sessionId: string
 }
 
 function catalogLocationKey(location: LocationRef): string {
-  return location.directory
+  return locationAuthorityKey(location)
 }
 
 async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
@@ -846,8 +846,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       model: defaultModel.providerId && defaultModel.modelId
         ? { providerID: defaultModel.providerId, id: defaultModel.modelId }
         : null,
-      location: activeLocation ?? { directory: instance.folder },
-    })
+      location: { directory: activeLocation?.directory ?? instance.folder },
+    }, requestLocationOptions(activeLocation))
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
     const session = toClientSessionV2(instanceId, info)
     session.agent = selectedAgent
@@ -1110,11 +1110,11 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
-    const response = await rootClient.agent.list({ location: requestLocation })
+    const response = await rootClient.agent.list({ location: requestLocation }, requestLocationOptions(location))
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
       try {
-        const result = await rootClient.agent.get({ agentID: id, location: requestLocation })
+        const result = await rootClient.agent.get({ agentID: id, location: requestLocation }, requestLocationOptions(location))
         agentsById.set(result.data.id, result.data)
       } catch (error) {
         log.warn("Failed to fetch built-in agent", { instanceId, agentId: id, error })
@@ -1185,9 +1185,9 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
     const request = { location: toRequestLocation(location) }
     const [response, models, defaultModel] = await Promise.all([
-      rootClient.provider.list(request),
-      rootClient.model.list(request),
-      rootClient.model.default(request),
+      rootClient.provider.list(request, requestLocationOptions(location)),
+      rootClient.model.list(request, requestLocationOptions(location)),
+      rootClient.model.default(request, requestLocationOptions(location)),
     ])
     const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
     const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))

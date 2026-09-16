@@ -1,5 +1,6 @@
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { normalizeWslUncPath } from "./worktree-directory"
+import { moveSessionToLocation, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const PAGE_SIZE = 200
 const MAX_PAGES = 10_000
@@ -155,15 +156,24 @@ export async function evacuateWorktreeSessions(params: {
   await assertInactive()
 
   const moved: SessionInfo[] = []
+  // Resolve before any move; a directory-only fallback could silently move a
+  // legacy session into a different native workspace.
+  const rootLocation = readLocationRef(await params.client.location.get({ location: { directory: params.rootDirectory } }))
+  if (await identity(rootLocation.directory) !== await identity(params.rootDirectory)) {
+    throw new Error("OpenCode resolved a foreign evacuation destination")
+  }
   try {
     for (const session of affected) {
       await assertInactive()
       const original = { ...session, location: { ...session.location } }
-      await params.client.session.move({ sessionID: session.id, directory: params.rootDirectory })
+      await moveSessionToLocation(params.client, session.id, rootLocation)
       moved.push(original)
     }
     await waitForInventory(params.client, project.id, async (current) => (
-      !(await Promise.all(current.map((session) => matchesTarget(session.location.directory)))).some(Boolean)
+      moved.every((original) => {
+        const session = current.find((candidate) => candidate.id === original.id)
+        return session && sameLocation(readLocationRef(session.location), rootLocation)
+      }) && !(await Promise.all(current.map((session) => matchesTarget(session.location.directory)))).some(Boolean)
     ))
     const finalInventory = await inventorySessions(params.client, project.id)
     const finalAffected = (await Promise.all(finalInventory.map(async (session) => (
@@ -176,20 +186,17 @@ export async function evacuateWorktreeSessions(params: {
     const rollbackErrors: unknown[] = []
     for (const session of moved.reverse()) {
       try {
-        await params.client.session.move({
-          sessionID: session.id,
-          directory: session.location.directory,
-        })
+        await moveSessionToLocation(params.client, session.id, readLocationRef(session.location))
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)
       }
     }
     try {
-      const expected = new Set(moved.map((session) => session.id))
+      const expected = new Map(moved.map((session) => [session.id, readLocationRef(session.location)]))
       await waitForInventory(params.client, project.id, async (current) => {
         const restored = current.filter((session) => expected.has(session.id))
         return restored.length === expected.size
-          && (await Promise.all(restored.map((session) => matchesTarget(session.location.directory)))).every(Boolean)
+          && restored.every((session) => sameLocation(readLocationRef(session.location), expected.get(session.id)!))
       })
     } catch (rollbackError) {
       rollbackErrors.push(rollbackError)

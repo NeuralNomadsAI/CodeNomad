@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import type { CommandInfo, LocationRef, OpenCodeClient } from "@opencode/client"
-import { toRequestLocation } from "./request-locations"
+import { requestLocationOptions, toRequestLocation } from "./request-locations"
 
 const [commandMap, setCommandMap] = createSignal<Map<string, CommandInfo[]>>(new Map())
 const commandRequestIds = new Map<string, number>()
@@ -15,7 +15,7 @@ export async function fetchCommands(
   commandRequestIds.set(instanceId, requestId)
   let commands: CommandInfo[]
   try {
-    commands = await client.command.list(location ? { location: toRequestLocation(location) } : undefined).then((result) => result.data)
+    commands = await client.command.list(location ? { location: toRequestLocation(location) } : undefined, requestLocationOptions(location)).then((result) => result.data)
   } catch {
     return false
   }

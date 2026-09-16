@@ -1,5 +1,6 @@
 import { createSignal, untrack } from "solid-js"
 import type { OpenCodeClient, ShellInfo } from "@opencode/client"
+import { requestLocationOptions } from "./request-locations"
 
 const MAX_SHELL_OUTPUT_DISPLAY_CHARS = 4 * 1024 * 1024
 
@@ -50,9 +51,9 @@ export function appendShellOutput(current: string, chunk: string): { output: str
 }
 
 export interface ShellApi {
-  list(directory: string): Promise<ShellInfo[]>
-  remove(directory: string, shellId: string): Promise<void>
-  output(directory: string, shellId: string, cursor?: number): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
+  list(directory: string, workspaceID?: string): Promise<ShellInfo[]>
+  remove(directory: string, shellId: string, workspaceID?: string): Promise<void>
+  output(directory: string, shellId: string, cursor?: number, workspaceID?: string): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
 }
 
 export interface ShellState {
@@ -63,7 +64,7 @@ export interface ShellState {
 
 export interface ShellRefreshEvent {
   type: string
-  location?: { directory?: string }
+  location?: { directory?: string; workspaceID?: string }
   data?: { info?: { cwd?: string } }
 }
 
@@ -73,32 +74,32 @@ const SHELL_EVENTS = new Set(["shell.created", "shell.exited", "shell.deleted", 
 export function createShellApi(client: OpenCodeClient): ShellApi {
   const location = (directory: string) => ({ directory })
   return {
-    list: async (directory) => (await client.shell.list({ location: location(directory) })).data,
-    remove: (directory, shellId) => client.shell.remove({ id: shellId, location: location(directory) }),
-    output: async (directory, shellId, cursor = 0) => (await client.shell.output({
+    list: async (directory, workspaceID) => (await client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))).data,
+    remove: (directory, shellId, workspaceID) => client.shell.remove({ id: shellId, location: location(directory) }, requestLocationOptions({ directory, workspaceID })),
+    output: async (directory, shellId, cursor = 0, workspaceID) => (await client.shell.output({
       id: shellId,
       location: location(directory),
       cursor,
       limit: 1024 * 1024,
-    })).data,
+    }, requestLocationOptions({ directory, workspaceID }))).data,
   }
 }
 
 export function createShellStore(apiForInstance: (instanceId: string) => ShellApi) {
   const [states, setStates] = createSignal<Map<string, ShellState>>(new Map())
   const generations = new Map<string, number>()
-  const key = (instanceId: string, directory: string) => `${instanceId}\0${directory}`
+  const key = (instanceId: string, directory: string, workspaceID?: string) => JSON.stringify([instanceId, directory, workspaceID])
   const setState = (stateKey: string, state: ShellState) => setStates((current) => new Map(current).set(stateKey, state))
   const readState = (stateKey: string): ShellState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
 
-  const load = async (instanceId: string, directory: string): Promise<void> => {
+  const load = async (instanceId: string, directory: string, workspaceID?: string): Promise<void> => {
     if (!instanceId || !directory) return
-    const stateKey = key(instanceId, directory)
+    const stateKey = key(instanceId, directory, workspaceID)
     const generation = (generations.get(stateKey) ?? 0) + 1
     generations.set(stateKey, generation)
     setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
     try {
-      const items = await apiForInstance(instanceId).list(directory)
+      const items = await apiForInstance(instanceId).list(directory, workspaceID)
       if (generations.get(stateKey) === generation) setState(stateKey, { items, loading: false, failed: false })
     } catch {
       if (generations.get(stateKey) === generation) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
@@ -109,23 +110,24 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
     if (!SHELL_EVENTS.has(event.type)) return
     const eventDirectory = event.location?.directory ?? event.data?.info?.cwd
     const tracked = Array.from(states().keys())
-      .map((stateKey) => stateKey.split("\0") as [string, string])
+      .map((stateKey): [string, string, string | null] => JSON.parse(stateKey))
       .filter(([trackedInstanceId]) => trackedInstanceId === instanceId)
-    const matching = eventDirectory ? tracked.filter(([, directory]) => sameDirectory(directory, eventDirectory)) : tracked
-    await Promise.all((matching.length ? matching : tracked).map(([, directory]) => load(instanceId, directory)))
+    const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => sameDirectory(directory, eventDirectory)
+      && (event.location?.workspaceID === undefined || event.location.workspaceID === workspaceID)) : tracked
+    await Promise.all((matching.length ? matching : tracked).map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined)))
   }
 
-  const remove = async (instanceId: string, directory: string, shellId: string): Promise<boolean> => {
+  const remove = async (instanceId: string, directory: string, shellId: string, workspaceID?: string): Promise<boolean> => {
     try {
-      await apiForInstance(instanceId).remove(directory, shellId)
-      await load(instanceId, directory)
+      await apiForInstance(instanceId).remove(directory, shellId, workspaceID)
+      await load(instanceId, directory, workspaceID)
       return true
     } catch { return false }
   }
 
-  const output = (instanceId: string, directory: string, shellId: string, cursor?: number) =>
-    apiForInstance(instanceId).output(directory, shellId, cursor)
-  const getState = (instanceId: string, directory: string): ShellState => states().get(key(instanceId, directory)) ?? EMPTY_STATE
+  const output = (instanceId: string, directory: string, shellId: string, cursor?: number, workspaceID?: string) =>
+    apiForInstance(instanceId).output(directory, shellId, cursor, workspaceID)
+  const getState = (instanceId: string, directory: string, workspaceID?: string): ShellState => states().get(key(instanceId, directory, workspaceID)) ?? EMPTY_STATE
   return { getState, load, refreshForEvent, remove, output }
 }
 
