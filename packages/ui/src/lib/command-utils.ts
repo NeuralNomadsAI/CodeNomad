@@ -1,5 +1,5 @@
 import type { Command } from "./commands"
-import type { CommandInfo } from "@opencode-ai/client"
+import type { CommandInfo } from "@opencode/client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { activeSessionId, executeCustomCommand } from "../stores/sessions"
 import { getLogger } from "./logger"

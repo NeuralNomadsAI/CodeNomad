@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { MissionListResponse, MissionSnapshot } from "../../missions/model"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { locationRequestOptions } from "../../opencode/compatibility/location"
 
 interface MissionRouteDeps {
   workspaceManager: WorkspaceManager
@@ -19,14 +20,15 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       return unavailable("workspace-unavailable")
     }
 
-    const directory = deps.workspaceManager.getServiceDirectory(parsed.data.id)
-    if (!directory) return unavailable("workspace-unavailable")
-    const location = { directory }
+    const ownedLocation = deps.workspaceManager.getServiceLocation(parsed.data.id)
+    if (!ownedLocation) return unavailable("workspace-unavailable")
+    const location = { directory: ownedLocation.directory }
+    const options = locationRequestOptions(ownedLocation)
 
     try {
       const client = await deps.workspaceManager.getSharedServiceClient()
-      await client.plugin.awaitActivation({ location })
-      const inventory = await client.plugin.list({ location })
+      const resolved = await client.location.get({ location }, options)
+      const inventory = await client.plugin.list({ location }, options)
       const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
       // Local V2 plugins currently advertise `server` but do not set `features.rpc`
       // after registration. The reviewed typed call below is the RPC capability check.
@@ -35,8 +37,8 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       }
 
       // The registered RPC validates this JSON-Schema output before the generated client returns it.
-      const snapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }) as MissionSnapshot
-      if (snapshot.projectID !== inventory.location.project.id) {
+      const snapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location, ...options }) as MissionSnapshot
+      if (snapshot.projectID !== resolved.project.id) {
         request.log.error({ workspaceId: parsed.data.id }, "Mission RPC returned a foreign project snapshot")
         reply.code(502)
         return unavailable("plugin-unavailable")

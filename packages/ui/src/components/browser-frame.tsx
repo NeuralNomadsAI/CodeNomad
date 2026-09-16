@@ -332,14 +332,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           <RefreshCw class="h-4 w-4" />
         </button>
         <Show when={props.lockedBaseLabel}>
-          <div class="shrink-0 rounded-md px-3 py-1.5 text-sm" style={{ background: "var(--surface-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-base)" }}>
+          <div class="shrink-0 px-3 py-1.5 text-sm" style={{ background: "var(--surface-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-base)" }}>
             {props.lockedBaseLabel}
           </div>
         </Show>
         <form class="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => void handleGo(event)}>
           <input
             type="text"
-            class="min-w-0 flex-1 rounded-md px-3 py-1.5 text-sm outline-none"
+            class="min-w-0 flex-1 px-3 py-1.5 text-sm outline-none"
             style={{ background: "var(--surface-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-base)" }}
             value={pathInput()}
             disabled={navigating()}
@@ -372,7 +372,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           </button>
           <Show when={viewportMenuOpen()}>
             <div
-              class="absolute right-0 top-full z-20 mt-1 min-w-[13rem] overflow-hidden rounded-md border border-base shadow-xl"
+              class="absolute right-0 top-full z-20 mt-1 min-w-[13rem] overflow-hidden border border-base shadow-xl"
               style={{ background: "var(--surface-base)", color: "var(--text-primary)" }}
               role="menu"
             >
@@ -437,7 +437,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         <Show when={props.commentMode && highlight()}>
           {(rect) => (
             <div
-              class="pointer-events-none absolute rounded-md"
+              class="pointer-events-none absolute"
               style={{
                 left: `${rect().x}px`,
                 top: `${rect().y}px`,

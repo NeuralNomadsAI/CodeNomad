@@ -1,5 +1,5 @@
 import path from "node:path"
-import type { JsonValue, SessionMetadata } from "@opencode-ai/client"
+import type { JsonValue, SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
 import {

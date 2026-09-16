@@ -1,4 +1,4 @@
-import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { SessionMessageInfo } from "@opencode/client"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision"
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
@@ -24,7 +24,7 @@ export async function pruneMessageContent(
   invalidateSessionMessageLoad(instanceId, sessionId)
   for (let attempt = 0; attempt < 3; attempt++) {
     const revision = getOpenCodeMutationRevision(instanceId, sessionId)
-    const updated = await client.session.message({ sessionID: sessionId, messageID: message.id })
+    const updated = await client.session.message.get({ sessionID: sessionId, messageID: message.id })
     if (generation !== getOpenCodeInstanceGeneration(instanceId) || client !== getRootClient(instanceId)) break
     if (revision !== getOpenCodeMutationRevision(instanceId, sessionId)) continue
     // Apply in the same synchronous turn as the authority check: an older

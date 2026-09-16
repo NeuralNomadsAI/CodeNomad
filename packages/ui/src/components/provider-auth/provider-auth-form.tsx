@@ -1,5 +1,5 @@
 import { Select } from "@kobalte/core/select"
-import type { FormAnswer, FormField, FormFields, FormValue } from "@opencode-ai/client"
+import type { FormAnswer, FormField, FormFields, FormValue } from "@opencode/client"
 import { ChevronDown, ExternalLink } from "lucide-solid"
 import { createMemo, For, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"

@@ -21,7 +21,10 @@ function scheduleRefresh(instanceId: string): void {
 }
 
 serverEvents.on("instance.event", (event) => {
-  if (event.type !== "instance.event" || !isMissionChangedEvent(event.event)) return
+  if (event.type !== "instance.event") return
+  const capabilityChanged = event.event.type === "plugin.updated"
+  if (!isMissionChangedEvent(event.event)
+    && !(capabilityChanged && missionStore.trackedInstanceIds().includes(event.instanceId))) return
   scheduleRefresh(event.instanceId)
 })
 

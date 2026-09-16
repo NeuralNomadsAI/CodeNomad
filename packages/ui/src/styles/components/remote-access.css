@@ -55,7 +55,7 @@
   border: 1px solid var(--border-base);
   background: var(--surface-secondary);
   color: var(--text-primary);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 6px 10px;
   cursor: pointer;
   font-size: 18px;
@@ -72,7 +72,7 @@
 
 .remote-section {
   border: 1px solid var(--border-base);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface-secondary);
   padding: 16px;
 }
@@ -113,7 +113,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background: var(--surface-primary);
   color: var(--text-primary);
@@ -136,7 +136,7 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background: var(--surface-primary);
   cursor: pointer;
@@ -145,7 +145,7 @@
 .remote-toggle-switch {
   width: 58px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface-secondary);
   border: 1px solid var(--border-base);
   display: inline-flex;
@@ -168,7 +168,7 @@
 .remote-toggle-thumb {
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface-primary);
   transition: transform 0.2s ease;
   transform: translateX(0);
@@ -214,7 +214,7 @@
 
 .remote-address {
   border: 1px solid var(--border-base);
-  border-radius: 12px;
+  border-radius: 0;
   padding: 12px;
   background: var(--surface-primary);
 }
@@ -249,7 +249,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: 999px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background: var(--surface-secondary);
   color: var(--text-primary);
@@ -258,7 +258,7 @@
 
 .remote-address-disclosure {
   border: 1px solid var(--border-base);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface-primary);
   overflow: hidden;
 }
@@ -307,7 +307,7 @@
   justify-content: center;
   padding: 12px;
   border: 1px dashed var(--border-base);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface-secondary);
 }
 
@@ -319,7 +319,7 @@
 
 .remote-card {
   border: 1px dashed var(--border-base);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 12px;
   color: var(--text-secondary);
 }
@@ -327,7 +327,7 @@
 .remote-error {
   border: 1px solid var(--border-critical, #e65c5c);
   background: color-mix(in srgb, var(--border-critical, #e65c5c) 10%, transparent);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 12px;
   color: var(--text-primary);
 }

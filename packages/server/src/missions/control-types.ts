@@ -1,4 +1,4 @@
-import type { SessionMetadata } from "@opencode-ai/client"
+import type { SessionMetadata } from "@opencode/client"
 import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, MissionTemplateId } from "./model"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 

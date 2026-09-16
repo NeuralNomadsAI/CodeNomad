@@ -1,6 +1,6 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
 import type { Agent } from "../types/session"
-import type { CommandInfo } from "@opencode-ai/client"
+import type { CommandInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"

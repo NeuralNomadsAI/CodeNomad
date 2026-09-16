@@ -5,6 +5,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "0.0.0-beta-18999"
+    "@opencode/plugin": "2.0.4"
   }
 }

@@ -1,0 +1,62 @@
+/* The timeline ends at the composer footer, not below its controls. */
+.session-view {
+  position: relative;
+  isolation: isolate;
+}
+
+.session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
+  padding-inline-end: 40px;
+}
+
+.session-timeline-slot {
+  pointer-events: none;
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 40px;
+  display: flex;
+}
+
+.session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+  content: "";
+  position: absolute;
+  inset-block: -1px 0;
+  inset-inline-start: 100%;
+  width: 40px;
+  border-block-start: 1px solid var(--border-divider);
+  border-inline-start: 1px solid var(--border-divider);
+  background-color: var(--surface-chrome);
+  pointer-events: none;
+}
+
+.session-timeline-slot .message-timeline-sidebar {
+  pointer-events: auto;
+}
+
+.session-timeline-slot > div {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+}
+
+@media (pointer: coarse) {
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
+    padding-inline-end: var(--touch-target-size);
+  }
+  .session-timeline-slot { width: var(--touch-target-size); }
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+    width: var(--touch-target-size);
+  }
+}
+
+.session-center-column[data-session-header-density="4"] .session-view {
+  padding-inline-end: 0;
+}
+
+.session-center-column[data-session-header-density="4"] .session-timeline-slot {
+  display: none;
+}
+
+.session-center-column[data-session-header-density="4"] .session-view .prompt-input-footer::after {
+  display: none;
+}

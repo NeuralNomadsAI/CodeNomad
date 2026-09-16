@@ -25,14 +25,17 @@ function manager(options: {
     calls,
     value: {
       get: (id: string) => options.workspace === false || id !== "workspace-1" ? undefined : { id },
-      getServiceDirectory: (id: string) => id === "workspace-1" ? (options.directory ?? "/owned/repo") : undefined,
+      getServiceLocation: (id: string) => id === "workspace-1" ? { directory: options.directory ?? "/owned/repo" } : undefined,
       getSharedServiceClient: async () => ({
+        location: { get: async (input: unknown) => {
+          calls.push({ method: "location", value: input })
+          return { directory: "/owned/repo", project: { id: options.projectID ?? "project-1" } }
+        } },
         plugin: {
-          awaitActivation: async (input: unknown) => { calls.push({ method: "await", value: input }) },
           list: async (input: unknown) => {
             calls.push({ method: "list", value: input })
             return {
-              location: { directory: "/owned/repo", project: { id: options.projectID ?? "project-1" } },
+              location: { directory: "/owned/repo" },
               data: plugin === "missing" ? [] : [{
                 id: "codenomad.missions",
                 features: { server: true },
@@ -65,7 +68,7 @@ test("brokers only the reviewed mission snapshot RPC at the owned workspace loca
   assert.equal(response.statusCode, 200)
   assert.deepEqual(response.json(), { available: true, ...snapshot })
   assert.deepEqual(fake.calls, [
-    { method: "await", value: { location: { directory: "/owned/repo" } } },
+    { method: "location", value: { location: { directory: "/owned/repo" } } },
     { method: "list", value: { location: { directory: "/owned/repo" } } },
     { method: "rpc-definition", value: "codenomad.missions" },
     { method: "snapshot", value: { input: {}, callOptions: { location: { directory: "/owned/repo" } } } },

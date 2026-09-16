@@ -6,7 +6,7 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
-import type { OpenCodeEvent } from "@opencode-ai/client"
+import type { OpenCodeEvent } from "@opencode/client"
 
 export type {
   MissionActor,

@@ -2,9 +2,10 @@ import path from "node:path"
 import type { z } from "zod"
 import type { messageTargetSchema } from "./contract"
 import { storageDirectory } from "./storage-path"
+import type { LocationRef } from "@opencode/client"
 
 export async function readPruningPreview(
-  filename: unknown, target: z.infer<typeof messageTargetSchema>, directory: string,
+  filename: unknown, target: z.infer<typeof messageTargetSchema>, location: LocationRef, projectID: string,
 ): Promise<unknown | undefined> {
   // Deliberately no default ~/.local/share path or UI-supplied override.
   if (typeof filename !== "string" || !path.isAbsolute(filename)) return undefined
@@ -15,7 +16,9 @@ export async function readPruningPreview(
     const row = db.prepare(`SELECT m.data FROM session_message m
       JOIN session_v2 s ON s.id = m.session_id
       WHERE m.id = ? AND m.session_id = ? AND m.type = 'assistant' AND s.directory = ?
-      AND length(CAST(m.data AS BLOB)) <= 16777216`).get(target.messageID, target.sessionID, storageDirectory(directory))
+       AND s.project_id = ? AND s.workspace_id IS ?
+       AND length(CAST(m.data AS BLOB)) <= 16777216`).get(target.messageID, target.sessionID,
+         storageDirectory(location.directory), projectID, location.workspaceID ?? null)
     return typeof row?.data === "string" ? JSON.parse(row.data) : undefined
   } finally { db.close() }
 }

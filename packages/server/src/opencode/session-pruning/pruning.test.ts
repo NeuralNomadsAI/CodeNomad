@@ -20,10 +20,10 @@ const data = { content, time: { created: 1, completed: 3 }, tokens: { input: 123
 const input = (indexes = [0, 1]) => ({ sessionID: "s", messageID: "m", revision: revision(content), indexes })
 function fixture(filename = ":memory:") {
   const db = new DatabaseSync(filename)
-  db.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY, directory TEXT);
+  db.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY, directory TEXT, project_id TEXT, workspace_id TEXT);
     CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT);
     CREATE TABLE event(aggregate_id TEXT,data TEXT);
-    INSERT INTO session_v2 VALUES ('s','/work');`)
+    INSERT INTO session_v2 VALUES ('s','/work','p',NULL);`)
   db.prepare("INSERT INTO session_message VALUES ('m','s','assistant',7,?)").run(JSON.stringify(data))
   return db
 }
@@ -133,9 +133,11 @@ test("refuses file-backed writes, but supports explicit read-only preview", asyn
   const db = fixture(filename)
   try {
     assert.deepEqual(pruneIsolatedMessage(db, input(), "/work"), { status: "blocked", reason: "maintenance_required" })
-    assert.deepEqual(await readPruningPreview(filename, input(), "/work"), data)
-    assert.equal(await readPruningPreview(filename, input(), "/other"), undefined)
-    assert.equal(await readPruningPreview(undefined, input(), "/work"), undefined)
+    assert.deepEqual(await readPruningPreview(filename, input(), { directory: "/work" }, "p"), data)
+    assert.equal(await readPruningPreview(filename, input(), { directory: "/other" }, "p"), undefined)
+    assert.equal(await readPruningPreview(filename, input(), { directory: "/work", workspaceID: "foreign" }, "p"), undefined)
+    assert.equal(await readPruningPreview(filename, input(), { directory: "/work" }, "foreign"), undefined)
+    assert.equal(await readPruningPreview(undefined, input(), { directory: "/work" }, "p"), undefined)
     assert.deepEqual(stored(db), data)
   } finally { db.close(); await rm(dir, { recursive: true, force: true }) }
 })
