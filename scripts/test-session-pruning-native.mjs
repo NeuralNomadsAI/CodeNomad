@@ -14,7 +14,7 @@ import { tsImport } from "tsx/esm/api"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
-const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2 v/, "")
+const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode v/, "")
 const ui = process.argv.includes("--ui")
 const pluginArgument = process.argv[3] === "--ui" ? undefined : process.argv[3]
 const pluginDirectory = pluginArgument ?? fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/", import.meta.url))

@@ -99,7 +99,7 @@ jobs:
           $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
           $arch = node -p "process.arch"
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
-          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode2$extension"
+          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
           $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
           node scripts/test-session-pruning-native.mjs $cli $plugin
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
