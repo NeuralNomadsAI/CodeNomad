@@ -1,4 +1,4 @@
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createInstanceClient } from "../workspaces/instance-client"

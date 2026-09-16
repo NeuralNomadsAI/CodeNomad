@@ -1,4 +1,4 @@
-import { OpenCode, type OpenCodeClient } from "@opencode-ai/client"
+import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 
 class SDKManager {
@@ -40,7 +40,7 @@ export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_
   return `${base}${normalized}/`
 }
 
-function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
+export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`

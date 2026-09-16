@@ -1,0 +1,49 @@
+.theme-scheme-swatches {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: 0;
+  overflow-x: auto;
+  padding: 3px;
+}
+
+.theme-scheme-swatch {
+  display: flex;
+  flex: 0 0 1.5rem;
+  height: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.theme-scheme-swatches input[type="color"] {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--border-base) 75%, transparent);
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-scheme-swatches input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.theme-scheme-swatches input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 0;
+}
+
+.theme-scheme-swatches input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 0;
+}
+
+@media (pointer: coarse) {
+  .theme-scheme-swatch {
+    flex-basis: var(--touch-target-size);
+    min-height: var(--touch-target-size);
+  }
+}

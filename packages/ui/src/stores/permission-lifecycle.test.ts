@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterEach, test } from "node:test"
-import type { OpenCodeClient, PermissionReplyInput } from "@opencode-ai/client"
+import type { OpenCodeClient, PermissionReplyInput } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager"
 import type { Instance } from "../types/instance"
 import {
@@ -66,7 +66,7 @@ test("permission replies use the queued request session", async () => {
   assert.deepEqual(input, {
     sessionID: "queued-session",
     requestID: "permission",
-    reply: "always",
+    decision: "always",
     message: "trusted",
   })
   assert.deepEqual(getPermissionQueue("permission-reply"), [])
@@ -82,7 +82,7 @@ test("pending request sync cannot erase newer SSE mutations", async () => {
     permission: { request: { list: () => ++permissionCalls === 1
       ? new Promise((resolve) => { resolvePermissions = resolve })
       : Promise.resolve({ location: {} as never, data: [newPermission] }) } },
-    form: { request: { list: async () => ({ location: {} as never, data: [] }) } },
+    form: { list: async () => ({ location: {} as never, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("pending-request-race", client)
   setSessions((previous) => new Map(previous).set("pending-request-race", new Map([["session", {
@@ -112,12 +112,12 @@ test("pending request sync uses native global lists with an explicit directory",
         }] }
       },
     } },
-    form: { request: {
+    form: {
       list: async (input: { location?: unknown }) => {
         locations.push(input.location)
         return { location: {} as never, data: [] }
       },
-    } },
+    },
   } as unknown as OpenCodeClient
   addTestInstance("native-pending-api", client)
   setSessions((previous) => {
@@ -146,7 +146,7 @@ test("liveness recovers a missed permission with an idle session and empty queue
         }] : [] }
       },
     } },
-    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+    form: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("missed-permission", client)
 
@@ -158,7 +158,7 @@ test("liveness recovers a missed permission with an idle session and empty queue
 test("pending sync removes a stale permission after its session disappears", async () => {
   const client = {
     permission: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
-    form: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
+    form: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("deleted-permission-session", client)
   addPermissionToQueue("deleted-permission-session", {
@@ -177,7 +177,7 @@ test("partial pending scans preserve permission reply tombstones", async () => {
       if (requested.directory === "/workspace") throw new Error("root unavailable")
       return { location, data: [] }
     } } },
-    form: { request: { list: async ({ location: requested }: { location: unknown }) => ({ location: requested, data: [] }) } },
+    form: { list: async ({ location: requested }: { location: unknown }) => ({ location: requested, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("partial-permission-scan", client)
   setSessions((previous) => new Map(previous).set("partial-permission-scan", new Map([["session", {
@@ -194,7 +194,7 @@ test("pending authority normalizes Windows directory keys", async () => {
   const location = { directory: "c:/repo" }
   const client = {
     permission: { request: { list: async () => ({ location, data: [] }) } },
-    form: { request: { list: async () => ({ location, data: [] }) } },
+    form: { list: async () => ({ location, data: [] }) },
   } as unknown as OpenCodeClient
   addTestInstance("normalized-permission-location", client)
   addPermissionToQueue("normalized-permission-location", {
@@ -214,7 +214,7 @@ test("cancelling a bounded pending scan does not launch queued locations", async
   })
   const client = {
     permission: { request: { list } },
-    form: { request: { list } },
+    form: { list },
   } as unknown as OpenCodeClient
   const instanceId = "cancelled-bounded-scan"
   addTestInstance(instanceId, client)

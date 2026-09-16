@@ -1,11 +1,14 @@
+import type { LocationRef } from "@opencode/client"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, getInstanceMetadataGeneration, mergeInstanceMetadata } from "../../stores/instance-metadata"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Map<string, {
   client: NonNullable<Instance["client"]>
   generation: number
+  locationKey: string
   promise: Promise<void>
 }>()
 const pendingProjectMetadataRequests = new Map<string, {
@@ -14,35 +17,50 @@ const pendingProjectMetadataRequests = new Map<string, {
   promise: Promise<void>
 }>()
 
-function hasMetadataLoaded(metadata?: Instance["metadata"]): boolean {
-  if (!metadata) return false
-  return "project" in metadata && "mcpStatus" in metadata && "plugins" in metadata
+function locationKey(location: LocationRef): string {
+  return locationAuthorityKey(location)
 }
 
-export function loadInstanceMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
+function metadataMatchesLocation(metadata: Instance["metadata"] | undefined, location: LocationRef): boolean {
+  if (!metadata) return false
+  const resolved = metadata.mcpStatus?.location
+  return Boolean(resolved && locationAuthorityKey(resolved) === locationAuthorityKey(location))
+}
+
+function hasMetadataLoaded(metadata?: Instance["metadata"], location?: LocationRef): boolean {
+  if (!metadata) return false
+  if (metadata.project === undefined || metadata.mcpStatus === undefined || metadata.plugins === undefined) return false
+  return !location || metadataMatchesLocation(metadata, location)
+}
+
+export function loadInstanceMetadata(instance: Instance, options?: { force?: boolean; location?: LocationRef }): Promise<void> {
   const client = instance.client
   if (!client) {
     log.warn("[metadata] Skipping fetch; client missing", { instanceId: instance.id })
     return Promise.resolve()
   }
 
+  const location = options?.location ?? { directory: instance.folder }
+  const currentLocationKey = locationKey(location)
   const currentMetadata = getInstanceMetadata(instance.id) ?? instance.metadata
-  if (!options?.force && hasMetadataLoaded(currentMetadata)) {
+  if (!options?.force && hasMetadataLoaded(currentMetadata, location)) {
     return Promise.resolve()
   }
 
   const generation = getInstanceMetadataGeneration(instance.id)
   const pending = pendingMetadataRequests.get(instance.id)
-  if (pending?.client === client && pending.generation === generation) return pending.promise
-  const request = { client, generation, promise: Promise.resolve() as Promise<void> }
+  if (pending?.client === client
+    && pending.generation === generation
+    && pending.locationKey === currentLocationKey) return pending.promise
+  const request = { client, generation, locationKey: currentLocationKey, promise: Promise.resolve() as Promise<void> }
   request.promise = (async () => {
     try {
-      const location = { directory: instance.folder }
+      const requestLocation = toRequestLocation(location)
       const [projectResult, projectsResult, mcpResult, pluginResult] = await Promise.allSettled([
         loadInstanceProjectMetadata(instance, options),
         client.project.list(),
-        client.mcp.list({ location }),
-        client.plugin.list({ location }),
+        client.mcp.list({ location: requestLocation }, requestLocationOptions(location)),
+        client.plugin.list({ location: requestLocation }, requestLocationOptions(location)),
       ])
 
       const currentProject = getInstanceMetadata(instance.id)?.project
@@ -50,10 +68,20 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
         ? projectsResult.value.find((project) => project.id === currentProject.id)
         : undefined
       const plugins = pluginResult.status === "fulfilled"
-        ? pluginResult.value.data.flatMap((plugin) => typeof plugin.id === "string" && !plugin.id.startsWith("opencode.") ? [plugin.id] : [])
+        ? pluginResult.value.data.flatMap((plugin) => {
+            const status = plugin.state?.status ?? (plugin as unknown as { status?: string }).status
+            return status === "active" && typeof plugin.id === "string" && !plugin.id.startsWith("opencode.")
+              ? [plugin.id]
+              : []
+          })
         : undefined
 
-      const updates: Instance["metadata"] = { ...(getInstanceMetadata(instance.id) ?? currentMetadata ?? {}) }
+      const latestMetadata = getInstanceMetadata(instance.id) ?? currentMetadata
+      const updates: Instance["metadata"] = { ...(latestMetadata ?? {}) }
+      if (latestMetadata && !metadataMatchesLocation(latestMetadata, location)) {
+        updates.mcpStatus = undefined
+        updates.plugins = undefined
+      }
 
       if (projectResult.status === "fulfilled" && currentProject && listedProject?.vcs) {
         updates.project = { ...currentProject, vcs: listedProject.vcs }
@@ -95,12 +123,12 @@ export function loadInstanceProjectMetadata(instance: Instance, options?: { forc
   const pending = pendingProjectMetadataRequests.get(instance.id)
   if (pending?.client === client && pending.generation === generation) return pending.promise
   const request = { client, generation, promise: Promise.resolve() as Promise<void> }
-  request.promise = client.project.current({ location: { directory: instance.folder } })
-    .then((project) => {
+  request.promise = client.location.get({ location: { directory: instance.folder } })
+    .then((location) => {
       if (pendingProjectMetadataRequests.get(instance.id) !== request
         || getInstanceMetadataGeneration(instance.id) !== generation) return
       mergeInstanceMetadata(instance.id, {
-        project: project ?? null,
+        project: location.project,
         ...(!currentMetadata?.version && instance.binaryVersion ? { version: instance.binaryVersion } : {}),
       })
     })

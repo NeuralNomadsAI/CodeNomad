@@ -1,0 +1,36 @@
+/* One native, shared-style scrollbar lane above tabs; no vertical transforms
+   or negative-pixel overlaps that rasterize differently at fractional zoom. */
+.tab-scroll-frame {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.tab-scrollbar {
+  flex: 0 0 calc(var(--scrollbar-size) + 1px);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.tab-scrollbar-extent {
+  height: 1px;
+}
+
+.tab-scroll-frame > .tab-scroll {
+  flex: 0 0 auto;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tab-scroll-frame > .tab-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-scroll-frame .tab-strip {
+  width: max-content;
+}

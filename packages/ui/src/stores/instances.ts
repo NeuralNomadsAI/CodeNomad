@@ -14,6 +14,7 @@ import {
   fetchAgents,
   fetchProviders,
   getActiveCatalogLocation,
+  refreshSessionCatalog,
   clearInstanceDraftPrompts,
   clearSessionListRequestState,
   clearSessionCatalogState,
@@ -28,7 +29,7 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
-import { buildV2RequestLocations, type RequestLocation } from "./request-locations"
+import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
@@ -185,15 +186,13 @@ const [activePermissionId, setActivePermissionId] = createSignal<Map<string, str
 const permissionRequestLocations = new Map<string, Map<string, string>>()
 const formRequestLocations = new Map<string, Map<string, string>>()
 
-type RequestAuthorityLocation = RequestLocation | { directory: string; workspaceID?: string }
+type RequestAuthorityLocation = RequestLocation | { directory: string }
 
 function requestLocationKey(location?: RequestAuthorityLocation | string): string | undefined {
   if (!location) return undefined
-  if (typeof location === "string") return `${normalizeWorkspacePath(location)}\0`
+  if (typeof location === "string") return locationAuthorityKey({ directory: normalizeWorkspacePath(location) })
   if (!location.directory) return undefined
-  const workspace = (location as { workspace?: string }).workspace
-    ?? (location as { workspaceID?: string }).workspaceID
-  return `${normalizeWorkspacePath(location.directory)}\0${workspace ?? ""}`
+  return locationAuthorityKey({ ...location, directory: normalizeWorkspacePath(location.directory) })
 }
 
 function rememberRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
@@ -445,8 +444,10 @@ function refreshVolatileInstanceState(
       const location = getActiveCatalogLocation(instanceId)
       if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
       if (current.has("providers")) requests.push(fetchProviders(instanceId, location, true))
-      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, getActiveCatalogLocation(instanceId)))
-      if (current.has("metadata")) requests.push(loadInstanceMetadata(instance, { force: true }))
+      if (current.has("commands")) requests.push(fetchCommands(instanceId, client, location))
+      if (current.has("metadata")) {
+        requests.push(loadInstanceMetadata(instance, { force: true, location }))
+      }
       await Promise.all(requests)
     } while (state.pending.size)
   })().finally(() => {
@@ -660,7 +661,7 @@ async function syncPendingPermissions(
     const scannedLocations = new Set<string>()
     const results = await allSettledBounded(locations, isCurrent, async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.permission.request.list({ location }, { signal })
+        instance.client!.permission.request.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
       ))
       return { location, response }
     })
@@ -674,7 +675,7 @@ async function syncPendingPermissions(
       log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
       const authority = {
         directory: response.location.directory || location.directory,
-        workspaceID: response.location.workspaceID ?? location.workspace,
+        workspaceID: locationWorkspaceID(response.location),
       }
       const key = requestLocationKey(authority)
       if (!key) continue
@@ -735,7 +736,7 @@ async function syncPendingForms(
     const scannedLocations = new Set<string>()
     const results = await allSettledBounded(locations, isCurrent, async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.form.request.list({ location }, { signal })
+        instance.client!.form.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
       ))
       return { location, response }
     })
@@ -748,7 +749,7 @@ async function syncPendingForms(
       const { location, response } = result.value
       const authority = {
         directory: response.location.directory || location.directory,
-        workspaceID: response.location.workspaceID ?? location.workspace,
+        workspaceID: locationWorkspaceID(response.location),
       }
       const key = requestLocationKey(authority)
       if (!key) continue
@@ -895,7 +896,9 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   })
   void worktreeHydration.then(async () => {
     const instance = instances().get(instanceId)
-    if (instance?.client) await loadInstanceMetadata(instance, { force })
+    if (instance?.client) {
+      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
+    }
   }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   const sessions = workspaceMetadata.then(async () => {
     resetSessionPagination(instanceId)
@@ -921,12 +924,8 @@ async function hydrateInstanceData(instanceId: string, options?: {
       : startInstanceSessionHydration(instanceId, options?.force)
     await hydration.sessions
     await hydration.workspaceMetadata
-    await fetchAgents(instanceId)
-    await fetchProviders(instanceId)
+    await refreshSessionCatalog(instanceId, options?.force)
     await ensureInstanceConfigLoaded(instanceId)
-    const instance = instances().get(instanceId)
-    if (!instance?.client) return
-    await fetchCommands(instanceId, instance.client, getActiveCatalogLocation(instanceId))
     await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
@@ -1881,7 +1880,7 @@ async function sendPermissionResponse(
     await getRootClient(instanceId).permission.reply({
       sessionID: permission.sessionID,
       requestID: requestId,
-      reply,
+      decision: reply,
       ...(message ? { message } : {}),
     })
 
@@ -1902,7 +1901,7 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
-    await getRootClient(instanceId).form.reply(
+    await getRootClient(instanceId).session.form.reply(
       { sessionID: form.sessionID, formID: form.id, answer },
       formRequestOptions(form),
     )
@@ -1965,7 +1964,7 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
-    await getRootClient(instanceId).form.cancel(
+    await getRootClient(instanceId).session.form.cancel(
       { sessionID: form.sessionID, formID: form.id },
       formRequestOptions(form),
     )

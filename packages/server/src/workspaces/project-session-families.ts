@@ -1,5 +1,6 @@
 import path from "node:path"
-import type { LocationGetOutput, LocationRef, OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { LocationGetOutput, LocationRef, OpenCodeClient, SessionInfo } from "@opencode/client"
+import { locationRequestOptions, moveSessionToLocation, readLocationRef } from "../opencode/compatibility/location"
 
 const SESSION_PAGE_LIMIT = 500
 const MAX_SESSION_PAGES = 1000
@@ -39,18 +40,20 @@ export async function listCompleteProjectSessions(
     if (++page > MAX_SESSION_PAGES) throw new ProjectSessionError("Session inventory exceeded the page limit", 502)
     const response = await client.session.list(cursor
       ? { cursor }
-      : { project: projectID, workspace: workspaceID, limit: SESSION_PAGE_LIMIT, order: "asc" })
+      : { project: projectID, limit: SESSION_PAGE_LIMIT, order: "asc" })
     if (!response || !Array.isArray(response.data) || !response.cursor || typeof response.cursor !== "object") {
       throw new ProjectSessionError("OpenCode returned an invalid session inventory", 502)
     }
     for (const session of response.data) {
       if (!session?.id
         || session.projectID !== projectID
-        || !session.location?.directory
-        || (workspaceID && session.location.workspaceID !== workspaceID)) {
+        || !session.location?.directory) {
         throw new ProjectSessionError("OpenCode returned a session outside the requested project", 409)
       }
       if (sessionIds.has(session.id)) throw new ProjectSessionError("Session inventory contains duplicate sessions", 409)
+      // Modern project inventory has no workspace selector. Filter the retained
+      // internal legacy identity after the complete native page is received.
+      if (workspaceID && readLocationRef(session.location).workspaceID !== workspaceID) continue
       sessionIds.add(session.id)
       sessions.push(session)
     }
@@ -111,6 +114,7 @@ export async function moveProjectSessionFamily(params: {
   projectLocation: LocationRef
   sessionId: string
   targetDirectory: string
+  resolveExactDirectory?: (directory: string) => Promise<string | undefined>
   validateTarget?: () => Promise<boolean>
   runMutation?: <T>(directories: string[], operation: () => Promise<T>) => Promise<T>
 }): Promise<SessionFamilyMoveResult> {
@@ -123,7 +127,7 @@ export async function moveProjectSessionFamily(params: {
     const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
     if (!family) throw new ProjectSessionError("Session not found in project", 404)
     assertWorkspaceFamily(family[1], context.workspaceID)
-    const target = await resolveProjectLocation(context, params.targetDirectory)
+    const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
     const move = async () => {
       await assertInactive(context.client, family[1])
       if (params.validateTarget && !await params.validateTarget()) {
@@ -143,6 +147,7 @@ export async function removeProjectWorktree(params: {
   projectLocation: LocationRef
   targetDirectory: string
   rootDirectory: string
+  resolveExactDirectory?: (directory: string) => Promise<string | undefined>
   remove: () => Promise<void>
   isTargetRegistered: () => Promise<boolean>
   matchesTarget?: (directory: string) => Promise<boolean>
@@ -157,7 +162,7 @@ export async function removeProjectWorktree(params: {
       matchesTarget,
     )
     for (const family of initial) assertWorkspaceFamily(family, context.workspaceID)
-    const destination = await resolveProjectLocation(context, params.rootDirectory)
+    const destination = await resolveProjectLocation(context, params.rootDirectory, params.resolveExactDirectory)
     const remove = async () => {
       if (!await params.isTargetRegistered()) {
         throw new ProjectSessionError("Worktree changed before deletion", 409)
@@ -228,7 +233,7 @@ async function matchingFamilies(
 
 function assertWorkspaceFamily(family: SessionInfo[], workspaceID: string | undefined): void {
   if (!workspaceID) return
-  const foreign = family.filter((session) => session.location.workspaceID !== workspaceID).map(({ id }) => id)
+  const foreign = family.filter((session) => readLocationRef(session.location).workspaceID !== workspaceID).map(({ id }) => id)
   if (foreign.length) {
     throw new ProjectSessionError(`Sessions from another workspace block this operation: ${foreign.join(", ")}`, 409)
   }
@@ -242,13 +247,13 @@ async function withProject<T>(
   let location: LocationGetOutput
   try {
     location = await client.location.get({
-      location: { directory: requested.directory, workspace: requested.workspaceID },
-    })
+      location: { directory: requested.directory },
+    }, locationRequestOptions(requested))
   } catch (error) {
     throw asProjectError(error, "Unable to resolve the workspace project")
   }
   if (!location?.project?.id) throw new ProjectSessionError("OpenCode could not resolve the workspace project", 502)
-  const workspaceID = location.workspaceID ?? requested.workspaceID
+  const workspaceID = readLocationRef(location).workspaceID ?? requested.workspaceID
   const lockKey = location.project.id
   const previous = projectLocks.get(lockKey) ?? Promise.resolve()
   const run = previous.catch(() => undefined).then(async () => {
@@ -267,14 +272,19 @@ async function withProject<T>(
   }
 }
 
-async function resolveProjectLocation(context: ProjectContext, directory: string): Promise<LocationRef> {
+async function resolveProjectLocation(context: ProjectContext, directory: string, resolveExactDirectory?: (directory: string) => Promise<string | undefined>): Promise<LocationRef> {
   const location = await context.client.location.get({
-    location: { directory, workspace: context.workspaceID },
+    location: { directory },
   })
   if (!location?.directory || location.project?.id !== context.project.id) {
     throw new ProjectSessionError("Target worktree does not belong to the workspace project", 409)
   }
-  return { directory: location.directory, workspaceID: location.workspaceID }
+  const expected = resolveExactDirectory ? await resolveExactDirectory(directory) : directory
+  const actual = resolveExactDirectory ? await resolveExactDirectory(location.directory) : location.directory
+  if (!expected || !actual || !sameDirectory(expected, actual)) {
+    throw new ProjectSessionError("OpenCode resolved a foreign evacuation destination", 409)
+  }
+  return readLocationRef(location)
 }
 
 async function assertInactive(client: OpenCodeClient, sessions: SessionInfo[]): Promise<void> {
@@ -312,11 +322,7 @@ async function moveMembers(
   for (const session of members) {
     await assertInactive(context.client, [session])
     moved.push(session.id)
-    await context.client.session.move({
-      sessionID: session.id,
-      directory: target.directory,
-      workspaceID: target.workspaceID,
-    })
+    await moveSessionToLocation(context.client, session.id, target)
     await waitForSessionLocation(context, session.id, target, `Session move verification failed: ${session.id}`)
   }
 }
@@ -352,7 +358,7 @@ async function rollback(
   try {
     for (const sessionId of [...moved].reverse()) {
       const location = original.get(sessionId)!
-      await context.client.session.move({ sessionID: sessionId, directory: location.directory, workspaceID: location.workspaceID })
+      await moveSessionToLocation(context.client, sessionId, location)
       await waitForSessionLocation(context, sessionId, location, `Session rollback verification failed: ${sessionId}`)
     }
     await verifyInventory(context, moved, original)
@@ -370,7 +376,7 @@ async function verifyInventory(
   expected: Map<string, LocationRef>,
 ): Promise<SessionInfo[]> {
   for (let attempt = 0; attempt < MOVE_VERIFY_ATTEMPTS; attempt += 1) {
-    const sessions = await listCompleteProjectSessions(context.client, context.project.id, context.workspaceID)
+    const sessions = await listCompleteProjectSessions(context.client, context.project.id)
     const refreshed = new Map(sessions.map((session) => [session.id, session]))
     if (sessionIds.every((sessionId) => {
       const session = refreshed.get(sessionId)

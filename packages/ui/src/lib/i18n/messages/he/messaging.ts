@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "תוכן ההודעות",
+  "transcriptFilters.description": "הצגה או הסתרה של תוכן ובחירה אם הוא מורחב בתחילה. ההגדרות חלות על כל השיחות.",
+  "transcriptFilters.show": "הצגת {name}",
+  "transcriptFilters.hide": "הסתרת {name}",
+  "transcriptFilters.expand": "הרחבת {name}",
+  "transcriptFilters.collapse": "כיווץ {name}",
   "messageListHeader.sidebar.openSessionListAriaLabel": "פתח רשימת סשנים",
   "messageListHeader.metrics.usedLabel": "בשימוש",
   "messageListHeader.metrics.availableLabel": "זמין",

@@ -10,11 +10,12 @@ const hiddenSubagent: Agent = { id: "debug", name: "Debug", description: "", mod
 
 describe("agent selectability", () => {
   it("keeps native session location and metadata authoritative", () => {
+    const location = { directory: "D:/repo/worktree", workspaceID: "workspace" }
     const session = createClientSession({
       id: "session",
       projectID: "project",
       title: "Session",
-      location: { directory: "D:/repo/worktree", workspaceID: "workspace" },
+      location,
       metadata: { persisted: true },
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },

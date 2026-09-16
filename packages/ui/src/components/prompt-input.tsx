@@ -934,7 +934,7 @@ export default function PromptInput(props: PromptInputProps) {
         data-compact-auto={compactLayoutEnabled() ? "true" : undefined}
         style={
           isDragging()
-            ? "border-color: var(--accent-primary); background-color: rgba(0, 102, 255, 0.05);"
+            ? "border-color: var(--accent-primary); background-color: color-mix(in oklab, var(--accent-primary) 5%, transparent);"
             : ""
         }
         onDragOver={handleDragOver}
@@ -1072,45 +1072,50 @@ export default function PromptInput(props: PromptInputProps) {
           disabled={props.disabled}
           onChange={handleFileInputChange}
         />
-        <div class="prompt-actions-menu">
-          <ActionOverflowMenu
-            items={promptActionMenuItems()}
-            label={t("messageItem.actions.more")}
-            triggerClass="prompt-actions-menu-trigger"
-          />
-        </div>
+        <div class="prompt-input-footer">
+          <div class="prompt-input-footer-context">{props.footerControls}</div>
+          <div class="prompt-input-footer-actions">
+            <div class="prompt-actions-menu">
+              <ActionOverflowMenu
+                items={promptActionMenuItems()}
+                label={t("messageItem.actions.more")}
+                triggerClass="prompt-actions-menu-trigger"
+              />
+            </div>
 
-        <div class="prompt-input-primary-actions">
-          <button
-            type="button"
-            class="stop-button"
-            onClick={handleAbort}
-            disabled={!canStop()}
-            aria-label={t("promptInput.stopSession.ariaLabel")}
-            title={t("promptInput.stopSession.title")}
-          >
-            <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <rect x="4" y="4" width="12" height="12" rx="2" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
-            onClick={() => void handleSend()}
-            disabled={!canSend()}
-            aria-label={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
-            title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
-          >
-            <Show
-              when={mode() === "shell"}
-              fallback={<span class="send-icon">▶</span>}
-            >
-              <svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 8l5 4-5 4" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h6" />
-              </svg>
-            </Show>
-          </button>
+            <div class="prompt-input-primary-actions">
+              <button
+                type="button"
+                class="stop-button"
+                onClick={handleAbort}
+                disabled={!canStop()}
+                aria-label={t("promptInput.stopSession.ariaLabel")}
+                title={t("promptInput.stopSession.title")}
+              >
+                <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <rect x="4" y="4" width="12" height="12" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class={`send-button ${mode() === "shell" ? "shell-mode" : ""}`}
+                onClick={() => void handleSend()}
+                disabled={!canSend()}
+                aria-label={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+                title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+              >
+                <Show
+                  when={mode() === "shell"}
+                  fallback={<span class="send-icon">▶</span>}
+                >
+                  <svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 8l5 4-5 4" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h6" />
+                  </svg>
+                </Show>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

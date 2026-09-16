@@ -1,0 +1,53 @@
+/* Every nesting level advances by the same pixel-aligned step.
+   Selection controls stay on the root axis, independently of depth. */
+.session-item-base {
+  --session-root-indent: 6px;
+  --session-expander-size: calc(0.875rem + 0.25rem);
+  --session-tree-step: round(nearest, calc((max(0.875rem, calc(var(--session-expander-size) / 2 + var(--space-xs))) + var(--session-expander-size) / 2 - 0.5px) / 2), 1px);
+  --session-selection-offset: 0px;
+  padding-inline-start: var(--session-root-indent);
+}
+
+.session-item-base:has(> input[type="checkbox"]) {
+  --session-selection-offset: calc(0.875rem + var(--space-xs));
+  position: relative;
+  padding-inline-start: calc(var(--session-root-indent) + var(--session-selection-offset));
+}
+
+.session-item-base.session-item-nested:has(> input[type="checkbox"]) {
+  padding-inline-start: calc(var(--session-indent) + var(--session-selection-offset));
+}
+
+.session-item-base > input[type="checkbox"] {
+  position: absolute;
+  inset-inline-start: var(--session-root-indent);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.session-item-expander {
+  @apply transition-colors;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--session-expander-size);
+  height: var(--session-expander-size);
+  padding: 0.125rem;
+  border-radius: 0;
+}
+
+.session-item-base.session-item-nested {
+  padding-inline-start: var(--session-indent);
+  position: relative;
+}
+
+@media (pointer: coarse) {
+  .session-item-base {
+    --session-expander-size: var(--touch-target-size);
+  }
+}

@@ -4,12 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import Fastify from "fastify"
 import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorktreeRoutes } from "./worktrees"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { readLocationContext } from "../../opencode/compatibility/location"
 
 describe("worktree routes", () => {
 it("reserves the physical worktree and rejects a same-HEAD replacement before deletion", async () => {
@@ -29,13 +30,14 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     execFileSync("git", ["-C", repo, "-c", "user.name=CodeNomad", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init"], { stdio: "ignore" })
     execFileSync("git", ["-C", repo, "worktree", "add", "-b", "feature", linked], { stdio: "ignore" })
 
+    const originalLocation = { directory: path.join(linked, "..cache", "session"), workspaceID: "native-feature" }
     const current: SessionInfo = {
       id: "session",
       projectID: "project",
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: 1, updated: 1 },
-      location: { directory: path.join(linked, "..cache", "session"), workspaceID: "native-feature" },
+      location: originalLocation,
     }
     let lists = 0
     const client = {
@@ -61,8 +63,8 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
           return { data: [structuredClone(current)], cursor: {} }
         },
         active: async () => ({}),
-        move: async ({ directory, workspaceID }: { directory: string; workspaceID?: string }) => {
-          current.location = { directory, workspaceID }
+        move: async ({ directory }: { directory: string }, options?: { headers: Record<string, string> }) => {
+          current.location = readLocationContext(options?.headers["x-codenomad-location"], "legacy") ?? { directory }
         },
         get: async () => structuredClone(current),
       },
@@ -128,13 +130,13 @@ it("fails a direct delete call closed when session evacuation fails", async () =
       const client = {
         project: { list: async () => [{ id: "project" }] },
         debug: { location: { list: async () => [{ directory: path.join(temp, "unrelated"), workspaceID: "root-location" }] } },
-        shell: { list: async ({ location }: { location?: { workspace?: string } }) => ({
-          data: blocker === "shell" && location?.workspace === "root-location"
+        shell: { list: async (_input: unknown, options?: { headers: Record<string, string> }) => ({
+          data: blocker === "shell" && readLocationContext(options?.headers["x-codenomad-location"], "legacy")?.workspaceID === "root-location"
             ? [{ id: "sh_blocker", status: "running", cwd: target }]
             : [],
         }) },
-        pty: { list: async ({ location }: { location?: { workspace?: string } }) => ({
-          data: blocker === "pty" && location?.workspace === "root-location"
+        pty: { list: async (_input: unknown, options?: { headers: Record<string, string> }) => ({
+          data: blocker === "pty" && readLocationContext(options?.headers["x-codenomad-location"], "legacy")?.workspaceID === "root-location"
             ? [{ id: "pty_blocker", status: "running", cwd: target }]
             : [],
         }) },

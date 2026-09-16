@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
+import { readLocationContext, readLocationRef } from "../opencode/compatibility/location"
 import {
   listCompleteProjectSessions,
   moveProjectSessionFamily,
@@ -13,6 +14,7 @@ const ROOT = "/repo"
 const WORKTREE = "/repo/.codenomad/worktrees/feature"
 
 function session(id: string, parentID?: string, directory = ROOT, workspaceID?: string): SessionInfo {
+  const location = { directory, workspaceID }
   return {
     id,
     parentID,
@@ -20,7 +22,7 @@ function session(id: string, parentID?: string, directory = ROOT, workspaceID?: 
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 1, updated: 1 },
-    location: { directory, workspaceID },
+    location,
   }
 }
 
@@ -45,7 +47,7 @@ function clientHarness(initial: SessionInfo[], options: {
     session: {
       list: async (input?: { workspace?: string }) => ({
         data: Array.from(sessions.values())
-          .filter((value) => !input?.workspace || value.location.workspaceID === input.workspace)
+          .filter((value) => !input?.workspace || readLocationRef(value.location).workspaceID === input.workspace)
           .map((value) => structuredClone(value)),
         cursor: {},
       }),
@@ -58,11 +60,11 @@ function clientHarness(initial: SessionInfo[], options: {
         }
         return structuredClone(sessions.get(sessionID)!)
       },
-      move: async ({ sessionID, directory, workspaceID }: { sessionID: string; directory: string; workspaceID?: string }) => {
+      move: async ({ sessionID, directory }: { sessionID: string; directory: string }, requestOptions?: { headers: Record<string, string> }) => {
         moveCall += 1
         moveCalls.push(sessionID)
         if (options.failMove?.(sessionID, moveCall)) throw new Error(`move failed: ${sessionID}`)
-        const location = { directory, workspaceID }
+        const location = readLocationContext(requestOptions?.headers["x-codenomad-location"], "legacy") ?? { directory }
         if (options.visibilityDelayGets) pending.set(sessionID, { location, remaining: options.visibilityDelayGets })
         else sessions.get(sessionID)!.location = location
       },
@@ -92,7 +94,7 @@ describe("project session families", () => {
     } as unknown as OpenCodeClient
 
     assert.deepEqual((await listCompleteProjectSessions(client, "project", "workspace")).map(({ id }) => id), pages.map(({ id }) => id))
-    assert.deepEqual(calls[0], { project: "project", workspace: "workspace", limit: 500, order: "asc" })
+    assert.deepEqual(calls[0], { project: "project", limit: 500, order: "asc" })
     assert.deepEqual(calls.slice(1), ["page-2", "page-3", "page-4", "page-5"].map((cursor) => ({ cursor })))
   })
 
@@ -138,6 +140,15 @@ describe("project session families", () => {
     })
     assert.deepEqual(moved.sessionIds, ["root", "child"])
     assert.ok([...harness.sessions.values()].every(({ location }) => location.directory === WORKTREE))
+  })
+
+  it("rejects a same-project destination redirected to another directory before moving", async () => {
+    const { client, moveCalls } = clientHarness([session("root")])
+    client.location.get = async () => ({ directory: ROOT, project: { id: "project", directory: ROOT, canonical: ROOT } }) as any
+    await assert.rejects(moveProjectSessionFamily({
+      client, projectLocation: { directory: ROOT }, sessionId: "root", targetDirectory: WORKTREE,
+    }), /foreign evacuation destination/)
+    assert.deepEqual(moveCalls, [])
   })
 
   it("rejects a family split across native workspaces", async () => {

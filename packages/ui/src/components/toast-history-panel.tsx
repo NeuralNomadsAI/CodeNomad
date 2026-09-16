@@ -10,6 +10,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   type Component,
 } from "solid-js"
 import { X, Bell, Trash2, ExternalLink } from "lucide-solid"
@@ -166,19 +167,8 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
     });
   });
 
-  // Close on ESC
-  createEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        props.onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    onCleanup(() => {
-      document.removeEventListener("keydown", handleKeyDown);
-    });
-  });
+  let closeButton: HTMLButtonElement | undefined;
+  onMount(() => closeButton?.focus({ preventScroll: true }));
 
   // Handle item click
   const handleItemClick = (item: IToastHistoryItem) => {
@@ -200,6 +190,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
 
   // Handle mark all as read
   const handleMarkAllAsRead = () => {
+    if (!hasUnread()) return;
     markAllToastHistoryAsRead();
   };
 
@@ -210,6 +201,12 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
       class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-base"
       role="dialog"
       aria-label={t("toastHistory.title")}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        event.preventDefault();
+        event.stopPropagation();
+        props.onClose();
+      }}
     >
         {/* Header */}
         <header class="window-header">
@@ -228,6 +225,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
           <button
             type="button"
             class="toast-history-close-btn window-icon-button cursor-pointer"
+            ref={closeButton}
             onClick={props.onClose}
             aria-label={t("toastHistory.close")}
           >
@@ -236,12 +234,13 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
         </header>
 
         <Show when={!isEmpty() || props.onOpenSettings}>
-          <div class="window-toolbar justify-end overflow-x-auto">
+          <div class="window-toolbar toast-history-actions-toolbar">
             <Show when={!isEmpty()}>
               <button
                 type="button"
                 class="toast-history-action-btn window-action cursor-pointer"
                 onClick={handleMarkAllAsRead}
+                aria-disabled={!hasUnread()}
                 title={t("toastHistory.markAllRead")}
               >
                 {t("toastHistory.markAllRead")}
@@ -271,7 +270,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
 
         {/* Filter */}
         <Show when={!isEmpty()}>
-          <div class="window-toolbar toast-history-filter-toolbar overflow-x-auto" aria-label={t("toastHistory.filter.label")}>
+          <div class="window-toolbar toast-history-filter-toolbar" role="group" aria-label={t("toastHistory.filter.label")}>
             <For each={FILTER_OPTIONS}>
               {(option) => (
                 <button
@@ -328,7 +327,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                              }}
                              onClick={() => handleItemClick(item)}
                              onKeyDown={(e) => {
-                               if (e.key === "Enter" || e.key === " ") {
+                                if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
                                  e.preventDefault();
                                  handleItemClick(item);
                                }
@@ -338,14 +337,17 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                                class={`w-1.5 h-1.5 flex-shrink-0 mt-[0.3rem] toast-history-indicator ${VARIANT_INDICATOR_CLASS[item.variant]}`}
                               aria-hidden="true"
                             />
-                            <div class="flex-1 min-w-0">
-                               <div class="flex items-center gap-[var(--space-sm)]">
+                             <div class="flex-1 min-w-0 toast-history-item-copy">
+                                <div class="flex items-center gap-[var(--space-sm)]">
+                                  <Show when={!item.read}>
+                                    <span class="toast-history-item-unread-dot w-1.5 h-1.5 flex-shrink-0" aria-hidden="true" />
+                                  </Show>
                                  <Show when={item.title}>
                                    <span class="text-[var(--font-size-xs)] font-medium text-primary">{item.title}</span>
                                  </Show>
-                                 <span class="text-[10px] text-muted flex-shrink-0">{formatTime(item.createdAt)}</span>
+                                 <time class="text-[10px] text-muted flex-shrink-0" dateTime={new Date(item.createdAt).toISOString()}>{formatTime(item.createdAt)}</time>
                                </div>
-                               <p class="text-[11px] text-secondary m-0 line-clamp-2">{item.message}</p>
+                               <p class="text-[var(--font-size-xs)] text-secondary m-0">{item.message}</p>
                               <Show when={item.action}>
                                 <button
                                   type="button"
@@ -364,16 +366,13 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
                             </div>
                             <button
                               type="button"
-                               class="toast-history-item-delete inline-flex items-center justify-center w-5 h-5 border-none bg-transparent text-muted cursor-pointer flex-shrink-0"
+                               class="toast-history-item-delete window-icon-button cursor-pointer"
                               onClick={(e) => handleDelete(e, item.id)}
                               aria-label={t("toastHistory.deleteItem")}
                               title={t("toastHistory.deleteItem")}
                             >
                                <X class="w-3 h-3" aria-hidden="true" />
                             </button>
-                            <Show when={!item.read}>
-                               <span class="toast-history-item-unread-dot absolute top-[var(--space-sm)] right-[var(--space-sm)] w-1.5 h-1.5" aria-hidden="true" />
-                            </Show>
                            </li>
                          </>
                        )}

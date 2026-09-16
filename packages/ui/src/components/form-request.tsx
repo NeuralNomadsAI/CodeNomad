@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js"
-import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode-ai/client"
+import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
 import { isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 

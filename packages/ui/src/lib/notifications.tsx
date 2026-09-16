@@ -1,5 +1,6 @@
 import toast from "solid-toast"
 import { createSignal } from "solid-js"
+import { tGlobal } from "./i18n"
 import { isTauriHost } from "./runtime-env"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
@@ -293,7 +294,7 @@ async function openExternalUrl(url: string): Promise<void> {
     window.open(url, "_blank", "noopener,noreferrer")
   } catch (error) {
     console.warn("[notifications] unable to open external url", error)
-    toast.error("Unable to open link")
+    toast.error(tGlobal("toastHistory.openLinkError"))
   }
 }
 
@@ -373,13 +374,13 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
   const id = toast.custom(
     () => (
       <div
-        class={`pointer-events-auto relative w-[320px] max-w-[360px] rounded-lg border px-4 py-3 shadow-xl ${accent.container}`}
+        class={`pointer-events-auto relative w-[320px] max-w-[360px] border px-4 py-3 shadow-xl ${accent.container}`}
       >
         <button
           type="button"
-          class="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-200/80 hover:text-slate-50 hover:bg-white/10"
-          aria-label="Close notification"
-          title="Close"
+          class="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center text-slate-200/80 hover:text-slate-50 hover:bg-white/10"
+          aria-label={tGlobal("toastHistory.close")}
+          title={tGlobal("toastHistory.close")}
           onClick={() => toast.dismiss(id)}
         >
           x

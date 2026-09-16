@@ -51,22 +51,20 @@ function closeServer(server: http.Server | undefined): Promise<void> {
   return new Promise((resolve) => server?.close(() => resolve()) ?? resolve())
 }
 
-function isolateAutomationBridgeDirectory(root: string): () => void {
-  const previous = {
-    HOME: process.env.HOME,
-    LOCALAPPDATA: process.env.LOCALAPPDATA,
-    WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME,
-    XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
-  }
-  process.env.HOME = root
+function isolateAutomationBridgeRegistry(root: string): () => void {
+  const previousLocalAppData = process.env.LOCALAPPDATA
+  const previousXdgRuntimeDir = process.env.XDG_RUNTIME_DIR
+  const previousWslDistroName = process.env.WSL_DISTRO_NAME
   process.env.LOCALAPPDATA = root
   process.env.XDG_RUNTIME_DIR = root
   delete process.env.WSL_DISTRO_NAME
   return () => {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
+    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA
+    else process.env.LOCALAPPDATA = previousLocalAppData
+    if (previousXdgRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR
+    else process.env.XDG_RUNTIME_DIR = previousXdgRuntimeDir
+    if (previousWslDistroName === undefined) delete process.env.WSL_DISTRO_NAME
+    else process.env.WSL_DISTRO_NAME = previousWslDistroName
   }
 }
 
@@ -120,7 +118,7 @@ test("removes only the generated legacy global plugin shim", async () => {
 
 test("restart waits for a new native generation and returns a fresh inspection", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-restart-"))
-  const restoreEnvironment = isolateAutomationBridgeDirectory(root)
+  const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   const definitions: ToolDefinition[] = []
   let removeOld: (() => Promise<void>) | undefined
   let removeNew: (() => Promise<void>) | undefined
@@ -181,14 +179,14 @@ test("restart waits for a new native generation and returns a fresh inspection",
     await closeServer(newServer)
     await closeServer(preexistingServer)
     await Promise.all(distractorServers.map(closeServer))
-    restoreEnvironment()
+    restoreBridgeRegistry()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("keeps inspected targets isolated per plugin setup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-isolation-"))
-  const restoreEnvironment = isolateAutomationBridgeDirectory(root)
+  const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
@@ -207,14 +205,14 @@ test("keeps inspected targets isolated per plugin setup", async () => {
   } finally {
     await removeBridge?.()
     await closeServer(server)
-    restoreEnvironment()
+    restoreBridgeRegistry()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("pins parallel sessions to their independently inspected bridges", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-sessions-"))
-  const restoreEnvironment = isolateAutomationBridgeDirectory(root)
+  const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   const removals: Array<() => Promise<void>> = []
   const servers: http.Server[] = []
   try {
@@ -235,14 +233,14 @@ test("pins parallel sessions to their independently inspected bridges", async ()
   } finally {
     await Promise.all(removals.map((remove) => remove()))
     await Promise.all(servers.map(closeServer))
-    restoreEnvironment()
+    restoreBridgeRegistry()
     await rm(root, { recursive: true, force: true })
   }
 })
 
 test("prunes stale registry pressure before limiting discovery", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-stale-"))
-  const restoreEnvironment = isolateAutomationBridgeDirectory(root)
+  const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
@@ -271,7 +269,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
   } finally {
     await removeBridge?.()
     await closeServer(server)
-    restoreEnvironment()
+    restoreBridgeRegistry()
     await rm(root, { recursive: true, force: true })
   }
 })

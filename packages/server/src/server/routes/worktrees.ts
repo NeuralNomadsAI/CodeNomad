@@ -24,6 +24,7 @@ import {
   removeProjectWorktree,
 } from "../../workspaces/project-session-families"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -136,6 +137,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         projectLocation,
         sessionId: request.params.sessionId,
         targetDirectory,
+        resolveExactDirectory: (directory) => deps.workspaceManager.getServiceDirectoryForPath(workspace.id, directory),
         validateTarget: async () => {
           const refreshed = await strictWorktrees({
             repoRoot,
@@ -246,6 +248,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           projectLocation,
           targetDirectory,
           rootDirectory,
+          resolveExactDirectory: (directory) => deps.workspaceManager.getServiceDirectoryForPath(workspace.id, directory),
           matchesTarget: async (directory) => servicePathContains(targetServiceRoot, directory),
           validateBeforeRemove: async (projectID) => {
             await assertNoWorktreeBlockers(client, projectID, targetServiceRoot, targetDirectory)
@@ -334,15 +337,14 @@ async function assertNoWorktreeBlockers(
     client.debug.location.list(),
     client.project.list(),
   ])
-  const locations = new Map<string, { directory: string; workspace?: string }>()
-  const candidates: Array<{ directory: string; workspace?: string }> = [{ directory: targetDirectory }, ...nativeLocations
-    .map(({ directory, workspaceID }) => ({ directory, workspace: workspaceID }))]
+  const locations = new Map<string, { directory: string; workspaceID?: string }>()
+  const candidates = [{ directory: targetDirectory }, ...nativeLocations.map(readLocationRef)]
   for (const location of candidates) {
-    locations.set(`${location.directory}\0${location.workspace ?? ""}`, location)
+    locations.set(`${location.directory}\0${location.workspaceID ?? ""}`, location)
   }
   const resources = await Promise.all([...locations.values()].map(async (location) => Promise.all([
-    client.shell.list({ location }),
-    client.pty.list({ location }),
+    client.shell.list({ location: { directory: location.directory } }, locationRequestOptions(location)),
+    client.pty.list({ location: { directory: location.directory } }, locationRequestOptions(location)),
   ])))
   const shell = resources.flatMap(([shells]) => shells.data)
     .find((entry) => entry.status === "running" && servicePathContains(targetRoot, entry.cwd))
@@ -382,9 +384,10 @@ async function refreshOpenCodeWorktrees(
   try {
     const client = await manager.getSharedServiceClient()
     const signal = AbortSignal.timeout(5_000)
-    await client.worktree.refresh({
-      location: { directory: location.directory, workspace: location.workspaceID },
-    }, { signal })
+    const resolved = await client.location.get({ location: { directory: location.directory } }, { ...locationRequestOptions(location), signal })
+    await client.worktree.refresh({ projectID: resolved.project.id }, {
+      ...locationRequestOptions(location, { includeDirectory: true }), signal,
+    })
   } catch (error) {
     logger.warn({ err: error }, "Failed to refresh OpenCode worktrees")
   }

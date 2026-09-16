@@ -1,4 +1,4 @@
-import type { FormInfo } from "@opencode-ai/client"
+import type { FormInfo } from "@opencode/client"
 
 interface MessagePart {
   id?: string
