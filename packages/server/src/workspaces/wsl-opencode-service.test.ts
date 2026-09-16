@@ -59,15 +59,15 @@ describe("WslOpenCodeService", () => {
     }
   })
 
-  it("starts through the Linux CLI, fetches the password, and authenticates Windows health", async () => {
-    let healthRequest: { url: string; authorization: string | null } | undefined
+  it("starts through the Linux CLI, fetches the password, and authenticates Windows status", async () => {
+    let statusRequest: { url: string; authorization: string | null } | undefined
     const test = harness({ start: `${url}\r\n`, password: "start-secret\r\n" }, {
       fetch: async (input, init) => {
-        healthRequest = {
+        statusRequest = {
           url: String(input),
           authorization: new Headers(init?.headers).get("authorization"),
         }
-        return Response.json({ healthy: true, version: "2.0.0", pid: 987654 })
+        return Response.json({ version: "2.0.4", pid: 987654, urls: [url] })
       },
     })
 
@@ -77,8 +77,8 @@ describe("WslOpenCodeService", () => {
       ["service", "start"],
       ["service", "get", "password"],
     ])
-    assert.deepEqual(healthRequest, {
-      url: `${url}/api/health`,
+    assert.deepEqual(statusRequest, {
+      url: `${url}/api/status`,
       authorization: `Basic ${Buffer.from("opencode:start-secret").toString("base64")}`,
     })
     assert.deepEqual(endpoint, {
@@ -132,7 +132,7 @@ describe("WslOpenCodeService", () => {
     )
   })
 
-  it("fails closed with actionable forwarding or health failures", async () => {
+  it("fails closed with actionable forwarding or status failures", async () => {
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => { throw new Error("ECONNREFUSED") },
     }).service.discover(), /Enable WSL localhost forwarding/)
@@ -143,30 +143,72 @@ describe("WslOpenCodeService", () => {
 
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => new Response(null, { status: 503 }),
-    }).service.discover(), /health check failed.*503/)
+    }).service.discover(), /status check failed.*503/)
 
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
-      fetch: async () => Response.json({ healthy: false, pid: 12 }),
-    }).service.discover(), /invalid health response/)
+      fetch: async () => Response.json({ version: "2.0.4", pid: 12 }),
+    }).service.discover(), /invalid status response/)
   })
 
-  it("requires the complete compatible health shape", async () => {
-    for (const health of [
-      { healthy: true, pid: 1 },
-      { healthy: true, version: "", pid: 1 },
-      { healthy: true, version: "   ", pid: 1 },
-      { healthy: true, version: "2.0.0", pid: 0 },
-      { healthy: true, version: "2.0.0", pid: 1.5 },
-      { healthy: true, version: "2.0.0", pid: Number.MAX_SAFE_INTEGER + 1 },
-    ]) {
+  it("falls back to authenticated Windows health for an older WSL V2 service", async () => {
+    const requests: string[] = []
+    const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async (input, init) => {
+        requests.push(String(input))
+        assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
+        return requests.length === 1 ? new Response(null, { status: 404 })
+          : Response.json({ healthy: true, version: "0.0.0-beta-19271", pid: 123 })
+      },
+    }).service.discover()
+    assert.equal(endpoint?.url, url)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+  })
+
+  it("rejects missing, unauthenticated, malformed and oversized fallback health responses", async () => {
+    for (const [response, expected] of [
+      [() => new Response(null, { status: 404 }), /health check failed.*404/],
+      [() => new Response(null, { status: 401 }), /authentication failed.*401/],
+      [() => new Response(null, { status: 503 }), /health check failed.*503/],
+      [() => new Response("invalid JSON"), /invalid health response/],
+      ...[
+        { healthy: false, version: "2.0.3", pid: 123 },
+        { healthy: true, version: " ", pid: 123 },
+        { healthy: true, version: "2.0.3", pid: 0 },
+        { healthy: true, version: "2.0.3", pid: 1.5 },
+        { version: "2.0.4", pid: 123, urls: [url] },
+      ].map(value => [() => Response.json(value), /invalid health response/] as const),
+      [() => new Response(" ".repeat(64 * 1024 + 1)), /invalid health response/],
+    ] as const) {
+      const requests: string[] = []
       await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
-        fetch: async () => Response.json(health),
-      }).service.discover(), /invalid health response/)
+        fetch: async (input) => {
+          requests.push(String(input))
+          return requests.length === 1 ? new Response(null, { status: 404 }) : response()
+        },
+      }).service.discover(), expected)
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
     }
   })
 
-  it("streams at most 64 KiB of health data and cancels an oversized body", async () => {
-    const valid = JSON.stringify({ healthy: true, version: "2.0.0", pid: 123 }).padEnd(64 * 1024, " ")
+  it("requires the complete compatible status shape", async () => {
+    for (const status of [
+      { pid: 1, urls: [url] },
+      { version: "", pid: 1, urls: [url] },
+      { version: "   ", pid: 1, urls: [url] },
+      { version: "2.0.4", pid: -1, urls: [url] },
+      { version: "2.0.4", pid: 1.5, urls: [url] },
+      { version: "2.0.4", pid: Number.MAX_SAFE_INTEGER + 1, urls: [url] },
+      { version: "2.0.4", pid: 1 },
+      { version: "2.0.4", pid: 1, urls: [1] },
+    ]) {
+      await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+        fetch: async () => Response.json(status),
+      }).service.discover(), /invalid status response/)
+    }
+  })
+
+  it("streams at most 64 KiB of status data and cancels an oversized body", async () => {
+    const valid = JSON.stringify({ version: "2.0.4", pid: 123, urls: [url] }).padEnd(64 * 1024, " ")
     await harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => new Response(valid),
     }).service.discover()
@@ -181,7 +223,7 @@ describe("WslOpenCodeService", () => {
     })
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => new Response(oversized),
-    }).service.discover(), /invalid health response/)
+    }).service.discover(), /invalid status response/)
     assert.equal(cancelled, true)
   })
 
@@ -320,7 +362,7 @@ function harness(
       const key = operation === "status" || operation === "start" ? operation : "password"
       return { stdout: output[key] ?? "", stderr: "" }
     },
-    fetch: async () => Response.json({ healthy: true, version: "2.0.0", pid: 123 }),
+    fetch: async () => Response.json({ version: "2.0.4", pid: 123, urls: [url] }),
     ...overrides,
   }
   return {

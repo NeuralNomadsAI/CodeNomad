@@ -2,7 +2,7 @@ import type {
   ModelRef,
   SessionMessageProviderState,
   SessionStructuredError,
-} from "@opencode-ai/client"
+} from "@opencode/client"
 
 import type { PermissionRequest } from "./permission"
 import type { ToolState } from "./tool-state"

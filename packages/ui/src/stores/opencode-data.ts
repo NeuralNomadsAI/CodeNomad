@@ -1,5 +1,5 @@
-import type { OpenCodeEvent, SessionMessageInfo } from "@opencode-ai/client"
-import { createData, type Data } from "@opencode-ai/client/solid"
+import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client"
+import { createData, type Data } from "@opencode/client/solid"
 import { createRoot, createSignal } from "solid-js"
 import { getRootClient } from "./opencode-client"
 import { seedSessionMessagesV2 } from "./message-v2/bridge"

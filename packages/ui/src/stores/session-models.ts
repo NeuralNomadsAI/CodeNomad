@@ -1,10 +1,10 @@
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import { activeSessionId, agents, providers, sessions } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { resolveAgentId } from "../types/session"
-import { toRequestLocation } from "./request-locations"
+import { requestLocationOptions, toRequestLocation } from "./request-locations"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
@@ -95,7 +95,7 @@ async function getDefaultModel(
     if (instance?.client) {
       const response = await getRootClient(instanceId).model.default({
         location: toRequestLocation(getActiveCatalogLocation(instanceId)),
-      }).catch(() => null)
+      }, requestLocationOptions(getActiveCatalogLocation(instanceId))).catch(() => null)
       if (response?.data) {
         return { providerId: response.data.providerID, modelId: response.data.id }
       }

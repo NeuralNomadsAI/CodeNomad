@@ -66,25 +66,23 @@ describe("form interruption lifecycle", () => {
     }
   })
 
-  it("keeps global form locations for response routing while session forms stay unchanged", () => {
+  it("keeps global form locations for list reconciliation while session forms stay unchanged", () => {
     const instanceId = "global-form-location"
     const globalForm = {
       ...form,
       id: "global-form",
       sessionID: "global",
-      location: { directory: "/worktree", workspaceID: "workspace-1" },
+      location: { directory: "/worktree" },
     }
 
     try {
       addPendingForm(instanceId, globalForm)
       assert.deepEqual(getFormQueue(instanceId)[0]?.location, globalForm.location)
       assert.deepEqual(formRequestOptions(globalForm), {
-        headers: {
-          "x-opencode-directory": "%2Fworktree",
-          "x-opencode-workspace": "workspace-1",
-        },
+        headers: { "x-opencode-directory": "%2Fworktree" },
       })
       assert.equal(formRequestOptions(form), undefined)
+      assert.equal(formRequestOptions({ ...form, location: globalForm.location }), undefined)
     } finally {
       removePendingForm(instanceId, globalForm.id)
     }
@@ -92,28 +90,30 @@ describe("form interruption lifecycle", () => {
 
   it("percent-encodes Unicode and percent signs in global form directories", () => {
     assert.deepEqual(formRequestOptions({
-      ...form,
-      sessionID: "global",
-      location: { directory: "/工作/100% ready" },
-    }), {
-      headers: {
-        "x-opencode-directory": "%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready",
-      },
-    })
+      ...form, sessionID: "global", location: { directory: "/工作/100% ready" },
+    }), { headers: { "x-opencode-directory": "%2F%E5%B7%A5%E4%BD%9C%2F100%25%20ready" } })
   })
 
-  it("sends global replies and cancellations with their location request options", async () => {
+  it("preserves global legacy Form identity in the validated context channel", () => {
+    const location = { directory: "/worktree", workspaceID: "workspace-one" }
+    const options = formRequestOptions({ ...form, sessionID: "global", location })!
+    assert.equal(options.headers["x-opencode-directory"], "%2Fworktree")
+    assert.deepEqual(JSON.parse(decodeURIComponent(options.headers["x-codenomad-location"])), location)
+    assert.equal(formRequestOptions({ ...form, location }), undefined)
+  })
+
+  it("routes global replies and cancellations through their list location", async () => {
     const instanceId = "global-form-response-location"
     const globalForm = {
       ...form,
       id: "global-response-form",
       sessionID: "global",
-      location: { directory: "/worktree", workspaceID: "workspace-1" },
+      location: { directory: "/worktree" },
     }
     const calls: unknown[][] = []
     const client = getRootClient(instanceId)
-    ;(client.form as any).reply = async (...args: unknown[]) => { calls.push(args) }
-    ;(client.form as any).cancel = async (...args: unknown[]) => { calls.push(args) }
+    ;(client.session.form as any).reply = async (...args: unknown[]) => { calls.push(args) }
+    ;(client.session.form as any).cancel = async (...args: unknown[]) => { calls.push(args) }
 
     try {
       addPendingForm(instanceId, globalForm)
@@ -139,16 +139,16 @@ describe("form interruption lifecycle", () => {
 
   it("attaches list response locations only to global forms", async () => {
     const instanceId = "global-form-list-location"
-    const location = { directory: "/worktree", workspaceID: "workspace-1" }
+    const location = { directory: "/worktree" }
     const client = {
       permission: { request: { list: async () => ({ location, data: [] }) } },
-      form: { request: { list: async () => ({
+      form: { list: async () => ({
         location,
         data: [
           { ...form, id: "global-list-form", sessionID: "global" },
           { ...form, id: "session-list-form" },
         ],
-      }) } },
+      }) },
     }
     addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
 
@@ -168,7 +168,7 @@ describe("form interruption lifecycle", () => {
     const location = { directory: "/worktree" }
     const client = {
       permission: { request: { list: async () => ({ location, data: [] }) } },
-      form: { request: { list: async () => ({ location, data: [] }) } },
+      form: { list: async () => ({ location, data: [] }) },
     }
     addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
 
@@ -181,15 +181,39 @@ describe("form interruption lifecycle", () => {
     }
   })
 
+  it("does not reconcile one legacy Form location from another same-directory scan", async () => {
+    const instanceId = "same-directory-form-identities"
+    const directory = "/workspace"
+    const seen = new Set<string | undefined>()
+    const list = async (_input: unknown, options?: { headers?: Record<string, string> }) => {
+      const context = options?.headers?.["x-codenomad-location"]
+      const location = context ? JSON.parse(decodeURIComponent(context)) : { directory }
+      seen.add(location.workspaceID)
+      if (location.workspaceID === "two") throw new Error("second native location unavailable")
+      return { location, data: [] }
+    }
+    addInstance({ id: instanceId, folder: directory, status: "ready", client: {
+      permission: { request: { list } }, form: { list },
+    } } as any)
+    try {
+      for (const workspaceID of ["one", "two"]) addPendingForm(instanceId, {
+        ...form, id: workspaceID, sessionID: "global", location: { directory, workspaceID },
+      })
+      await assert.rejects(syncPendingRequests(instanceId))
+      assert.deepEqual(seen, new Set([undefined, "one", "two"]))
+      assert.deepEqual(getFormQueue(instanceId).map(entry => entry.id), ["two"])
+    } finally { removeInstance(instanceId) }
+  })
+
   it("preserves form settlement tombstones when one location scan fails", async () => {
     const instanceId = "partial-form-scan"
     const worktreeLocation = { directory: "/worktree" }
     const client = {
       permission: { request: { list: async ({ location }: { location: unknown }) => ({ location, data: [] }) } },
-      form: { request: { list: async ({ location }: { location: { directory?: string } }) => {
+      form: { list: async ({ location }: { location: { directory?: string } }) => {
         if (location.directory === "/workspace") throw new Error("root unavailable")
         return { location: worktreeLocation, data: [] }
-      } } },
+      } },
     }
     addInstance({ id: instanceId, folder: "/workspace", status: "ready", client } as any)
     setSessions((previous) => new Map(previous).set(instanceId, new Map([["session", {

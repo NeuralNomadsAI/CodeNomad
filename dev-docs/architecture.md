@@ -2,7 +2,7 @@
 
 ## Overview
 
-CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. It integrates with the latest experimental `@opencode-ai/client@beta` contract in both server and UI. The public `@opencode-ai/sdk` is an alternative embedded host; CodeNomad uses the network client.
+CodeNomad is a SolidJS UI and Fastify server hosted by Electron or Tauri. Both server and UI pin the official `@opencode/client@2.0.4` network contract. The runtime CLI is independently managed.
 
 ```text
 Desktop host -> CodeNomad server -> one shared OpenCode service

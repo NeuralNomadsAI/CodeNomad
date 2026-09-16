@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient } from "@opencode-ai/client"
-import type { Endpoint } from "@opencode-ai/client/service"
+import type { OpenCodeClient } from "@opencode/client"
+import type { Endpoint } from "@opencode/client/service"
 
 import {
   OpenCodeSharedService,
@@ -185,7 +185,6 @@ describe("OpenCodeSharedService", () => {
         return {
           location: { get: async () => ({
             directory: "/repo",
-            workspaceID: "canonical",
             project: { id: "project", directory: "/repo", canonical: "/repo" },
           }) },
           debug: { location: { evict: async (input: unknown, request?: { signal?: AbortSignal }) => {
@@ -201,16 +200,16 @@ describe("OpenCodeSharedService", () => {
     assert.deepEqual(await service.headers(options), { authorization: "Basic proxy" })
     await assert.rejects(
       service.validateLocation({ directory: "/repo", workspaceID: "foreign" }, undefined, options),
-      /does not match/,
+      /identified by directory/,
     )
     await service.evictLocation(
-      { directory: "/repo", workspaceID: "canonical" },
+      { directory: "/repo" },
       { signal },
       options,
     )
 
     assert.deepEqual(clientHeaders, { authorization: "Basic proxy" })
-    assert.deepEqual(evicted, { location: { directory: "/repo", workspace: "canonical" } })
+    assert.deepEqual(evicted, { location: { directory: "/repo" } })
     assert.equal(evictionSignal, signal)
   })
 })

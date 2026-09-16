@@ -1,9 +1,8 @@
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, getInstanceMetadataGeneration, mergeInstanceMetadata } from "../../stores/instance-metadata"
-import { waitForPluginActivation } from "../../stores/plugin-activation"
-import { toRequestLocation } from "../../stores/request-locations"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Map<string, {
@@ -19,14 +18,13 @@ const pendingProjectMetadataRequests = new Map<string, {
 }>()
 
 function locationKey(location: LocationRef): string {
-  return `${location.directory}\0${location.workspaceID ?? ""}`
+  return locationAuthorityKey(location)
 }
 
 function metadataMatchesLocation(metadata: Instance["metadata"] | undefined, location: LocationRef): boolean {
   if (!metadata) return false
   const resolved = metadata.mcpStatus?.location
-  return resolved?.directory === location.directory
-    && (!location.workspaceID || resolved.workspaceID === location.workspaceID)
+  return Boolean(resolved && locationAuthorityKey(resolved) === locationAuthorityKey(location))
 }
 
 function hasMetadataLoaded(metadata?: Instance["metadata"], location?: LocationRef): boolean {
@@ -58,13 +56,11 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
   request.promise = (async () => {
     try {
       const requestLocation = toRequestLocation(location)
-      const pluginRequest = waitForPluginActivation(client, location)
-        .then(() => client.plugin.list({ location: requestLocation }))
       const [projectResult, projectsResult, mcpResult, pluginResult] = await Promise.allSettled([
         loadInstanceProjectMetadata(instance, options),
         client.project.list(),
-        client.mcp.list({ location: requestLocation }),
-        pluginRequest,
+        client.mcp.list({ location: requestLocation }, requestLocationOptions(location)),
+        client.plugin.list({ location: requestLocation }, requestLocationOptions(location)),
       ])
 
       const currentProject = getInstanceMetadata(instance.id)?.project
@@ -127,12 +123,12 @@ export function loadInstanceProjectMetadata(instance: Instance, options?: { forc
   const pending = pendingProjectMetadataRequests.get(instance.id)
   if (pending?.client === client && pending.generation === generation) return pending.promise
   const request = { client, generation, promise: Promise.resolve() as Promise<void> }
-  request.promise = client.project.current({ location: { directory: instance.folder } })
-    .then((project) => {
+  request.promise = client.location.get({ location: { directory: instance.folder } })
+    .then((location) => {
       if (pendingProjectMetadataRequests.get(instance.id) !== request
         || getInstanceMetadataGeneration(instance.id) !== generation) return
       mergeInstanceMetadata(instance.id, {
-        project: project ?? null,
+        project: location.project,
         ...(!currentMetadata?.version && instance.binaryVersion ? { version: instance.binaryVersion } : {}),
       })
     })

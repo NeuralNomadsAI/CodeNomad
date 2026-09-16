@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { SessionMessageInfo } from "@opencode/client"
 import { normalizeSessionMessage } from "./normalizers.ts"
 
 describe("native session message normalization", () => {

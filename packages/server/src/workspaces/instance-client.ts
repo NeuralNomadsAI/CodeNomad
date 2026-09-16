@@ -1,4 +1,4 @@
-import type { OpenCodeClient } from "@opencode-ai/client"
+import type { OpenCodeClient } from "@opencode/client"
 import type { WorkspaceManager } from "./manager"
 
 /**

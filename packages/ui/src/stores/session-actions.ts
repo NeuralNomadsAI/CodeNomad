@@ -1,5 +1,5 @@
-import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode-ai/client"
-import { isSessionBusyError } from "@opencode-ai/client"
+import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode/client"
+import { isSessionBusyError } from "@opencode/client"
 import type { Attachment } from "../types/attachment"
 import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
 import { tGlobal } from "../lib/i18n"
@@ -82,7 +82,7 @@ export function stageSessionRevert(instanceId: string, sessionId: string, messag
       // interruption is required. Idle undo never interrupts another session.
       if (!isSessionBusyError(error)) throw error
       assertCurrent()
-      await client.session.interrupt({ sessionID: sessionId, continue: false }, options)
+      await client.session.interrupt({ sessionID: sessionId, resume: false }, options)
       assertCurrent()
       // Interrupt acknowledges acceptance before execution cleanup settles.
       await client.session.wait({ sessionID: sessionId }, options)
@@ -414,7 +414,7 @@ async function executeCustomCommand(
     if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
     const client = getRootClient(instanceId)
     await syncVoiceModeInstruction(client, instanceId, sessionId)
-    await client.session.command({ sessionID: sessionId, command: commandName, text: args, delivery: "steer" })
+    await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" })
   }, { optimisticGeneration: false })
 }
 
@@ -571,7 +571,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
-  await client.session.rename({ sessionID: sessionId, title: trimmedTitle })
+  await client.session.update({ sessionID: sessionId, title: trimmedTitle })
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle
@@ -646,7 +646,7 @@ async function deleteSelectedMessageTechnicalParts(
 
   return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
-    const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+    const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) {
       throw new Error(tGlobal("session.pruning.not_deletable"))
     }
@@ -676,7 +676,7 @@ async function deleteMessageTechnicalParts(instanceId: string, sessionId: string
   }
   await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
     const client = getRootClient(instanceId)
-    const message = await client.session.message({ sessionID: sessionId, messageID: messageId })
+    const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.not_deletable"))
     const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
     if (content.length === message.content.length) return
