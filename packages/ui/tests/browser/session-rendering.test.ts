@@ -350,6 +350,20 @@ test("a real send stays rendered across delayed admission, inbox echo and author
       assert.equal(visible, true)
     }
     await assertPrompt()
+    const queuedBadge = page.locator(".message-stream-block").filter({ hasText: marker })
+      .locator(".message-item-header-row--top > .message-header-left + .message-queued-badge")
+    assert.equal(await queuedBadge.count(), 1)
+    const placement = await queuedBadge.evaluate((badge) => {
+      const actions = badge.nextElementSibling
+      const badgeRect = badge.getBoundingClientRect()
+      const actionsRect = actions?.getBoundingClientRect()
+      return {
+        beforeMenu: actions?.classList.contains("message-item-actions") === true,
+        alignedBeforeMenu: Boolean(actionsRect && badgeRect.right <= actionsRect.left),
+      }
+    })
+    assert.deepEqual(placement, { beforeMenu: true, alignedBeforeMenu: true })
+    assert.equal(await page.locator(".message-stream-block").filter({ hasText: marker }).locator(".message-sending").count(), 0)
     for (const phase of ["before-accept", "accepted", "inbox-echo", "persisted"]) {
       if (phase === "accepted") await page.evaluate(() => (window as any).fixture.acceptPrompt())
       if (phase === "inbox-echo") await page.evaluate(() => (window as any).fixture.echoPrompt())

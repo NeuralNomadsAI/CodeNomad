@@ -68,20 +68,20 @@
 
 .message-timeline-segment {
   width: 100%;
-  min-height: 1.5rem;
+  min-height: 1.25rem;
   border-radius: 0;
-  border: 1px solid var(--border-base);
-  background-color: var(--surface-secondary);
+  border: 1px solid transparent;
+  background-color: transparent;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
+  font-size: 0.625rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-primary);
-  opacity: 0.5;
+  opacity: 0.65;
   transition: opacity 0.2s ease, transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   overflow: hidden;
   user-select: none;
@@ -94,6 +94,21 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+}
+
+/* Short, neutral separators distinguish adjacent markers without boxing them. */
+.message-timeline-segment::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  inset-inline: 30%;
+  height: 1px;
+  background-color: var(--border-divider);
+  pointer-events: none;
+}
+
+.message-timeline-segment:is(:hover, :focus-visible, :active, .message-timeline-segment-active)::after {
+  opacity: 0;
 }
 
 .message-timeline-item-spacer {
@@ -112,15 +127,17 @@
 
 .message-timeline-segment-active {
   opacity: 1;
-  border-color: var(--accent-primary);
-  background-color: color-mix(in oklab, var(--accent-primary) 14%, var(--surface-secondary));
+  border-color: currentColor;
+  background-color: var(--selection-neutral-strong-bg);
 }
 
 .message-timeline-segment:hover,
 .message-timeline-segment:focus-visible,
 .message-timeline-segment:active {
   opacity: 1;
-  transform: translateY(-1px);
+  border-color: currentColor;
+  background-color: var(--selection-neutral-strong-bg);
+  transform: none;
   outline: none;
 }
 
@@ -129,42 +146,27 @@
 }
 
 .message-timeline-user {
-  border-color: var(--message-user-border);
-  background-color: var(--message-user-bg);
+  color: var(--message-user-border);
 }
 
 .message-timeline-assistant {
-  border-color: var(--message-assistant-border);
-  background-color: var(--message-assistant-bg);
+  color: var(--message-assistant-border);
 }
 
 .message-timeline-tool {
-  border-color: var(--message-tool-border);
-  background-color: var(--surface-secondary);
+  color: var(--message-tool-border);
 }
 
 .message-timeline-segment.message-timeline-segment-permission {
-  border-color: var(--session-status-permission-fg);
-  background-color: var(--session-status-permission-bg);
   color: var(--session-status-permission-fg);
-}
-
-.message-timeline-segment.message-timeline-segment-permission:hover,
-.message-timeline-segment.message-timeline-segment-permission:focus-visible {
-  background-color: var(--session-status-permission-bg);
-  color: var(--session-status-permission-fg);
-  border-color: var(--session-status-permission-fg);
-  transform: translateY(-1px);
 }
 
 .message-timeline-compaction-auto {
-  border-color: var(--session-status-compacting-fg);
-  background-color: var(--surface-secondary);
+  color: var(--session-status-compacting-fg);
 }
 
 .message-timeline-compaction-manual {
-  border-color: var(--session-status-compacting-fg);
-  background-color: var(--surface-secondary);
+  color: var(--session-status-compacting-fg);
 }
 
 .message-timeline-label {
@@ -183,8 +185,8 @@
 }
 
 .message-timeline-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 12px;
+  height: 12px;
 }
 
 .message-timeline-tooltip {
@@ -198,7 +200,7 @@
   width: 360px;
   max-height: 420px;
   overflow: auto;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: var(--surface-base);
   box-shadow: var(--panel-shadow-strong);
@@ -234,4 +236,18 @@
   color: #111827 !important;
   box-shadow: 0 0 0 2px #ca8a04, 0 0 0 4px color-mix(in oklab, #facc15 34%, transparent) !important;
   transform: none !important;
+}
+
+@media (pointer: coarse) {
+  .message-layout--with-timeline {
+    grid-template-columns: minmax(0, 1fr) var(--touch-target-size);
+  }
+
+  .message-timeline-sidebar {
+    width: var(--touch-target-size);
+  }
+
+  .message-timeline-segment {
+    min-height: var(--touch-target-size);
+  }
 }

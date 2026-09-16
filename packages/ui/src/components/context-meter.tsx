@@ -50,7 +50,7 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
   }
 
   const containerClass =
-    `context-meter-values inline-flex items-center gap-2 rounded-full border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
+    `context-meter-values inline-flex items-center gap-2 border border-base px-2 py-0.5 text-xs text-primary ${props.class ?? ""}`
 
   function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
     const rad = (angleDeg * Math.PI) / 180
@@ -105,7 +105,7 @@ export const ContextMeter: Component<ContextMeterProps> = (props) => {
   const tooltipText = () => `Context Used: ${percentLabel()}`
 
   const valuePill = () => (
-    <div class={containerClass}>
+    <div class={`${containerClass} opacity-50`}>
       <span class={LABEL_CLASS}>{props.usedLabel}</span>
       <span class="font-semibold text-primary tabular-nums">{props.formatTokens(used())}</span>
       <span class="text-muted">/</span>

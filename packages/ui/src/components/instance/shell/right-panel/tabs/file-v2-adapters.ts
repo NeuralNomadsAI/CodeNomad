@@ -1,4 +1,4 @@
-import type { FileSystemEntry } from "@opencode-ai/client"
+import type { FileSystemEntry } from "@opencode/client"
 import type { FileBrowserEntry } from "./FilesTab"
 
 export function adaptFileSystemEntries(entries: FileSystemEntry[]): FileBrowserEntry[] {

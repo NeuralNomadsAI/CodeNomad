@@ -1,5 +1,5 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
-import type { CommandInfo } from "@opencode-ai/client"
+import type { CommandInfo } from "@opencode/client"
 import type { Agent } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
 import { addAttachment, getAttachments } from "../../stores/attachments"

@@ -1,5 +1,5 @@
 import { decodeHtmlEntities } from "../../lib/text-render-utils"
-import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { SessionMessageInfo } from "@opencode/client"
 import type { ClientPart, Message, MessageInfo } from "../../types/message"
 
 function decodeTextSegment(segment: any): any {
@@ -88,6 +88,7 @@ function structuredError(error: { type: string; message: string; status?: number
 }
 
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
+  if (source.type === "idle") return source.outcome === "failed" || source.outcome === "interrupted" ? "error" : "complete"
   if (source.type === "assistant") {
     if (source.error) return "error"
     return source.time.completed ? "complete" : "streaming"
@@ -116,7 +117,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
     id: source.id,
     sessionID: sessionId,
     role,
-    time: source.time,
+    time: source.type === "idle" ? { ...source.time, completed: source.time.created } : source.time,
     ...(assistant
       ? {
           mode: assistant.agent,
@@ -181,12 +182,19 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         messageID: source.id,
       } as ClientPart)),
     ]
+  } else if (source.type === "idle") {
+    // Native execution control record, not assistant-authored transcript text.
+    // Keep its ID/time for cursor/anchor authority without rendering "idle".
+    parts = []
   } else if (source.type === "compaction") {
     parts = [{
       id: source.id,
       type: "compaction",
       auto: source.reason === "auto",
       text: "summary" in source ? source.summary : source.error.message,
+      ...(source.status === "completed"
+        ? { model: source.model, providerState: source.providerState }
+        : {}),
       sessionID: sessionId,
       messageID: source.id,
     } as ClientPart]

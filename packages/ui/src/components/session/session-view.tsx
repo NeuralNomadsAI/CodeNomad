@@ -1,5 +1,5 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
-import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode-ai/client"
+import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -7,6 +7,8 @@ import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
+import PromptContextControls from "../prompt-input/PromptContextControls"
+import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
@@ -47,6 +49,8 @@ interface SessionViewProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   isActive?: boolean
+  onAgentChange: (agent: string) => Promise<void>
+  onModelChange: (model: { providerId: string; modelId: string }) => Promise<void>
   registerSessionPromptApi?: (sessionId: string, api: PromptInputApi | null) => void
 }
 
@@ -114,6 +118,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let scrollToBottomHandle: (() => void) | undefined
   let rootRef: HTMLDivElement | undefined
+  const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
+  createEffect(() => {
+    const rail = timelineMount()
+    if (rail) onCleanup(observeTimelineRailBoundary(rail))
+  })
   const pendingIdleSeenTimers = new Set<string>()
   const [submitBottomPinIntent, setSubmitBottomPinIntent] = createSignal<SessionBottomPinIntent | null>(null)
   let submitBottomPinIntentSequence = 0
@@ -468,9 +477,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
         }
       } else if (item.delivery === "queue") {
-        await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" })
       } else {
-        await inbox.queue({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" })
       }
     } catch (error) {
       showQueueError(error)
@@ -606,6 +615,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           when={preview()?.mode === "preview"}
           fallback={
             <MessageSection
+              timelineMount={timelineMount()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               loading={messagesLoading()}
@@ -673,8 +683,20 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           disabled={sessionNeedsInput()}
           onAbortSession={handleAbortSession}
           onBackgroundSession={handleBackgroundSession}
+          footerControls={
+            <PromptContextControls
+              instanceId={props.instanceId}
+              sessionId={props.sessionId}
+              worktreeSessionId={props.sessionId}
+              currentAgent={session()?.agent ?? ""}
+              currentModel={session()?.model ?? { providerId: "", modelId: "" }}
+              onAgentChange={props.onAgentChange}
+              onModelChange={props.onModelChange}
+            />
+          }
           registerPromptInputApi={registerPromptInputApi}
         />
+        <div class="session-timeline-slot" ref={setTimelineMount} />
       </div>
     </Show>
   )

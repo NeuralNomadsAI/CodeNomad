@@ -1,7 +1,8 @@
-import { createContext, createEffect, createMemo, createSignal, onMount, useContext, type JSX } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
+import { effectiveAppearance } from "./appearance-preferences"
 import {
   applyColorScheme,
   normalizeColorScheme,
@@ -76,20 +77,13 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
-  const { colorSchemePreference, setColorSchemePreference } = useConfig()
-  const [selectedColorScheme, setSelectedColorScheme] = createSignal(colorSchemePreference())
+  const config = useConfig()
+  const [systemDark, setSystemDark] = createSignal(mediaQuery?.matches ?? false)
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
 
-  const colorScheme = () => selectedColorScheme()
-  const themeMode = (): ThemeMode => colorScheme().appearance
-  let latestWrite: Promise<void> | null = null
-
-  createEffect(() => {
-    const preference = colorSchemePreference()
-    if (latestWrite) return
-    setSelectedColorScheme(preference)
-  })
+  const themeMode = () => config.themePreference()
+  const colorScheme = () => config.getAppearancePalette(effectiveAppearance(themeMode(), systemDark()))
 
   const applyResolvedTheme = () => {
     const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches })
@@ -105,40 +99,16 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     applyResolvedTheme()
   })
 
-  onMount(() => {
-    if (!mediaQuery) return
-    const handleSystemThemeChange = () => {
-      applyResolvedTheme()
-    }
-
-    mediaQuery.addEventListener("change", handleSystemThemeChange)
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleSystemThemeChange)
-    }
-  })
+  const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+  mediaQuery?.addEventListener("change", handleSystemThemeChange)
+  onCleanup(() => mediaQuery?.removeEventListener("change", handleSystemThemeChange))
 
   const setColorScheme = (scheme: NormalizedColorScheme) => {
-    const normalized = normalizeColorScheme(scheme)
-    setSelectedColorScheme(normalized)
-    const write = setColorSchemePreference(normalized)
-    latestWrite = write
-    void write.then(
-      () => {
-        if (latestWrite !== write) return
-        latestWrite = null
-        setSelectedColorScheme(colorSchemePreference())
-      },
-      () => {
-        if (latestWrite !== write) return
-        latestWrite = null
-        setSelectedColorScheme(colorSchemePreference())
-      },
-    )
+    void config.setColorSchemePreference(normalizeColorScheme(scheme))
   }
 
   const setThemeMode = (mode: ThemeMode) => {
-    setColorScheme(normalizeColorScheme(mode === "dark" ? "classic" : mode))
+    void config.setThemePreference(mode)
   }
 
   const cycleThemeMode = () => {
