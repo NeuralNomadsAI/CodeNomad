@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { FormFields } from "@opencode-ai/client"
+import type { FormFields } from "@opencode/client"
 import {
   getProviderAuthAnswer,
   getProviderAuthInitialAnswer,

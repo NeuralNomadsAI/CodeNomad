@@ -1,7 +1,7 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
-import type { SessionInboxUser } from "@opencode-ai/client"
+import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"

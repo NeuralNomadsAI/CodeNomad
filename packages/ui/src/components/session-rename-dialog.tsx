@@ -80,7 +80,7 @@ const SessionRenameDialog: Component<SessionRenameDialogProps> = (props) => {
                   value={title()}
                   onInput={(event) => setTitle(event.currentTarget.value)}
                   placeholder={t("sessionRenameDialog.input.placeholder")}
-                  class="w-full px-3 py-2 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent"
+                  class="w-full px-3 py-2 text-sm bg-surface-base border border-base text-primary focus-ring-accent"
                 />
               </div>
 

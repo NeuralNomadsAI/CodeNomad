@@ -90,14 +90,8 @@ re-read or retry the **same** request, not assume no mutation occurred.
 
 ## Version and loading notes
 
-- UI/server client lock refreshed to the last `@opencode-ai/client@beta` publication,
-  `beta-19271`. The published low-level `rpc.call` transport is used by the broker.
-- Plugin definition uses `@opencode/plugin@beta` with reproducible workspace lock resolution,
-   a development-only dependency bundled into the shipped plugin payload. No npm
-   installation is performed at app startup. Migration of the rest of CodeNomad to `@opencode/client`
-  is separate work. The native integration test uses the actual `beta-19271` client
-  against an explicitly supplied official runtime, including RPC and custom events.
-  The native test and TUI cache tests do not impose a beta-number allowlist.
+- UI/server pin `@opencode/client@2.0.4`. The published low-level `rpc.call` transport is used by the broker.
+- Plugin definition pins `@opencode/plugin@2.0.4`, a development-only dependency bundled into the shipped plugin payload. No npm installation is performed at app startup. The native integration test uses the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy. CI uses CLI 2.0.4; production discovery has no exact runtime-version gate.
 - In that plugin contract, `ctx.session.message` and `ctx.db` do not exist.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
   driver **inside the official compiled runtime**, not an embedded SDK substitute.

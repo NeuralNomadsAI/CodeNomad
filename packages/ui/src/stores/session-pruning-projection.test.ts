@@ -18,7 +18,7 @@ test("the SDK projection cannot resurrect deleted parts on the next native event
     active: async () => ({}), inbox: { list: async () => [] },
   })
   client.permission.list = async () => []
-  client.form.list = async () => []
+  client.session.form.list = async () => []
   client.message.list = async () => ({ data: [current], cursor: {} }) as any
   let synced = false
   const apply = (type: string, data: object) => applyOpenCodeDataEvent(instanceId, "/work", {
@@ -54,7 +54,7 @@ test("a late post-prune read cannot overtake another client's invalidation", asy
   let reads = 0
   let applied: any
   const original = { id: "m", type: "assistant", content: [{ type: "reasoning", text: "remove" }], time: { created: 1, completed: 2 } } as any
-  client.session.message = async () => ++reads === 1 ? new Promise(done => { resolve = done }) : { ...original, content: [] }
+  client.session.message.get = async () => ++reads === 1 ? new Promise(done => { resolve = done }) : { ...original, content: [] }
   serverApi.pruneSessionMessage = async () => ({ status: "pruned", messageID: "m", revision: "a".repeat(64), removedCount: 1 })
   try {
     const pruning = pruneMessageContent(instanceId, "s", original, [0], message => { applied = message })

@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "सन्देशको सामग्री",
+  "transcriptFilters.description": "सामग्री देखाउने वा लुकाउने र सुरुमा विस्तार गर्ने वा नगर्ने रोज्नुहोस्। यी सेटिङहरू सबै कुराकानीमा लागू हुन्छन्।",
+  "transcriptFilters.show": "{name} देखाउनुहोस्",
+  "transcriptFilters.hide": "{name} लुकाउनुहोस्",
+  "transcriptFilters.expand": "{name} विस्तार गर्नुहोस्",
+  "transcriptFilters.collapse": "{name} खुम्च्याउनुहोस्",
   "messageListHeader.sidebar.openSessionListAriaLabel": "सत्र सूची खोल्नुहोस्",
   "messageListHeader.metrics.usedLabel": "प्रयोग गरिएको",
   "messageListHeader.metrics.availableLabel": "उपलब्ध",

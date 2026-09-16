@@ -1,14 +1,16 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { Dynamic } from "solid-js/web"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolIcon, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
+import { ensureMarkdownContent, getDefaultToolAction, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
 import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
 import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
 import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
+import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
@@ -561,7 +563,7 @@ export const taskRenderer: ToolRenderer = {
                     <div class="tool-call-task-summary">
                       <For each={legacyItems()}>
                         {(item) => {
-                          const icon = getToolIcon(item.tool)
+                          const icon = getMessageContentIcon(item.tool)
                           const fullDescription = describeToolTitle(item)
                           const description = limitToolTitleForRender(fullDescription)
                           const copyTitle = getTruncatedTaskStepTitleCopyText(fullDescription)
@@ -575,7 +577,9 @@ export const taskRenderer: ToolRenderer = {
                           const statusAttr = status ?? "pending"
                           return (
                             <div class="tool-call-task-item" data-task-id={item.id} data-task-status={statusAttr}>
-                              <span class="tool-call-task-icon">{icon}</span>
+                              <span class="tool-call-task-icon inline-flex flex-shrink-0">
+                                <Dynamic component={icon} class="w-3.5 h-3.5" aria-hidden="true" />
+                              </span>
                               <span class="tool-call-task-label">{toolLabel}</span>
                               <span class="tool-call-task-separator" aria-hidden="true">—</span>
                               <span class="tool-call-task-text">{description}</span>

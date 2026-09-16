@@ -1,4 +1,4 @@
-import type { SessionMessageInfo as SDKMessage } from "@opencode-ai/client"
+import type { SessionMessageInfo as SDKMessage } from "@opencode/client"
 import type { OpenCodeClient } from "./opencode-client"
 
 export interface MessageWindowPage {

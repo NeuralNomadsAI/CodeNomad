@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "メッセージの内容",
+  "transcriptFilters.description": "内容の表示・非表示と初期の展開状態を選択します。設定はすべての会話に適用されます。",
+  "transcriptFilters.show": "{name}を表示",
+  "transcriptFilters.hide": "{name}を非表示",
+  "transcriptFilters.expand": "{name}を展開",
+  "transcriptFilters.collapse": "{name}を折りたたむ",
   "messageListHeader.sidebar.openSessionListAriaLabel": "セッション一覧を開く",
   "messageListHeader.metrics.usedLabel": "使用",
   "messageListHeader.metrics.availableLabel": "残り",

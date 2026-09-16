@@ -14,13 +14,13 @@ describe("agent selectability", () => {
       id: "session",
       projectID: "project",
       title: "Session",
-      location: { directory: "D:/repo/worktree", workspaceID: "workspace" },
+      location: { directory: "D:/repo/worktree" },
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: 1, updated: 1 },
     }, "instance")
 
-    assert.deepEqual(session.location, { directory: "D:/repo/worktree", workspaceID: "workspace" })
+    assert.deepEqual(session.location, { directory: "D:/repo/worktree" })
   })
 
   it("matches primary-session selector rules", () => {

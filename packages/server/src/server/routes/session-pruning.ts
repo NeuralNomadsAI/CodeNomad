@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { messageTargetSchema, PRUNING_RPC_ID, prunePreviewSchema, pruneRequestSchema, pruneResultSchema } from "../../opencode/session-pruning/contract"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 
 interface RouteDeps {
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath">
@@ -15,7 +16,8 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: RouteDe
       if (!input.success) return reply.code(400).send({ error: "Invalid pruning request" })
       const client = await deps.workspaceManager.getSharedServiceClient()
       const session = await client.session.get({ sessionID: input.data.sessionID })
-      if (!await deps.workspaceManager.ownsLocation(request.params.id, session.location)) {
+      const location = readLocationRef(session.location)
+      if (!await deps.workspaceManager.ownsLocation(request.params.id, session.location, client)) {
         return reply.code(403).send({ error: "Session does not belong to workspace" })
       }
       const identity = await deps.workspaceManager.getWorktreeIdentityForPath(request.params.id, session.location.directory)
@@ -27,7 +29,7 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: RouteDe
         // database filename, SQL, or replacement content. Generic RPC stays blocked.
         const result = await client.rpc.call({
           rpcID: PRUNING_RPC_ID, method, input: input.data, location: { directory: session.location.directory },
-        }, { signal: AbortSignal.timeout(15_000) })
+        }, { ...locationRequestOptions(location), signal: AbortSignal.timeout(15_000) })
         const output = (method === "prune" ? pruneResultSchema : prunePreviewSchema).safeParse(result.output)
         if (!output.success) return { status: "blocked", reason: "unavailable" }
         if (output.data.status === "pruned" && (output.data.messageID !== input.data.messageID

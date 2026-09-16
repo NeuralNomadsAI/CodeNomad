@@ -85,7 +85,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       <div class="panel-body space-y-3">
         <div>
           <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("instanceInfo.labels.folder")}</div>
-          <div dir="ltr" class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
+          <div dir="ltr" class="text-xs text-primary font-mono break-all px-2 py-1.5 border bg-surface-secondary border-base">
             {currentInstance().folder}
           </div>
         </div>
@@ -97,7 +97,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
                 <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
                   {t("instanceInfo.labels.project")}
                 </div>
-                <div dir="ltr" class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
+                <div dir="ltr" class="text-xs font-mono px-2 py-1.5 border truncate bg-surface-secondary border-base text-primary">
                   {project().id}
                 </div>
               </div>
@@ -129,7 +129,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               {t("instanceInfo.labels.opencodeVersion")}
             </div>
-            <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div class="text-xs px-2 py-1.5 border bg-surface-secondary border-base text-primary">
               v{binaryVersion()}
             </div>
           </div>
@@ -140,7 +140,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               {t("instanceInfo.labels.binaryPath")}
             </div>
-            <div dir="ltr" class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div dir="ltr" class="text-xs font-mono break-all px-2 py-1.5 border bg-surface-secondary border-base text-primary">
               {currentInstance().binaryPath}
             </div>
           </div>
@@ -154,7 +154,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="space-y-1">
               <For each={environmentEntries()}>
                 {([key, value]) => (
-                  <div dir="ltr" class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                  <div dir="ltr" class="flex items-center gap-2 px-2 py-1.5 border bg-surface-secondary border-base">
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
                       {key}
                     </span>

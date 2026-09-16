@@ -45,6 +45,13 @@
   background: var(--surface-interactive-hover);
 }
 
+.toast-history-action-btn:disabled,
+.toast-history-action-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+}
+
 .toast-history-action-btn:focus-visible {
   outline: 1px solid var(--focus-ring-color);
   outline-offset: 2px;
@@ -116,8 +123,18 @@
   background: var(--surface-subtle);
 }
 
+.toast-history-actions-toolbar,
+.toast-history-filter-toolbar {
+  flex-wrap: wrap;
+}
+
+.toast-history-actions-toolbar {
+  justify-content: flex-end;
+}
+
 .toast-history-body {
   padding: 0;
+  overscroll-behavior: contain;
 }
 
 .toast-history-filter-btn-warning.toast-history-filter-btn-active {
@@ -136,6 +153,10 @@
 
 .toast-history-item {
   transition: background-color 0.15s ease;
+}
+
+.toast-history-item-copy {
+  overflow-wrap: anywhere;
 }
 
 .toast-history-item:hover {
@@ -198,7 +219,8 @@
 }
 
 /** Nested selector: show delete button on item hover */
-.toast-history-item:hover .toast-history-item-delete {
+.toast-history-item:hover .toast-history-item-delete,
+.toast-history-item:focus-within .toast-history-item-delete {
   opacity: 1;
 }
 
@@ -213,13 +235,28 @@
   outline-offset: 2px;
 }
 
-/* ==================== Unread Dot ==================== */
+@media (hover: none) {
+  .toast-history-item-delete {
+    opacity: 1;
+  }
+}
 
 .toast-history-item-unread-dot {
   background: var(--accent-primary);
 }
 
 /* ==================== Responsive ==================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-history-panel {
+    animation: none !important;
+  }
+
+  .toast-history-panel button,
+  .toast-history-item {
+    transition: none;
+  }
+}
 
 @media (max-width: 720px) {
   .toast-history-panel {

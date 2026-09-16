@@ -26,3 +26,10 @@ test("ignores unknown RPCs, malformed payloads and sessions outside this instanc
   handlePruningEvent("b", event)
   assert.equal(isCurrentMessageLoad("a", "s", epoch), true)
 })
+
+test("legacy native content edits invalidate the authoritative message load", () => {
+  setSessions(new Map([["a", new Map([["s", { id: "s", instanceId: "a" } as Session]])]]))
+  const epoch = advanceMessageLoadEpoch("a", "s")
+  assert.equal(handlePruningEvent("a", { type: "session.message.content.updated", data: { sessionID: "s", messageID: "m" } }), true)
+  assert.equal(isCurrentMessageLoad("a", "s", epoch), false)
+})

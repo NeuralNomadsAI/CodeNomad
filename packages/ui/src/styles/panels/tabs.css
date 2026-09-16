@@ -6,6 +6,9 @@
 
 .tab-bar-instance {
   background-color: var(--surface-secondary);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
+  position: relative;
+  border-bottom: 0;
 }
 
 .tab-bar-session {
@@ -24,9 +27,39 @@
 }
 
 .tab-bar-instance .tab-scroll {
-  flex: 1 1 auto;
+  position: relative;
+  z-index: 1;
   min-width: 0;
   width: auto;
+  overflow-y: hidden;
+}
+
+.tab-bar-instance .tab-container {
+  padding-block: 0;
+  /* Preserve the previous strip's outer height, including its baseline. */
+  height: calc(var(--chrome-height) + var(--space-xs) + var(--scrollbar-size) + 1px);
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-strip, .tab-strip-tabs, .tab-draggable, .right-panel-tab-draggable) {
+  height: 100%;
+  align-items: stretch;
+}
+
+/* Fixed content height reserves the scrollbar lane even when overflow is absent.
+   scrollbar-gutter only reserves inline gutters, not this horizontal lane. */
+.tab-bar-instance .tab-strip,
+.right-panel-tab-bar .tab-strip {
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+}
+
+.tab-bar-instance .tab-draggable > div {
+  height: 100%;
+  display: flex;
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-base, .tab-pill, .right-panel-tab) {
+  height: 100%;
+  padding-block: 0;
 }
 
 .tab-bar-actions {
@@ -50,14 +83,13 @@
 }
 
 .tab-strip-tabs {
-  @apply flex items-center gap-1 flex-shrink-0;
+  @apply flex items-center flex-shrink-0;
 }
 
 .tab-draggable {
   @apply flex-shrink-0;
   user-select: none;
   transition: transform 140ms ease, opacity 140ms ease;
-  will-change: transform;
 }
 
 .tab-draggable-active {
@@ -93,9 +125,12 @@
 }
 
 .tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-2 rounded-t-md max-w-[200px] transition-colors text-sm font-normal;
+  @apply inline-flex items-center gap-2 px-3 py-2 max-w-[200px] transition-colors text-sm font-normal;
   font-family: var(--font-family-sans);
   outline: none;
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
 }
 
 .tab-base:focus-visible {
@@ -107,13 +142,33 @@
 .tab-active {
   background-color: var(--tab-active-bg);
   color: var(--tab-active-text);
-  border-bottom: 2px solid var(--accent-primary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: transparent;
+}
+
+.tab-bar-instance .tab-active,
+.tab-bar-instance .tab-active:hover {
+  background-color: var(--surface-shade-light);
+  border-bottom-color: var(--surface-shade-light);
+}
+
+.tab-bar-instance .tab-active {
+  position: relative;
+}
+
+.tab-bar-instance .tab-draggable:first-child :is(.tab-base, .tab-pill) {
+  border-inline-start: 1px solid var(--tab-border);
 }
 
 .tab-inactive {
   background-color: var(--tab-inactive-bg);
-  color: color-mix(in oklab, var(--tab-inactive-text) 62%, transparent);
-  border-bottom: 2px solid var(--tab-active-bg);
+  border-inline-end-color: var(--tab-border);
+  border-bottom-color: var(--tab-border);
+  color: var(--tab-inactive-text);
+}
+
+.tab-bar-instance .tab-inactive {
+  background-color: var(--surface-secondary);
 }
 
 .tab-inactive:hover {
@@ -130,7 +185,7 @@
 }
 
 .tab-close {
-  @apply opacity-100 hover:bg-red-500 hover:text-white rounded p-0.5 transition-all cursor-pointer;
+  @apply opacity-100 hover:bg-red-500 hover:text-white p-0.5 transition-all cursor-pointer;
 }
 
 .tab-close:focus-visible {
@@ -189,7 +244,7 @@
 }
 
 .new-tab-button {
-  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-md transition-colors;
+  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 transition-colors;
   background-color: var(--new-tab-bg);
   color: var(--new-tab-text);
 }
@@ -216,10 +271,12 @@
 }
 
 .tab-pill {
-  @apply inline-flex items-center gap-1 px-3 py-2 rounded-t-md max-w-[220px] text-sm;
+  @apply inline-flex items-center gap-1 px-3 py-2 max-w-[220px] text-sm;
   background-color: var(--tab-inactive-bg);
   color: var(--tab-inactive-text);
-  border-bottom: 2px solid var(--tab-active-bg);
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
   outline: none;
 }
 
@@ -230,9 +287,10 @@
 }
 
 .tab-pill-active {
-  background-color: var(--tab-active-bg);
+  background-color: var(--surface-shade-light);
   color: var(--tab-active-text);
-  border-bottom-color: var(--accent-primary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: var(--surface-shade-light);
 }
 
 .tab-pill-button {
@@ -240,7 +298,7 @@
 }
 
 .tab-pill-close {
-  @apply inline-flex items-center justify-center rounded w-5 h-5 text-xs;
+  @apply inline-flex items-center justify-center w-5 h-5 text-xs;
 }
 
 .tab-pill-close:hover {
@@ -249,10 +307,11 @@
 
 /* Session tabs */
 .session-tab-base {
-  @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md max-w-[150px] transition-colors text-sm;
+  @apply inline-flex items-center gap-2 px-3 py-1.5 max-w-[150px] transition-colors text-sm;
   font-family: var(--font-family-sans);
   outline: none;
-  border-bottom: 2px solid transparent;
+  border: 1px solid var(--tab-border);
+  margin-inline-end: -1px;
 }
 
 .session-tab-base:focus-visible {
@@ -263,7 +322,6 @@
 
 .session-tab-active {
   background-color: var(--session-tab-active-bg);
-  border-bottom-color: var(--accent-primary);
   color: var(--session-tab-active-text);
   font-weight: var(--font-weight-medium);
 }

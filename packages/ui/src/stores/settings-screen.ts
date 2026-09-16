@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { runtimeEnv } from "../lib/runtime-env"
 import { openNativePreferences, type NativePreferencesRequest } from "../lib/native/preferences-window"
 import { getLogger } from "../lib/logger"
+import { confirmSettingsDiscard } from "./settings-dirty-guard"
 
 export type SettingsSectionId =
   | "general"
@@ -20,7 +21,11 @@ const [settingsOpen, setSettingsOpen] = createSignal(false)
 const [activeSettingsSection, setActiveSettingsSection] = createSignal<SettingsSectionId>("general")
 const log = getLogger("actions")
 
-export async function openSettings(section: SettingsSectionId = "general") {
+export async function openSettings(section: SettingsSectionId = "general", toggle = false) {
+  if (toggle && settingsOpen()) {
+    if (await confirmSettingsDiscard()) setSettingsOpen(false)
+    return
+  }
   setActiveSettingsSection(section)
   if ((runtimeEnv.host === "electron" || runtimeEnv.host === "tauri") && runtimeEnv.windowContext === "local") {
     try {
@@ -31,7 +36,7 @@ export async function openSettings(section: SettingsSectionId = "general") {
         const { getActiveCatalogLocation } = await import("./sessions")
         request.location = getActiveCatalogLocation(instanceId)
       }
-      await openNativePreferences(request)
+      await openNativePreferences(request, toggle)
       return
     } catch (error) {
       log.warn("Native Preferences failed; opening settings in this window", error)
@@ -39,6 +44,8 @@ export async function openSettings(section: SettingsSectionId = "general") {
   }
   setSettingsOpen(true)
 }
+
+export const toggleSettings = (section: SettingsSectionId = "general") => openSettings(section, true)
 
 export function closeSettings() {
   setSettingsOpen(false)

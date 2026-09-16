@@ -5,7 +5,7 @@
 1. UI posts a folder to `/api/workspaces`.
 2. `WorkspaceManager` resolves the binary launch spec and calls the single `OpenCodeSharedService`.
 3. The adapter runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle and validates the authenticated loopback endpoint. WSL requires Windows localhost forwarding and stays inside the Linux namespace.
-4. `client.location.get` validates the directory and returns native location/workspace identity.
+4. `client.location.get` validates the directory and returns its native project metadata and directory-only public location.
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
 6. Explicit Stop Workspace evicts the location/resources and removes the logical workspace. Ordinary tab/window close only detaches local UI; backend shutdown clears connection state. Neither close nor shutdown stops the daemon.
 

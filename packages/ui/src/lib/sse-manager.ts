@@ -13,7 +13,7 @@ import type {
   SessionStatusUpdated,
   TuiToastShow,
   V2Event,
-} from "@opencode-ai/client"
+} from "@opencode/client"
 import { serverEvents } from "./server-events"
 import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type { InstanceStreamEvent, WorkspaceEventPayload } from "../../../server/src/api-types"
