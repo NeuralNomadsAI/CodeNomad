@@ -32,12 +32,15 @@ function merge(target: any, patch: any): any {
   }
   return result
 }
-async function open(run: (page: Page) => Promise<void>) {
+async function open(run: (page: Page) => Promise<void>, saveDelay = 0) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
   let state: any = {}
   await page.route("**/api/**", async route => {
     const request = route.request()
-    if (request.url().includes("/storage/state/ui") && request.method() === "PATCH") state = merge(state, request.postDataJSON())
+    if (request.url().includes("/storage/state/ui") && request.method() === "PATCH") {
+      if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay))
+      state = merge(state, request.postDataJSON())
+    }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(request.url().includes("/storage/state/ui") ? state : {}) })
   })
   try { await page.goto(url); await page.waitForFunction(() => Boolean((window as any).appearanceFixture)); await run(page) }
@@ -77,6 +80,33 @@ test("mode filters a flat palette list and retains both choices across reload", 
   await mode("Light")
   await page.waitForFunction(() => document.documentElement.dataset.colorScheme === "linen")
 }))
+
+test("palette arrow navigation retains focus and saves the latest choice during slow writes", async () => open(async page => {
+  const picker = page.locator(".theme-scheme-picker")
+  await page.locator(".theme-scheme-mode").getByRole("button", { name: "Dark", exact: true }).click()
+  await page.waitForFunction(() => !document.querySelector<HTMLSelectElement>(".theme-scheme-picker")?.disabled)
+  await picker.selectOption("builtin:classic")
+  await page.waitForFunction(() => document.querySelector(".theme-scheme-picker")?.getAttribute("aria-busy") === "false")
+  const options = await picker.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))
+  await picker.focus()
+  await page.keyboard.press("ArrowDown")
+  await page.waitForFunction(() => document.querySelector(".theme-scheme-picker")?.getAttribute("aria-busy") === "true")
+  assert.equal(await picker.evaluate(element => document.activeElement === element), true)
+  assert.equal(await picker.isDisabled(), false)
+  await page.keyboard.press("ArrowDown")
+  await page.keyboard.press("ArrowDown")
+  assert.equal(await picker.inputValue(), options[3])
+  await page.waitForFunction(id => document.documentElement.dataset.colorScheme === id, options[3].slice("builtin:".length))
+  await page.waitForFunction(() => document.querySelector(".theme-scheme-picker")?.getAttribute("aria-busy") === "false")
+  assert.equal(await picker.evaluate(element => document.activeElement === element), true)
+  await page.keyboard.press("ArrowUp")
+  await page.waitForFunction(id => document.documentElement.dataset.colorScheme === id, options[2].slice("builtin:".length))
+  await page.waitForFunction(() => document.querySelector(".theme-scheme-picker")?.getAttribute("aria-busy") === "false")
+  assert.equal(await picker.evaluate(element => document.activeElement === element), true)
+  await page.reload()
+  await page.waitForFunction(id => document.documentElement.dataset.colorScheme === id, options[2].slice("builtin:".length))
+  assert.equal(await picker.inputValue(), options[2])
+}, 350))
 
 test("Classic and soft palettes preserve local subtle hover on messages, sessions and panels", async () => open(async page => {
   const ids = ["classic", "mist", "slate", "clay", "sage", "porcelain", "dawn", "parchment", "linen", "iris", "sage-light", "light", "basalt", "fjord", "lichen", "velvet", "ember"]
