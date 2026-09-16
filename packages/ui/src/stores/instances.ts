@@ -46,7 +46,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
 import {
@@ -2054,6 +2054,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       removePendingForm(instanceId, event.data.id)
     }
   }
+  finishOpenCodeDataEvent(instanceId, event)
   const targets = getInstanceRefreshTargets(event.type)
   if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
 }

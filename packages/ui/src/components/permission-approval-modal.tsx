@@ -11,6 +11,7 @@ import {
 import { activeSessionId, ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
+import { getPermissionDiffPayload, isPermissionApprovalBlocked } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
 import { getFormQueue, type FormInfo } from "../stores/forms"
 import { sendFormCancel, sendFormReply } from "../stores/instances"
@@ -368,10 +369,10 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                     </div>
                                     <div class="tool-call-permission-actions">
                                       <div class="tool-call-permission-buttons">
-                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}>
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id) || isPermissionApprovalBlocked(getPermissionDiffPayload(item.payload as PermissionRequest), false)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}>
                                           {t("permissionApproval.actions.allowOnce")}
                                         </button>
-                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}>
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id) || isPermissionApprovalBlocked(getPermissionDiffPayload(item.payload as PermissionRequest), false)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}>
                                           {t("permissionApproval.actions.alwaysAllow")}
                                         </button>
                                         <button
