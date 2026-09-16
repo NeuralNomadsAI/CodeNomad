@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { evacuateWorktreeSessions, WorktreeDeletionFence } from "./worktree-session-evacuation"
 
 function session(id: string, directory: string, parentID?: string): SessionInfo {

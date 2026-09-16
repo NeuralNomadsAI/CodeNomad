@@ -4,8 +4,8 @@ import {
   type LocationRef,
   type OpenCodeClient,
   type OpenCodeEvent,
-} from "@opencode-ai/client"
-import { Service, type Endpoint } from "@opencode-ai/client/service"
+} from "@opencode/client"
+import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
@@ -68,6 +68,7 @@ export class OpenCodeSharedService {
     requestOptions?: RequestOptions,
     serviceOptions?: OpenCodeSharedServiceOptions,
   ): Promise<LocationGetOutput> {
+    if (location.workspaceID !== undefined) throw new Error("OpenCode V2 locations are identified by directory")
     const result = await this.withClient(serviceOptions, (client) => client.location.get({
       location: { directory: location.directory },
     }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
@@ -80,9 +81,6 @@ export class OpenCodeSharedService {
     ) {
       throw new Error("OpenCode returned an invalid location")
     }
-    if (location.workspaceID && result.workspaceID !== location.workspaceID) {
-      throw new Error("OpenCode location workspace does not match the canonical location")
-    }
     return result
   }
 
@@ -94,7 +92,6 @@ export class OpenCodeSharedService {
     await this.withClient(serviceOptions, (client) => client.debug.location.evict({
       location: {
         directory: location.directory,
-        ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
       },
     }, requestOptions?.signal ? { signal: requestOptions.signal } : undefined), requestOptions)
   }

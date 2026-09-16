@@ -73,7 +73,7 @@ function setup(instanceId: string) {
 }
 
 describe("session request authority", () => {
-  it("waits for plugin activation before loading every location catalog", async () => {
+  it("loads every native catalog without a removed activation endpoint", async () => {
     const instanceId = "catalog-plugin-activation"
     const { client, cleanup } = setup(instanceId)
     const activation = deferred<void>()
@@ -125,11 +125,11 @@ describe("session request authority", () => {
         fetchCommands(instanceId, client, location),
       ]
       await Promise.resolve()
-      assert.deepEqual(calls, { activation: 1, agents: 0, providers: 0, models: 0, defaults: 0, commands: 0 })
+      assert.deepEqual(calls, { activation: 0, agents: 1, providers: 1, models: 1, defaults: 1, commands: 1 })
 
       activation.resolve()
       assert.deepEqual(await Promise.all(requests), [true, true, true])
-      assert.deepEqual(calls, { activation: 1, agents: 1, providers: 1, models: 1, defaults: 1, commands: 1 })
+      assert.deepEqual(calls, { activation: 0, agents: 1, providers: 1, models: 1, defaults: 1, commands: 1 })
     } finally {
       activation.resolve()
       cleanup()
@@ -1503,8 +1503,8 @@ describe("session request authority", () => {
     const { client: oldClient, cleanup } = setup(instanceId)
     const oldGate = deferred<void>()
     const wait = async <T>(value: T) => { await oldGate.promise; return value }
+    ;(oldClient as any).location = { get: () => wait({ directory: "/old", project: { id: "old", directory: "/old", canonical: "/old" } }) }
     ;(oldClient as any).project = {
-      current: () => wait({ id: "old", directory: "/old", canonical: "/old" }),
       list: () => wait([]),
     }
     ;(oldClient as any).mcp = { list: () => wait({ data: [] }) }
@@ -1514,8 +1514,8 @@ describe("session request authority", () => {
 
     const newClient = {
       session: { active: async () => ({}) },
+      location: { get: async () => ({ directory: "/new", project: { id: "new", directory: "/new", canonical: "/new" } }) },
       project: {
-        current: async () => ({ id: "new", directory: "/new", canonical: "/new" }),
         list: async () => [],
       },
       mcp: { list: async () => ({ data: [] }) },

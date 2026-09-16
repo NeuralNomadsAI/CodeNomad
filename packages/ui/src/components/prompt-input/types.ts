@@ -1,4 +1,4 @@
-import type { SessionInboxUserPayload } from "@opencode-ai/client"
+import type { SessionInboxUserPayload } from "@opencode/client"
 import type { JSX } from "solid-js"
 import type { Attachment } from "../../types/attachment"
 

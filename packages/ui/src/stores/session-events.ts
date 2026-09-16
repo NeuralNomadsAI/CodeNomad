@@ -10,7 +10,7 @@ import type {
   SessionRevertStaged,
   SessionStatusUpdated,
   TuiToastShow,
-} from "@opencode-ai/client"
+} from "@opencode/client"
 import { getLogger } from "../lib/logger"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"

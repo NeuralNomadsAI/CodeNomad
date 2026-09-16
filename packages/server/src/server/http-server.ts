@@ -10,7 +10,7 @@ import { connect as connectTls, type TLSSocket } from "tls"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
-import { isInvalidRequestError, isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode-ai/client"
+import { isInvalidRequestError, isPtyNotFoundError, isSessionNotFoundError, isShellNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode/client"
 
 import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
@@ -417,7 +417,6 @@ export interface InstanceProxyWorkspaceManager {
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
   ownsLocation(id: string, location: LocationRef): ReturnType<WorkspaceManager["ownsLocation"]>
-  ownsLocationWorkspace(id: string, workspaceID: string): ReturnType<WorkspaceManager["ownsLocationWorkspace"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
 }
@@ -674,7 +673,7 @@ async function proxyWorkspaceRequest(args: {
         return null
       }
     }))
-    reply.send(Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)))
+    reply.send({ data: Object.fromEntries(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)) })
     return
   }
   if (pathname.replace(/\/+$/, "") === "/api/project") {
@@ -691,7 +690,7 @@ async function proxyWorkspaceRequest(args: {
   }
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
-    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project") || targetUrl.searchParams.has("workspace"))
+    && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
   const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
@@ -701,8 +700,7 @@ async function proxyWorkspaceRequest(args: {
   let globalFormLocation: LocationRef | undefined
   if (isGlobalFormAction(pathname, request.method)) {
     const directoryHeader = request.headers["x-opencode-directory"]
-    const workspaceHeader = request.headers["x-opencode-workspace"]
-    if (Array.isArray(directoryHeader) || Array.isArray(workspaceHeader)) {
+    if (Array.isArray(directoryHeader) || request.headers["x-opencode-workspace"] !== undefined) {
       reply.code(400).send({ error: "Invalid Form location" })
       return
     }
@@ -719,16 +717,7 @@ async function proxyWorkspaceRequest(args: {
         return
       }
     }
-    if (workspaceHeader !== undefined && !workspaceHeader.trim()) {
-      reply.code(400).send({ error: "Invalid Form location" })
-      return
-    }
-    if (directory !== undefined || workspaceHeader !== undefined) {
-      globalFormLocation = {
-        directory: directory ?? workspace.path,
-        ...(workspaceHeader ? { workspaceID: workspaceHeader } : {}),
-      }
-    }
+    if (directory !== undefined) globalFormLocation = { directory }
   }
   const imported = prepareSessionImport(
     pathname,
@@ -907,7 +896,6 @@ async function proxyWorkspaceRequest(args: {
         const outgoingHeaders = sanitizeInstanceProxyRequestHeaders(headers, instanceAuthHeader)
         if (globalFormLocation) {
           outgoingHeaders["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
-          if (globalFormLocation.workspaceID) outgoingHeaders["x-opencode-workspace"] = globalFormLocation.workspaceID
         }
 
         if (logger.isLevelEnabled("trace")) {
@@ -976,16 +964,10 @@ function readRequestDirectories(
       else invalid = true
     }
   }
-  const queryWorkspaces = targetUrl.searchParams.getAll("location[workspace]")
   const queryDirectories = targetUrl.searchParams.getAll("location[directory]")
-  if (queryWorkspaces.length > 1 || queryDirectories.length > 1) invalid = true
-  if (queryWorkspaces.length === 1) {
-    const workspaceID = queryWorkspaces[0]
-    if (!workspaceID.trim()) invalid = true
-    else locations.push({ directory: queryDirectories[0] ?? defaultDirectory, workspaceID })
-  }
-  if (targetUrl.pathname.replace(/\/+$/, "") !== "/api/session" && targetUrl.searchParams.has("workspace")) invalid = true
-  if (targetUrl.searchParams.has("workspaceID") || targetUrl.searchParams.has("location[workspaceID]")) invalid = true
+  if (queryDirectories.length > 1) invalid = true
+  if (targetUrl.searchParams.has("workspace") || targetUrl.searchParams.has("location[workspace]")
+    || targetUrl.searchParams.has("workspaceID") || targetUrl.searchParams.has("location[workspaceID]")) invalid = true
 
   if (body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)) {
     const input = body as Record<string, unknown>
@@ -1000,23 +982,12 @@ function readRequestDirectories(
         const directory = source.directory
         if (typeof directory === "string" && directory.trim()) directories.push(directory)
         else invalid = true
-        if (source.workspace !== undefined) invalid = true
-        if (source.workspaceID !== undefined) {
-          if (typeof source.workspaceID === "string" && source.workspaceID.trim() && typeof directory === "string" && directory.trim()) {
-            locations.push({ directory, workspaceID: source.workspaceID })
-          } else invalid = true
-        }
+        if (source.workspace !== undefined || source.workspaceID !== undefined) invalid = true
       } else if (location !== null && location !== undefined) {
         invalid = true
       }
     }
-    if (/^\/api\/session\/[^/]+\/move\/?$/.test(targetUrl.pathname) && "workspaceID" in input) {
-      if (typeof input.workspaceID === "string" && input.workspaceID.trim() && typeof input.directory === "string" && input.directory.trim()) {
-        locations.push({ directory: input.directory, workspaceID: input.workspaceID })
-      } else invalid = true
-    } else if ("workspaceID" in input) {
-      invalid = true
-    }
+    if ("workspaceID" in input) invalid = true
   }
   return { directories, locations, invalid }
 }
@@ -1100,7 +1071,7 @@ async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, works
 }
 
 async function allLocationsOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, locations: LocationRef[]) {
-  const unique = new Map(locations.map((location) => [`${location.directory}\0${location.workspaceID ?? ""}`, location]))
+  const unique = new Map(locations.map((location) => [location.directory, location]))
   return (await Promise.all([...unique.values()].map((location) => manager.ownsLocation(workspaceId, location)))).every(Boolean)
 }
 
@@ -1117,6 +1088,8 @@ function applyDefaultWorkspaceLocation(
   sessionRoute: boolean,
 ): unknown {
   if (hasLocation || sessionRoute) return body
+  if (/^\/api\/(?:credential|project)(?:\/|$)/.test(targetUrl.pathname)
+    || /^\/api\/permission\/saved(?:\/|$)/.test(targetUrl.pathname)) return body
   if (targetUrl.pathname === "/api/session" && method === "GET") {
     targetUrl.searchParams.set("directory", directory)
     return body
@@ -1138,7 +1111,8 @@ function getSessionRouteId(pathname: string): string | null {
 }
 
 function isGlobalFormAction(pathname: string, method: string): boolean {
-  return method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/(?:reply|cancel)\/?$/.test(pathname)
+  return (method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/reply\/?$/.test(pathname))
+    || (method === "DELETE" && /^\/api\/session\/global\/form\/[^/]+\/?$/.test(pathname))
 }
 
 async function authorizeSessionList(
@@ -1153,7 +1127,7 @@ async function authorizeSessionList(
   if (cursors.length === 1) {
     const scope = decodeSessionListCursor(cursors[0])
     if (!scope) return "invalid"
-    for (const key of ["directory", "workspace", "location[directory]", "location[workspace]", "project", "subpath"]) {
+    for (const key of ["directory", "location[directory]", "project", "subpath"]) {
       targetUrl.searchParams.delete(key)
     }
     return ownsSessionListScope(manager, workspaceId, scope)
@@ -1161,26 +1135,21 @@ async function authorizeSessionList(
 
   const projects = targetUrl.searchParams.getAll("project")
   const subpaths = targetUrl.searchParams.getAll("subpath")
-  const workspaces = targetUrl.searchParams.getAll("workspace")
   const directories = targetUrl.searchParams.getAll("directory")
-  if (projects.length > 1 || subpaths.length > 1 || workspaces.length > 1 || directories.length > 1
+  if (projects.length > 1 || subpaths.length > 1 || directories.length > 1
     || (subpaths.length && !projects.length)) return "invalid"
-  const workspace = workspaces[0]
   const directory = directories[0]
-  if ((workspace !== undefined && !workspace.trim()) || (directory !== undefined && !directory.trim())) return "invalid"
+  if (directory !== undefined && !directory.trim()) return "invalid"
   if (!projects.length) {
-    if (workspace && directory) return ownsSessionListScope(manager, workspaceId, { workspace, directory })
-    if (workspace) return ownsSessionListScope(manager, workspaceId, { workspace })
     return "allowed"
   }
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { ...(workspace ? { workspace } : {}), project, subpath })
+  return ownsSessionListScope(manager, workspaceId, { project, subpath })
 }
 
 type SessionListScope = {
-  workspace?: string
   directory?: string
   project?: string
   subpath?: string
@@ -1191,27 +1160,25 @@ function decodeSessionListCursor(cursor: string): SessionListScope | null {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>
     if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    if (value.workspace !== undefined || value.workspaceID !== undefined) return null
     const anchor = value.anchor as Record<string, unknown> | undefined
     if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)
       || typeof anchor.id !== "string" || !anchor.id
       || typeof anchor.time !== "number" || !Number.isFinite(anchor.time)
       || (anchor.direction !== "previous" && anchor.direction !== "next")) return null
-    if (value.workspace !== undefined && (typeof value.workspace !== "string" || !value.workspace.trim())) return null
     if (value.search !== undefined && typeof value.search !== "string") return null
     if (value.order !== undefined && value.order !== "asc" && value.order !== "desc") return null
+    if (value.parentID !== undefined && value.parentID !== null && typeof value.parentID !== "string") return null
     if (typeof value.directory === "string" && value.directory.trim() && value.project === undefined && value.subpath === undefined) {
-      return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), directory: value.directory }
+      return { directory: value.directory }
     }
     if (typeof value.project === "string" && value.project.trim() && value.directory === undefined) {
       if (value.subpath === undefined) {
-        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project }
+        return { project: value.project }
       }
       if (typeof value.subpath === "string" && isSafeRelativePath(value.subpath)) {
-        return { ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}), project: value.project, subpath: value.subpath }
+        return { project: value.project, subpath: value.subpath }
       }
-    }
-    if (typeof value.workspace === "string" && value.directory === undefined && value.project === undefined && value.subpath === undefined) {
-      return { workspace: value.workspace }
     }
     return null
   } catch {
@@ -1229,12 +1196,10 @@ async function ownsSessionListScope(
   scope: SessionListScope,
 ): Promise<"allowed" | "foreign"> {
   if (scope.directory) {
-    const owned = scope.workspace
-      ? await manager.ownsLocation(workspaceId, { directory: scope.directory, workspaceID: scope.workspace })
-      : await manager.ownsDirectory(workspaceId, scope.directory)
+    const owned = await manager.ownsDirectory(workspaceId, scope.directory)
     return owned ? "allowed" : "foreign"
   }
-  if (!scope.project) return scope.workspace && await manager.ownsLocationWorkspace(workspaceId, scope.workspace) ? "allowed" : "foreign"
+  if (!scope.project) return "foreign"
   const project = (await (await manager.getSharedServiceClient()).project.list()).find((candidate) => candidate.id === scope.project)
   if (!project) return "foreign"
   const directory = scope.subpath === undefined
@@ -1242,9 +1207,7 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  const owned = scope.workspace
-    ? await manager.ownsLocation(workspaceId, { directory, workspaceID: scope.workspace })
-    : await manager.ownsDirectory(workspaceId, directory)
+  const owned = await manager.ownsDirectory(workspaceId, directory)
   return owned ? "allowed" : "foreign"
 }
 
@@ -1253,7 +1216,7 @@ function getPtyRouteId(pathname: string): string | null {
 }
 
 function getShellRouteId(pathname: string): string | null {
-  return pathname.replace(/\/+$/, "").match(/^\/api\/shell\/([^/]+)(?:\/output|\/timeout)?$/)?.[1] ?? null
+  return pathname.replace(/\/+$/, "").match(/^\/api\/shell\/([^/]+)(?:\/output)?$/)?.[1] ?? null
 }
 
 function buildInstanceTargetUrl(endpoint: string, pathSuffix: string | undefined): URL | null {
@@ -1288,43 +1251,45 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
   const route = pathname.replace(/\/+$/, "")
   const allowed: Array<[string, RegExp]> = [
     ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider|reference|skill)$/],
-    ["POST", /^\/api\/plugin\/await-activation$/],
     ["GET", /^\/api\/(?:mcp\/resource|websearch\/provider)$/],
     ["GET", /^\/api\/agent\/[^/]+$/],
     ["GET", /^\/api\/model\/default$/],
-    ["GET", /^\/api\/(?:permission|question)\/request$/],
-    ["GET", /^\/api\/form\/request$/],
-    ["GET", /^\/api\/project\/current$/],
+    ["GET", /^\/api\/permission\/request$/],
+    ["GET", /^\/api\/form$/],
     ["GET", /^\/api\/project$/],
     ["GET", /^\/api\/vcs(?:\/status)?$/],
     ["GET", /^\/api\/fs\/(?:list|read\/.+)$/],
-    ["GET", /^\/api\/(?:pty|shell)(?:\/[^/]+(?:\/output)?)?$/],
+    ["GET", /^\/api\/pty(?:\/[^/]+)?$/],
+    ["GET", /^\/api\/shell(?:\/[^/]+(?:\/output)?)?$/],
     ["POST", /^\/api\/(?:pty|shell)$/],
     ["PUT", /^\/api\/pty\/[^/]+$/],
     ["DELETE", /^\/api\/pty\/[^/]+$/],
     ["DELETE", /^\/api\/shell\/[^/]+$/],
-    ["PATCH", /^\/api\/shell\/[^/]+\/timeout$/],
-    ["POST", /^\/api\/mcp\/[^/]+\/(?:connect|disconnect)$/],
+    ["POST", /^\/api\/experimental\/mcp\/[^/]+\/(?:connect|disconnect)$/],
     ["DELETE", /^\/api\/credential\/[^/]+$/],
     ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command)$/],
     ["GET", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
     ["DELETE", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
     ["POST", /^\/api\/integration\/[^/]+\/connect\/oauth\/[^/]+\/complete$/],
     ["GET", /^\/api\/session(?:\/active)?$/],
-    ["POST", /^\/api\/session(?:\/import)?$/],
+    ["POST", /^\/api\/session$/],
+    ["POST", /^\/api\/experimental\/session\/import$/],
     ["GET", /^\/api\/session\/[^/]+(?:\/message(?:\/[^/]+)?)?$/],
     ["GET", /^\/api\/session\/[^/]+\/inbox$/],
     ["GET", /^\/api\/session\/[^/]+\/(?:permission|form)$/],
     ["DELETE", /^\/api\/session\/[^/]+$/],
     ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
-    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|rename|move|prompt|command|shell|compact|interrupt|wait|background|fork)$/],
-    ["POST", /^\/api\/session\/[^/]+\/inbox\/[^/]+\/(?:steer|queue)$/],
-    ["POST", /^\/api\/session\/[^/]+\/revert\/(?:stage|clear)$/],
-    ["PUT", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
-    ["DELETE", /^\/api\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["PATCH", /^\/api\/session\/[^/]+$/],
+    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|move|prompt|command|shell|compact|interrupt|background|fork)$/],
+    ["POST", /^\/api\/experimental\/session\/[^/]+\/wait$/],
+    ["PATCH", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
+    ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
+    ["DELETE", /^\/api\/session\/[^/]+\/revert$/],
+    ["PUT", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["DELETE", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],
-    ["POST", /^\/api\/session\/[^/]+\/question\/[^/]+\/(?:reply|reject)$/],
-    ["POST", /^\/api\/session\/[^/]+\/form\/[^/]+\/(?:reply|cancel)$/],
+    ["POST", /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/],
+    ["DELETE", /^\/api\/session\/[^/]+\/form\/[^/]+$/],
     ["GET", /^\/api\/experimental\/session\/[^/]+\/log$/],
   ]
   return allowed.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(route))
@@ -1357,7 +1322,7 @@ function replaceRequestDirectories(
     if (typeof value === "string" && replacements.has(value)) input[key] = replacements.get(value)
   }
   input.location = replaceLocation(input.location)
-  if (pathname !== "/api/session/import" || method !== "POST") return input
+  if (pathname !== "/api/experimental/session/import" || method !== "POST") return input
   input.info = input.info && typeof input.info === "object" && !Array.isArray(input.info) && !Buffer.isBuffer(input.info)
     ? { ...(input.info as Record<string, unknown>), location: replaceLocation((input.info as Record<string, unknown>).location) }
     : input.info
@@ -1468,7 +1433,7 @@ function replacePromptFileUris(body: unknown, replacements: ReadonlyMap<string, 
 
 function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
   const result = { body, directories: [] as string[], locations: [] as LocationRef[], invalid: false }
-  if (pathname !== "/api/session/import" || method !== "POST") return result
+  if (pathname !== "/api/experimental/session/import" || method !== "POST") return result
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) {
     result.invalid = true
     return result
@@ -1493,12 +1458,7 @@ function prepareSessionImport(pathname: string, method: string, body: unknown, d
       return
     }
     result.directories.push(location.directory)
-    if (location.workspace !== undefined) result.invalid = true
-    if (location.workspaceID !== undefined) {
-      if (typeof location.workspaceID === "string" && location.workspaceID.trim()) {
-        result.locations.push({ directory: location.directory, workspaceID: location.workspaceID })
-      } else result.invalid = true
-    }
+    if (location.workspace !== undefined || location.workspaceID !== undefined) result.invalid = true
   }
 
   addLocation(input, "location")

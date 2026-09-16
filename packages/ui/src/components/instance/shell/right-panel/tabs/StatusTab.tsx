@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
-import type { ShellInfo } from "@opencode-ai/client"
+import type { ShellInfo } from "@opencode/client"
 import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,

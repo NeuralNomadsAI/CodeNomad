@@ -1,4 +1,4 @@
-import type { VcsFileStatus } from "@opencode-ai/client"
+import type { VcsFileStatus } from "@opencode/client"
 import type { WorktreeGitStatusEntry } from "../../../../../../server/src/api-types"
 
 import type { GitChangeEntry, GitChangeListItem, GitChangeSection, GitChangeStatus } from "./types"

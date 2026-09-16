@@ -2,12 +2,12 @@
 
 ## Package
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently; startup validates its authenticated loopback `/api/status` response without an exact version gate, while contract parity is reviewed at upgrade and release time. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
+CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates its authenticated loopback `/api/status` response without an exact version gate. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
-- Promise client: `import { OpenCode } from "@opencode-ai/client"`
-- Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
+- Promise client: `import { OpenCode } from "@opencode/client"`
+- Service authentication headers: `import { Service } from "@opencode/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
-- Declarations: `node_modules/@opencode-ai/client/dist/promise/`
+- Declarations: `node_modules/@opencode/client/dist/promise/`
 
 Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNomad intentionally changes to an embedded, process-owned host.
 
@@ -18,14 +18,18 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 | Service | CLI `service status/start/get password`; `Service.headers` for the authenticated `/api/status` and API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
-| Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
+| Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
 | Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
-| Forms | `client.form.request.list`, `client.form.reply`, `client.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
+| Forms | `client.form.list`, `client.session.form.reply`, `client.session.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
 
-Native Forms own pending interruption state. The allowlisted Question request/reply/reject routes are compatibility-only. The Question tool renderer may display compatible output, but no Question queue/state architecture should return.
+Native Forms own pending interruption state. Global Forms use `sessionID: "global"` and `x-opencode-directory: encodeURIComponent(directory)`; ordinary session Forms derive location from the session. Question tool output rendering is independent of pending Forms.
+
+Stable mutations use `permission.reply({ decision })`, `session.command({ name })`, `session.interrupt({ resume })`, `session.fork({ before? })`, `session.inbox.update({ delivery })` and `session.message.get(...)`. Credential removal is global and takes only `credentialID`. There is no plugin activation-wait endpoint; catalog reads and `plugin.updated` supply native state.
+
+Wait, instructions, import/export, stats and log use `/api/experimental/session/...` paths. Cancellation is `DELETE /api/session/:sessionID/form/:formID`. Preserve generated response envelopes in the proxy: `session.active` consumes `{ data }`, while `project.list` consumes an array. Native `cursor.next` remains the sole continuation authority.
 
 ## Routing
 

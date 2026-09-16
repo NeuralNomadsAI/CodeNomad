@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeEvent } from "@opencode-ai/client"
+import type { OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
 import type { Logger } from "../logger"
 import { InstanceEventBridge } from "./instance-events"
@@ -312,7 +312,7 @@ describe("InstanceEventBridge", () => {
       subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
         yield serverConnected()
         yield { type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
-        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        yield { id: "model-update", created: 1, type: "model.updated", data: {} } satisfies OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
@@ -329,7 +329,7 @@ describe("InstanceEventBridge", () => {
       workspaces = [workspaces[1]]
       retry.resolve(false)
       await waitFor(() => received.length === 1)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
       assert.equal(received[0].instanceId, "flaky")
     } finally {
       bridge.shutdown()
@@ -393,7 +393,7 @@ describe("InstanceEventBridge", () => {
     const events = [
       { type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } },
       { type: "permission.asked", data: { id: "unknown", sessionID: "unknown" } },
-      { type: "catalog.updated", data: {} },
+      { type: "model.updated", data: {} },
     ] as OpenCodeEvent[]
     const { manager, sessionGets } = locationlessManager(events, { unknown: new Error("not found") })
     const bus = new EventBus()
@@ -407,7 +407,7 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 1)
       assert.equal(sessionGets(), 2)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
     } finally {
       bridge.shutdown()
     }
@@ -433,7 +433,7 @@ describe("InstanceEventBridge", () => {
         yield { type: "permission.asked", data: { id: "p1", sessionID: "missing" } } as OpenCodeEvent
         now = 3_001
         yield { type: "permission.asked", data: { id: "p2", sessionID: "missing" } } as OpenCodeEvent
-        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        yield { id: "model-update", created: 1, type: "model.updated", data: {} } satisfies OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
@@ -448,7 +448,7 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 1)
       assert.equal(sessionGets, 2)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
     } finally {
       Date.now = originalNow
       bridge.shutdown()
@@ -578,10 +578,11 @@ describe("InstanceEventBridge", () => {
   it("broadcasts safe global locationless service events", async () => {
     const events = [
       { type: "agent.updated", data: {} },
-      { type: "catalog.updated", data: {} },
+      { type: "model.updated", data: {} },
       { type: "command.updated", data: {} },
       { type: "config.updated", data: {} },
-      { type: "integration.connection.updated", data: { integrationID: "test" } },
+      { type: "provider.updated", data: {} },
+      { type: "plugin.updated", data: {} },
       { type: "integration.updated", data: {} },
       { type: "mcp.resources.changed", data: { server: "test" } },
       { type: "mcp.status.changed", data: { server: "test" } },

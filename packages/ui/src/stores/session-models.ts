@@ -1,4 +1,4 @@
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import { activeSessionId, agents, providers, sessions } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"

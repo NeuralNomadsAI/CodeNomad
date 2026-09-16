@@ -63,7 +63,7 @@ Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect beh
 - File structure
 - TypeScript interfaces
 - Shared OpenCode service and location ownership
-- Native `@opencode-ai/client` integration
+- Native `@opencode/client` integration
 - IPC communication
 - Error handling strategies
 

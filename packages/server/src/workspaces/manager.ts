@@ -2,8 +2,8 @@ import path from "path"
 import { spawnSync } from "child_process"
 import { randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
-import type { Endpoint } from "@opencode-ai/client/service"
-import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
+import type { Endpoint } from "@opencode/client/service"
+import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
 import type { SettingsService } from "../settings/service"
 import type { BinaryResolver } from "../settings/binaries"
@@ -227,37 +227,7 @@ export class WorkspaceManager {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     const requested = await this.resolveOwnedWorktree(record, location.directory)
-    if (!requested) return false
-    if (!location.workspaceID) return true
-    try {
-      const candidates = record.location?.workspaceID === location.workspaceID
-        ? [record.location]
-        : (await (await this.sharedService.client(record[WORKSPACE_STATE].serviceOptions)).debug.location.list())
-          .filter((candidate) => candidate.workspaceID === location.workspaceID)
-      for (const candidate of candidates) {
-        const resolved = await this.resolveOwnedWorktree(record, candidate.directory)
-        if (resolved && canonicalWorktreeIdentity(resolved.worktreeDirectory, this.options.platform)
-          === canonicalWorktreeIdentity(requested.worktreeDirectory, this.options.platform)) return true
-      }
-      return false
-    } catch {
-      return false
-    }
-  }
-
-  async ownsLocationWorkspace(id: string, workspaceID: string): Promise<boolean> {
-    const record = this.workspaces.get(id)
-    if (!record?.[WORKSPACE_STATE].published) return false
-    if (record.location?.workspaceID === workspaceID) return true
-    try {
-      const locations = await (await this.sharedService.client(record[WORKSPACE_STATE].serviceOptions)).debug.location.list()
-      for (const location of locations) {
-        if (location.workspaceID === workspaceID && await this.ownsDirectory(id, location.directory)) return true
-      }
-      return false
-    } catch {
-      return false
-    }
+    return Boolean(requested && location.workspaceID === undefined)
   }
 
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
@@ -564,12 +534,11 @@ export class WorkspaceManager {
         if (state.abortController.signal.aborted && locationResult.status === "fulfilled") {
           cancelledLocation = {
             directory: locationResult.value.directory,
-            workspaceID: locationResult.value.workspaceID,
           }
         }
         this.throwIfCancelled(record)
         if (locationResult.status === "fulfilled") {
-          record.location = { directory: locationResult.value.directory, workspaceID: locationResult.value.workspaceID }
+          record.location = { directory: locationResult.value.directory }
           state.locationOwned = true
         }
         if (headersResult.status === "rejected") throw headersResult.reason
@@ -826,7 +795,7 @@ export class WorkspaceManager {
     if (leftRecord[WORKSPACE_STATE].serviceOptions?.identity !== rightRecord[WORKSPACE_STATE].serviceOptions?.identity) {
       return false
     }
-    return left.directory === right.directory && left.workspaceID === right.workspaceID
+    return left.directory === right.directory
   }
 
   private async withLocationCreation<T>(operation: () => Promise<T>): Promise<T> {

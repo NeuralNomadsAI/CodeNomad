@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import path from "node:path"
 import { describe, it } from "node:test"
-import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client"
+import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
 import pino from "pino"
 
 import { EventBus } from "../events/bus"
@@ -76,7 +76,6 @@ class ControlledSharedService {
     const directory = location.directory
     return {
       directory,
-      workspaceID: location.workspaceID ?? "location-1",
       project: { id: "project-1", directory, canonical: directory },
     }
   }
@@ -119,7 +118,7 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
-  it("validates native workspace identity against an owned directory", async () => {
+  it("validates native directory ownership and rejects removed workspace selectors", async () => {
     const service = new ControlledSharedService()
     service.debugLocations = [
       { directory: process.cwd(), workspaceID: "worktree-location" },
@@ -128,10 +127,9 @@ describe("workspace manager shared service lifecycle", () => {
     const { manager } = createHarness(service)
     const workspace = await manager.create(process.cwd())
 
-    assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "location-1" }), true)
+    assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd() }), true)
     assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "foreign" }), false)
     assert.equal(await manager.ownsLocation(workspace.workspace.id, { directory: process.cwd(), workspaceID: "mismatch-location" }), false)
-    assert.equal(await manager.ownsLocationWorkspace(workspace.workspace.id, "worktree-location"), true)
   })
 
   it("distinguishes WSL service paths from Windows host paths", () => {
@@ -486,7 +484,7 @@ describe("workspace manager shared service lifecycle", () => {
     await deletion
     assert.deepEqual(harness.manager.list(), [])
     assert.equal(harness.service.evictionCalls.length, 1)
-    assert.equal(harness.service.evictionCalls[0]?.location.workspaceID, "location-1")
+    assert.deepEqual(harness.service.evictionCalls[0]?.location, { directory: process.cwd() })
     assert.equal(harness.service.evictionCalls[0]?.signal, undefined)
   })
 
@@ -498,7 +496,6 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.evictionCalls.length, 1)
     assert.deepEqual(harness.service.evictionCalls[0]?.location, {
       directory: process.cwd(),
-      workspaceID: "location-1",
     })
     assert.equal(harness.service.shutdownCalls, 0)
   })
@@ -685,7 +682,6 @@ describe("workspace manager shared service lifecycle", () => {
 
     assert.deepEqual(harness.service.evictionCalls.map(({ location }) => location), [{
       directory: process.cwd(),
-      workspaceID: "location-1",
     }])
     assert.equal((harness.manager as any).workspaces.size, 0)
   })

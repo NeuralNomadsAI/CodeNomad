@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-import type { ShellInfo } from "@opencode-ai/client"
+import type { ShellInfo } from "@opencode/client"
 
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"

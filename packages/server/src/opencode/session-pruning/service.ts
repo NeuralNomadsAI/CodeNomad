@@ -19,8 +19,9 @@ export async function pruneBoundMessage(
     return { status: "blocked", reason: "unsupported_storage" }
   }
   const session = await ctx.session.get({ sessionID: request.sessionID })
-  if (session.location.directory !== ctx.location.directory || session.projectID !== ctx.location.project.id
-    || session.location.workspaceID !== ctx.location.workspaceID) return { status: "blocked", reason: "not_deletable" }
+  if (session.location.directory !== ctx.location.directory || session.projectID !== ctx.location.project.id) {
+    return { status: "blocked", reason: "not_deletable" }
+  }
   const filename = await realpath(configured)
   const { DatabaseSync } = await import("node:sqlite")
   const key = `pruning/binding/${randomUUID()}`
@@ -38,7 +39,6 @@ export async function pruneBoundMessage(
         return pruneTransaction(db, request, () => validateClaimFence(db, request.sessionID, {
           key: storageKey(key), nonce,
           directory: session.location.directory, projectID: session.projectID,
-          workspaceID: session.location.workspaceID,
         }), storageKey("pruning/receipt/"))
       } catch (error) {
         const code = (error as { errcode?: number; code?: string }).errcode

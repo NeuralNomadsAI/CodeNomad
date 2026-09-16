@@ -72,7 +72,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       await row.getByRole("button", { name: "Delete", exact: true }).click()
       await page.getByRole("dialog").waitFor()
       assert.match(await page.getByRole("dialog").textContent(), /storage is busy/)
-      assert.deepEqual((await client.session.message({ sessionID: session.id, messageID: selected.id })).content, selected.content)
+      assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: selected.id })).content, selected.content)
       await page.screenshot({ path: path.join(root, "ui-busy.png") })
       await page.getByRole("dialog").getByRole("button", { name: "OK", exact: true }).click()
     } finally { await finish() }
@@ -85,13 +85,13 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       assert.equal((await (await response).json()).status, "pruned")
     }
     await clickDelete(row.locator(".tool-call-header"))
-    const updated = await client.session.message({ sessionID: session.id, messageID: selected.id })
+    const updated = await client.session.message.get({ sessionID: session.id, messageID: selected.id })
     assert.deepEqual(updated.content, selected.content.filter(part => part !== tool), "single tool deleted persistently")
     await page.waitForFunction(id => !window.fixture.snapshot().find(message => message.id === id.message)?.partIds.includes(id.part), { message: selected.id, part: tool.id })
     console.log("PASS: UI single tool deletion")
     const reasoning = page.locator(`.message-reasoning-card[data-part-id="${selected.id}-reasoning-0"]`)
     await clickDelete(reasoning.locator(".message-reasoning-header"))
-    assert.deepEqual((await client.session.message({ sessionID: session.id, messageID: selected.id })).content, updated.content.filter(part => part.type !== "reasoning"))
+    assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: selected.id })).content, updated.content.filter(part => part.type !== "reasoning"))
     console.log("PASS: UI single reasoning deletion")
 
     const groupTarget = tools.at(-2)
@@ -101,7 +101,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     if (await toggle.getAttribute("aria-expanded") === "true") await toggle.click()
     await clickDelete(group.locator(".message-technical-group-header").first())
     await page.waitForFunction(id => window.fixture.snapshot().find(message => message.id === id)?.partIds.length === 1, groupTarget.id)
-    assert.deepEqual((await client.session.message({ sessionID: session.id, messageID: groupTarget.id })).content, groupTarget.content.filter(part => part.type !== "tool"))
+    assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: groupTarget.id })).content, groupTarget.content.filter(part => part.type !== "tool"))
     console.log("PASS: UI whole tool group deletion")
 
     const responseAction = page.getByRole("button", { name: "Remove tools and reasoning from this response", exact: true }).last()

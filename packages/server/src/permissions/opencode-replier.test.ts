@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient } from "@opencode-ai/client"
+import type { OpenCodeClient } from "@opencode/client"
 
 import type { WorkspaceManager } from "../workspaces/manager"
 import { createOpencodePermissionReplier } from "./opencode-replier"

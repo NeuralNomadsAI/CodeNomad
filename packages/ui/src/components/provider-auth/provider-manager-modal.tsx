@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, X } from "lucide-solid"
-import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode-ai/client"
+import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { isLocalTauriHost } from "../../lib/runtime-env"
@@ -20,7 +20,6 @@ import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { toRequestLocation } from "../../stores/request-locations"
 import { getRootClient } from "../../stores/opencode-client"
-import { waitForPluginActivation } from "../../stores/plugin-activation"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
@@ -102,7 +101,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   const requestLocation = (location: LocationRef) => toRequestLocation(location)
   const isActiveCatalogLocation = (location: LocationRef) => {
     const active = currentCatalogLocation()
-    return active.directory === location.directory && active.workspaceID === location.workspaceID
+    return active.directory === location.directory
   }
 
   const providerNameById = createMemo(() => {
@@ -284,7 +283,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       return
     }
     const catalogLocation = currentCatalogLocation()
-    const catalogLocationKey = `${catalogLocation.directory}\0${catalogLocation.workspaceID ?? ""}`
+    const catalogLocationKey = catalogLocation.directory
     if (loadedInstanceId === instanceId && loadedClient === authClient && loadedCatalogLocationKey === catalogLocationKey) return
     resetProviderData()
     loadedInstanceId = instanceId
@@ -312,7 +311,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoadError(null)
     try {
       const location = { location: requestLocation(catalogLocation) }
-      await waitForPluginActivation(authClient, catalogLocation)
       const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
         authClient.provider.list(location),
         authClient.model.list(location),
@@ -587,7 +585,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       if (disconnectMode !== "credential-remove") return
       await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({
         credentialID,
-        location: requestLocation(catalogLocation),
       })))
       if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)

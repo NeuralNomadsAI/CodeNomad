@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { ShellInfo } from "@opencode-ai/client"
+import type { ShellInfo } from "@opencode/client"
 import { appendShellOutput, createShellStore, type ShellApi } from "./shell-store.ts"
 
 const shell = (id: string, cwd = "/repo"): ShellInfo => ({

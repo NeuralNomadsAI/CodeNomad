@@ -1,4 +1,4 @@
-import type { LocationGetInput, LocationRef } from "@opencode-ai/client"
+import type { LocationGetInput, LocationRef } from "@opencode/client"
 
 export type RequestLocation = NonNullable<LocationGetInput["location"]>
 
@@ -12,10 +12,7 @@ export function createRequestLocation(directory?: string): RequestLocation {
 }
 
 export function toRequestLocation(location: LocationRef): RequestLocation {
-  return {
-    directory: location.directory,
-    ...(location.workspaceID ? { workspace: location.workspaceID } : {}),
-  }
+  return { directory: location.directory }
 }
 
 export function buildV2RequestLocations(
@@ -23,16 +20,13 @@ export function buildV2RequestLocations(
   worktrees: RequestLocationWorktree[],
 ): RequestLocation[] {
   const locations = [createRequestLocation(directory)]
-  const seen = new Set(directory ? [`${directory}\0`] : [])
+  const seen = new Set(directory ? [directory] : [])
 
   for (const worktree of worktrees) {
     const worktreeDirectory = worktree.directory?.trim()
-    const key = `${worktreeDirectory}\0${worktree.workspaceID ?? ""}`
-    if (!worktreeDirectory || seen.has(key)) continue
-    seen.add(key)
-    locations.push(worktree.workspaceID
-      ? { directory: worktreeDirectory, workspace: worktree.workspaceID }
-      : createRequestLocation(worktreeDirectory))
+    if (!worktreeDirectory || seen.has(worktreeDirectory)) continue
+    seen.add(worktreeDirectory)
+    locations.push(createRequestLocation(worktreeDirectory))
   }
 
   return locations

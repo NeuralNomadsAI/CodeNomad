@@ -56,13 +56,13 @@ after(() => {
 
 function seed(client: any): void {
   if (client.session?.applyPrune) {
-    const read = client.session.message
+    const read = client.session.message.get
     const committed = new Map<string, any>()
-    client.session.message = async (input: any) => committed.get(input.messageID) ?? read(input)
+    client.session.message.get = async (input: any) => committed.get(input.messageID) ?? read(input)
     serverApi.pruneSessionMessage = async (owner, input) => {
       assert.equal(owner, instanceId)
       assert.deepEqual(Object.keys(input).sort(), ["indexes", "messageID", "revision", "sessionID"])
-      const message = await client.session.message(input)
+      const message = await client.session.message.get(input)
       assert.equal(input.revision, await contentRevision(message.content))
       const updated = await client.session.applyPrune({
         sessionID: input.sessionID, messageID: input.messageID,
@@ -129,7 +129,7 @@ describe("native undo settlement", () => {
     const gate = new Promise<void>(resolve => { release = resolve })
     seed({ session: {
       revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
-      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, continue: false }) },
+      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
       wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
     } })
     const undo = stageSessionRevert(instanceId, sessionId, "message")
@@ -197,7 +197,7 @@ describe("voice instruction sync", () => {
     assert.deepEqual(calls, ["put", "command"])
     assert.deepEqual(commandInput, {
       sessionID: sessionId,
-      command: "review",
+      name: "review",
       text: "",
       delivery: "steer",
     })
@@ -266,7 +266,7 @@ describe("plugin RPC message pruning", () => {
   it("keeps the local message when the plugin blocks or its acknowledgement is lost", async () => {
     const messageId = "blocked-prune"
     const content = [{ type: "tool", id: "tool-1", state: { status: "completed" } }, { type: "text", text: "keep" }]
-    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
     const store = messageStoreBus.getOrCreate(instanceId)
     store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
@@ -289,7 +289,7 @@ describe("plugin RPC message pruning", () => {
     const messageId = "stale-selection"
     const content = [{ type: "text", text: "new text" }, { type: "tool", id: "tool-1", state: { status: "completed" } }]
     let selected: number[] = []
-    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
     serverApi.pruneSessionMessage = async (_owner, input) => { selected = input.indexes; return { status: "blocked", reason: "maintenance_required" } }
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
       { id: "tool-1", type: "tool", tool: "bash" },
@@ -301,7 +301,7 @@ describe("plugin RPC message pruning", () => {
   it("refuses ambiguous reasoning instead of deleting another occurrence", async () => {
     const messageId = "ambiguous-selection"
     const content = [{ type: "reasoning", text: "same" }, { type: "reasoning", text: "same" }]
-    seed({ session: { message: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } })
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
     let calls = 0
     serverApi.pruneSessionMessage = async () => { calls++; return { status: "blocked", reason: "maintenance_required" } }
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
@@ -323,7 +323,7 @@ describe("plugin RPC message pruning", () => {
       const fresh = variant === "missing-time" ? [{ ...first, time: { created: 1, completed: 2 } }]
         : variant === "changed-state" ? [{ ...first, state: { provider: { opaque: "CHANGED" } } }]
         : [second]
-      seed({ session: { message: async () => ({ ...original, content: fresh }) } })
+      seed({ session: { message: { get: async () => ({ ...original, content: fresh }) } } })
       const normalized = normalizeSessionMessage(sessionId, original).message
       const store = messageStoreBus.getOrCreate(instanceId)
       store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
@@ -343,7 +343,7 @@ describe("plugin RPC message pruning", () => {
     const second = { type: "reasoning", text: "", state: { provider: "p", opaque: "SECOND" } }
     const original = { id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second] } as any
     const fresh = { ...original, content: [{ ...second, state: { opaque: "SECOND", provider: "p" } }] }
-    seed({ session: { message: async () => fresh } })
+    seed({ session: { message: { get: async () => fresh } } })
     const normalized = normalizeSessionMessage(sessionId, original).message
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
     let calls = 0
@@ -372,14 +372,14 @@ describe("plugin RPC message pruning", () => {
     ]
     let updateInput: any
     seed({ session: {
-      message: async () => ({
+      message: { get: async () => ({
         id: messageId,
         type: "assistant",
         agent: "build",
         model: { providerID: "provider", id: "old" },
         time: { created: 1, completed: 3 },
         content,
-      }),
+      }) },
       applyPrune: async (input: any) => {
         updateInput = input
         return {
@@ -434,7 +434,7 @@ describe("plugin RPC message pruning", () => {
       ],
     }
     seed({ session: {
-      message: async () => structuredClone(remote),
+      message: { get: async () => structuredClone(remote) },
       applyPrune: async (input: any) => {
         remote = { ...remote, content: input.content }
         return structuredClone(remote)
@@ -471,7 +471,7 @@ describe("plugin RPC message pruning", () => {
     ]
     let updateInput: any
     seed({ session: {
-      message: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }),
+      message: { get: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }) },
       applyPrune: async (input: any) => {
         updateInput = input
         return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
@@ -510,7 +510,7 @@ describe("plugin RPC message pruning", () => {
     ])
     const updates: any[] = []
     seed({ session: {
-      message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+      message: { get: async ({ messageID }: { messageID: string }) => messages.get(messageID) },
       applyPrune: async (input: any) => {
         updates.push(input)
         return { ...messages.get(input.messageID), content: input.content }
@@ -563,7 +563,7 @@ describe("plugin RPC message pruning", () => {
           : { data: [messages.get("assistant-2")], cursor: {} }
       } },
       session: {
-        message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+        message: { get: async ({ messageID }: { messageID: string }) => messages.get(messageID) },
         applyPrune: async (input: any) => {
           updates.push(input)
           return { ...messages.get(input.messageID), content: input.content }

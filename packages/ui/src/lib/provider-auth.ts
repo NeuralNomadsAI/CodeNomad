@@ -1,4 +1,4 @@
-import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode-ai/client"
+import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode/client"
 import { isFormFieldVisible } from "./form-schema"
 
 export type ProviderAuthAuthorization = {

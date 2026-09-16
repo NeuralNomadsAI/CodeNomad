@@ -5,7 +5,7 @@ import {
 } from "../types/session"
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
-import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode-ai/client"
+import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -83,7 +83,6 @@ import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery
 import { fetchCommands } from "./commands"
 import { toRequestLocation } from "./request-locations"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
-import { waitForPluginActivation } from "./plugin-activation"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -145,7 +144,7 @@ function invalidateMessageHistoryTraversal(instanceId: string, sessionId: string
 }
 
 function catalogLocationKey(location: LocationRef): string {
-  return `${location.directory}\0${location.workspaceID ?? ""}`
+  return location.directory
 }
 
 async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
@@ -927,9 +926,7 @@ async function forkSession(
 
   const request = {
     sessionID: sourceSessionId,
-    boundary: options?.messageId
-      ? { type: "before" as const, messageID: options.messageId }
-      : { type: "through" as const },
+    ...(options?.messageId ? { before: options.messageId } : {}),
   }
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
@@ -1113,7 +1110,6 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
-    await waitForPluginActivation(rootClient, location)
     const response = await rootClient.agent.list({ location: requestLocation })
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
@@ -1188,7 +1184,6 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
     const request = { location: toRequestLocation(location) }
-    await waitForPluginActivation(rootClient, location)
     const [response, models, defaultModel] = await Promise.all([
       rootClient.provider.list(request),
       rootClient.model.list(request),

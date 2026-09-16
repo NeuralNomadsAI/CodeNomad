@@ -6,11 +6,12 @@ export function getInstanceRefreshTargets(eventType: string): readonly InstanceR
       return ["agents"]
     case "command.updated":
       return ["commands"]
-    case "catalog.updated":
     case "models-dev.refreshed":
       return ["agents", "providers", "commands"]
+    case "model.updated":
+    case "provider.updated":
+      return ["providers"]
     case "integration.updated":
-    case "integration.connection.updated":
     case "credential.updated":
     case "credential.switched":
       return ["providers", "metadata"]

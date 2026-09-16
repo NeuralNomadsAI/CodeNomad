@@ -232,7 +232,7 @@ Explicit **Stop Workspace** evicts that location and its resources from the glob
 
 CodeNomad holds one shared OpenCode V2 `client.event.subscribe()` stream. It routes native location-scoped events to logical workspaces and multiplexes them with CodeNomad events over `GET /api/events` for browser `EventSource` clients.
 
-The stream is volatile and has no replay guarantee. After reconnecting, clients must refetch authoritative sessions and pending permission, question, and form requests; file and config consumers must also refetch after `filesystem.changed` and `config.updated` invalidations.
+The stream is volatile and has no replay guarantee. After reconnecting, clients must refetch authoritative sessions and pending permission and Form requests; file and config consumers must also refetch after `filesystem.changed` and `config.updated` invalidations.
 
 ### Provider Plan Usage
 

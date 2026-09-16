@@ -1,4 +1,4 @@
-import { isSessionNotFoundError, type OpenCodeEvent } from "@opencode-ai/client"
+import { isSessionNotFoundError, type OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
@@ -9,19 +9,23 @@ const DIRECTORY_OWNER_CACHE_MS = 2000
 const SESSION_DIRECTORY_CACHE_MS = 2000
 const GLOBAL_EVENT_TYPES = new Set([
   "agent.updated",
-  "catalog.updated",
   "command.updated",
   "config.updated",
   "credential.switched",
   "credential.updated",
-  "integration.connection.updated",
   "integration.updated",
   "installation.update-available",
   "installation.updated",
   "mcp.resources.changed",
   "mcp.status.changed",
   "models-dev.refreshed",
+  "model.updated",
+  "plugin.updated",
+  "provider.updated",
+  "reference.updated",
   "server.connected",
+  "skill.updated",
+  "websearch.updated",
 ])
 
 interface InstanceEventBridgeOptions {

@@ -1,5 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process"
-import { Service, type Endpoint } from "@opencode-ai/client/service"
+import { Service, type Endpoint } from "@opencode/client/service"
 
 import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../api-types"
 import { assertLoopbackServiceUrl } from "./service-state"

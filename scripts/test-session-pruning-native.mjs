@@ -9,7 +9,7 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { OpenCode } from "@opencode-ai/client"
+import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
 
 const cli = process.argv[2]
@@ -125,8 +125,10 @@ try {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   } })
   const client = makeClient()
-  assert.equal((await client.health.get()).version, runtimeVersion)
+  assert.equal((await client.server.status()).version, runtimeVersion)
   console.log(`Testing official runtime ${runtimeVersion}`)
+  const { testNativeProxy } = await import("./test-opencode-proxy-native.mjs")
+  await testNativeProxy({ client, baseUrl, root, authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}` })
   const location = { directory: root }
   const session = await client.session.create({ location })
   // Install after the daemon and location exist: desktop startup must not need a restart.
@@ -170,7 +172,7 @@ try {
       } finally { toolSteps = 1; probeName = "prune_probe" }
     } })
   }
-  const fork = await client.session.fork({ sessionID: session.id, boundary: { type: "before", messageID: messages.at(-1).id } })
+  const fork = await client.session.fork({ sessionID: session.id, before: messages.at(-1).id })
   const forkTarget = (await client.message.list({ sessionID: fork.id, limit: 100, order: "asc" })).data.find(message => message.type === "assistant")
   assert.deepEqual(forkTarget.content, target.content)
   const preview = (await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "preview", location, input: { sessionID: session.id, messageID: target.id } })).output
@@ -195,7 +197,7 @@ try {
   assert.equal(result.status, "pruned")
   assert.deepEqual((await prune()).output, result)
   await until(() => [first, second].every(events => events.some(event => event.type === "rpc.codenomad.session-pruning.pruned" && event.data.messageID === target.id)))
-  assert.deepEqual((await client.session.message({ sessionID: session.id, messageID: target.id })).content, target.content.slice(1))
+  assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: target.id })).content, target.content.slice(1))
   // The second ordering: native admission begins while our write lock is held.
   db.exec("BEGIN IMMEDIATE")
   assert.equal(claim(), null)
@@ -211,8 +213,8 @@ try {
   assert(!JSON.stringify(next).includes("TOOL_PRUNING_CANARY"))
   assert(!JSON.stringify(next).includes("REASONING_PRUNING_CANARY"))
   assert(JSON.stringify(next).includes("Retain this conclusion"))
-  assert.deepEqual((await client.session.message({ sessionID: session.id, messageID: target.id })).content, [])
-  assert.deepEqual((await client.session.message({ sessionID: fork.id, messageID: forkTarget.id })).content, target.content, "parent cleanup does not alter a fork's independent copy")
+  assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
+  assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, target.content, "parent cleanup does not alter a fork's independent copy")
   await client.session.compact({ sessionID: fork.id })
   await client.session.wait({ sessionID: fork.id }, { signal: AbortSignal.timeout(20_000) })
   const contextBefore = await client.session.context({ sessionID: fork.id })
@@ -220,7 +222,7 @@ try {
   assert(!contextBefore.some(message => message.id === forkTarget.id))
   const historical = { sessionID: fork.id, messageID: forkTarget.id, revision: revision(forkTarget.content), indexes: [0, 1] }
   assert.equal((await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "prune", location, input: historical })).output.status, "pruned")
-  assert.deepEqual((await client.session.message({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
+  assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await client.session.context({ sessionID: fork.id }), contextBefore, "deleting pre-compaction content does not rewrite or re-expand a summary")
   assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok")
   streams.abort(); await Promise.all(observers)
@@ -233,8 +235,8 @@ try {
   const restarted = OpenCode.make({ baseUrl: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], headers: {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   } })
-  assert.deepEqual((await restarted.session.message({ sessionID: session.id, messageID: target.id })).content, [])
-  assert.deepEqual((await restarted.session.message({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
+  assert.deepEqual((await restarted.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
+  assert.deepEqual((await restarted.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await restarted.session.context({ sessionID: fork.id }), contextBefore)
   if (bundled) {
     const preview = () => restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "preview", location, input: { sessionID: session.id, messageID: target.id } })
@@ -259,7 +261,7 @@ try {
     await preview()
     await until(async () => { try { await preview(); return false } catch { return true } })
     await rm(crashLease)
-    assert.deepEqual((await restarted.session.message({ sessionID: session.id, messageID: target.id })).content, [])
+    assert.deepEqual((await restarted.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
     console.log("PASS: shipped bundle, automatic discovery, multiple backends, final close disposes RPC, reopening restores RPC")
     console.log("PASS: installation on an already-running daemon and crash expiry without stopping OpenCode")
   }

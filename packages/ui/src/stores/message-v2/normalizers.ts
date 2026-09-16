@@ -1,5 +1,5 @@
 import { decodeHtmlEntities } from "../../lib/text-render-utils"
-import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { SessionMessageInfo } from "@opencode/client"
 import type { ClientPart, Message, MessageInfo } from "../../types/message"
 
 function decodeTextSegment(segment: any): any {

@@ -1,4 +1,4 @@
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { normalizeWslUncPath } from "./worktree-directory"
 
 const PAGE_SIZE = 200
@@ -179,7 +179,6 @@ export async function evacuateWorktreeSessions(params: {
         await params.client.session.move({
           sessionID: session.id,
           directory: session.location.directory,
-          workspaceID: session.location.workspaceID,
         })
       } catch (rollbackError) {
         rollbackErrors.push(rollbackError)

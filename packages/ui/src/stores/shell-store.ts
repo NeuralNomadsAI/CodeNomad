@@ -1,5 +1,5 @@
 import { createSignal, untrack } from "solid-js"
-import type { OpenCodeClient, ShellInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, ShellInfo } from "@opencode/client"
 
 const MAX_SHELL_OUTPUT_DISPLAY_CHARS = 4 * 1024 * 1024
 

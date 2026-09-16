@@ -11,10 +11,9 @@ describe("createRequestLocation", () => {
 })
 
 describe("toRequestLocation", () => {
-  it("maps SDK output workspace IDs to native request selectors", () => {
+  it("uses directory-only native request selectors", () => {
     assert.deepEqual(toRequestLocation({ directory: "/repo", workspaceID: "workspace-1" }), {
       directory: "/repo",
-      workspace: "workspace-1",
     })
     assert.deepEqual(toRequestLocation({ directory: "/repo" }), { directory: "/repo" })
   })
@@ -51,14 +50,12 @@ describe("buildV2RequestLocations", () => {
     ])
   })
 
-  it("keeps workspace scopes that share a directory", () => {
+  it("deduplicates older location records that share a directory", () => {
     assert.deepEqual(buildV2RequestLocations("/repo", [
       { directory: "/repo", workspaceID: "one" },
       { directory: "/repo", workspaceID: "two" },
     ]), [
       { directory: "/repo" },
-      { directory: "/repo", workspace: "one" },
-      { directory: "/repo", workspace: "two" },
     ])
   })
 })

@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
-import type { FormAnswer, FormInfo } from "@opencode-ai/client"
-import type { FormWithLocation } from "@opencode-ai/client/solid"
+import type { FormAnswer, FormInfo } from "@opencode/client"
+import type { FormWithLocation } from "@opencode/client/solid"
 
 const [formQueues, setFormQueues] = createSignal<Map<string, FormWithLocation[]>>(new Map())
 
@@ -46,11 +46,10 @@ export function clearFormQueue(instanceId: string): void {
 }
 
 export function formRequestOptions(form: FormWithLocation) {
-  if (!form.location) return undefined
+  if (form.sessionID !== "global" || !form.location) return undefined
   return {
     headers: {
       "x-opencode-directory": encodeURIComponent(form.location.directory),
-      ...(form.location.workspaceID ? { "x-opencode-workspace": form.location.workspaceID } : {}),
     },
   }
 }
