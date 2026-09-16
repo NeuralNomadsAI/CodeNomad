@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI pin the official `@opencode/client@2.0.4`; the bundled pruning plugin pins `@opencode/plugin@2.0.4`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates only the authenticated `/api/status` contract (`version`, `pid`, `urls`), with no exact version gate or health-endpoint fallback. The older beta reviews below are historical.
+Server and UI pin the official `@opencode/client@2.0.4`; the bundled pruning plugin pins `@opencode/plugin@2.0.4`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates authenticated `/api/status` (`version`, `pid`, `urls`), falling back only on HTTP 404 to the earlier V2 `/api/health` contract (`healthy: true`, `version`, positive `pid`). Both probes share the endpoint, credentials, response-size bound and absolute deadline. There is no exact version gate. Discovery compatibility alone does not establish compatibility for the remaining client APIs. The older beta reviews below are historical.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -92,14 +92,14 @@ No route or schema was added or removed: the OpenAPI remains at 119 paths, 140 o
 
 The renewed OpenAPI review also made explicit that `fs.list` accepts absolute paths and `..` traversal relative to a Location. The CodeNomad proxy now resolves that target, rejects duplicate selectors and paths outside owned worktrees, and translates an accepted path for WSL before forwarding it.
 
-Runtime changes in the same release—settling abandoned compactions before resume, retrying failed Location initialization, disabling plugins after transform failures, backgrounding command subagents, restoring Windows terminal interruption, detecting new ecosystem config roots, and live provider/model fixes—are acquired automatically when the independently managed `opencode2` runtime is updated. CodeNomad does not duplicate those internals or impose an exact version gate, but the runtime must implement the current `/api/status` contract. At the time of this audit `upstream/beta` equals the published `beta-19059` source, so there is no later unpublished contract delta.
+Runtime changes in the same release—settling abandoned compactions before resume, retrying failed Location initialization, disabling plugins after transform failures, backgrounding command subagents, restoring Windows terminal interruption, detecting new ecosystem config roots, and live provider/model fixes—are acquired automatically when the independently managed `opencode2` runtime is updated. CodeNomad does not duplicate those internals or impose an exact version gate. At the time of this audit `upstream/beta` equals the published `beta-19059` source, so there is no later unpublished contract delta.
 
 ## Shared Service Model
 
 - OpenCode V2 explicitly confirms that the intended architecture is [one shared process for all workspaces and clients](https://github.com/anomalyco/opencode/issues/43898#issuecomment-5372607267); workload slowdowns must be profiled and fixed within that topology rather than worked around with private servers.
 - Replace one OpenCode runtime per workspace with one externally owned global service in the selected host or WSL environment.
 - Discover or start it through the selected CLI's official `service status`, `service start`, and `service get password` commands.
-- Validate the current bounded `/api/status` response over the authenticated loopback endpoint and pin one service identity while connected.
+- Validate the bounded `/api/status` response over the authenticated loopback endpoint, use earlier V2 `/api/health` only after a status 404, and pin one service identity while connected.
 - Use OpenCode's standard service registration, state, and database. CodeNomad owns no private daemon port, database, registration, or PID.
 - Pass configured startup environment variables and `NODE_EXTRA_CA_CERTS` only when starting a missing service. Strip legacy `OPENCODE_DB` and `XDG_STATE_HOME` overrides rather than taking ownership of OpenCode storage.
 - Never stop the global daemon during CodeNomad shutdown. Backend shutdown clears only CodeNomad's cached connection and logical workspace state.

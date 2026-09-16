@@ -120,22 +120,20 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
   }
 
   private async validateStatus(endpoint: Endpoint, deadlineAt: number): Promise<void> {
-    let response: Response
-    try {
-      const timeout = this.remaining(deadlineAt, "status validation")
-      response = await this.withDeadline(this.dependencies.fetch(new URL("/api/status", endpoint.url), {
-        headers: Service.headers(endpoint),
-        signal: AbortSignal.timeout(timeout),
-      }), deadlineAt, "status validation")
-    } catch {
-      const message = this.options.unreachableMessage?.(endpoint.url)
-      throw new Error(message ?? `Cannot reach the ${this.options.label} OpenCode service at ${endpoint.url}`)
+    let kind: "status" | "health" = "status"
+    let response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
+    // Earlier V2 runtimes expose health instead of status. Negotiate only on
+    // route absence, using the same authenticated endpoint and deadline.
+    if (response.status === 404) {
+      await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, "status response")
+      kind = "health"
+      response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
     }
     if (response.status === 401) {
       throw new Error(`${this.options.label} OpenCode service authentication failed at ${endpoint.url} (HTTP 401)`)
     }
     if (!response.ok) {
-      throw new Error(`${this.options.label} OpenCode service status check failed at ${endpoint.url} (HTTP ${response.status})`)
+      throw new Error(`${this.options.label} OpenCode service ${kind} check failed at ${endpoint.url} (HTTP ${response.status})`)
     }
 
     let payload: unknown
@@ -143,14 +141,27 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       const body = await this.withDeadline(
         readBoundedBody(response, MAX_SERVICE_OUTPUT_BYTES),
         deadlineAt,
-        "status response",
+        `${kind} response`,
       )
       payload = JSON.parse(body)
     } catch {
-      throw new Error(`${this.options.label} OpenCode service returned an invalid status response at ${endpoint.url}`)
+      throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
-    if (!isServiceStatusResponse(payload)) {
-      throw new Error(`${this.options.label} OpenCode service returned an invalid status response at ${endpoint.url}`)
+    if (!(kind === "status" ? isServiceStatusResponse(payload) : isServiceHealthResponse(payload))) {
+      throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
+    }
+  }
+
+  private async fetchServiceStatus(endpoint: Endpoint, kind: "status" | "health", deadlineAt: number): Promise<Response> {
+    try {
+      const timeout = this.remaining(deadlineAt, `${kind} validation`)
+      return await this.withDeadline(this.dependencies.fetch(new URL(`/api/${kind}`, endpoint.url), {
+        headers: Service.headers(endpoint),
+        signal: AbortSignal.timeout(timeout),
+      }), deadlineAt, `${kind} validation`)
+    } catch {
+      const message = this.options.unreachableMessage?.(endpoint.url)
+      throw new Error(message ?? `Cannot reach the ${this.options.label} OpenCode service at ${endpoint.url}`)
     }
   }
 
@@ -218,6 +229,16 @@ function isServiceStatusResponse(value: unknown): boolean {
     && Number(status.pid) >= 0
     && Array.isArray(status.urls)
     && status.urls.every((url) => typeof url === "string")
+}
+
+function isServiceHealthResponse(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const health = value as { healthy?: unknown; version?: unknown; pid?: unknown }
+  return health.healthy === true
+    && typeof health.version === "string"
+    && Boolean(health.version.trim())
+    && Number.isSafeInteger(health.pid)
+    && Number(health.pid) > 0
 }
 
 function executeFile(file: string, args: string[], options: ServiceExecOptions): Promise<ServiceExecResult> {

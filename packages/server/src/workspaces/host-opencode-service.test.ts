@@ -69,6 +69,57 @@ describe("HostOpenCodeService", () => {
     assert.equal(statusUrl, "http://127.0.0.1:4321/api/status")
   })
 
+  it("falls back on status 404 to authenticated V2 health for discovery and startup", async () => {
+    for (const operation of ["discover", "ensure"] as const) {
+      const requests: string[] = []
+      let cancelled = false
+      const service = createService([], {}, {
+        execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }),
+        fetch: async (input, init) => {
+          requests.push(String(input))
+          assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:password").toString("base64")}`)
+          if (requests.length === 1) return new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 404 })
+          return Response.json({ healthy: true, version: "2.0.3", pid: 123 })
+        },
+      })
+      assert.equal((await service[operation]())?.url, url)
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+      assert.equal(cancelled, true)
+    }
+  })
+
+  it("does not downgrade on authentication, server, transport or malformed status failures", async () => {
+    for (const response of [
+      () => new Response(null, { status: 401 }),
+      () => new Response(null, { status: 403 }),
+      () => new Response(null, { status: 503 }),
+      () => new Response("invalid JSON"),
+      () => Response.json({ healthy: true, version: "2.0.3", pid: 123 }),
+      () => { throw new Error("ECONNREFUSED") },
+    ]) {
+      const requests: string[] = []
+      const service = createService([], {}, {
+        fetch: async (input) => { requests.push(String(input)); return response() },
+      })
+      await assert.rejects(service.ensure())
+      assert.deepEqual(requests, [`${url}/api/status`])
+    }
+  })
+
+  it("does not give the fallback a fresh deadline", async (context) => {
+    let now = 1000
+    context.mock.method(Date, "now", () => now)
+    const requests: string[] = []
+    const service = createService([], {}, {
+      fetch: async (input) => {
+        requests.push(String(input))
+        return new Response(new ReadableStream({ cancel() { now = 1500 } }), { status: 404 })
+      },
+    })
+    await assert.rejects(service.ensure(1500), /timed out/)
+    assert.deepEqual(requests, [`${url}/api/status`])
+  })
+
   it("redacts startup environment values from failures and hashes identity", async () => {
     const secret = "DO_NOT_LEAK"
     const service = createService([], { TOKEN: secret }, {

@@ -150,16 +150,44 @@ describe("WslOpenCodeService", () => {
     }).service.discover(), /invalid status response/)
   })
 
-  it("does not fall back to the removed health route", async () => {
+  it("falls back to authenticated Windows health for an older WSL V2 service", async () => {
     const requests: string[] = []
-    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
-      fetch: async (input) => {
+    const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async (input, init) => {
         requests.push(String(input))
-        return new Response(null, { status: 404 })
+        assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
+        return requests.length === 1 ? new Response(null, { status: 404 })
+          : Response.json({ healthy: true, version: "0.0.0-beta-19271", pid: 123 })
       },
-    }).service.discover(), /status check failed.*404/)
+    }).service.discover()
+    assert.equal(endpoint?.url, url)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+  })
 
-    assert.deepEqual(requests, [`${url}/api/status`])
+  it("rejects missing, unauthenticated, malformed and oversized fallback health responses", async () => {
+    for (const [response, expected] of [
+      [() => new Response(null, { status: 404 }), /health check failed.*404/],
+      [() => new Response(null, { status: 401 }), /authentication failed.*401/],
+      [() => new Response(null, { status: 503 }), /health check failed.*503/],
+      [() => new Response("invalid JSON"), /invalid health response/],
+      ...[
+        { healthy: false, version: "2.0.3", pid: 123 },
+        { healthy: true, version: " ", pid: 123 },
+        { healthy: true, version: "2.0.3", pid: 0 },
+        { healthy: true, version: "2.0.3", pid: 1.5 },
+        { version: "2.0.4", pid: 123, urls: [url] },
+      ].map(value => [() => Response.json(value), /invalid health response/] as const),
+      [() => new Response(" ".repeat(64 * 1024 + 1)), /invalid health response/],
+    ] as const) {
+      const requests: string[] = []
+      await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+        fetch: async (input) => {
+          requests.push(String(input))
+          return requests.length === 1 ? new Response(null, { status: 404 }) : response()
+        },
+      }).service.discover(), expected)
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+    }
   })
 
   it("requires the complete compatible status shape", async () => {

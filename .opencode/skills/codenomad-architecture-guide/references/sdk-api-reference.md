@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates its authenticated loopback `/api/status` response without an exact version gate. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
+CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/status`, falling back only on HTTP 404 to earlier V2 `/api/health` with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. Discovery does not prove compatibility for other APIs. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
 - Promise client: `import { OpenCode } from "@opencode/client"`
 - Service authentication headers: `import { Service } from "@opencode/client/service"`
@@ -15,7 +15,7 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | CLI `service status/start/get password`; `Service.headers` for the authenticated `/api/status` and API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
+| Service | CLI `service status/start/get password`; authenticated `/api/status`, then `/api/health` only on 404; `Service.headers` for probes and API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
 | Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
