@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -22,7 +22,10 @@ const pluginDirectory = pluginArgument ?? fileURLToPath(new URL("../packages/ser
 if (!path.isAbsolute(pluginDirectory)) throw new Error("Plugin directory must be absolute")
 const temporaryRoot = path.join(os.tmpdir(), "opencode")
 await mkdir(temporaryRoot, { recursive: true })
-const root = await mkdtemp(path.join(temporaryRoot, "codenomad-pruning-native-"))
+// macOS FSEvents reports physical paths (/private/var, not /var). OpenCode's
+// plugin-source filter compares those to its configured roots lexically.
+// Give the isolated daemon one canonical namespace before it starts watching.
+const root = await realpath(await mkdtemp(path.join(temporaryRoot, "codenomad-pruning-native-")))
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE_") && !key.startsWith("XDG_")))
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 Object.assign(env, {
@@ -241,13 +244,24 @@ try {
   const session = await client.session.create({ location }, locationOptions)
   assert.equal(session.location.workspaceID, location.workspaceID)
   // Install after the daemon and location exist: desktop startup must not need a restart.
-  if (bundled) closePresence = await openPresence()
-  await until(async () => {
-    const plugins = (await client.plugin.list({ location }, locationOptions)).data
-    const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
-    if (failed.length) throw new Error(JSON.stringify(failed))
-    return plugins.some(item => item.id === "codenomad-session-pruning" && item.state.status === "active")
-  })
+  if (bundled) {
+    const beforeInstallation = (await client.plugin.list({ location }, locationOptions)).data
+    assert(!beforeInstallation.some(item => item.id === "codenomad-session-pruning"), "Bundled plugin must be absent before late installation")
+    closePresence = await openPresence()
+  }
+  let plugins
+  try {
+    await until(async () => {
+      plugins = (await client.plugin.list({ location }, locationOptions)).data
+      const failed = plugins.filter(item => item.source.type !== "builtin" && item.state.status === "failed")
+      if (failed.length) throw new Error(JSON.stringify(failed))
+      return plugins.some(item => item.id === "codenomad-session-pruning" && item.state.status === "active")
+    })
+  } catch (error) {
+    const snapshot = { runtimeVersion, bundled, location, config: env.OPENCODE_CONFIG_DIR, plugins }
+    await writeFile(path.join(root, "discovery.json"), JSON.stringify(snapshot, null, 2))
+    throw new Error(`Native pruning discovery failed: ${JSON.stringify(snapshot)}`, { cause: error })
+  }
   const first = [], second = []
   const observe = (subscriber, events) => (async () => {
     for await (const event of subscriber.event.subscribe({ signal: streams.signal })) events.push(event)

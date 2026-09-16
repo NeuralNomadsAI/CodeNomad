@@ -102,6 +102,8 @@ jobs:
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
           $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
           $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
+          $fixtures = node -p "require('node:path').join(require('node:fs').realpathSync(require('node:os').tmpdir()), 'opencode')"
+          "PRUNING_NATIVE_FIXTURES=$fixtures" >> $env:GITHUB_ENV
           node scripts/test-session-pruning-native.mjs $cli $plugin
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run build:pruning --workspace @neuralnomads/codenomad
@@ -109,6 +111,18 @@ jobs:
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli --ui
+      - name: Upload isolated native failure diagnostics
+        if: ${{ failure() && env.PRUNING_NATIVE_FIXTURES != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-pruning-failure-${{ matrix.os }}
+          path: |
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/server.log
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/before-restart.log
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/discovery.json
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/ui-*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload opt-in plugin package
         if: success()
         uses: actions/upload-artifact@v4

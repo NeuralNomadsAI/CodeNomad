@@ -70,6 +70,16 @@ The first CI run of the completed implementation (`a0c1c943`, [run 35142559235](
 
 The corrected 2.0.4 shipped bundle also passes the full rendered/native suite on Windows. Fresh full beta-19271 and 2.0.3 runs with `--legacy-pruning` pass under a reproducing NTFS short-path TEMP root **after** the exact-directory correction. Independent final packaging/documentation and worktree-identity reviews approve the follow-up with zero actionable findings. The final full server suite passes **500 tests, with 2 skipped**, including the new packaging and directory-identity regressions. The `comment` job failed only because the required build-validation run failed; it did not expose an additional defect. These follow-up results are local evidence, not a claim that the next remote CI run has completed.
 
+### macOS late-discovery follow-up
+
+The next remote run at `486e856d` ([35146390688](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/35146390688)) passes the general tests, all runtime-contract jobs, both Tauri checks, all service-compatibility jobs, and the Windows/Linux native pruning jobs. macOS passes the installed-package suite and presence tests, then times out discovering the bundle installed after the daemon/location already exist. The dependent artifact-comment job reports that failure.
+
+Source review of OpenCode `v2.0.4` (`466b3e594d3df396a57340249590a70c5c358c8a`) identifies an alias-path mismatch consistent with this failure: global configuration retains `OPENCODE_CONFIG_DIR` verbatim, while Parcel's macOS FSEvents backend emits native physical paths. Plugin-source filtering uses lexical `FSUtil.contains`. A `/private/var/...` event therefore falls outside a configured `/var/...` root. Parcel watcher 2.5.1 itself canonicalizes temporary roots in its tests. Linux inotify constructs paths from the watched alias, so a passing Linux symlink experiment does not validate macOS event spelling.
+
+The native fixture now resolves its temporary root with `realpath` **before** constructing any daemon paths. Installation still happens after daemon/location startup; an explicit assertion verifies that the bundled plugin was absent beforehand. Discovery failures retain the last plugin inventory and phase context. CI uploads only these isolated fixtures' daemon logs, discovery snapshots and rendered captures on failure.
+
+The corrected full native suite passes on Linux/WSL 2.0.4 with a symlinked TEMP root, and the Windows 2.0.4 rendered/native suite passes. Script syntax, workflow YAML parsing and whitespace checks pass; an independent gatekeeper review reports no actionable findings. This corrects the fixture namespace rather than preinstalling the plugin, restarting the daemon, or extending the timeout. Actual macOS confirmation requires the next CI run; the prior runner's raw watcher paths were not retained. Existing user daemons configured through symlinked config roots remain an upstream watcher limitation, not a production fix claimed by this fixture change.
+
 ### Validation boundaries
 
 UI/server/Electron typechecks and production builds pass. The Windows Tauri release executable also builds (`npm run build --workspace @codenomad/tauri-app -- --no-bundle`). Electron and Tauri packaged-resource smoke checks pass. Full desktop interaction through Developer Mode could not run: the visible application reports Developer Mode inactive. Interactive TUI validation is not claimed. No shared daemon or user database is used by the native fixtures.
@@ -292,6 +302,8 @@ Research files on the audit machine live under `C:/Users/Admin/AppData/Local/Tem
 - `pr695-ci-failed.log`: first published CI failures; `pr695-packed-before.log` and `pr695-packed-fixed.log`: failing then passing standalone packed-plugin native runs. `pr695-packed-linux.log` and `pr695-packed-linux204.log`: passing installed-plugin native suites under Linux/WSL. `pr695-ci-ui204.log`: passing corrected 2.0.4 rendered/native bundle run.
 - `pr695-ci-server-final.log`: full server suite after the packaging/exact-project corrections, 500 passed and 2 skipped.
 - `pr695-final-exact-short-beta19271-legacy.log` and `pr695-final-exact-short-203-legacy.log`: full native suites with non-null legacy identity and short-path TEMP, after the final exact-directory correction.
+- `pr695-ci-macos-failed.log`: macOS late-discovery failure after the standalone package suite passes. `pr695-macos-symlink-before.log`: Linux inotify preserves alias-path discovery; this does not reproduce macOS FSEvents semantics.
+- `pr695-macos-symlink-after.log`: Linux/WSL full native 2.0.4 with the fixture canonicalized from a symlinked TEMP root. `pr695-canonical-ui204.log`: passing Windows 2.0.4 rendered/native suite after canonicalization and the explicit pre-install absence assertion.
 
 The tarball inventory is reproducible with `npm view <package> time --json` and `npm pack <package>@<exact-version> --ignore-scripts`, then comparison of `dist/promise/generated/client.js`, `types.d.ts` and `dist/solid/data.js`. Downloading a tarball does not require launching its CLI or loading a user database.
 
