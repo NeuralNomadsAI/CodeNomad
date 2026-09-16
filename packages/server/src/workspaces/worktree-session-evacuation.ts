@@ -127,18 +127,33 @@ export async function evacuateWorktreeSessions(params: {
   targetDirectory: string
   rootDirectory: string
   resolveDirectoryIdentity?: (directory: string) => Promise<string | undefined>
+  resolveExactDirectory?: (directory: string) => Promise<string | undefined>
   remove: () => Promise<void>
 }): Promise<void> {
   const identity = async (directory: string) => normalizeDirectory(
     await params.resolveDirectoryIdentity?.(directory) ?? directory,
   )
+  // Containing-worktree identity intentionally groups descendant sessions. It
+  // cannot identify a project root or destination: nested repositories differ.
+  const exactDirectory = async (directory: string) => {
+    const resolved = params.resolveExactDirectory ? await params.resolveExactDirectory(directory) : directory
+    return resolved === undefined ? undefined : normalizeDirectory(resolved)
+  }
+  const [projectDirectory, targetDirectory, rootDirectory] = await Promise.all([
+    exactDirectory(params.projectDirectory), exactDirectory(params.targetDirectory), exactDirectory(params.rootDirectory),
+  ])
+  if (projectDirectory === undefined || targetDirectory === undefined || rootDirectory === undefined) {
+    throw new Error("Unable to resolve owned directories before deleting worktree")
+  }
   const target = await identity(params.targetDirectory)
   const matchesTarget = async (directory: string) => await identity(directory) === target
   const projects = await params.client.project.list()
   let project: (typeof projects)[number] | undefined
   for (const candidate of projects) {
-    if (normalizeDirectory(candidate.canonical) === normalizeDirectory(params.projectDirectory)
-      || (await Promise.all(candidate.sandboxes.map(matchesTarget))).some(Boolean)) {
+    // Resolve aliases without collapsing a nested repository or nested sandbox
+    // into its containing worktree. Both comparisons require exact directories.
+    if (await exactDirectory(candidate.canonical) === projectDirectory
+      || (await Promise.all(candidate.sandboxes.map(exactDirectory))).includes(targetDirectory)) {
       project = candidate
       break
     }
@@ -159,7 +174,7 @@ export async function evacuateWorktreeSessions(params: {
   // Resolve before any move; a directory-only fallback could silently move a
   // legacy session into a different native workspace.
   const rootLocation = readLocationRef(await params.client.location.get({ location: { directory: params.rootDirectory } }))
-  if (await identity(rootLocation.directory) !== await identity(params.rootDirectory)) {
+  if (await exactDirectory(rootLocation.directory) !== rootDirectory) {
     throw new Error("OpenCode resolved a foreign evacuation destination")
   }
   try {

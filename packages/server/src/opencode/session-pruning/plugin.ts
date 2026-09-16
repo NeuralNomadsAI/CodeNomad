@@ -5,7 +5,7 @@ import { previewContent } from "./planner"
 import { readPruningPreview } from "./preview-store"
 import { pruneBoundMessage } from "./service"
 import { pruningDatabasePath } from "./database-path"
-import { readLocationRef, sameLocation } from "../compatibility/location"
+import { readLocationRef, sameLocation } from "./location"
 
 export const SessionPruningRpc = Rpc.define(pruningRpcDefinition)
 

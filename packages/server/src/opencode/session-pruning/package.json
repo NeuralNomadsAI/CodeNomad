@@ -9,7 +9,7 @@
     "./tui": "./tui.ts"
   },
   "files": [
-    "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "planner.ts", "plugin.ts",
+    "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "location.ts", "planner.ts", "plugin.ts",
     "preview-store.ts", "revision.ts", "service.ts", "storage-path.ts",
     "transaction.ts", "tui.ts", "tui-reload.ts"
   ],

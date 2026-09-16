@@ -61,6 +61,15 @@ The autonomous loop corrected full-location authority/serialization, generation 
 
 The final rendered run exposed a fixture sequencing error: it awaited only the first prune of a cross-message group, then started response cleanup against stale selected content. Production guards correctly rejected that selection. The fixture now waits for every message's commit/projection, has a gated regression and independently tests whole-response confirmation counts. The final rendered-fixture review approved the correction; modern 2.0.5 and beta-19271 with non-null identity both pass. A further modern rerun passes using the exact shared connection throughout browser proxy and event transport. Test cleanup was also hardened so an import failure cannot leave the proxy listening or be replaced by a cleanup 404.
 
+### First published CI run and corrective follow-up
+
+The first CI run of the completed implementation (`a0c1c943`, [run 35142559235](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/35142559235)) failed despite the local bundle validation. It exposed two gaps:
+
+- The standalone npm pruning package imported identity helpers from the sibling `compatibility/` directory, which was absent from its archive. All three packaged-plugin jobs failed to load it. Pure identity validation/equality now live inside the pruning package and are re-exported by the HTTP adapter. A fast packaging regression resolves every exported entrypoint from only the files selected by `npm pack`, outside the checkout. The actual packed/installed native test reproduced the failure before the fix and passes afterward on Windows 2.0.4 and Linux-under-WSL 2.0.4/2.0.5.
+- The Windows legacy jobs encountered NTFS short-path TEMP directories while Git returned the long canonical project root. Project selection compared strings before evacuation could reach its rollback test. It now resolves exact owned directories through `getServiceDirectoryForPath`, preserving aliases and WSL translation. The review rejected an initial attempt to reuse containing-worktree identity: that could select a nested repository and miss the intended project's active sessions. Exact project/sandbox/destination comparisons are now separate from descendant-session ownership. Regressions cover nested projects listed first, active-session refusal through the real route, unresolved/foreign destinations, short/long paths, real junction/symlink aliases and WSL translation.
+
+The corrected 2.0.4 shipped bundle also passes the full rendered/native suite on Windows. Fresh full beta-19271 and 2.0.3 runs with `--legacy-pruning` pass under a reproducing NTFS short-path TEMP root **after** the exact-directory correction. Independent final packaging/documentation and worktree-identity reviews approve the follow-up with zero actionable findings. The final full server suite passes **500 tests, with 2 skipped**, including the new packaging and directory-identity regressions. The `comment` job failed only because the required build-validation run failed; it did not expose an additional defect. These follow-up results are local evidence, not a claim that the next remote CI run has completed.
+
 ### Validation boundaries
 
 UI/server/Electron typechecks and production builds pass. The Windows Tauri release executable also builds (`npm run build --workspace @codenomad/tauri-app -- --no-bundle`). Electron and Tauri packaged-resource smoke checks pass. Full desktop interaction through Developer Mode could not run: the visible application reports Developer Mode inactive. Interactive TUI validation is not claimed. No shared daemon or user database is used by the native fixtures.
@@ -280,6 +289,9 @@ Research files on the audit machine live under `C:/Users/Admin/AppData/Local/Tem
 - `compat-rendered-ui.log`: final 2.0.5 rendered suite using the exact shared connection; captures in `codenomad-pruning-native-2Fea1N/` (`ui-before.png`, `ui-busy.png`, `ui-after.png`).
 - `compat-rendered-ui-agent-legacy.log`: beta-19271 rendered suite with non-null identity; captures in `codenomad-pruning-native-rGgcVF/`.
 - `compat-wsl-native-linuxfs.log`: passing Ubuntu/WSL native 2.0.5 suite. `compat-wsl-native.log` records the mounted-configuration late-discovery limitation.
+- `pr695-ci-failed.log`: first published CI failures; `pr695-packed-before.log` and `pr695-packed-fixed.log`: failing then passing standalone packed-plugin native runs. `pr695-packed-linux.log` and `pr695-packed-linux204.log`: passing installed-plugin native suites under Linux/WSL. `pr695-ci-ui204.log`: passing corrected 2.0.4 rendered/native bundle run.
+- `pr695-ci-server-final.log`: full server suite after the packaging/exact-project corrections, 500 passed and 2 skipped.
+- `pr695-final-exact-short-beta19271-legacy.log` and `pr695-final-exact-short-203-legacy.log`: full native suites with non-null legacy identity and short-path TEMP, after the final exact-directory correction.
 
 The tarball inventory is reproducible with `npm view <package> time --json` and `npm pack <package>@<exact-version> --ignore-scripts`, then comparison of `dist/promise/generated/client.js`, `types.d.ts` and `dist/solid/data.js`. Downloading a tarball does not require launching its CLI or loading a user database.
 
@@ -287,6 +299,7 @@ Portable native regression already in the repository:
 
 ```text
 node scripts/test-session-pruning-native.mjs <absolute-isolated-cli-path>
+node scripts/test-session-pruning-native.mjs <absolute-isolated-cli-path> <absolute-installed-plugin-directory>
 node scripts/test-session-pruning-native.mjs <absolute-legacy-cli-path> --legacy-pruning
 node scripts/test-session-pruning-native.mjs <absolute-isolated-cli-path> --ui
 ```

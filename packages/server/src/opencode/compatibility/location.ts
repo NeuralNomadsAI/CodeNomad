@@ -1,23 +1,12 @@
 import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { ContractProfile } from "./runtime"
+import { readLocationRef } from "../session-pruning/location"
+export { readLocationRef, sameLocation } from "../session-pruning/location"
 
 // An explicit CodeNomad context channel survives the generated modern client's
 // field selection. Never forward this header to OpenCode unchanged. The guarded
 // proxy must authorize its complete location before transport serialization.
 export const LOCATION_CONTEXT_HEADER = "x-codenomad-location"
-
-export function readLocationRef(value: unknown): LocationRef {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid location")
-  const input = value as Record<string, unknown>
-  if (typeof input.directory !== "string" || !input.directory.trim() || input.directory.includes("\0")
-    || (input.workspaceID !== undefined && (typeof input.workspaceID !== "string"
-      || !input.workspaceID.trim() || input.workspaceID.includes("\0")))) throw new Error("Invalid location")
-  return { directory: input.directory, ...(input.workspaceID === undefined ? {} : { workspaceID: input.workspaceID }) }
-}
-
-export function sameLocation(left: LocationRef, right: LocationRef): boolean {
-  return left.directory === right.directory && left.workspaceID === right.workspaceID
-}
 
 export function locationRequestOptions(location: LocationRef, options?: { includeDirectory?: boolean }): { headers: Record<string, string> } | undefined {
   const resolved = readLocationRef(location)

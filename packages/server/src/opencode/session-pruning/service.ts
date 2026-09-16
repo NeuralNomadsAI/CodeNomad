@@ -6,7 +6,7 @@ import { storageKey, validateClaimFence } from "./claim-fence"
 import { pruneTransaction } from "./transaction"
 import { pruneRequestSchema, type PruneResult } from "./contract"
 import { pruningDatabasePath } from "./database-path"
-import { readLocationRef, sameLocation } from "../compatibility/location"
+import { readLocationRef, sameLocation } from "./location"
 
 // Only an explicit pruning RPC calls this service; loading the plugin never prunes.
 // No database access is exposed through CodeNomad's HTTP broker.

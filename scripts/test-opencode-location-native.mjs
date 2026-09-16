@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -158,7 +158,16 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
     }
     await assert.rejects(evacuateWorktreeSessions({
       client, projectDirectory: rootLocation.directory, targetDirectory: worktreeLocation.directory, rootDirectory: rootLocation.directory,
-      remove: async () => { throw new Error("Synthetic Git removal refusal") },
+      // Like the production manager's resolver, compare filesystem identities:
+      // Windows TEMP can be an 8.3 path while Git reports its long canonical root.
+      resolveDirectoryIdentity: directory => realpath(directory).catch(() => undefined),
+      resolveExactDirectory: directory => realpath(directory).catch(() => undefined),
+      remove: async () => {
+        for (const original of created.filter(session => session.location.directory === worktreeLocation.directory)) {
+          assert.deepEqual((await client.session.get({ sessionID: original.id })).location, { directory: rootLocation.directory })
+        }
+        throw new Error("Synthetic Git removal refusal")
+      },
     }), /Synthetic Git removal refusal/)
     for (const original of created) assert.deepEqual((await client.session.get({ sessionID: original.id })).location, original.location)
     console.log("PASS: native same-directory identities, worktree/global Forms, Shell/PTY list scope, scoped SSE, foreign session/cursor refusal and exact move rollback")
