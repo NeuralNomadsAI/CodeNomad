@@ -6,7 +6,8 @@ describe("instance invalidation targets", () => {
   it("keeps narrow catalog events narrow", () => {
     assert.deepEqual(getInstanceRefreshTargets("agent.updated"), ["agents"])
     assert.deepEqual(getInstanceRefreshTargets("command.updated"), ["commands"])
-    assert.deepEqual(getInstanceRefreshTargets("catalog.updated"), ["agents", "providers", "commands"])
+    assert.deepEqual(getInstanceRefreshTargets("models-dev.refreshed"), ["agents", "providers", "commands"])
+    assert.deepEqual(getInstanceRefreshTargets("model.updated"), ["providers"])
     assert.deepEqual(getInstanceRefreshTargets("plugin.updated"), ["agents", "providers", "commands", "metadata"])
     assert.deepEqual(getInstanceRefreshTargets("plugin.added"), [])
   })

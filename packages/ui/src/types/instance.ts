@@ -1,4 +1,4 @@
-import type { McpListOutput, OpenCodeClient, Project, ProjectCurrent } from "@opencode-ai/client"
+import type { LocationPublicInfo, McpListOutput, OpenCodeClient, Project } from "@opencode/client"
 
 export interface LogEntry {
   timestamp: number
@@ -6,7 +6,7 @@ export interface LogEntry {
   message: string
 }
 
-export type ProjectInfo = ProjectCurrent & Partial<Pick<Project, "vcs">>
+export type ProjectInfo = LocationPublicInfo["project"] & Partial<Pick<Project, "vcs">>
 
 export interface McpServerStatus {
   name: string

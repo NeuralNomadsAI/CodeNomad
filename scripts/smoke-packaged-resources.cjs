@@ -10,7 +10,7 @@ const requiredPackages = [
   "@fastify/static",
   "@fastify/cors",
   "@fastify/reply-from",
-  "@opencode-ai/client",
+  "@opencode/client",
   "openai",
   "pino",
   "undici",

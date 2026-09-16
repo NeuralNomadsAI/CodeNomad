@@ -8,10 +8,18 @@ const refreshing = new Map<string, { dirty: boolean }>()
 const log = getLogger("sse")
 
 export function handlePruningEvent(instanceId: string, event: { type: string; data: unknown }): boolean {
+  if (event.type === "session.message.content.updated") {
+    const data = event.data as { sessionID?: unknown; messageID?: unknown } | null
+    if (typeof data?.sessionID === "string" && typeof data.messageID === "string") refreshContent(instanceId, data.sessionID)
+    return true
+  }
   if (event.type !== PRUNING_EVENT) return false
   const parsed = prunedEventSchema.safeParse(event.data)
   if (!parsed.success) return true
-  const sessionId = parsed.data.sessionID
+  return refreshContent(instanceId, parsed.data.sessionID)
+}
+
+function refreshContent(instanceId: string, sessionId: string): boolean {
   if (!sessions().get(instanceId)?.has(sessionId)) return true
   invalidateOpenCodeSessionContent(instanceId, sessionId)
   invalidateSessionMessageLoad(instanceId, sessionId)
@@ -29,7 +37,7 @@ export function handlePruningEvent(instanceId: string, event: { type: string; da
         await loadMessages(instanceId, sessionId, { force: true })
       } while (state.dirty)
     } catch (error) {
-      log.warn("Failed to reload pruned history", { instanceId, sessionId, error })
+      log.warn("Failed to reload changed history", { instanceId, sessionId, error })
     } finally { refreshing.delete(key) }
   })()
   return true

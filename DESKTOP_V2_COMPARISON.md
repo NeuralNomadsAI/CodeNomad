@@ -9,7 +9,7 @@ This review compares:
 - The latest published OpenCode V2 beta source at `c9d240704d6eefc88b63a1eca2cb933b3eb70ed3` (2026-09-04), which produced `beta-19059`.
 - The matching `upstream/beta` head, with no later unpublished contract delta at review time.
 
-CodeNomad declares `@opencode-ai/client@beta`; UI and server resolve `beta-19059`. The independently managed runtime used to verify the compatibility fallback still reports `beta-18999`; startup intentionally has no exact client/runtime version gate.
+This comparison records the historical September 4 beta review. The current integration pins `@opencode/client@2.0.4` in UI/server and `@opencode/plugin@2.0.4` for pruning. PR #695 migrates the full wire contract, not just discovery; see [the stable contract notes](MIGRATION_V2.md#stable-204-contract-pr-695). Runtime selection remains independent and startup has no exact version gate.
 
 The official reference is `packages/desktop` for the Electron host, `packages/app` for the shared UI, and the V2 client, protocol, schema, server, and core packages for wire behavior. Older `v2`, `opencode-2-0`, and intermediate `desktop-v2-*` branches are historical, not the current Desktop V2 reference.
 
@@ -45,7 +45,7 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 **Official behavior:** `packages/desktop/src/main/service/background-service.ts` connects to a wildcard-bound service through `127.0.0.1`.
 
-**Resolution:** CodeNomad rewrites only the advertised wildcard hostname to loopback before authenticated health checks and client construction. Existing loopback URL strings retain their previous identity and formatting. Non-loopback remote addresses remain rejected.
+**Resolution:** CodeNomad rewrites only the advertised wildcard hostname to loopback before the authenticated `/api/status` check and client construction. Existing loopback URL strings retain their previous identity and formatting. Non-loopback remote addresses remain rejected.
 
 ### Failed plugin inventory
 
@@ -55,7 +55,7 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 **Resolution:** CodeNomad projects only non-builtin plugins with a string ID and `state.status === "active"`. Failed records remain available in the native inventory but are no longer represented as healthy in the legacy name-only status list.
 
-### Asynchronous plugin activation
+### Asynchronous plugin activation (historical beta behavior)
 
 **Previous behavior:** Initial agent, provider, model, command, and plugin reads could run while a Location's configured plugins were still installing or activating. CodeNomad could therefore retain a transiently incomplete catalog until another event forced a refresh.
 
@@ -63,13 +63,15 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 **Resolution:** The proxy exposes only the non-mutating activation wait, catalog and plugin-status reads wait for it, concurrent waits for one client and Location coalesce, and an unsupported lagging runtime falls back to authoritative reads. `plugin.updated` now refreshes agents, providers, commands, and metadata; the obsolete `plugin.added` branch is removed. `plugin.check`, `plugin.update`, and generic plugin RPC remain blocked.
 
+**Stable 2.0.4 update:** The activation endpoint is removed. CodeNomad uses native catalog reads and current resource/plugin update events, with no legacy endpoint fallback.
+
 ### Active-location MCP and plugin status
 
 **Previous behavior:** Metadata requests and their loaded-state check used the instance root even when the selected session belonged to a worktree with different `.opencode` configuration.
 
-**Official behavior:** Location-scoped status follows the selected session, and request inputs encode native `workspaceID` values as the wire-level `location[workspace]` selector.
+**Official behavior:** Location-scoped status follows the selected session. Stable 2.0.4 public locations contain only `directory`; the beta `workspaceID`/`location[workspace]` selectors are no longer public inputs.
 
-**Resolution:** MCP, plugin activation, and plugin inventory reads now use the active `SessionInfo.location`; metadata readiness is keyed by the location returned from MCP; session switches trigger a new status load; and MCP toggles continue to use that same returned location. Replaced clients and superseded locations cannot commit stale metadata.
+**Resolution:** MCP and plugin inventory reads use the active `SessionInfo.location`; metadata readiness is keyed by its directory; session switches trigger a new status load; and MCP toggles use that same location. Replaced clients and superseded locations cannot commit stale metadata.
 
 ### Filesystem list ownership
 
@@ -83,7 +85,7 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 **Previous behavior:** The local session adapter reconstructed `SessionInfo` without its durable JSON `metadata`, `session.created` also dropped that metadata, and the local message-info time shape omitted the new `streamed` boundary. A recovered `session.step.streamed` event alone did not mark an idle local session as working.
 
-**Official behavior:** Published V2 sessions carry optional `SessionMetadata`; assistant messages carry `time.streamed`; `session.step.streamed` and `session.message.content.updated` are native durable events reduced by `@opencode-ai/client/solid`.
+**Official behavior:** Published V2 sessions carry optional `SessionMetadata`; assistant messages carry `time.streamed`; `session.step.streamed` and `session.message.content.updated` are native durable events reduced by `@opencode/client/solid`.
 
 **Resolution:** REST and event session projections retain metadata, message projection retains streamed time, a streamed step restores working status after an event gap, and focused tests verify authoritative assistant-content replacement through the generated Solid reducer.
 
@@ -126,11 +128,11 @@ The review reconfirmed these areas and found no current incompatibility:
 - Native `session.background` control plus background Shell listing, bounded output, removal, and ownership-checked Shell/PTY proxy routes.
 - Root/worktree location ownership, physical-identity mutation fencing and session evacuation before worktree deletion, and WSL translation.
 - Independent multi-window tabs and content-addressed restore state across Electron and Tauri.
-- Strict proxy route allowlisting, traversal protection, validated native workspace selectors, authentication isolation, and location ownership checks.
+- Strict proxy route allowlisting, traversal protection, directory-only public selectors, authentication isolation, and location ownership checks.
 
 Service stop removal is intentional: CodeNomad does not own the shared daemon. Upstream session sharing is disabled, so its absence is not a parity gap. Upstream's temporary SSE heartbeat change was reverted and requires no CodeNomad change.
 
-## Latest Published Beta Audit
+## September 4 Published Beta Audit (Historical)
 
 The official `anomalyco/opencode-beta` repository published 22 beta tags from `beta-18230` through `beta-19059`. Their GitHub release bodies are empty, so there are no prose release notes to review. This audit instead matched every successful publish workflow to its source commit, read the intervening official commits, compared npm artifacts and generated declarations, and checked the official V2 documentation index and relevant API/client pages.
 
@@ -163,11 +165,11 @@ The reviewed Windows release artifacts are not Authenticode-signed, and the macO
 
 This is distribution hardening rather than V2 API parity. Release jobs should fail unless Windows signatures, macOS identity, and notarization validate against the expected publisher.
 
-## Beta Channel Policy
+## Stable Client Policy
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup validates its authenticated loopback health response without an exact version gate.
+CodeNomad server and UI pin `@opencode/client@2.0.4`. The root workspace lock keeps builds reproducible; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup validates its authenticated loopback `/api/status` response without an exact version gate.
 
-Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
+Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the pinned client changes.
 
 ## Optional Feature Gaps
 

@@ -1,5 +1,5 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
-import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode-ai/client"
+import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
@@ -477,9 +477,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
         }
       } else if (item.delivery === "queue") {
-        await inbox.steer({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" })
       } else {
-        await inbox.queue({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" })
       }
     } catch (error) {
       showQueueError(error)
