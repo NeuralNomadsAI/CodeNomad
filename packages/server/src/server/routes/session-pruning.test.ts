@@ -6,16 +6,18 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 
 const payload = { sessionID: "s", messageID: "m", revision: "a".repeat(64), indexes: [0] }
 const url = "/api/workspaces/w/session-pruning/prune"
-function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean } = {}) {
+function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; workspaceID?: string } = {}) {
   const calls: any[] = []
+  const requestOptions: any[] = []
   const app = Fastify()
   const fence = new WorktreeDeletionFence()
   registerSessionPruningRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
     getSharedServiceClient: async () => ({
-      session: { get: async () => ({ location: { directory: "/owned/worktree" } }) },
+      session: { get: async () => ({ location: { directory: "/owned/worktree", workspaceID: options.workspaceID } }) },
       rpc: { call: async (input: unknown, opts: any) => {
         assert(opts.signal instanceof AbortSignal)
         calls.push(input)
+        requestOptions.push(opts)
         if (options.fail) throw new Error("plugin unavailable")
         return { output: options.output ?? { status: "blocked", reason: "maintenance_required" } }
       } },
@@ -23,7 +25,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean } 
     ownsLocation: async () => options.owned !== false,
     getWorktreeIdentityForPath: async () => "/owned/worktree",
   } })
-  return { app, calls, fence }
+  return { app, calls, fence, requestOptions }
 }
 
 test("broker pins RPC, method and native session location", async () => {
@@ -41,6 +43,16 @@ test("rejects unowned sessions before any RPC", async () => {
   try {
     assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 403)
     assert.equal(calls.length, 0)
+  } finally { await app.close() }
+})
+
+test("broker preserves the authorized native identity through generated request options", async () => {
+  const { app, requestOptions } = fixture({ workspaceID: "native-worktree" })
+  try {
+    assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 200)
+    assert.deepEqual(JSON.parse(decodeURIComponent(requestOptions[0].headers["x-codenomad-location"])), {
+      directory: "/owned/worktree", workspaceID: "native-worktree",
+    })
   } finally { await app.close() }
 })
 

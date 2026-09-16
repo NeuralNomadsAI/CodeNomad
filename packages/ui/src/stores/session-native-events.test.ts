@@ -4,12 +4,55 @@ import { describe, it } from "node:test"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionStatus } from "./session-events.ts"
+import { handleNativeSessionEvent, handleSessionStatus, handleSessionUpdate } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
+  it("preserves durable session metadata and recognizes the streamed step boundary", () => {
+    const instanceId = "native-session-metadata"
+    const sessionId = "session"
+    const client = { session: { active: async () => ({}) } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+
+    try {
+      handleSessionUpdate(instanceId, {
+        id: "created",
+        type: "session.created",
+        created: 1,
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        location: { directory: "/work" },
+        data: {
+          sessionID: sessionId,
+          title: "Session",
+          version: "1",
+          metadata: { client: "codenomad", restore: { window: "primary" } },
+        },
+      } as any)
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.metadata, {
+        client: "codenomad",
+        restore: { window: "primary" },
+      })
+
+      handleNativeSessionEvent(instanceId, {
+        id: "streamed",
+        type: "session.step.streamed",
+        created: 2,
+        durable: { aggregateID: sessionId, seq: 2, version: 1 },
+        location: { directory: "/work" },
+        data: { sessionID: sessionId, assistantMessageID: "assistant" },
+      } as any)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
+    } finally {
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("projects text immediately, coalesces compaction deltas, and keeps terminal state authoritative", async () => {
     const instanceId = "native-compaction-delta"
     const sessionId = "session"

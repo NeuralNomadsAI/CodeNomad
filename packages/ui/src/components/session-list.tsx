@@ -1,4 +1,4 @@
-import { Component, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { Component, For, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
@@ -7,6 +7,8 @@ import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Squ
 import KeyboardHint from "./keyboard-hint"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
+import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { useSessionRowOverflow } from "./session-row-overflow"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
@@ -75,6 +77,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
+  const [menuSessionId, setMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
 
   const setListElement = (element: HTMLDivElement) => {
@@ -231,10 +234,12 @@ const SessionList: Component<SessionListProps> = (props) => {
     return { ids, rowsById, indexById }
   })
   const keptMountedIndexes = createMemo(() => {
-    const sessionId = focusedSessionId()
-    if (!sessionId) return undefined
-    const index = visibleProjection().indexById.get(sessionId)
-    return index === undefined ? undefined : [index]
+    const indexes = new Set<number>()
+    for (const sessionId of [focusedSessionId(), menuSessionId()]) {
+      const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
+      if (index !== undefined) indexes.add(index)
+    }
+    return indexes.size ? [...indexes] : undefined
   })
 
   const allMatchingSessionIds = createMemo<string[]>(() => {
@@ -281,9 +286,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     props.onSelect(sessionId)
   }
  
-  const copySessionId = async (event: MouseEvent, sessionId: string) => {
-    event.stopPropagation()
-
+  const copySessionId = async (sessionId: string) => {
     try {
       const success = await copyToClipboard(sessionId)
       if (success) {
@@ -297,8 +300,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
   }
  
-  const handleDeleteSession = async (event: MouseEvent, sessionId: string) => {
-    event.stopPropagation()
+  const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
 
     const confirmed = await showConfirmDialog(
@@ -366,8 +368,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const isSessionReloading = (sessionId: string) => reloadingSessionIds().has(sessionId)
 
-  const handleReloadSession = async (event: MouseEvent, sessionId: string) => {
-    event.stopPropagation()
+  const handleReloadSession = async (sessionId: string) => {
     if (isSessionReloading(sessionId)) return
 
     setReloadingSessionIds((prev) => {
@@ -614,73 +615,92 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const nestedStyle = () => {
       if (!isChild()) return undefined
-      const visualDepth = Math.min(rowProps.depth, 6)
-      const indent = 1.375 + visualDepth * 0.875
       return {
-        "--session-indent": `${indent}rem`,
-        "--session-connector-offset": `${indent - 0.875}rem`,
+        "--session-indent": `calc(var(--session-root-indent) + ${rowProps.depth} * var(--session-tree-step))`,
       }
     }
 
+    const [rowElement, setRowElement] = createSignal<HTMLDivElement>()
+    const actionsOverflow = useSessionRowOverflow(rowElement)
+    const compactActions = () => actionsOverflow() || menuSessionId() === sessionId()
+    const actionItems: ActionOverflowMenuItem[] = [
+      {
+        key: "copy",
+        get label() { return t("sessionList.actions.copyId.title") },
+        get icon() { return <Copy class="w-3.5 h-3.5" /> },
+        onSelect: () => copySessionId(sessionId()),
+      },
+      {
+        key: "reload",
+        get label() { return t("sessionList.actions.reload.title") },
+        get icon() { return <RotateCw class="w-3.5 h-3.5" /> },
+        get disabled() { return isSessionReloading(sessionId()) },
+        onSelect: () => handleReloadSession(sessionId()),
+      },
+      {
+        key: "rename",
+        get label() { return t("sessionList.actions.rename.title") },
+        get icon() { return <Pencil class="w-3.5 h-3.5" /> },
+        onSelect: () => openRenameDialog(sessionId()),
+      },
+      {
+        key: "delete",
+        get label() { return t("sessionList.actions.delete.title") },
+        get icon() { return <Trash2 class="w-3.5 h-3.5" /> },
+        get disabled() { return isSessionDeleting(sessionId()) },
+        onSelect: () => handleDeleteSession(sessionId()),
+      },
+    ]
+
     return (
       <div class={`session-list-item group ${rowProps.isLastRow ? "session-list-item-last" : ""}`}>
-        <button
+        <div
           class={`session-item-base ${isChild() ? "session-item-nested" : ""} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
           style={nestedStyle()}
           data-session-id={sessionId()}
-          onClick={() => selectSession(sessionId())}
-          title={title()}
-          role="button"
-          aria-selected={isActive()}
-          aria-expanded={rowProps.hasChildren ? Boolean(rowProps.expanded) : undefined}
+          ref={setRowElement}
+          data-compact-actions={compactActions()}
         >
-          <div class="session-item-row session-item-header">
-            <div class="session-item-title-row">
-              <Show when={props.enableFilterBar}>
-                <input
-                  ref={(el) => {
-                    rowCheckboxEl = el
-                  }}
-                  type="checkbox"
-                  checked={parentGroupState().checked}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => {
-                    event.stopPropagation()
-                    setSelectedMany(parentGroupState().ids, event.currentTarget.checked)
-                  }}
-                  aria-label={t("sessionList.selection.checkboxAriaLabel")}
-                />
-              </Show>
-
-              <Show when={isChild()} fallback={<User class="w-4 h-4 flex-shrink-0" />}>
-                <Bot class="w-4 h-4 flex-shrink-0" />
-              </Show>
-              <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
-            </div>
-          </div>
-          <div class="session-item-row session-item-meta">
-            <div class="flex items-center gap-2 min-w-0">
-              <Show
-                when={rowProps.hasChildren}
-                fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
-              >
-                <span
-                  class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    rowProps.onToggleExpand?.()
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={Boolean(rowProps.expanded)}
-                  aria-label={
-                    rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
-                  }
-                  title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
-                >
-                  <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
-                </span>
-              </Show>
+          <Show when={props.enableFilterBar}>
+            <input
+              ref={(el) => {
+                rowCheckboxEl = el
+              }}
+              type="checkbox"
+              checked={parentGroupState().checked}
+              onChange={(event) => setSelectedMany(parentGroupState().ids, event.currentTarget.checked)}
+              aria-label={t("sessionList.selection.checkboxAriaLabel")}
+            />
+          </Show>
+          <Show
+            when={rowProps.hasChildren}
+            fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
+          >
+            <button
+              type="button"
+              class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
+              onClick={() => rowProps.onToggleExpand?.()}
+              aria-expanded={Boolean(rowProps.expanded)}
+              aria-label={
+                rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
+              }
+              title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
+            >
+              <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
+            </button>
+          </Show>
+          <button
+            type="button"
+            class="session-item-select"
+            onClick={() => selectSession(sessionId())}
+            title={title()}
+            aria-current={isActive() ? "true" : undefined}
+          >
+            <Show when={isChild()} fallback={<User class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
+              <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
+            </Show>
+            <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
+            <span class="session-item-badges">
               <Show when={showStatus()}>
                 <span
                   class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
@@ -688,7 +708,7 @@ const SessionList: Component<SessionListProps> = (props) => {
                   translate="no"
                 >
                   {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
-                  {statusText()}
+                  <span class="session-item-status-label">{statusText()}</span>
                 </span>
               </Show>
               <Show when={showWorktreeBadge()}>
@@ -697,73 +717,42 @@ const SessionList: Component<SessionListProps> = (props) => {
                   <span class="worktree-indicator-label">{worktreeSlug()}</span>
                 </span>
               </Show>
+            </span>
+          </button>
+          <div class="session-item-actions">
+            <div class="session-item-inline-actions" inert={compactActions()}>
+              <For each={actionItems}>{(item) => (
+                <button
+                  type="button"
+                  class="session-item-close"
+                  title={item.label}
+                  aria-label={item.label}
+                  aria-disabled={item.disabled}
+                  onClick={() => { if (!item.disabled) void item.onSelect() }}
+                >
+                  {item.icon}
+                </button>
+              )}</For>
             </div>
-            <div class="session-item-actions">
-              <span
-                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => copySessionId(event, sessionId())}
-                role="button"
-                tabIndex={0}
-                aria-label={t("sessionList.actions.copyId.ariaLabel")}
-                title={t("sessionList.actions.copyId.title")}
-              >
-                <Copy class="w-3 h-3" />
-              </span>
-              <span
-                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleReloadSession(event, sessionId())}
-                role="button"
-                tabIndex={0}
-                aria-label={t("sessionList.actions.reload.ariaLabel")}
-                title={t("sessionList.actions.reload.title")}
-              >
-                <Show
-                  when={!isSessionReloading(sessionId())}
-                  fallback={<RotateCw class="w-3 h-3 animate-spin" />}
-                >
-                  <RotateCw class="w-3 h-3" />
-                </Show>
-              </span>
-              <span
-                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  openRenameDialog(sessionId())
+            <div class="session-item-overflow-actions">
+              <ActionOverflowMenu
+                label={t("messageItem.actions.more")}
+                onOpenChange={(open) => {
+                  setMenuSessionId(open ? sessionId() : undefined)
+                  if (!open && !actionsOverflow()) requestAnimationFrame(() => {
+                    const row = rowElement()
+                    if (!row?.isConnected) return
+                    const active = document.activeElement
+                    if (active === document.body || row.querySelector(".session-item-overflow-actions")?.contains(active)) {
+                      row.querySelector<HTMLButtonElement>(".session-item-inline-actions button")?.focus({ preventScroll: true })
+                    }
+                  })
                 }}
-                role="button"
-                tabIndex={0}
-                aria-label={t("sessionList.actions.rename.ariaLabel")}
-                title={t("sessionList.actions.rename.title")}
-              >
-                <Pencil class="w-3 h-3" />
-              </span>
-              <span
-                class={`session-item-close opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-                onClick={(event) => handleDeleteSession(event, sessionId())}
-                role="button"
-                tabIndex={0}
-                aria-label={t("sessionList.actions.delete.ariaLabel")}
-                title={t("sessionList.actions.delete.title")}
-              >
-                <Show
-                  when={!isSessionDeleting(sessionId())}
-                  fallback={
-                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                      <path
-                        class="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                  }
-                >
-                  <Trash2 class="w-3 h-3" />
-                </Show>
-              </span>
+                items={actionItems}
+              />
             </div>
           </div>
-        </button>
+        </div>
       </div>
     )
   }

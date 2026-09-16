@@ -5,7 +5,7 @@ import type {
   ProviderInfo as SDKProvider,
   SessionInfo as SDKSession,
   SessionStatus as SDKSessionStatus,
-} from "@opencode-ai/client"
+} from "@opencode/client"
 import type { GenerationRecoveryState } from "../stores/session-generation-recovery"
 
 // Export SDK types for external use
@@ -14,7 +14,7 @@ export type {
   ModelInfo as SDKModel,
   ProviderInfo as SDKProvider,
   SessionInfo as SDKSession,
-} from "@opencode-ai/client"
+} from "@opencode/client"
 
 export type SessionStatus = "idle" | "working" | "compacting"
 

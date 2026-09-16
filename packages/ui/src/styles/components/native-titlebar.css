@@ -4,8 +4,8 @@
   flex: 0 0 var(--chrome-height);
   min-width: 0;
   height: var(--chrome-height);
-  border-bottom: 1px solid var(--border-divider);
-  background: var(--surface-chrome);
+  border-bottom: 0;
+  background: var(--surface-shade-strong);
   color: var(--text-secondary);
   user-select: none;
   -webkit-app-region: drag;
@@ -117,5 +117,11 @@
 
   .native-titlebar-button {
     width: 40px;
+  }
+}
+
+@media (max-width: 360px) {
+  .native-titlebar-menu-button {
+    padding-inline: 2px;
   }
 }
