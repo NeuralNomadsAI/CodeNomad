@@ -24,6 +24,10 @@ Incremental comparison with official OpenCode Desktop V2, including parity, clos
 
 September 2026 published API-contract census, verified compatibility failures, connection-scoped adapter proposal, support targets and cross-runtime acceptance roadmap. Start here for OpenCode upgrade and backward-compatibility work.
 
+### [OPENCODE_V2_POST_BETA.md](OPENCODE_V2_POST_BETA.md)
+
+Draft preparation for retiring earlier V2 runtime contracts after beta: support-policy decisions, a file-level retirement map, historical-data migration acceptance and incremental release gates. Current runtime support remains unchanged.
+
 ### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
 
 Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.
