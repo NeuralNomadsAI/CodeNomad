@@ -45,7 +45,7 @@ The comparison and subsequent beta-contract audit found concrete CodeNomad defec
 
 **Official behavior:** `packages/desktop/src/main/service/background-service.ts` connects to a wildcard-bound service through `127.0.0.1`.
 
-**Resolution:** CodeNomad rewrites only the advertised wildcard hostname to loopback before authenticated health checks and client construction. Existing loopback URL strings retain their previous identity and formatting. Non-loopback remote addresses remain rejected.
+**Resolution:** CodeNomad rewrites only the advertised wildcard hostname to loopback before the authenticated `/api/status` check and client construction. Existing loopback URL strings retain their previous identity and formatting. Non-loopback remote addresses remain rejected.
 
 ### Failed plugin inventory
 
@@ -165,7 +165,7 @@ This is distribution hardening rather than V2 API parity. Release jobs should fa
 
 ## Beta Channel Policy
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup validates its authenticated loopback health response without an exact version gate.
+CodeNomad server and UI follow `@opencode-ai/client@beta`. The root workspace lock keeps each build reproducible after resolving that dependency; Electron selects npm optional dependencies for the requested OS/CPU target, while Tauri requires a completed root `npm ci --workspaces --include=optional` and never repairs dependencies during prebuild. The runtime CLI is managed independently, and startup validates its authenticated loopback `/api/status` response without an exact version gate.
 
 Generated types, proxy routes, events, plugin inventory, Forms, sessions, and real workspace behavior must be checked whenever the beta channel advances.
 

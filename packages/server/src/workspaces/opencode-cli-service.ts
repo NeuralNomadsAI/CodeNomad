@@ -71,7 +71,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     if (!password) throw new Error(`${this.options.label} OpenCode service returned an empty password`)
     const endpoint: Endpoint = { url, auth: { type: "basic", username: "opencode", password } }
     await this.options.beforeHealth?.(endpoint, deadlineAt)
-    await this.validateHealth(endpoint, deadlineAt)
+    await this.validateStatus(endpoint, deadlineAt)
     return endpoint
   }
 
@@ -119,14 +119,14 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     return result.stdout
   }
 
-  private async validateHealth(endpoint: Endpoint, deadlineAt: number): Promise<void> {
+  private async validateStatus(endpoint: Endpoint, deadlineAt: number): Promise<void> {
     let response: Response
     try {
-      const timeout = this.remaining(deadlineAt, "health validation")
-      response = await this.withDeadline(this.dependencies.fetch(new URL("/api/health", endpoint.url), {
+      const timeout = this.remaining(deadlineAt, "status validation")
+      response = await this.withDeadline(this.dependencies.fetch(new URL("/api/status", endpoint.url), {
         headers: Service.headers(endpoint),
         signal: AbortSignal.timeout(timeout),
-      }), deadlineAt, "health validation")
+      }), deadlineAt, "status validation")
     } catch {
       const message = this.options.unreachableMessage?.(endpoint.url)
       throw new Error(message ?? `Cannot reach the ${this.options.label} OpenCode service at ${endpoint.url}`)
@@ -135,31 +135,22 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       throw new Error(`${this.options.label} OpenCode service authentication failed at ${endpoint.url} (HTTP 401)`)
     }
     if (!response.ok) {
-      throw new Error(`${this.options.label} OpenCode service health check failed at ${endpoint.url} (HTTP ${response.status})`)
+      throw new Error(`${this.options.label} OpenCode service status check failed at ${endpoint.url} (HTTP ${response.status})`)
     }
 
-    let health: unknown
+    let payload: unknown
     try {
       const body = await this.withDeadline(
         readBoundedBody(response, MAX_SERVICE_OUTPUT_BYTES),
         deadlineAt,
-        "health response",
+        "status response",
       )
-      health = JSON.parse(body)
+      payload = JSON.parse(body)
     } catch {
-      throw new Error(`${this.options.label} OpenCode service returned an invalid health response at ${endpoint.url}`)
+      throw new Error(`${this.options.label} OpenCode service returned an invalid status response at ${endpoint.url}`)
     }
-    const value = health as { healthy?: unknown; version?: unknown; pid?: unknown } | null
-    if (
-      !value
-      || typeof value !== "object"
-      || value.healthy !== true
-      || typeof value.version !== "string"
-      || !value.version.trim()
-      || !Number.isSafeInteger(value.pid)
-      || Number(value.pid) <= 0
-    ) {
-      throw new Error(`${this.options.label} OpenCode service returned an invalid health response at ${endpoint.url}`)
+    if (!isServiceStatusResponse(payload)) {
+      throw new Error(`${this.options.label} OpenCode service returned an invalid status response at ${endpoint.url}`)
     }
   }
 
@@ -216,6 +207,17 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       if (timer) clearTimeout(timer)
     }
   }
+}
+
+function isServiceStatusResponse(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const status = value as { version?: unknown; pid?: unknown; urls?: unknown }
+  return typeof status.version === "string"
+    && Boolean(status.version.trim())
+    && Number.isSafeInteger(status.pid)
+    && Number(status.pid) >= 0
+    && Array.isArray(status.urls)
+    && status.urls.every((url) => typeof url === "string")
 }
 
 function executeFile(file: string, args: string[], options: ServiceExecOptions): Promise<ServiceExecResult> {

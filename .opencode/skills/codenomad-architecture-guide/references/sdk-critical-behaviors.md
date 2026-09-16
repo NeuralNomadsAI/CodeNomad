@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Server and UI follow `@opencode-ai/client@beta`; refresh the client lock before API audits or release validation. Manage the runtime CLI independently: startup checks the authenticated loopback endpoint and health shape without an exact version gate, while documentation, installed declarations, and proxy/API parity are reviewed whenever the client contract changes.
+- Server and UI follow `@opencode-ai/client@beta`; refresh the client lock before API audits or release validation. Manage the runtime CLI independently: startup checks the authenticated loopback `/api/status` shape without an exact version gate, while documentation, installed declarations, and proxy/API parity are reviewed whenever the client contract changes.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
