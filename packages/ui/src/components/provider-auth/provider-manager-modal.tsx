@@ -20,6 +20,7 @@ import { instances } from "../../stores/instances"
 import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { toRequestLocation } from "../../stores/request-locations"
 import { getRootClient } from "../../stores/opencode-client"
+import { waitForPluginActivation } from "../../stores/plugin-activation"
 import { ProviderAuthForm } from "./provider-auth-form"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
@@ -311,6 +312,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoadError(null)
     try {
       const location = { location: requestLocation(catalogLocation) }
+      await waitForPluginActivation(authClient, catalogLocation)
       const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
         authClient.provider.list(location),
         authClient.model.list(location),

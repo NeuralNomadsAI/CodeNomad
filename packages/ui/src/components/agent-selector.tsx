@@ -32,6 +32,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
     return getSelectableAgentsForSession(instanceAgents(), props.currentAgent, isChildSession())
   })
   const selectedAgent = createMemo(() => findAgentById(availableAgents(), props.currentAgent))
+  const accessibleLabel = () => t("agentSelector.trigger.primary", { agent: selectedAgent()?.name || t("agentSelector.none") })
   const [isOpen, setIsOpen] = createSignal(false)
   let searchInputRef: HTMLInputElement | undefined
 
@@ -95,7 +96,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
       >
         <Combobox.Control class="relative w-full">
           <Combobox.Input class="sr-only" data-agent-selector aria-label={t("agentSelector.placeholder")} />
-          <Combobox.Trigger class="selector-trigger">
+          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={accessibleLabel()}>
             <div class="flex-1 min-w-0">
               <div class="selector-trigger-label selector-trigger-label--stacked">
                 <span class="selector-trigger-primary selector-trigger-primary--align-left">

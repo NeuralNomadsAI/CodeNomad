@@ -127,6 +127,7 @@ describe("native session message normalization", () => {
     }).message
     const compacted = normalizeSessionMessage("session", {
       id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", recent: "recent",
+      model: { providerID: "anthropic", id: "claude", variant: "high" }, providerState: { cache: "warm" },
       time: { created: 1 },
     }).message
     const running = normalizeSessionMessage("session", {
@@ -141,6 +142,8 @@ describe("native session message normalization", () => {
     assert.equal(shell.status, "complete")
     assert.equal(compacted.status, "complete")
     assert.equal((compacted.parts[0] as any).text, "summary")
+    assert.deepEqual((compacted.parts[0] as any).model, { providerID: "anthropic", id: "claude", variant: "high" })
+    assert.deepEqual((compacted.parts[0] as any).providerState, { cache: "warm" })
     assert.equal(running.status, "sent")
     assert.equal((running.parts[0] as any).text, "partial")
     assert.equal(failed.message.status, "error")

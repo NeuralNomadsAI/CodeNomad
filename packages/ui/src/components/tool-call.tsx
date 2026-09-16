@@ -42,6 +42,7 @@ import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { observeActionOverflow } from "./measured-action-overflow"
 import SpeechActionButton from "./speech-action-button"
 
 const log = getLogger("session")
@@ -80,23 +81,29 @@ interface ToolCallProps {
   headerMenuItems?: () => ActionOverflowMenuItem[]
  }
 
-function ToolStatusIndicator(props: { status: Accessor<string> }) {
-  const isVisible = (value: string) => props.status() === value
+function ToolStatusIndicator(props: { status: Accessor<string>; t: ReturnType<typeof useI18n>["t"] }) {
+  const resolvedStatus = () => {
+    const value = props.status()
+    return value === "running" || value === "completed" || value === "error" ? value : "pending"
+  }
+  const isVisible = (value: string) => resolvedStatus() === value
+  const label = () => props.t(`toolCall.status.${resolvedStatus()}`)
 
   return (
-    <span class="tool-call-header-status" aria-hidden="true" data-status={props.status() || "pending"}>
-      <span style={{ display: isVisible("pending") ? "inline-flex" : "none" }}>
+    <span class="tool-call-header-status" role="status" aria-label={label()} data-status={resolvedStatus()}>
+      <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("pending") ? "inline-flex" : "none" }}>
         <Hourglass class="w-4 h-4" />
       </span>
-      <span style={{ display: isVisible("running") ? "inline-flex" : "none" }}>
+      <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("running") ? "inline-flex" : "none" }}>
         <Loader2 class="w-4 h-4 animate-spin" />
       </span>
-      <span style={{ display: isVisible("completed") ? "inline-flex" : "none" }}>
+      <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("completed") ? "inline-flex" : "none" }}>
         <Check class="w-4 h-4" />
       </span>
-      <span style={{ display: isVisible("error") ? "inline-flex" : "none" }}>
+      <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("error") ? "inline-flex" : "none" }}>
         <XCircle class="w-4 h-4" />
       </span>
+      <span class="tool-call-header-status-label">{label()}</span>
     </span>
   )
 }
@@ -936,7 +943,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
+        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -949,7 +956,7 @@ export default function ToolCall(props: ToolCallProps) {
             <Show when={headerTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
-            <ToolStatusIndicator status={status} />
+            <ToolStatusIndicator status={status} t={t} />
           </span>
         </button>
 

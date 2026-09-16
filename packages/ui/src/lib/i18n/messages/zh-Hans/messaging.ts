@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "消息内容",
+  "transcriptFilters.description": "显示或隐藏内容，并选择初始展开状态。这些设置适用于所有对话。",
+  "transcriptFilters.show": "显示{name}",
+  "transcriptFilters.hide": "隐藏{name}",
+  "transcriptFilters.expand": "展开{name}",
+  "transcriptFilters.collapse": "折叠{name}",
   "messageListHeader.sidebar.openSessionListAriaLabel": "打开会话列表",
   "messageListHeader.metrics.usedLabel": "已用",
   "messageListHeader.metrics.availableLabel": "可用",

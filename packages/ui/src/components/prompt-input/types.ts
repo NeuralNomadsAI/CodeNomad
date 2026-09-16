@@ -1,4 +1,5 @@
 import type { SessionInboxUserPayload } from "@opencode-ai/client"
+import type { JSX } from "solid-js"
 import type { Attachment } from "../../types/attachment"
 
 export type PromptMode = "normal" | "shell"
@@ -35,5 +36,6 @@ export interface PromptInputProps {
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>
   onBackgroundSession?: () => Promise<void>
+  footerControls?: JSX.Element
   registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
 }

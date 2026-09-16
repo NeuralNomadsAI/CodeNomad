@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "Содержимое сообщений",
+  "transcriptFilters.description": "Выберите видимость содержимого и начальное состояние развёртывания. Настройки применяются ко всем беседам.",
+  "transcriptFilters.show": "Показать {name}",
+  "transcriptFilters.hide": "Скрыть {name}",
+  "transcriptFilters.expand": "Развернуть {name}",
+  "transcriptFilters.collapse": "Свернуть {name}",
   "messageListHeader.sidebar.openSessionListAriaLabel": "Открыть список сессий",
   "messageListHeader.metrics.usedLabel": "Использовано",
   "messageListHeader.metrics.availableLabel": "Доступно",

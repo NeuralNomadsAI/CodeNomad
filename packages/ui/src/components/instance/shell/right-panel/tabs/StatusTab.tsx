@@ -109,6 +109,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
         <div class="-mr-2 shrink-0">
           <Switch
+            class="yolo-mode-switch"
             checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
             size="small"
             sx={{

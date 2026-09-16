@@ -7,6 +7,8 @@ describe("instance invalidation targets", () => {
     assert.deepEqual(getInstanceRefreshTargets("agent.updated"), ["agents"])
     assert.deepEqual(getInstanceRefreshTargets("command.updated"), ["commands"])
     assert.deepEqual(getInstanceRefreshTargets("catalog.updated"), ["agents", "providers", "commands"])
+    assert.deepEqual(getInstanceRefreshTargets("plugin.updated"), ["agents", "providers", "commands", "metadata"])
+    assert.deepEqual(getInstanceRefreshTargets("plugin.added"), [])
   })
 
   it("refreshes only state affected by metadata and filesystem events", () => {

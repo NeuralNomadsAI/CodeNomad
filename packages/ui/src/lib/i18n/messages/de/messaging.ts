@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "transcriptFilters.title": "Nachrichteninhalt",
+  "transcriptFilters.description": "Inhalte ein- oder ausblenden und ihre anfängliche Darstellung festlegen. Diese Einstellungen gelten für alle Unterhaltungen.",
+  "transcriptFilters.show": "{name} anzeigen",
+  "transcriptFilters.hide": "{name} ausblenden",
+  "transcriptFilters.expand": "{name} aufklappen",
+  "transcriptFilters.collapse": "{name} zuklappen",
   "messageListHeader.sidebar.openSessionListAriaLabel": "Sitzungsliste öffnen",
   "messageListHeader.metrics.usedLabel": "Benutzt",
   "messageListHeader.metrics.availableLabel": "Verfügbar",

@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, type Component, type Accessor } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { Portal } from "solid-js/web"
+import { Dynamic, Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
@@ -8,10 +8,10 @@ import { isHiddenSyntheticTextPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
-import { getToolIcon } from "./tool-call/utils"
-import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
+import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
+import { getMessageContentIcon } from "./message-content-icons"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -21,7 +21,7 @@ export interface TimelineSegment {
   type: TimelineSegmentType
   label: string
   tooltip: string
-  shortLabel?: string
+  toolName?: string
   variant?: "auto" | "manual"
   toolPartIds?: string[]
   partIds?: string[]
@@ -188,7 +188,6 @@ export function buildTimelineSegments(
       return
     }
     const label = segmentLabel(pending.type)
-    const shortLabel = undefined
     const tooltip = formatTextsTooltip(
       [...pending.texts, ...pending.reasoningTexts],
       pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
@@ -200,7 +199,6 @@ export function buildTimelineSegments(
       type: pending.type,
       label,
       tooltip,
-      shortLabel,
       partIds: pending.partIds,
       totalChars: pending.totalChars,
     })
@@ -232,6 +230,7 @@ export function buildTimelineSegments(
     if (part.type === "tool") {
       flushPending()
       const toolPart = part as ToolCallPart
+      const toolName = typeof toolPart.tool === "string" ? toolPart.tool.trim() : ""
       const partId = typeof toolPart.id === "string" ? toolPart.id : ""
       const title = getToolTitle(toolPart, t)
       result.push({
@@ -240,7 +239,7 @@ export function buildTimelineSegments(
         type: "tool",
         label: getToolTypeLabel(toolPart, t) || segmentLabel("tool"),
         tooltip: formatToolTooltip([title], t),
-        shortLabel: getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"),
+        toolName,
         toolPartIds: partId ? [partId] : undefined,
         totalChars: getPartCharCount(part),
       })
@@ -590,10 +589,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
             const shortLabelContent = () => {
               if (segment.type === "tool") {
-                if (hasActivePermission()) {
-                  return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
-                }
-                return segment.shortLabel ?? getToolIcon("tool")
+                return <Dynamic component={getMessageContentIcon(segment.toolName)} class="message-timeline-icon" aria-hidden="true" />
               }
               if (segment.type === "compaction") {
                 return <FoldVertical class="message-timeline-icon" aria-hidden="true" />

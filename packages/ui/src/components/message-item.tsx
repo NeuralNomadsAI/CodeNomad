@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
+import { Bot, User, Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode-ai/client"
 import type { MessageInfo, ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
@@ -11,6 +11,7 @@ import { useI18n } from "../lib/i18n"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import { observeActionOverflow } from "./measured-action-overflow"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
@@ -546,11 +547,21 @@ export default function MessageItem(props: MessageItemProps) {
       data-assistant-text-block={isAssistantTextBlock() ? "true" : undefined}
     >
       <header class="message-item-header pb-0">
-        <div class="message-item-header-row message-item-header-row--top" ref={(el) => (topRowEl = el)}>
+        <div class="message-item-header-row message-item-header-row--top" ref={(el) => { topRowEl = el; observeActionOverflow(el) }}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
               <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>
-                {speakerLabel()}
+                <Show when={isUser()} fallback={
+                  <span class="inline-flex items-center gap-1">
+                    <Bot class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    {speakerLabel()}
+                  </span>
+                }>
+                  <span class="inline-flex items-center gap-1">
+                    <User class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    {speakerLabel()}
+                  </span>
+                </Show>
               </span>
               <time class="message-timestamp message-timestamp-inline" dateTime={timestampIso()}>{timestamp()}</time>
             </div>
@@ -568,6 +579,10 @@ export default function MessageItem(props: MessageItemProps) {
               </span>
             </Show>
           </div>
+
+          <Show when={isUser() && userMenuState() === "queue"}>
+            <span class="message-queued-badge">{t("messageItem.status.queued")}</span>
+          </Show>
 
           <div
             class="message-item-actions"
@@ -685,10 +700,6 @@ export default function MessageItem(props: MessageItemProps) {
 
       <div class="pt-0 whitespace-pre-wrap break-words leading-[1.1]" dir="auto">
 
-        <Show when={isUser() && userMenuState() === "queue"}>
-          <div class="message-queued-badge">{t("messageItem.status.queued")}</div>
-        </Show>
-
         <Show when={errorMessage()}>
           <div class="message-error-block" dir="auto">⚠️ {errorMessage()}</div>
         </Show>
@@ -744,7 +755,7 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 rounded object-cover" />
+                      <img src={attachment.url} alt={name} class="h-5 w-5 object-cover" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <Show when={!attachment.url?.startsWith("file://")}>
@@ -791,12 +802,6 @@ export default function MessageItem(props: MessageItemProps) {
               </Portal>
             )
           }}
-        </Show>
-
-        <Show when={isUser() && userMenuState() === "queue"}>
-          <div class="message-sending">
-            <span class="generating-spinner">●</span> {t("messageItem.status.sending")}
-          </div>
         </Show>
 
         <Show when={props.record.status === "error"}>
