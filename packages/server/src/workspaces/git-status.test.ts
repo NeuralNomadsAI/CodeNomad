@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
+import fs from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
@@ -7,11 +8,25 @@ import { describe, it } from "node:test"
 import { getWorktreeGitStatus, invalidateWorktreeGitStatus } from "./git-status"
 
 describe("worktree git status singleflight", () => {
-  it("coalesces concurrent requests and runs again after settlement", async () => {
+  it("coalesces concurrent requests and runs again after settlement", async (t) => {
     const directory = await mkdtemp(path.join(tmpdir(), "codenomad-git-status-"))
     let calls = 0
     let release!: () => void
     const blocked = new Promise<void>((resolve) => { release = resolve })
+    // Both callers must finish canonicalization before releasing the Git work.
+    // Otherwise a fast first read can settle while the second realpath is still
+    // in the filesystem queue, legitimately starting a separate flight.
+    const realpath = fs.realpath
+    let canonicalized = 0
+    let ready!: () => void
+    const bothCanonicalized = new Promise<void>((resolve) => { ready = resolve })
+    t.mock.method(fs, "realpath", async (value: string) => {
+      const result = await realpath(value)
+      canonicalized += 1
+      if (canonicalized === 2) ready()
+      await bothCanonicalized
+      return result
+    })
     const run = async () => {
       calls += 1
       await blocked
@@ -33,6 +48,7 @@ describe("worktree git status singleflight", () => {
       await getWorktreeGitStatus({ workspaceFolder: directory }, run)
       assert.equal(calls, 10)
     } finally {
+      release()
       await rm(directory, { recursive: true, force: true })
     }
   })
