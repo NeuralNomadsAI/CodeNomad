@@ -68,6 +68,7 @@ export function binaryPathsEqual(left: string, right: string, platform = process
 }
 
 interface WorkspaceManagerOptions {
+  startServiceCommand?: import("./opencode-cli-service").OpenCodeCliServiceDependencies["execFile"]
   rootDir: string
   settings: SettingsService
   binaryResolver: BinaryResolver
@@ -955,7 +956,7 @@ export class WorkspaceManager {
         binary: spec.binary,
         startupEnvironment,
         timeoutMs,
-      })
+      }, { startFile: this.options.startServiceCommand })
   }
 
   private createHostServiceLifecycle(
@@ -969,7 +970,7 @@ export class WorkspaceManager {
         platform: spec.platform,
         startupEnvironment,
         timeoutMs,
-      })
+      }, { startFile: this.options.startServiceCommand })
   }
 
   private serviceStartupEnvironment(): NodeJS.ProcessEnv {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { afterEach, test } from "node:test"
 import type { OpenCodeClient, PermissionReplyInput } from "@opencode/client"
+import { OpenCode } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager"
 import type { Instance } from "../types/instance"
 import {
@@ -70,6 +71,28 @@ test("permission replies use the queued request session", async () => {
     message: "trusted",
   })
   assert.deepEqual(getPermissionQueue("permission-reply"), [])
+})
+
+test("the native client sends rejection feedback in the HTTP body", async () => {
+  const requests: Array<{ url: string; body: unknown }> = []
+  const client = OpenCode.make({
+    baseUrl: "http://permission-fixture.invalid/",
+    fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push({ url: request.url, body: await request.json() })
+      return new Response(null, { status: 204 })
+    },
+  })
+  sdkManager.createClient = (() => client) as typeof sdkManager.createClient
+  addTestInstance("reject-feedback", client)
+  addPermissionToQueue("reject-feedback", { id: "permission", sessionID: "owner", action: "shell", resources: ["fixture"] })
+  const message = "Ne supprime pas les fichiers.\nLis-les seulement."
+  await sendPermissionResponse("reject-feedback", "stale-session", "permission", "reject", message)
+  assert.deepEqual(requests, [{
+    url: "http://permission-fixture.invalid/api/session/owner/permission/permission/reply",
+    body: { decision: "reject", message },
+  }])
+  assert.deepEqual(getPermissionQueue("reject-feedback"), [])
 })
 
 test("pending request sync cannot erase newer SSE mutations", async () => {

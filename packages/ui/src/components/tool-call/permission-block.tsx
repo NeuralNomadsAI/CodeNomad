@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, type Accessor, type JSXElement } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, type Accessor, type JSXElement } from "solid-js"
 import type { PermissionRequest } from "../../types/permission"
 import { getPermissionDisplayTitle, getPermissionKind } from "../../types/permission"
 import { getPermissionSessionId } from "../../types/permission"
@@ -22,9 +22,12 @@ export type PermissionToolBlockProps = {
 export function PermissionToolBlock(props: PermissionToolBlockProps) {
   const { t } = useI18n()
   const [rejectReason, setRejectReason] = createSignal("")
+  // Pending-request reconciliation replaces objects for the same request.
+  // Only a new request should discard the user's explanation.
+  const requestId = createMemo(() => props.permission()?.id)
 
   createEffect(() => {
-    props.permission()?.id
+    requestId()
     setRejectReason("")
   })
 
