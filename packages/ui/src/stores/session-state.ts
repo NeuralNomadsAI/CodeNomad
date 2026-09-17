@@ -907,26 +907,13 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   return buildSessionThreads(instanceId, getSessionListIds(instanceId))
 }
 
-function getSessionSearchThreads(instanceId: string): SessionThread[] {
-  const resultIds = getSessionSearchResultIds(instanceId)
-  if (resultIds.length === 0) return []
-
+function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
-
-  const rootIds: string[] = []
-  for (const sessionId of resultIds) {
-    const session = instanceSessions.get(sessionId)
-    if (!session) continue
-    if (session.parentId === null) {
-      if (!rootIds.includes(session.id)) rootIds.push(session.id)
-    } else {
-      const root = getSessionRootFromMap(instanceSessions, session.id)
-      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
-    }
-  }
-
-  return buildSessionThreads(instanceId, rootIds)
+  return getSessionSearchResultIds(instanceId).flatMap(id => {
+    const session = instanceSessions.get(id)
+    return session ? [session] : []
+  })
 }
 
 function isSessionExpanded(instanceId: string, sessionId: string): boolean {
@@ -1284,7 +1271,7 @@ export {
   getSessionRoot,
   getSessionFamily,
   getSessionThreads,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getVisibleSessionIds,
   expandedSessions,
   isSessionExpanded,

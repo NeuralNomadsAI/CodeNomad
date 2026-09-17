@@ -174,6 +174,28 @@ authorized workspace spelling before changing UI state.
 
 ### Final native/UI integration (2026-09-17)
 
+Follow-up: search/filter mode presents independent flat rows. The "Show subsessions"
+switch (off by default) includes children without requiring their parents in the
+results. Text and worktree filters must match the same session; activity, names and
+worktree labels also sort each session independently. Selection targets only the
+displayed matches. Server search results no longer require ancestor hydration.
+Closing search restores normal hierarchy and ignores its worktree filter. This
+supersedes the temporary root-only worktree-filter fix in `3921ba08`.
+
+The real-component browser regression covers the switch, cross-worktree children,
+text plus directory filters, independent badges, bulk selection, direct child
+navigation, results without loaded ancestors and returning to normal hierarchy.
+
+The rebuilt UI was also loaded in the installed Windows Tauri renderer. An
+existing child, "Analyze automation update", was verified through native reads
+in `D:\CodeNomad` while its parent remained in `pr649-final`. With its title and
+the Workspace filter selected, the child appeared alone only when subsessions
+were enabled. Selecting the parent's checkout hid it; closing search restored
+the hierarchy and preserved the active parent conversation. A first desktop wait
+of 30 seconds expired; the completed repeat used a 90-second bound. Directory
+search still traverses the local worktree catalogue, so this is not a latency
+guarantee. No native session locations were changed by this check.
+
 Merged `dev@e47e01c6` (PR #697) into this branch. Discovery and canonical
 `server.status()` adaptation are now inherited from that independently merged
 change. The native worktree/family fixture passed again against isolated official

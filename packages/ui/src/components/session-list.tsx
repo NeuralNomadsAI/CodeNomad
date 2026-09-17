@@ -32,11 +32,11 @@ import {
   clearSessionSearch,
   fetchSessions,
   getSessionSearchQuery,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -72,6 +72,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
   const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
   const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
+  const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
   let failedSortExhaustion: string | undefined
 
@@ -133,7 +134,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   createEffect(() => {
     const sort = sortBy()
     const key = `${props.instanceId}:${sort}`
-    if (sort === "activity") {
+    if (sort === "activity" && !props.enableFilterBar) {
       failedSortExhaustion = undefined
       return
     }
@@ -222,20 +223,26 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
-    const searchThreads = query && getSessionSearchQuery(props.instanceId) === query && !isSessionSearchLoading(props.instanceId)
-      ? getSessionSearchThreads(props.instanceId)
-      : props.threads
+    const hasSearchResults = query && getSessionSearchQuery(props.instanceId) === query && !isSessionSearchLoading(props.instanceId)
     const worktrees = getWorktrees(props.instanceId)
     const getWorktreeLabel = (directory: string) => {
       const normalized = normalizeSessionDirectory(directory)
       const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
       return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
     }
-    return projectSessionFamilies(searchThreads, {
+    if (!props.enableFilterBar) return projectSessionFamilies(props.threads, { sort: sortBy(), getWorktreeLabel })
+    const instanceSessions = sessionStateSessions().get(props.instanceId)
+    const candidates = hasSearchResults ? getSessionSearchSessions(props.instanceId)
+      : collectSessionThreadIds(props.threads).flatMap(id => {
+        const session = instanceSessions?.get(id)
+        return session ? [session] : []
+      })
+    return projectSessionSearchResults(candidates, {
       sort: sortBy(),
       worktreeDirectory: worktreeDirectory(),
+      includeSubsessions: includeSubsessions(),
       getWorktreeLabel,
-      ...(query && searchThreads === props.threads
+      ...(query && !hasSearchResults
         ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
         : {}),
     })
@@ -557,6 +564,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   }> = (rowProps) => {
     const sessionId = () => rowProps.session.id
     const isChild = () => rowProps.depth > 0
+    const isSubsession = () => Boolean(rowProps.session.parentId)
 
     const worktreeSlug = createMemo(() => {
       if (isChild()) return ""
@@ -686,7 +694,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     return (
       <div class={`session-list-item group ${rowProps.isLastRow ? "session-list-item-last" : ""}`}>
         <div
-          class={`session-item-base ${isChild() ? "session-item-nested" : ""} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isChild() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
+          class={`session-item-base ${isChild() ? "session-item-nested" : ""} ${isChild() && rowProps.isLastChild ? "session-item-child-last" : ""} ${isSubsession() ? "session-item-border-assistant session-item-kind-assistant" : "session-item-border-user session-item-kind-user"} ${isActive() ? "session-item-active" : "session-item-inactive"}`}
           style={nestedStyle()}
           data-session-id={sessionId()}
           ref={setRowElement}
@@ -727,7 +735,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             title={title()}
             aria-current={isActive() ? "true" : undefined}
           >
-            <Show when={isChild()} fallback={<User class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
+            <Show when={isSubsession()} fallback={<User class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />}>
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
@@ -868,6 +876,16 @@ const SessionList: Component<SessionListProps> = (props) => {
               ))}
             </select>
           </div>
+
+          <label class="mt-2 flex items-center gap-2 text-xs text-secondary">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={includeSubsessions()}
+              onChange={(event) => setIncludeSubsessions(event.currentTarget.checked)}
+            />
+            {t("sessionList.filter.includeSubsessions")}
+          </label>
 
           <Show when={selectedCount() > 0}>
             <div class="mt-2 flex items-center justify-end gap-2">

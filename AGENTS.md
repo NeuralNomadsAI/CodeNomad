@@ -10,6 +10,7 @@
 - Keep agent, model, and thinking controls in the composer footer via `PromptContextControls`; adapt that footer with the named `prompt-composer` container rather than viewport-only breakpoints.
 - Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
 - Session hierarchy geometry lives in `styles/components/session-tree.css`; connector axes follow the parent expander at every depth, including selection mode, RTL and touch layouts.
+- Session search/filter mode uses flat per-session results with an optional subsession switch; filters, sorting, worktree badges and selection use each result's own identity. Normal browsing retains the session hierarchy.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
 - Explicit round exceptions: Yolo and MCP switches (shared `styles/components/switches.css` geometry), overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
 - Tags and numeric/context/token labels also use rounded geometry via `--chip-radius` (`--pill-radius` is an alias). Register badge variants in `styles/components/badges.css`; use `.badge-shape` for utility-styled labels rather than adding a local radius.

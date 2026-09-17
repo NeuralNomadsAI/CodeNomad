@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeSubsessions": "Показывать подсессии",
   "session.pruning.maintenance_required": "Сессия или её хранилище заняты. Дождитесь завершения текущей операции и повторите очистку.",
   "session.pruning.unavailable": "Плагин очистки недоступен или не ответил. Откройте CodeNomad заново и повторите попытку.",
   "session.pruning.conflict": "Сообщение изменилось после выбора. Перезагрузите его и выберите содержимое снова.",

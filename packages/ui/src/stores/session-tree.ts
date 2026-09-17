@@ -39,10 +39,7 @@ export function projectSessionFamilies(
   const projected = threads.filter((thread) => {
     if (options.matchesSession && !someSession(thread, options.matchesSession)) return false
     if (!worktreeDirectory) return true
-    return someSession(
-      thread,
-      (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory,
-    )
+    return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
   })
 
   return [...projected].sort((left, right) => {
@@ -56,6 +53,20 @@ export function projectSessionFamilies(
     const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
     return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
   })
+}
+
+// Search rows are independent leaves: filtering, sorting and selection all use
+// the session itself, without adding ancestors or inheriting descendant activity.
+export function projectSessionSearchResults(
+  sessions: Iterable<Session>,
+  options: SessionFamilyProjection & { includeSubsessions: boolean },
+): SessionThread[] {
+  const rows = new Map<string, SessionThread>()
+  for (const session of sessions) {
+    if (session.parentId && !options.includeSubsessions) continue
+    rows.set(session.id, { session, children: [], depth: 0, hasChildren: false, latestUpdated: session.time.updated })
+  }
+  return projectSessionFamilies([...rows.values()], options)
 }
 
 export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
