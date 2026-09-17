@@ -2,7 +2,7 @@ import fs from "fs"
 import path from "path"
 import fuzzysort from "fuzzysort"
 import type { FileSystemEntry } from "../api-types"
-import { clearWorkspaceSearchCache, getWorkspaceCandidates, refreshWorkspaceCandidates } from "./search-cache"
+import { clearWorkspaceSearchCache, getWorkspaceCandidates, refreshWorkspaceCandidates, WorkspaceSearchBusyError } from "./search-cache"
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 200
@@ -55,7 +55,7 @@ export async function searchWorkspaceFiles(
       )
     }
   } catch (error) {
-    clearWorkspaceSearchCache(normalizedRoot)
+    if (!(error instanceof WorkspaceSearchBusyError)) clearWorkspaceSearchCache(normalizedRoot)
     throw error
   }
 

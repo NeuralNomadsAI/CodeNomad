@@ -1,6 +1,7 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { withFileAccess } from "./file-access"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
@@ -89,7 +90,7 @@ export class FileSystemBrowser {
       throw new Error("writeFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    await fs.promises.writeFile(resolved, contents, "utf-8")
+    await withFileAccess(resolved, () => fs.promises.writeFile(resolved, contents, "utf-8"))
   }
 
   async readFile(relativePath: string): Promise<string> {
@@ -97,7 +98,7 @@ export class FileSystemBrowser {
       throw new Error("readFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return fs.promises.readFile(resolved, "utf-8")
+    return withFileAccess(resolved, () => fs.promises.readFile(resolved, "utf-8"))
   }
 
   async readFileBase64(relativePath: string): Promise<string> {
@@ -105,21 +106,23 @@ export class FileSystemBrowser {
       throw new Error("readFileBase64 is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return (await fs.promises.readFile(resolved)).toString("base64")
+    return withFileAccess(resolved, async () => (await fs.promises.readFile(resolved)).toString("base64"))
   }
 
   async readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
     const encoding = options?.encoding ?? "utf-8"
     const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
-    const stats = await fs.promises.stat(resolved)
-    if (!stats.isFile()) {
-      throw new Error("Selected path is not a file")
-    }
-    if (stats.size > MAX_READABLE_FILE_BYTES) {
-      throw new Error("Selected file is too large to attach")
-    }
-    const contents = (await fs.promises.readFile(resolved)).toString(encoding)
-    return { path: targetPath, contents, encoding }
+    return withFileAccess(resolved, async () => {
+      const stats = await fs.promises.stat(resolved)
+      if (!stats.isFile()) {
+        throw new Error("Selected path is not a file")
+      }
+      if (stats.size > MAX_READABLE_FILE_BYTES) {
+        throw new Error("Selected file is too large to attach")
+      }
+      const contents = (await fs.promises.readFile(resolved)).toString(encoding)
+      return { path: targetPath, contents, encoding }
+    })
   }
 
   private async listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): Promise<FileSystemListResponse> {

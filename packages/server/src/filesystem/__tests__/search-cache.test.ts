@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { beforeEach, describe, it } from "node:test"
 import type { FileSystemEntry } from "../../api-types"
+import { searchWorkspaceFiles } from "../search"
 import {
   clearWorkspaceSearchCache,
   getWorkspaceCandidates,
@@ -12,6 +13,17 @@ import {
 describe("workspace search cache", () => {
   beforeEach(() => {
     clearWorkspaceSearchCache()
+  })
+
+  it("a rejected extra query does not invalidate the successful in-flight scans", async () => {
+    let release!: (entries: FileSystemEntry[]) => void
+    const gate = new Promise<FileSystemEntry[]>(resolve => { release = resolve })
+    const first = refreshWorkspaceCandidates("/busy-root", "file\0first", () => gate)
+    const second = refreshWorkspaceCandidates("/another-root", "file\0second", () => gate)
+    try {
+      await assert.rejects(searchWorkspaceFiles("/busy-root", "third"), WorkspaceSearchBusyError)
+    } finally { release([createEntry("needle")]); await Promise.all([first, second]) }
+    assert.equal(getWorkspaceCandidates("/busy-root", "file\0first")?.[0].name, "needle")
   })
 
   it("coalesces scans, bounds parallel I/O and does not refill an invalidated cache", async () => {
