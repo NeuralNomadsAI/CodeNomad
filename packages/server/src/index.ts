@@ -23,6 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
+import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
@@ -377,6 +378,7 @@ async function main() {
     catch (error) { logger.error({ err: error }, "Failed to load the bundled session-pruning plugin") }
   }
   await prepareSessionPruning()
+  const nativeParent = new NativeParent()
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
     settings,
@@ -384,8 +386,8 @@ async function main() {
     eventBus,
     logger: workspaceLogger,
     prepareSessionPruning,
+    startServiceCommand: nativeServiceStarter(nativeParent),
   })
-  const nativeParent = new NativeParent()
   if (nativeParent.available) {
     try {
       await removeLegacyAutomationPlugin()

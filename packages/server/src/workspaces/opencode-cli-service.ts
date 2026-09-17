@@ -29,6 +29,7 @@ export interface ServiceExecResult {
 
 export interface OpenCodeCliServiceDependencies {
   execFile: (file: string, args: string[], options: ServiceExecOptions) => Promise<ServiceExecResult>
+  startFile?: OpenCodeCliServiceDependencies["execFile"]
   fetch: typeof globalThis.fetch
 }
 
@@ -93,7 +94,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     let result: ServiceExecResult
     try {
       result = await this.withDeadline(
-        this.dependencies.execFile(spec.command, spec.args, options),
+        (start ? this.dependencies.startFile ?? this.dependencies.execFile : this.dependencies.execFile)(spec.command, spec.args, options),
         deadlineAt,
         commandLabel,
       )
