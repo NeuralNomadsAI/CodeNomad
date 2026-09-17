@@ -229,7 +229,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const getWorktreeLabel = (directory: string) => {
       const normalized = normalizeSessionDirectory(directory)
       const worktree = worktrees.find((candidate) => normalizeSessionDirectory(candidate.serviceDirectory ?? candidate.directory) === normalized)
-      return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.slug ?? directory
+      return worktree?.kind === "root" ? t("sessionList.worktree.workspace") : worktree?.label ?? worktree?.slug ?? directory
     }
     return projectSessionFamilies(searchThreads, {
       sort: sortBy(),
@@ -559,9 +559,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isChild = () => rowProps.depth > 0
 
     const worktreeSlug = createMemo(() => {
-      if (isChild()) return "root"
+      if (isChild()) return ""
       const slug = getWorktreeSlugForParentSession(props.instanceId, sessionId())
-      return slug === "root" ? t("sessionList.worktree.workspace") : slug
+      return slug === "root" ? "" : getWorktrees(props.instanceId).find(entry => entry.slug === slug)?.label ?? slug
     })
 
     const showWorktreeBadge = createMemo(() => {
@@ -864,7 +864,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             >
               <option value="">{t("sessionList.worktreeFilter.all")}</option>
               {getWorktrees(props.instanceId).map((worktree) => (
-                <option value={worktree.serviceDirectory ?? worktree.directory}>{worktree.kind === "root" ? t("sessionList.worktree.workspace") : worktree.slug}</option>
+                <option value={worktree.serviceDirectory ?? worktree.directory}>{worktree.kind === "root" ? t("sessionList.worktree.workspace") : worktree.label ?? worktree.slug}</option>
               ))}
             </select>
           </div>

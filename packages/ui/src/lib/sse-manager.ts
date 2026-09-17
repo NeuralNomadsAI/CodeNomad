@@ -163,6 +163,9 @@ class SSEManager {
           log.warn("Failed to handle worktree ready event", { instanceId, error })
         }
         break
+      case "worktree.updated":
+        void this.onWorktreeUpdated?.(instanceId)?.catch(error => log.warn("Failed to refresh native worktrees", error))
+        break
       default:
         this.onNativeSessionEvent?.(instanceId, event as NativeSessionEvent)
     }
@@ -179,6 +182,7 @@ class SSEManager {
 
   onSessionUpdate?: (instanceId: string, event: SessionCreated | SessionRevertStaged | SessionRevertCleared | SessionRevertCommitted) => void
   onSessionDeleted?: (instanceId: string, event: EventSessionDeleted) => void
+  onWorktreeUpdated?: (instanceId: string) => Promise<void>
   onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
   onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
   onTuiToast?: (instanceId: string, event: TuiToastShow) => void

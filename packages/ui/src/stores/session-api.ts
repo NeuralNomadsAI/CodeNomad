@@ -5,6 +5,8 @@ import {
 } from "../types/session"
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
+import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
+import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
@@ -336,7 +338,11 @@ async function fetchCompleteSessionInventory(
       response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
     }
   }
-  return Array.from(inventory.values())
+  await ensureWorktreesLoaded(instanceId)
+  if (!isCurrent()) return []
+  signal?.throwIfAborted()
+  if (getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  return selectWorkspaceSessionFamilies(Array.from(inventory.values()), directory ?? "", getWorktrees(instanceId))
 }
 
 function getDisconnectedCapturedSessionIds(
@@ -520,11 +526,13 @@ async function fetchSessions(instanceId: string, options?: {
         next.set(instanceId, instanceSessions)
         return next
       })
+      // This directory page is only a partial view of the workspace. Keep
+      // existing worktree rows until the project inventory can reconcile them.
       setSessionPage(
         instanceId,
         rootApiSessions.filter((session) => !session.parentID && !deletedSessionIds.has(session.id)).map((session) => session.id),
         Boolean(response.nextCursor),
-        options?.reset ?? true,
+        false,
         response.nextCursor,
       )
     }
@@ -532,7 +540,7 @@ async function fetchSessions(instanceId: string, options?: {
     let inventoryComplete = false
     try {
       inventory = await fetchCompleteSessionInventory(instanceId, options?.signal, isCurrent)
-      inventoryComplete = hasProjectInventory && response.complete
+      inventoryComplete = hasProjectInventory
     } catch (error) {
       if (options?.signal?.aborted) throw error
       if (options?.strictStatus) throw error
@@ -590,7 +598,7 @@ async function fetchSessions(instanceId: string, options?: {
     const rootIds: string[] = []
     const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
-    for (const apiSession of rootApiSessions) {
+    for (const apiSession of apiSessions) {
       const root = getSessionRoot(instanceId, apiSession.id)
       if (root) {
         if (!seenRootIds.has(root.id)) {
@@ -601,7 +609,7 @@ async function fetchSessions(instanceId: string, options?: {
         missingRootSessionIds.push(apiSession.id)
       }
     }
-    if (!response.complete) {
+    if (!inventoryComplete && (!response.complete || hasProjectInventory)) {
       for (const sessionId of existingCatalogIds) {
         const session = sessions().get(instanceId)?.get(sessionId)
         if (session?.parentId === null && !seenRootIds.has(sessionId)) {
@@ -777,21 +785,25 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    let response = await fetchV2Sessions(instanceId, {
-      search: trimmedQuery,
-      directory: instance.folder,
-    })
+    await ensureWorktreesLoaded(instanceId)
     const results = new Map<string, SDKSession>()
-    const cursors = new Set<string>()
-    let pageCount = 1
-    while (true) {
+    const worktreeDirectories = getInstanceMetadata(instanceId)?.project?.id === "global"
+      ? [] : getWorktrees(instanceId).map(entry => entry.serviceDirectory ?? entry.directory)
+    const directories = new Set([instance.folder, ...worktreeDirectories])
+    for (const directory of directories) {
       if (!isCurrent()) return
-      for (const session of getV2SessionItems(response)) results.set(session.id, session)
-      if (!response.nextCursor) break
-      if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
-      if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
-      cursors.add(response.nextCursor)
-      response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory })
+      const cursors = new Set<string>()
+      let pageCount = 1
+      while (true) {
+        if (!isCurrent()) return
+        for (const session of getV2SessionItems(response)) results.set(session.id, session)
+        if (!response.nextCursor) break
+        if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
+        if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+        cursors.add(response.nextCursor)
+        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+      }
     }
     const searchResults = Array.from(results.values())
 

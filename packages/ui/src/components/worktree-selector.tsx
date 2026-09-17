@@ -1,6 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
-import { For, Show, createMemo, createSignal, createUniqueId } from "solid-js"
+import { Show, createMemo, createSignal, createUniqueId } from "solid-js"
 import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
@@ -32,6 +32,12 @@ type DeleteErrorDetails = {
   summary: string
   causeLabel: string
   nextStep: string
+}
+
+function preventSelectPress(event: PointerEvent | MouseEvent) {
+  event.preventDefault()
+  event.stopImmediatePropagation?.()
+  event.stopPropagation()
 }
 
 function normalizePath(input: string): string {
@@ -127,7 +133,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const [createOpen, setCreateOpen] = createSignal(false)
   const [createSlug, setCreateSlug] = createSignal("")
   const [isCreating, setIsCreating] = createSignal(false)
-  const [actionWorktreeSlug, setActionWorktreeSlug] = createSignal("")
 
   const [deleteOpen, setDeleteOpen] = createSignal(false)
   const [deleteTarget, setDeleteTarget] = createSignal<WorktreeOption & { kind: "worktree" } | null>(null)
@@ -163,14 +168,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     if (match) return match
     // Fallback to root if mapped slug is missing.
     return worktreeOptions().find((opt) => opt.kind === "worktree" && opt.slug === "root")
-  })
-  const selectedWorktree = createMemo(() => {
-    const option = selectedOption()
-    return option?.kind === "worktree" ? option : undefined
-  })
-  const actionWorktree = createMemo(() => {
-    const worktrees = worktreeOptions().filter((option): option is WorktreeOption & { kind: "worktree" } => option.kind === "worktree")
-    return worktrees.find((option) => option.slug === actionWorktreeSlug()) ?? selectedWorktree() ?? worktrees[0]
   })
 
   const openDeleteDialog = (opt: WorktreeOption & { kind: "worktree" }) => {
@@ -318,14 +315,18 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       <Select<WorktreeOption>
         gutter={0}
         open={isOpen()}
-        onOpenChange={setIsOpen}
+        onOpenChange={(open) => {
+          if (!open) { setIsOpen(false); return }
+          void reloadWorktrees(props.instanceId).catch(error => log.warn("Failed to refresh worktrees", error))
+            .then(() => setIsOpen(true))
+        }}
         value={selectedOption() ?? null}
         onChange={(value) => {
           void handleChange(value).catch((error) => log.warn("Failed to change worktree", error))
         }}
         options={worktreeOptions()}
         optionValue="key"
-        optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.slug)}
+        optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.raw.label ?? opt.slug)}
         placeholder={t("sessionList.sort.worktree")}
         disabled={dropdownDisabled()}
         itemComponent={(itemProps) => {
@@ -348,8 +349,28 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
               <div class="flex flex-col gap-1 flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <Select.ItemLabel class="selector-option-label flex-1 min-w-0 truncate">
-                    {opt.slug === "root" ? t("sessionList.worktree.workspace") : opt.slug}
+                    {opt.slug === "root" ? t("sessionList.worktree.workspace") : opt.raw.label ?? opt.slug}
                   </Select.ItemLabel>
+                  <Show when={opt.slug !== "root" && opt.raw.removable !== false}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.delete.action")}
+                      title={t("instanceShell.worktree.delete.action")}
+                      onPointerDown={preventSelectPress}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        preventSelectPress(event)
+                        setIsOpen(false)
+                        openDeleteDialog(opt)
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                    >
+                      <Trash2 class="w-3 h-3" />
+                    </button>
+                  </Show>
                 </div>
                 <div class="flex items-center gap-2 min-w-0">
                   <span
@@ -358,6 +379,48 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     {displayPathFor(opt.directory)}
                   </span>
+                  <button
+                    type="button"
+                    class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                    aria-label={t("instanceShell.filesShell.actions.copyPath")}
+                    title={t("instanceShell.filesShell.actions.copyPath")}
+                    onPointerDown={preventSelectPress}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      preventSelectPress(event)
+                      void (async () => {
+                        await handleCopyPath(opt.directory)
+                        setIsOpen(false)
+                      })()
+                    }}
+                    onPointerUp={preventSelectPress}
+                    onMouseDown={preventSelectPress}
+                    onMouseUp={preventSelectPress}
+                  >
+                    <Copy class="w-3 h-3" />
+                  </button>
+                  <Show when={canOpenWorkspacePaths()}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.openInFileManager.action")}
+                      title={t("instanceShell.worktree.openInFileManager.action")}
+                      onPointerDown={preventSelectPress}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        preventSelectPress(event)
+                        void (async () => {
+                          await handleOpenInFileManager(opt.slug)
+                          setIsOpen(false)
+                        })()
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                    >
+                      <FolderOpen class="w-3 h-3" />
+                    </button>
+                  </Show>
                 </div>
               </div>
             </Select.Item>
@@ -383,7 +446,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
                 const value = state.selectedOption()
                 const label = value && value.kind === "worktree"
-                  ? (value.slug === "root" ? t("sessionList.worktree.workspace") : value.slug)
+                  ? (value.slug === "root" ? t("sessionList.worktree.workspace") : value.raw.label ?? value.slug)
                   : t("sessionList.worktree.workspace")
                 return (
                   <div class="selector-trigger-label selector-trigger-label--stacked">
@@ -409,58 +472,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           </Select.Content>
         </Select.Portal>
       </Select>
-
-      <Show when={actionWorktree()} keyed>
-        {(worktree) => (
-          <div class="flex items-center gap-1 mt-1">
-            <select
-              class="selector-input min-w-0 flex-1"
-              value={worktree.slug}
-              aria-label={t("instanceShell.worktree.actionTarget")}
-              onChange={(event) => setActionWorktreeSlug(event.currentTarget.value)}
-            >
-              <For each={worktreeOptions()}>
-                {(option) => option.kind === "worktree" && (
-                  <option value={option.slug}>
-                    {option.slug === "root" ? t("sessionList.worktree.workspace") : option.slug}
-                  </option>
-                )}
-              </For>
-            </select>
-            <button
-              type="button"
-              class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-              aria-label={`${t("instanceShell.filesShell.actions.copyPath")}: ${worktree.slug}`}
-              title={`${t("instanceShell.filesShell.actions.copyPath")}: ${worktree.slug}`}
-              onClick={() => void handleCopyPath(worktree.directory)}
-            >
-              <Copy class="w-3 h-3" />
-            </button>
-            <Show when={canOpenWorkspacePaths()}>
-              <button
-                type="button"
-                class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                aria-label={`${t("instanceShell.worktree.openInFileManager.action")}: ${worktree.slug}`}
-                title={`${t("instanceShell.worktree.openInFileManager.action")}: ${worktree.slug}`}
-                onClick={() => void handleOpenInFileManager(worktree.slug)}
-              >
-                <FolderOpen class="w-3 h-3" />
-              </button>
-            </Show>
-            <Show when={worktree.slug !== "root"}>
-              <button
-                type="button"
-                class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                aria-label={`${t("instanceShell.worktree.delete.action")}: ${worktree.slug}`}
-                title={`${t("instanceShell.worktree.delete.action")}: ${worktree.slug}`}
-                onClick={() => openDeleteDialog(worktree)}
-              >
-                <Trash2 class="w-3 h-3" />
-              </button>
-            </Show>
-          </div>
-        )}
-      </Show>
 
       <Dialog open={createOpen()} onOpenChange={(open) => !open && setCreateOpen(false)}>
         <Dialog.Portal>
@@ -513,9 +524,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     const slug = createSlug().trim()
                     void (async () => {
                       setIsCreating(true)
-                      await createWorktree(props.instanceId, slug)
+                      const created = await createWorktree(props.instanceId, slug, currentSlug())
                       await reloadWorktrees(props.instanceId)
-                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), slug)
+                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), created.slug)
                       setCreateOpen(false)
                       showToastNotification({ message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
                     })()
@@ -555,7 +566,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                 {(target) => (
                   <div class="border border-base bg-surface-secondary px-3 py-2">
                     <p class="text-sm text-primary">
-                      {t("instanceShell.worktree.delete.target", { slug: target().slug })}
+                      {t("instanceShell.worktree.delete.target", { slug: target().raw.label ?? target().slug })}
                     </p>
                     <p class="text-[11px] text-secondary break-all font-mono leading-5">{target().directory}</p>
                   </div>
@@ -599,7 +610,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
                       closeDeleteDialog()
                       showToastNotification({
-                        message: t("instanceShell.worktree.delete.success", { slug: target.slug }),
+                        message: t("instanceShell.worktree.delete.success", { slug: target.raw.label ?? target.slug }),
                         variant: "success",
                       })
                     })()

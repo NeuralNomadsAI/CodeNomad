@@ -5,17 +5,13 @@ import { z } from "zod"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
   resolveRepoRoot,
-  listWorktrees,
   isValidWorktreeSlug,
-  createManagedWorktree,
-  removeWorktree,
 } from "../../workspaces/git-worktrees"
 import type {
   WorktreeListResponse,
   WorktreeSessionMoveRequest,
   WorktreeSessionMoveResponse,
 } from "../../api-types"
-import { ensureCodenomadGitExclude } from "../../workspaces/worktree-map"
 import { invalidateWorktreeCache } from "../../workspaces/worktree-directory"
 import {
   moveProjectSessionFamily,
@@ -34,6 +30,7 @@ interface RouteDeps {
 const WorktreeCreateSchema = z.object({
   slug: z.string().trim().min(1),
   branch: z.string().trim().min(1).optional(),
+  fromSlug: z.string().trim().min(1).optional(),
 })
 
 const WorktreeSessionMoveSchema = z.object({
@@ -48,14 +45,13 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { error: "Workspace not found" }
     }
 
-    const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
-    const listed = await listWorktrees({ repoRoot, workspaceFolder: workspace.path, logger: request.log })
-    const worktrees = await Promise.all(listed.map(async (worktree) => ({
-      ...worktree,
-      serviceDirectory: await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, worktree.directory),
-    })))
-    const response: WorktreeListResponse = { worktrees, isGitRepo }
-    return response
+    try {
+      const response: WorktreeListResponse = await deps.workspaceManager.getWorktrees(workspace.id)
+      invalidateWorktreeCache(workspace.id)
+      return response
+    } catch (error) {
+      return handleError(error, reply)
+    }
   })
 
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/worktrees", async (request, reply) => {
@@ -83,25 +79,27 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         }
       }
 
-      const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
+      const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
       if (!isGitRepo) {
         reply.code(400)
         return { error: "Workspace is not a Git repository" }
       }
 
-      await ensureCodenomadGitExclude(workspace.path, request.log).catch(() => undefined)
-
-      const created = await createManagedWorktree({
-        repoRoot,
-        workspaceFolder: workspace.path,
-        slug,
-        logger: request.log,
-      })
-      invalidateWorktreeCache(workspace.id)
-      await refreshOpenCodeWorktrees(deps.workspaceManager, workspace.id, request.log)
-
-      reply.code(201)
-      return created
+      const catalogue = await deps.workspaceManager.getWorktrees(workspace.id)
+      const source = catalogue.worktrees.find(entry => entry.slug === (body.fromSlug ?? "root"))
+      if (!source) throw new ProjectSessionError("Source worktree not found", 404)
+      const identities = await Promise.all(catalogue.worktrees.map(entry => (
+        deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, entry.directory)
+      )))
+      if (identities.some(identity => !identity)) throw new ProjectSessionError("Unable to identify worktrees before creation", 409)
+      const release = deps.worktreeDeletionFence.enter(identities as string[])
+      if (!release) throw new ProjectSessionError("A worktree is being removed", 409)
+      try {
+        const created = await deps.workspaceManager.createWorktree(workspace.id, slug, source.slug)
+        invalidateWorktreeCache(workspace.id)
+        reply.code(201)
+        return created
+      } finally { release() }
     } catch (error) {
       return handleError(error, reply)
     }
@@ -119,14 +117,9 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     try {
       const { worktreeSlug } = WorktreeSessionMoveSchema.parse(request.body ?? {})
-      const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
+      const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
       if (!isGitRepo) throw new ProjectSessionError("Workspace is not a Git repository", 409)
-      const worktrees = await strictWorktrees({
-        repoRoot,
-        workspaceFolder: workspace.path,
-        logger: request.log,
-        failClosed: true,
-      })
+      const worktrees = await strictWorktrees(deps.workspaceManager, workspace.id)
       const target = worktrees.find((worktree) => worktree.slug === worktreeSlug)
       if (!target) throw new ProjectSessionError("Worktree not found", 404)
       const projectLocation = deps.workspaceManager.getServiceLocation(workspace.id)
@@ -139,12 +132,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         targetDirectory,
         resolveExactDirectory: (directory) => deps.workspaceManager.getServiceDirectoryForPath(workspace.id, directory),
         validateTarget: async () => {
-          const refreshed = await strictWorktrees({
-            repoRoot,
-            workspaceFolder: workspace.path,
-            logger: request.log,
-            failClosed: true,
-          })
+          const refreshed = await strictWorktrees(deps.workspaceManager, workspace.id)
           return refreshed.some((worktree) => worktree.slug === worktreeSlug
             && worktree.registeredDirectory === target.registeredDirectory
             && worktree.head === target.head)
@@ -187,7 +175,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { error: "Invalid worktree slug" }
     }
 
-    const { repoRoot, isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
+    const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
     if (!isGitRepo) {
       reply.code(400)
       return { error: "Workspace is not a Git repository" }
@@ -196,17 +184,13 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     const force = (request.query?.force ?? "").toString().toLowerCase() === "true"
 
     try {
-      const worktrees = await strictWorktrees({
-        repoRoot,
-        workspaceFolder: workspace.path,
-        logger: request.log,
-        failClosed: true,
-      })
+      const worktrees = await strictWorktrees(deps.workspaceManager, workspace.id)
       const match = worktrees.find((wt) => wt.slug === slug)
       if (!match || match.kind === "root") {
         reply.code(404)
         return { error: "Worktree not found" }
       }
+      if (match.removable === false) throw new ProjectSessionError("Git's main checkout cannot be removed", 409)
       const targetHostDirectory = match.registeredDirectory ?? match.directory
       const targetIdentity = await deps.workspaceManager.getWorktreeIdentityForPath(workspace.id, match.directory)
       const pathIdentity = await readPathIdentity(targetHostDirectory)
@@ -230,12 +214,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         }
         const targetServiceRoot = resolveServiceWorktreeRoot(targetHostDirectory, match.directory, targetDirectory)
         const isTargetRegistered = async () => {
-          const refreshed = await strictWorktrees({
-            repoRoot,
-            workspaceFolder: workspace.path,
-            logger: request.log,
-            failClosed: true,
-          })
+          const refreshed = await strictWorktrees(deps.workspaceManager, workspace.id)
           const current = refreshed.find((worktree) => worktree.slug === slug && worktree.kind === "worktree")
           return Boolean(current
             && current.registeredDirectory === match.registeredDirectory
@@ -265,12 +244,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           },
           remove: async () => {
             try {
-              await removeWorktree({
-                workspaceFolder: workspace.path,
-                directory: targetHostDirectory,
-                force,
-                logger: request.log,
-              })
+              await deps.workspaceManager.removeWorktree(workspace.id, targetServiceRoot, force)
             } catch (error) {
               throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to remove worktree", 409)
             }
@@ -278,7 +252,6 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
           isTargetRegistered,
         })
         invalidateWorktreeCache(workspace.id)
-        await refreshOpenCodeWorktrees(deps.workspaceManager, workspace.id, request.log)
       } finally {
         releaseDeletion()
       }
@@ -291,9 +264,9 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
   )
 }
 
-function strictWorktrees(params: Parameters<typeof listWorktrees>[0]) {
-  return listWorktrees(params).catch((error) => {
-    throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to read Git worktree inventory", 502)
+function strictWorktrees(manager: WorkspaceManager, workspaceId: string) {
+  return manager.getWorktrees(workspaceId).then(result => result.worktrees).catch((error) => {
+    throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to read native worktree inventory", 502)
   })
 }
 
@@ -371,25 +344,6 @@ async function assertNoWorktreeBlockers(
       const persistent = persistentPty.find((entry) => entry.status === "running" && servicePathContains(targetRoot, entry.cwd))
       if (persistent) throw new ProjectSessionError(`Running persistent PTY blocks deletion: ${persistent.id}`, 409)
     }
-  }
-}
-
-async function refreshOpenCodeWorktrees(
-  manager: WorkspaceManager,
-  workspaceId: string,
-  logger: FastifyInstance["log"],
-): Promise<void> {
-  const location = manager.getServiceLocation(workspaceId)
-  if (!location) return
-  try {
-    const client = await manager.getSharedServiceClient()
-    const signal = AbortSignal.timeout(5_000)
-    const resolved = await client.location.get({ location: { directory: location.directory } }, { ...locationRequestOptions(location), signal })
-    await client.worktree.refresh({ projectID: resolved.project.id }, {
-      ...locationRequestOptions(location, { includeDirectory: true }), signal,
-    })
-  } catch (error) {
-    logger.warn({ err: error }, "Failed to refresh OpenCode worktrees")
   }
 }
 

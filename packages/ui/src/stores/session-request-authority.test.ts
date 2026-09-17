@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -57,12 +58,19 @@ function apiMessage(id: string) {
 }
 
 function setup(instanceId: string) {
+  const originalFetchWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+    { slug: "root", directory: "/work", kind: "root" },
+    { slug: "feature", directory: "/work/.worktrees/feature", kind: "worktree" },
+    { slug: "external-feature", directory: "/work-feature", kind: "worktree" },
+  ] })
   const client = { session: { active: async () => ({}) } } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return {
     client,
     cleanup() {
+      serverApi.fetchWorktrees = originalFetchWorktrees
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
@@ -311,7 +319,7 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)
       assert.equal(sessions().get(instanceId)?.has("parent") ?? false, false)
       assert.deepEqual(getSessionSearchResultIds(instanceId), [])
-      assert.equal(calls, 1)
+      assert.equal(calls, 3)
     } finally {
       cleanup()
     }
@@ -1589,7 +1597,12 @@ describe("session request authority", () => {
         cursor: { next: "root-page-2" },
       }
       if (input.project === "project") return {
-        data: [apiSession("root"), apiSession("child", "root")],
+        data: [
+          apiSession("root"),
+          apiSession("child", "root"),
+          { ...apiSession("worktree-root"), location: { directory: "/work/.worktrees/feature" } },
+          { ...apiSession("other-clone"), location: { directory: "/other-clone" } },
+        ],
         cursor: { next: "project-inventory-page-2" },
       }
       return {
@@ -1603,6 +1616,10 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has("root"), true)
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.equal(sessions().get(instanceId)?.has("worktree-root"), true)
+      assert.equal(getSessionListIds(instanceId).includes("worktree-root"), true)
+      assert.equal(getSessionListIds(instanceId).includes("other-clone"), false)
+      assert.equal(sessions().get(instanceId)?.has("other-clone"), false)
       assert.equal(sessions().get(instanceId)?.get("legacy-child")?.projectID, "global")
       assert.equal(requests[0].directory, "/work")
       assert.equal("project" in requests[0], false)
@@ -1620,6 +1637,66 @@ describe("session request authority", () => {
       assert.equal(requests.length, 6)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps worktree rows visible throughout repeated refreshes until the complete inventory replaces them", async () => {
+    const instanceId = "stable-worktree-rows"
+    const { client, cleanup } = setup(instanceId)
+    const root = apiSession("root")
+    const worktree = { ...apiSession("worktree"), location: { directory: "/work-feature" } }
+    let inventory = deferred<any>()
+    let inventoryStarted = deferred<void>()
+    let rootPageHasMore = false
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      if (input.project === "project") {
+        inventoryStarted.resolve()
+        return inventory.promise
+      }
+      return { data: [root], cursor: input.parentID === null && rootPageHasMore ? { next: "older-roots" } : {} }
+    }
+
+    try {
+      inventory.resolve({ data: [root, worktree], cursor: {} })
+      await fetchSessions(instanceId)
+      assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+
+      for (let refresh = 0; refresh < 3; refresh += 1) {
+        inventory = deferred<any>()
+        inventoryStarted = deferred<void>()
+        const request = fetchSessions(instanceId, { reset: true })
+        await inventoryStarted.promise
+        // The directory page has arrived, but the worktree inventory has not.
+        const pendingIds = [...getSessionListIds(instanceId)]
+        inventory.resolve({ data: [root, worktree], cursor: {} })
+        await request
+        assert.deepEqual(pendingIds, ["root", "worktree"])
+        assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+      }
+
+      inventory = deferred<any>()
+      inventoryStarted = deferred<void>()
+      const failedRequest = fetchSessions(instanceId, { reset: true })
+      await inventoryStarted.promise
+      inventory.resolve(Promise.reject(new Error("inventory unavailable")))
+      await failedRequest
+      assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+
+      // A complete inventory is authoritative even when the first root page
+      // has an older continuation. A session that left the scope must disappear.
+      rootPageHasMore = true
+      inventory = deferred<any>()
+      inventoryStarted = deferred<void>()
+      const request = fetchSessions(instanceId, { reset: true })
+      await inventoryStarted.promise
+      const pendingIds = [...getSessionListIds(instanceId)]
+      inventory.resolve({ data: [root, { ...worktree, location: { directory: "/other-clone" } }], cursor: {} })
+      await request
+      assert.deepEqual(pendingIds, ["root", "worktree"])
+      assert.deepEqual(getSessionListIds(instanceId), ["root"])
     } finally {
       cleanup()
     }
@@ -1721,6 +1798,25 @@ describe("session request authority", () => {
     } finally {
       cleanup()
     }
+  })
+
+  it("searches the local worktree catalogue and follows each opaque cursor without widening scope", async () => {
+    const instanceId = "search-local-worktrees"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.cursor === "feature-next") return { data: [{ ...apiSession("feature-match"), location: { directory: "/work-feature" } }], cursor: {} }
+      if (input.directory === "/work-feature") return { data: [], cursor: { next: "feature-next" } }
+      return { data: [], cursor: {} }
+    }
+    try {
+      await searchSessions(instanceId, "match")
+      assert.deepEqual(getSessionSearchResultIds(instanceId), ["feature-match"])
+      assert.deepEqual(requests.filter(input => input.directory).map(input => input.directory), ["/work", "/work/.worktrees/feature", "/work-feature"])
+      assert.deepEqual(requests.at(-1), { cursor: "feature-next" })
+      assert.ok(requests.every(input => !input.project))
+    } finally { cleanup() }
   })
 
   it("keeps the global project scoped to the workspace directory", async () => {

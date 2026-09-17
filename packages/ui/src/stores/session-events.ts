@@ -48,7 +48,7 @@ import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
-import { getWorktrees } from "./worktrees"
+import { getWorktrees, reloadWorktrees } from "./worktrees"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
@@ -237,7 +237,9 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
     if (pending) clearTimeout(pending)
     movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
       movedSessionRefreshTimers.delete(instanceId)
-      void fetchSessions(instanceId, { reset: true }).then(() => (
+      void reloadWorktrees(instanceId).catch(error => {
+        log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
+      }).then(() => fetchSessions(instanceId, { reset: true })).then(() => (
         activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
       )).catch((error) => {
         log.warn("Failed to reconcile moved sessions", { instanceId, error })

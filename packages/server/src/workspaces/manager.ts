@@ -30,7 +30,9 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { invalidateWorktreeCache, isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { resolveRepoRoot } from "./git-worktrees"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -302,11 +304,49 @@ export class WorkspaceManager {
       ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
+  private async nativeWorktreeContext(id: string) {
+    const record = this.workspaces.get(id)
+    const location = this.getServiceLocation(id)
+    if (!record || !location) throw new Error("Workspace has no native location")
+    return {
+      client: await this.getSharedServiceClient(), location, workspacePath: record.path,
+      toHost: async (directory: string) => record.wslDistro
+        ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+        : directory,
+    }
+  }
+
+  private readonly worktreeInventoryRequests = new Map<string, ReturnType<typeof listNativeWorktrees>>()
+
+  async getWorktrees(id: string) {
+    const pending = this.worktreeInventoryRequests.get(id)
+    if (pending) return pending
+    const task = this.nativeWorktreeContext(id).then(listNativeWorktrees)
+    this.worktreeInventoryRequests.set(id, task)
+    try { return await task }
+    finally { if (this.worktreeInventoryRequests.get(id) === task) this.worktreeInventoryRequests.delete(id) }
+  }
+
+  async createWorktree(id: string, branch: string, fromSlug?: string) {
+    try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
+    finally { invalidateWorktreeCache() }
+  }
+
+  async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
+    try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
+    finally { invalidateWorktreeCache() }
+  }
+
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
+    const [target, root] = await Promise.all([
+      realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+    ])
+    if (target && target === root) return true
     return (await resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
       directory,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })) !== null
   }
@@ -318,10 +358,20 @@ export class WorkspaceManager {
         : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
     if (!hostDirectory) return null
+    const [target, root] = await Promise.all([
+      realpath(hostDirectory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+    ])
+    // The explicitly opened folder is already authority. Do not require native
+    // discovery (or a second connection) to authorize that exact local directory.
+    if (target && target === root) {
+      const { repoRoot } = await resolveRepoRoot(root)
+      return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+    }
     return resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
       directory: hostDirectory,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })
   }
@@ -340,6 +390,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       candidate,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })
   }

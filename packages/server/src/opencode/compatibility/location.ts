@@ -38,11 +38,15 @@ export function applyLocationContext(url: URL, method: string, body: unknown, he
   headers.delete(LOCATION_CONTEXT_HEADER)
   if (!location) return body
   const input = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : undefined
-  if (method === "POST" && url.pathname === "/api/worktree/refresh") {
+  if ((url.pathname === "/api/worktree" && ["GET", "POST", "DELETE"].includes(method))
+    || (method === "POST" && url.pathname === "/api/worktree/refresh")) {
     if (profile === "modern") return body
+    url.searchParams.delete("projectID")
     url.searchParams.set("location[directory]", location.directory)
     if (location.workspaceID !== undefined) url.searchParams.set("location[workspace]", location.workspaceID)
-    return undefined
+    if (!input || url.pathname.endsWith("/refresh")) return undefined
+    const { projectID: _projectID, ...payload } = input
+    return payload
   }
   const assertDirectory = (directory: unknown) => {
     if (directory !== location.directory) throw new Error("Location context does not match request")

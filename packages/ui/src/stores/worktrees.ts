@@ -6,6 +6,7 @@ import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 const log = getLogger("api")
 
@@ -15,6 +16,7 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 const worktreeRequests = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
+const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
@@ -23,6 +25,8 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
   const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
     try {
       const response = await serverApi.fetchWorktrees(instanceId)
+      if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
+      else defaultDirectories.delete(instanceId)
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
         next.set(instanceId, response.worktrees ?? [])
@@ -110,7 +114,7 @@ function getGitRepoStatus(instanceId: string): boolean | null {
   return gitRepoStatusByInstance().get(instanceId) ?? null
 }
 
-async function createWorktree(instanceId: string, slug: string): Promise<{ slug: string; directory: string; branch?: string }> {
+async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
   if (!instanceId) {
     throw new Error("Missing instanceId")
   }
@@ -118,7 +122,7 @@ async function createWorktree(instanceId: string, slug: string): Promise<{ slug:
   if (!trimmed) {
     throw new Error("Worktree name is required")
   }
-  return serverApi.createWorktree(instanceId, { slug: trimmed })
+  return serverApi.createWorktree(instanceId, { slug: trimmed, fromSlug })
 }
 
 async function deleteWorktree(
@@ -174,8 +178,7 @@ function getParentSessionId(instanceId: string, sessionId: string): string {
 }
 
 function normalizeDirectory(directory: string): string {
-  const normalized = directory.replace(/\\/g, "/").replace(/\/+$/, "")
-  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized
+  return normalizeSessionDirectory(directory)
 }
 
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
@@ -188,8 +191,11 @@ function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: st
 }
 
 function getWorktreeSlugForSession(instanceId: string, sessionId: string): string {
-  const parentId = getParentSessionId(instanceId, sessionId)
-  return getWorktreeSlugForParentSession(instanceId, parentId)
+  return getWorktreeSlugForParentSession(instanceId, sessionId)
+}
+
+export function getDefaultWorktreeDirectory(instanceId: string): string | undefined {
+  return defaultDirectories.get(instanceId)
 }
 
 async function setWorktreeSlugForParentSession(

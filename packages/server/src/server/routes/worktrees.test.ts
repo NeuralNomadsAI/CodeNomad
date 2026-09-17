@@ -11,6 +11,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorktreeRoutes } from "./worktrees"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readLocationContext } from "../../opencode/compatibility/location"
+import { fixtureCatalogue } from "../../workspaces/__tests__/native-worktree-fixture"
 
 describe("worktree routes", () => {
 it("reserves the physical worktree and rejects a same-HEAD replacement before deletion", async () => {
@@ -72,6 +73,7 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     let reserved = ""
     let released = false
     const manager = {
+      getWorktrees: () => fixtureCatalogue(workspacePath),
       get: () => ({
         id: "workspace",
         path: workspacePath,
@@ -98,7 +100,8 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     } as unknown as WorkspaceManager
     registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
-    const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/feature" })
+    const slug = (await fixtureCatalogue(workspacePath)).worktrees.find(entry => entry.branch === "feature")!.slug
+    const response = await app.inject({ method: "DELETE", url: `/api/workspaces/workspace/worktrees/${slug}` })
 
     assert.equal(response.statusCode, 409)
     assert.equal(path.resolve(reserved), path.resolve(linked))
@@ -159,6 +162,7 @@ it("fails a direct delete call closed when session evacuation fails", async () =
         },
       } as unknown as OpenCodeClient
       const manager = {
+        getWorktrees: () => fixtureCatalogue(temp),
         get: () => workspace,
         getSharedServiceClient: async () => client,
         getServiceLocation: () => ({ directory: temp }),
@@ -168,15 +172,16 @@ it("fails a direct delete call closed when session evacuation fails", async () =
       } as unknown as WorkspaceManager
       registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
+      const slug = (await fixtureCatalogue(temp)).worktrees.find(entry => entry.branch === "doomed")!.slug
       for (const [kind, message] of [["shell", "Running Shell"], ["pty", "Running PTY"], ["persistent", "Running persistent PTY"]] as const) {
         blocker = kind
-        const blocked = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
+        const blocked = await app.inject({ method: "DELETE", url: `/api/workspaces/workspace/worktrees/${slug}` })
         assert.equal(blocked.statusCode, 409)
         assert.match(blocked.json().error, new RegExp(message))
       }
       blocker = undefined
 
-      const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace/worktrees/doomed" })
+      const response = await app.inject({ method: "DELETE", url: `/api/workspaces/workspace/worktrees/${slug}` })
 
       assert.equal(response.statusCode, 502)
       assert.match(response.json().error, /native move failed/)
