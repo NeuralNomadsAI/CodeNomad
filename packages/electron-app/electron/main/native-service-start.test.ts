@@ -62,8 +62,11 @@ test("parent-started service survives backend process-tree enforcement", { timeo
     assert.equal(await query("health"), "alive")
     const tree = await captureProcessTree(backend.pid!)
     assert.ok(tree)
-    assert.equal(await forceCapturedProcessTree(tree), true)
+    // POSIX termination may still report the just-killed child as a zombie
+    // until Node processes SIGCHLD. Production retries this confirmation too.
+    await forceCapturedProcessTree(tree)
     await exited
+    assert.equal(await forceCapturedProcessTree(tree), true)
     assert.equal(await query("health"), "alive")
   } finally {
     if (port) await query("stop").catch(() => undefined)

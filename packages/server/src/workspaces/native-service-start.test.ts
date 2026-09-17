@@ -23,7 +23,7 @@ test("desktop start alone crosses the native bridge for host and WSL lifecycles"
         local.push(args)
         return { stdout: args.at(-1) === "status" ? "stopped\n" : "password\n", stderr: "" }
       },
-      fetch: async () => Response.json({ healthy: true, version: "fixture", pid: 42 }),
+      fetch: async () => Response.json({ version: "fixture", pid: 42, urls: ["http://127.0.0.1:4321"] }),
     }
     const startupEnvironment = { TEST_START_TOKEN: "test-token" }
     const service = kind === "host"

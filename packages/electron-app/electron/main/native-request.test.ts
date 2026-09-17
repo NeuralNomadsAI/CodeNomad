@@ -41,3 +41,13 @@ test("native response ignores a child stdin closed during dispatch", async () =>
   } as unknown as ChildProcess
   await dispatchNativeRequest(child, request, async () => ({}), () => true)
 })
+
+test("a closing or superseded backend cannot start a native service", async () => {
+  const request = parseNativeRequest(`${NATIVE_REQUEST_PREFIX}${JSON.stringify({
+    v: 1, id: "late-start", method: "opencode.service.start", deadline: Date.now() + 10_000,
+  })}`)!
+  let executed = false
+  const child = { stdin: { writable: true, write() { assert.fail("stale response") } } } as unknown as ChildProcess
+  await dispatchNativeRequest(child, request, async () => { executed = true }, () => false)
+  assert.equal(executed, false)
+})
