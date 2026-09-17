@@ -22,6 +22,7 @@ import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./pr
 import { getUserShellEnv, supportsUserShell } from "./user-shell"
 import { resolveShellEnvironment } from "./shell-environment"
 import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
+import { startNativeService } from "./native-service-start"
 
 const nodeRequire = createRequire(import.meta.url)
 const mainFilename = fileURLToPath(import.meta.url)
@@ -468,7 +469,9 @@ export class CliProcessManager extends EventEmitter {
           void dispatchNativeRequest(
             child,
             request,
-            this.nativeRequestHandler ?? (async (method) => { throw new Error(`Unsupported native method: ${method}`) }),
+            (method, params, deadline) => method === "opencode.service.start"
+              ? startNativeService(params, deadline)
+              : this.nativeRequestHandler?.(method, params, deadline) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
             () => this.child === child && !this.requestedStop,
           )
         }

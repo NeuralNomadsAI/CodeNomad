@@ -12,6 +12,7 @@ mod linux_tls;
 mod local_windows;
 mod managed_node;
 mod native_request;
+mod native_service_start;
 mod preferences_window;
 mod shutdown;
 mod windows_update;
@@ -227,11 +228,12 @@ pub(crate) fn require_preferences_or_local_app_window(
 pub(crate) fn handle_native_request(
     app: &AppHandle,
     method: &str,
-    _params: Option<serde_json::Value>,
-    _deadline: u64,
+    params: Option<serde_json::Value>,
+    deadline: u64,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
     match method {
+        "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => Ok(state.developer_mode.native_snapshot(app)),
         "developer.restart" => state.developer_mode.request_restart(app),
         _ => Err(format!("Unsupported native developer request: {method}")),
