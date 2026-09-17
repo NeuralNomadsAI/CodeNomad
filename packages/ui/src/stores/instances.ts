@@ -95,6 +95,7 @@ import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
 import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
 
@@ -1022,6 +1023,9 @@ async function disposeInstance(instanceId: string): Promise<boolean> {
 }
 
 async function refreshWorkspaceList(): Promise<void> {
+  // Preferences imports shared controls, but does not own workspace/session
+  // hydration. Its provider editor receives an explicit location from the host.
+  if (!usesClientState()) return
   const requestFence = workspaceListReconciliationFence.begin()
   const removalCandidates = new Set(instances().keys())
   try {
@@ -1109,6 +1113,7 @@ async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
 function handleWorkspaceEvent(event: WorkspaceEventPayload) {
+  if (!usesClientState()) return
   const workspaceId = event.type === "workspace.log"
     ? event.entry.workspaceId
     : "workspace" in event
