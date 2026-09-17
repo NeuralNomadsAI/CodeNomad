@@ -44,7 +44,9 @@ test("Preferences restores section and scroll after recreation and flushes an im
       closeWindow: async () => { w.fixtureClosed = true },
     }
   }` })
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/**", route => new URL(route.request().url()).pathname.startsWith("/api/")
+    ? route.fulfill({ contentType: "application/json", body: "{}" })
+    : route.continue())
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).ready)
