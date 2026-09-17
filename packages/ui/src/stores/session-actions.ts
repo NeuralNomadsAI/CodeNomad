@@ -17,18 +17,10 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
-import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
+import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { syncSessionInstructions } from "./session-instructions"
 
 const log = getLogger("actions")
-const VOICE_MODE_INSTRUCTION_KEY = "codenomad.voice-mode"
-const VOICE_MODE_INSTRUCTION = [
-  "Voice conversation mode is enabled.",
-  "Prepend your reply with a fenced code block using language `spoken`.",
-  "The `spoken` block should be a concise, natural spoken gist of the full response in 2 to 4 sentences.",
-  "Do not include code, bullet lists, markdown formatting, or long technical detail in the spoken block.",
-  "After the `spoken` block, continue with your normal detailed response.",
-].join("\n\n")
-const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void> }>()
 const technicalPartUpdates = new Map<string, Promise<void>>()
 const sessionAdmissions = new Map<string, Promise<unknown>>()
 
@@ -106,37 +98,6 @@ function serializeTechnicalPartUpdate(
   })
   technicalPartUpdates.set(key, settled)
   return settled
-}
-
-async function syncVoiceModeInstruction(client: ReturnType<typeof getRootClient>, instanceId: string, sessionId: string): Promise<void> {
-  const key = `${instanceId}:${sessionId}`
-  const existing = voiceInstructionSyncs.get(key)
-  if (existing) {
-    existing.desired = isConversationModeEnabled(instanceId)
-    return existing.running
-  }
-
-  const state = { desired: isConversationModeEnabled(instanceId), running: Promise.resolve() }
-  state.running = (async () => {
-    try {
-      let applied: boolean | undefined
-      while (applied !== state.desired) {
-        const desired = state.desired
-        const instruction = client.session.instructions.entry
-        if (desired) {
-          await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
-        } else {
-          await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
-        }
-        applied = desired
-        state.desired = isConversationModeEnabled(instanceId)
-      }
-    } finally {
-      if (voiceInstructionSyncs.get(key) === state) voiceInstructionSyncs.delete(key)
-    }
-  })()
-  voiceInstructionSyncs.set(key, state)
-  return state.running
 }
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
@@ -372,7 +333,7 @@ async function sendMessage(
       if (!currentInstance?.client) throw new Error("Instance not ready")
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
-      await syncVoiceModeInstruction(client, instanceId, sessionId)
+      await syncSessionInstructions(client, instanceId, sessionId)
       if (options.delivery !== "queue") {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
@@ -413,7 +374,7 @@ async function executeCustomCommand(
     if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
     if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
     const client = getRootClient(instanceId)
-    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await syncSessionInstructions(client, instanceId, sessionId)
     await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" })
   }, { optimisticGeneration: false })
 }
@@ -433,7 +394,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
     if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
     const client = getRootClient(instanceId)
-    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await syncSessionInstructions(client, instanceId, sessionId)
     await client.session.shell({ sessionID: sessionId, command })
   })
 }

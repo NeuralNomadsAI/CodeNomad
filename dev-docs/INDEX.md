@@ -32,6 +32,10 @@ Measured DEV-v2 growth analysis, maintainer position on test volume, ranked redu
 
 Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
 
+### [WORKTREE_SESSION_PLACEMENT.md](WORKTREE_SESSION_PLACEMENT.md)
+
+Native project/location versus CodeNomad conversation attachment, user-authorized movement, session instruction synchronization, and Windows directory-spelling diagnostics.
+
 ---
 
 ## Specification Documents
