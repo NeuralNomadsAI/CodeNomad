@@ -6,6 +6,47 @@ import { OpenCode } from "@opencode/client"
 import type { Endpoint } from "@opencode/client/service"
 import { rememberRuntime } from "./runtime"
 import { createRuntimeFetch } from "./transport"
+import { modernContractFixture } from "./contract-fixture"
+
+test("the pinned status client follows the discovered route across legacy, modern and info runtimes", async () => {
+  for (const [version, discovery, route] of [
+    ["2.0.0", "health", "/api/health"],
+    ["2.0.4", "status", "/api/status"],
+    ["2.0.7", "info", "/api/info"],
+    ["future-release", "info", "/api/info"],
+  ] as const) {
+    const endpoint: Endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic", username: "opencode", password: "fixture" } }
+    rememberRuntime(endpoint, { version, pid: 123, discovery })
+    const seen: string[] = []
+    const fetch = createRuntimeFetch(endpoint, async (input, init) => {
+      const path = new URL(String(input)).pathname
+      seen.push(path)
+      assert.equal(init?.redirect, "error")
+      assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:fixture").toString("base64")}`)
+      if (path === "/openapi.json") return Response.json(modernContractFixture)
+      assert.equal(path, route)
+      return Response.json(discovery === "health" ? { healthy: true, version, pid: 123 } : { version, pid: 123, urls: [endpoint.url] })
+    })
+    const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
+    assert.deepEqual(await client.server.status(), { version, pid: 123, urls: [endpoint.url] })
+    assert.deepEqual(seen, discovery === "info" ? ["/openapi.json", route] : [route])
+  }
+})
+
+test("info translation is GET-only and does not probe alternate routes on failure", async () => {
+  const endpoint: Endpoint = { url: "http://127.0.0.1:4321" }
+  rememberRuntime(endpoint, { version: "2.0.7", pid: 123, discovery: "info" })
+  const seen: string[] = []
+  const fetch = createRuntimeFetch(endpoint, async (input, init) => {
+    const path = new URL(String(input)).pathname
+    seen.push(`${init?.method ?? "GET"} ${path}`)
+    return path === "/openapi.json" ? Response.json(modernContractFixture) : new Response(null, { status: 404 })
+  })
+  const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
+  await assert.rejects(client.server.status())
+  await fetch(`${endpoint.url}/api/status`, { method: "POST" })
+  assert.deepEqual(seen, ["GET /openapi.json", "GET /api/info", "POST /api/status"])
+})
 
 test("the pinned client uses the earlier wire contract and retains admission/list timestamps", async () => {
   const seen: Array<{ method: string; path: string; body: unknown }> = []
