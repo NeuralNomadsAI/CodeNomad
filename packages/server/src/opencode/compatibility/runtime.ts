@@ -3,7 +3,7 @@ import type { Endpoint } from "@opencode/client/service"
 export interface RuntimeIdentity {
   version: string
   pid: number
-  discovery: "status" | "health"
+  discovery: "status" | "health" | "info"
   /** Filled only by a successful, authenticated schema negotiation. */
   contract?: { profile?: Exclude<ContractProfile, "unknown"> }
 }
