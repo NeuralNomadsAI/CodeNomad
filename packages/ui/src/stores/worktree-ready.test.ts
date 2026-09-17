@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { serverApi } from "../lib/api-client.ts"
-import { ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees } from "./worktrees.ts"
+import { ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
+import type { Session } from "../types/session.ts"
+import { sessions, setSessions } from "./session-state.ts"
 
 describe("handleWorktreeReady", () => {
   it("refreshes worktrees", async () => {
@@ -130,6 +132,56 @@ describe("handleWorktreeReady", () => {
       assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["root", "feature"])
     } finally {
       serverApi.fetchWorktrees = originalFetchWorktrees
+    }
+  })
+})
+
+describe("session family worktree moves", () => {
+  it("moves a descendant's family root and refreshes authoritatively", async () => {
+    const instanceId = "family-move"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({
+      isGitRepo: true,
+      worktrees: [
+        { slug: "root", directory: "/repo", kind: "root" },
+        { slug: "feature", directory: "/repo-feature", kind: "worktree" },
+      ],
+    })
+    const root = { id: "root", parentId: null, location: { directory: "/repo" } } as Session
+    const child = { id: "child", parentId: "root", location: { directory: "/repo" } } as Session
+    setSessions((prev) => new Map(prev).set(instanceId, new Map([[root.id, root], [child.id, child]])))
+    await reloadWorktrees(instanceId)
+
+    try {
+      const calls: string[] = []
+      await setWorktreeSlugForParentSession(instanceId, child.id, "feature", {
+        moveFamily: async (_id, rootSessionId, slug) => {
+          calls.push(`move:${rootSessionId}:${slug}`)
+          assert.equal(root.location.directory, "/repo")
+          assert.equal(child.location.directory, "/repo")
+        },
+        refreshSessions: async () => {
+          calls.push("refresh")
+          setSessions((prev) => new Map(prev).set(instanceId, new Map([
+            [root.id, { ...root, location: { directory: "/repo-feature" } }],
+            [child.id, { ...child, location: { directory: "/repo-feature" } }],
+          ])))
+        },
+      })
+      assert.deepEqual(calls, ["move:root:feature", "refresh"])
+      assert.equal(root.location.directory, "/repo")
+      assert.equal(child.location.directory, "/repo")
+      assert.equal(sessions().get(instanceId)?.get(root.id)?.location.directory, "/repo-feature")
+      assert.equal(sessions().get(instanceId)?.get(child.id)?.location.directory, "/repo-feature")
+
+      await setWorktreeSlugForParentSession(instanceId, child.id, "root", {
+        moveFamily: async () => { calls.push("move:root") },
+        refreshSessions: async () => { throw new Error("refresh failed") },
+      })
+      assert.equal(calls.at(-1), "move:root")
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
     }
   })
 })

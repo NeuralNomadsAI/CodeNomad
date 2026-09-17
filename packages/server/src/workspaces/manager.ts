@@ -30,7 +30,9 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { invalidateWorktreeCache, isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { resolveRepoRoot } from "./git-worktrees"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -163,6 +165,7 @@ export interface WorkspaceCreateOptions {
 type CreationRequestState = "owner" | "cancelled" | "released"
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly deletingWorktreeRoots = new Set<string>()
   private readonly cancelledCreationRequests = new Set<string>()
   private readonly pendingCreationRequests = new Set<string>()
   private readonly activeLocationCreations = new Set<Promise<void>>()
@@ -196,6 +199,12 @@ export class WorkspaceManager {
     return record?.[WORKSPACE_STATE].published ? record.location?.directory ?? record.path : undefined
   }
 
+  getServiceLocation(id: string): LocationRef | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    return record.location ?? { directory: record.path }
+  }
+
   async getSharedServiceEndpoint(id: string): Promise<Endpoint | undefined> {
     if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
     try {
@@ -210,6 +219,21 @@ export class WorkspaceManager {
 
   getSharedServiceClient(): Promise<OpenCodeClient> {
     return this.sharedService.client()
+  }
+
+  async reserveWorktreeDeletion(directory: string): Promise<() => void> {
+    const submitted = path.isAbsolute(directory) ? directory : path.resolve(this.options.rootDir, directory)
+    const target = canonicalWorktreeIdentity(await realpath(submitted).catch(() => path.normalize(submitted)), this.options.platform)
+    if (Array.from(this.deletingWorktreeRoots).some((root) => pathsOverlap(root, target))) {
+      throw new Error("Worktree deletion is already in progress")
+    }
+    if (Array.from(this.workspaces.values()).some((workspace) => (
+      pathContains(target, canonicalWorktreeIdentity(workspace.path, this.options.platform))
+    ))) {
+      throw new Error("Worktree is open as another workspace")
+    }
+    this.deletingWorktreeRoots.add(target)
+    return () => this.deletingWorktreeRoots.delete(target)
   }
 
   getSharedServiceFetch(): Promise<typeof fetch> {
@@ -280,11 +304,49 @@ export class WorkspaceManager {
       ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
+  private async nativeWorktreeContext(id: string) {
+    const record = this.workspaces.get(id)
+    const location = this.getServiceLocation(id)
+    if (!record || !location) throw new Error("Workspace has no native location")
+    return {
+      client: await this.getSharedServiceClient(), location, workspacePath: record.path,
+      toHost: async (directory: string) => record.wslDistro
+        ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+        : directory,
+    }
+  }
+
+  private readonly worktreeInventoryRequests = new Map<string, ReturnType<typeof listNativeWorktrees>>()
+
+  async getWorktrees(id: string) {
+    const pending = this.worktreeInventoryRequests.get(id)
+    if (pending) return pending
+    const task = this.nativeWorktreeContext(id).then(listNativeWorktrees)
+    this.worktreeInventoryRequests.set(id, task)
+    try { return await task }
+    finally { if (this.worktreeInventoryRequests.get(id) === task) this.worktreeInventoryRequests.delete(id) }
+  }
+
+  async createWorktree(id: string, branch: string, fromSlug?: string) {
+    try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
+    finally { invalidateWorktreeCache() }
+  }
+
+  async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
+    try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
+    finally { invalidateWorktreeCache() }
+  }
+
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
+    const [target, root] = await Promise.all([
+      realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+    ])
+    if (target && target === root) return true
     return (await resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
       directory,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })) !== null
   }
@@ -296,10 +358,20 @@ export class WorkspaceManager {
         : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
     if (!hostDirectory) return null
+    const [target, root] = await Promise.all([
+      realpath(hostDirectory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+    ])
+    // The explicitly opened folder is already authority. Do not require native
+    // discovery (or a second connection) to authorize that exact local directory.
+    if (target && target === root) {
+      const { repoRoot } = await resolveRepoRoot(root)
+      return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+    }
     return resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
       directory: hostDirectory,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })
   }
@@ -318,6 +390,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       candidate,
+      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
       logger: this.options.logger,
     })
   }
@@ -400,6 +473,10 @@ export class WorkspaceManager {
         launchDeadlineAt,
         launchTimeoutMs,
       )
+      const workspaceIdentity = canonicalWorktreeIdentity(workspacePath, this.options.platform)
+      if (Array.from(this.deletingWorktreeRoots).some((root) => pathContains(root, workspaceIdentity))) {
+        throw new Error("Workspace directory is being removed")
+      }
       if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
         throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
       }
@@ -1029,4 +1106,25 @@ export class WorkspaceManager {
 
     return candidates[0] ?? ""
   }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const left = parseWorktreeIdentity(parent)
+  const right = parseWorktreeIdentity(child)
+  if (left || right) {
+    if (!left || !right || left.distro !== right.distro) return false
+    const relative = path.posix.relative(left.linuxPath, right.linuxPath)
+    return relative === "" || (relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative))
+  }
+  const relative = path.relative(parent, child)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return pathContains(left, right) || pathContains(right, left)
+}
+
+function parseWorktreeIdentity(identity: string): { distro: string; linuxPath: string } | undefined {
+  const match = /^wsl:([^:]+):(\/.*)$/.exec(identity)
+  return match ? { distro: match[1]!, linuxPath: match[2]! } : undefined
 }

@@ -162,7 +162,7 @@ describe("native undo settlement", () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
     seed({ session: {
-      instructions: { entry: { remove: async () => {} } },
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
       switchAgent: async () => {}, switchModel: async () => {},
       prompt: async (input: any) => { calls.push(input.text); if (input.text === "before") await gate; return { id: input.id } },
       revert: { stage: async () => { calls.push("stage") } },
@@ -179,13 +179,13 @@ describe("native undo settlement", () => {
   })
 })
 
-describe("voice instruction sync", () => {
+describe("session instruction sync", () => {
   it("syncs the enabled instruction before a slash command", async () => {
     const calls: string[] = []
     let commandInput: unknown
     seed({ session: {
       instructions: { entry: {
-        put: async () => { calls.push("put") },
+        put: async (input: any) => { calls.push(`put:${input.key}`) },
         remove: async () => { calls.push("remove") },
       } },
       command: async (input: unknown) => { calls.push("command"); commandInput = input },
@@ -194,7 +194,7 @@ describe("voice instruction sync", () => {
 
     await executeCustomCommand(instanceId, sessionId, "review", "")
 
-    assert.deepEqual(calls, ["put", "command"])
+    assert.deepEqual(calls, ["put:codenomad.voice-mode", "put:codenomad.session-placement", "command"])
     assert.deepEqual(commandInput, {
       sessionID: sessionId,
       name: "review",
@@ -209,15 +209,15 @@ describe("voice instruction sync", () => {
     const calls: string[] = []
     seed({ session: {
       instructions: { entry: {
-        put: async () => { calls.push("put") },
-        remove: async () => { calls.push("remove") },
+        put: async (input: any) => { calls.push(`put:${input.key}`) },
+        remove: async (input: any) => { calls.push(`remove:${input.key}`) },
       } },
       shell: async () => { calls.push("shell") },
     } })
 
     await runShellCommand(instanceId, sessionId, "pwd")
 
-    assert.deepEqual(calls, ["remove", "shell"])
+    assert.deepEqual(calls, ["remove:codenomad.voice-mode", "put:codenomad.session-placement", "shell"])
   })
 
   it("serializes concurrent syncs so the latest mode wins remotely", async () => {
@@ -226,7 +226,10 @@ describe("voice instruction sync", () => {
     const putGate = new Promise<void>((resolve) => { releasePut = resolve })
     seed({ session: {
       instructions: { entry: {
-        put: async () => { calls.push("put:start"); await putGate; calls.push("put:end") },
+        put: async (input: any) => {
+          if (input.key === "codenomad.session-placement") { calls.push("placement"); return }
+          calls.push("put:start"); await putGate; calls.push("put:end")
+        },
         remove: async () => { calls.push("remove") },
       } },
       command: async () => { calls.push("command") },
@@ -239,9 +242,45 @@ describe("voice instruction sync", () => {
     releasePut()
     await first
 
-    assert.deepEqual(calls, ["put:start", "put:end", "remove", "command"])
+    assert.deepEqual(calls, ["put:start", "put:end", "remove", "placement", "command"])
     assert.equal(calls.filter((call) => call === "remove").length, 1)
   })
+
+  for (const action of ["prompt", "command", "shell"] as const) {
+    it(`waits for placement setup before ${action} and propagates its failure`, async () => {
+      const calls: string[] = []
+      let rejectPut!: (error: Error) => void
+      const gate = new Promise<void>((_resolve, reject) => { rejectPut = reject })
+      seed({ session: {
+        instructions: { entry: {
+          put: async (input: any) => {
+            assert.equal(input.sessionID, sessionId)
+            assert.equal(input.key, "codenomad.session-placement")
+            calls.push("placement")
+            await gate
+          },
+          remove: async () => {},
+        } },
+        switchAgent: async () => {}, switchModel: async () => {},
+        [action]: async () => { calls.push(action) },
+      } })
+      const pending = action === "prompt" ? sendMessage(instanceId, sessionId, "hello")
+        : action === "command" ? executeCustomCommand(instanceId, sessionId, "review", "")
+          : runShellCommand(instanceId, sessionId, "pwd")
+      const rejected = assert.rejects(pending, /instruction unavailable/)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(calls, ["placement"])
+      rejectPut(new Error("instruction unavailable"))
+      await rejected
+      assert.deepEqual(calls, ["placement"])
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
+      if (action === "prompt") {
+        const store = messageStoreBus.getOrCreate(instanceId)
+        const ids = store.getSessionMessageIds(sessionId)
+        assert.equal(store.getMessage(ids[ids.length - 1])?.status, "error")
+      }
+    })
+  }
 })
 
 describe("session interruption", () => {
