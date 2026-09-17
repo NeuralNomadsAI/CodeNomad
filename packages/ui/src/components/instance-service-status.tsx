@@ -85,7 +85,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     try {
       const resolved = metadata()?.mcpStatus?.location
       const location = resolved
-        ? { directory: resolved.directory, ...(resolved.workspaceID ? { workspace: resolved.workspaceID } : {}) }
+        ? { directory: resolved.directory }
         : { directory: instance().folder }
       if (shouldEnable) {
         await client.mcp.connect({ server: serverName, location })

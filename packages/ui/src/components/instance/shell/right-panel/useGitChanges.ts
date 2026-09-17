@@ -189,6 +189,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 1500)),
       ]).catch(() => null)
 
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return
       const sdkList = sdkResult && sdkResult.kind === "fulfilled" ? sdkResult.value : null
       setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
     } catch (error) {

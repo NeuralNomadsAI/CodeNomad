@@ -27,7 +27,7 @@ import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-w
 import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
-import type { SessionInboxUser } from "@opencode-ai/client"
+import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"

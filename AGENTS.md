@@ -10,6 +10,7 @@
 - Keep agent, model, and thinking controls in the composer footer via `PromptContextControls`; adapt that footer with the named `prompt-composer` container rather than viewport-only breakpoints.
 - Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
 - Session hierarchy geometry lives in `styles/components/session-tree.css`; connector axes follow the parent expander at every depth, including selection mode, RTL and touch layouts.
+- Session search/filter mode uses flat per-session results with an optional subsession switch; filters, sorting, worktree badges and selection use each result's own identity. Normal browsing retains the session hierarchy.
 - Never use rounded corners in UI styling; keep corners square unless the user explicitly requests otherwise for a specific change.
 - Explicit round exceptions: Yolo and MCP switches (shared `styles/components/switches.css` geometry), overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
 - Tags and numeric/context/token labels also use rounded geometry via `--chip-radius` (`--pill-radius` is an alias). Register badge variants in `styles/components/badges.css`; use `.badge-shape` for utility-styled labels rather than adding a local radius.
@@ -17,12 +18,14 @@
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
 - Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`, with references in `dev-docs/PALETTE_SOURCES.md`. Keep selection independent of participant identity, and keep transcript/composer surfaces distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
-- Palette settings follow the resolved appearance in Auto mode. Keep the picker/actions beside the two-row swatch grid, stacking via the `palette-settings` container at narrow widths. Swatch styles live in `styles/components/theme-scheme-swatches.css`.
+- Palette settings follow the resolved appearance in Auto mode. Keep the picker, single-row square swatches and trailing actions aligned. Swatch names use tooltips and accessible input labels. At narrow card widths, scroll the swatch strip beside the picker and move actions below via the `palette-settings` container. Swatch styles live in `styles/components/theme-scheme-swatches.css`.
 - Appearance mode and the saved light/dark selections are independent (`lib/appearance-preferences.ts`). Message/tool cards use the muted surface, inset output and the composer use the base canvas, and preferences use the same secondary surface as the main panels. Use `--surface-hover-overlay` for a subtle local rollover; preserve selected backgrounds beneath that overlay instead of replacing them with a generic panel color.
 - Right-panel base-canvas button rollover overrides live in `styles/panels/control-hover.css`; do not substitute the secondary surface merely to show hover.
 - Project and right-panel tabs share `components/tab-scroll.tsx` and `styles/components/tab-scroll.css`. Keep their native scrollbar above upright content without mirrored transforms, negative border overlaps or permanent compositing hints. Validate shared scrollbar styling and adjoining edges at fractional zoom in the browser and isolated Electron renderer fixtures (`tests/browser/tab-chrome.test.ts`).
 
 ## Coding Principles
+
+- Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
 
 - Session pruning is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`; see `dev-docs/SESSION_PRUNING_RPC.md`. Bundle it with the shared server for both desktop hosts and provision through normal native plugin discovery. RPC registrations follow backend presence; clean shutdown removes that backend's lease and crashes expire. Loading never deletes content. Deletion occurs only on an explicit pruning request, without an extra enable-write switch or beta-number gate. Keep generic RPC proxy access closed. Writes validate actual storage, a fresh daemon-storage identity challenge and the native durable execution claim inside a synchronous SQLite transaction. Run isolated native concurrency/payload and client-cache regressions; tests must never target the shared daemon or a user's database.
 - Favor KISS by keeping modules narrowly scoped and limiting public APIs to what callers actually need.
@@ -68,8 +71,8 @@ Behavior for agents:
 - Run them with `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`. `CODENOMAD_BROWSER_PATH` optionally selects an existing Chromium executable; it does not target the installed application or user sessions.
 
 ## V2 Runtime Launch
-- Launch the release executable from PowerShell with the dedicated WebView2 profile, CDP port, Rust backtraces, and Node source maps described in `MIGRATION_V2.md`.
-- Stop the running CodeNomad instance before rebuilding the same release path, then relaunch it from the independent OpenCode TUI.
+- Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once; do not configure a fixed CDP port or a manual WebView2 profile.
+- Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.

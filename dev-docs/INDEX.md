@@ -20,6 +20,10 @@ Executive summary of the entire project - **start here!**
 
 Incremental comparison with official OpenCode Desktop V2, including parity, closed defects, remaining correctness work, runtime upgrade scope, and optional feature gaps.
 
+### [OPENCODE_V2_COMPATIBILITY.md](OPENCODE_V2_COMPATIBILITY.md)
+
+September 2026 published API-contract census, verified compatibility failures, connection-scoped adapter proposal, support targets and cross-runtime acceptance roadmap. Start here for OpenCode upgrade and backward-compatibility work.
+
 ### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
 
 Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.
@@ -27,6 +31,10 @@ Measured DEV-v2 growth analysis, maintainer position on test volume, ranked redu
 ### [DEVELOPER_MODE.md](DEVELOPER_MODE.md)
 
 Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
+
+### [WORKTREE_SESSION_PLACEMENT.md](WORKTREE_SESSION_PLACEMENT.md)
+
+Native project/location versus CodeNomad conversation attachment, user-authorized movement, session instruction synchronization, and Windows directory-spelling diagnostics.
 
 ---
 
@@ -63,7 +71,7 @@ Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect beh
 - File structure
 - TypeScript interfaces
 - Shared OpenCode service and location ownership
-- Native `@opencode-ai/client` integration
+- Native `@opencode/client` integration
 - IPC communication
 - Error handling strategies
 

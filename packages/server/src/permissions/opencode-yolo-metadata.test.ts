@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeClient } from "@opencode-ai/client"
+import type { OpenCodeClient } from "@opencode/client"
 
 import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
@@ -92,8 +92,8 @@ describe("OpenCode Yolo persistence", () => {
       },
     ])
     assert.deepEqual(listInputs, [
-      { directory: "/repo", limit: 10_000, cursor: undefined },
-      { directory: "/repo", limit: 10_000, cursor: "page-2" },
+      { directory: "/repo", limit: 10_000 },
+      { cursor: "page-2" },
     ])
   })
 

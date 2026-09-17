@@ -6,6 +6,7 @@ import { storageKey, validateClaimFence } from "./claim-fence"
 import { pruneTransaction } from "./transaction"
 import { pruneRequestSchema, type PruneResult } from "./contract"
 import { pruningDatabasePath } from "./database-path"
+import { readLocationRef, sameLocation } from "./location"
 
 // Only an explicit pruning RPC calls this service; loading the plugin never prunes.
 // No database access is exposed through CodeNomad's HTTP broker.
@@ -19,8 +20,10 @@ export async function pruneBoundMessage(
     return { status: "blocked", reason: "unsupported_storage" }
   }
   const session = await ctx.session.get({ sessionID: request.sessionID })
-  if (session.location.directory !== ctx.location.directory || session.projectID !== ctx.location.project.id
-    || session.location.workspaceID !== ctx.location.workspaceID) return { status: "blocked", reason: "not_deletable" }
+  const location = readLocationRef(session.location)
+  if (!sameLocation(location, readLocationRef(ctx.location)) || session.projectID !== ctx.location.project.id) {
+    return { status: "blocked", reason: "not_deletable" }
+  }
   const filename = await realpath(configured)
   const { DatabaseSync } = await import("node:sqlite")
   const key = `pruning/binding/${randomUUID()}`
@@ -37,8 +40,7 @@ export async function pruneBoundMessage(
       try {
         return pruneTransaction(db, request, () => validateClaimFence(db, request.sessionID, {
           key: storageKey(key), nonce,
-          directory: session.location.directory, projectID: session.projectID,
-          workspaceID: session.location.workspaceID,
+          directory: location.directory, workspaceID: location.workspaceID, projectID: session.projectID,
         }), storageKey("pruning/receipt/"))
       } catch (error) {
         const code = (error as { errcode?: number; code?: string }).errcode

@@ -2,12 +2,14 @@
 
 ## Package
 
-CodeNomad server and UI follow `@opencode-ai/client@beta`. Refresh the client lock before API audits or release validation. The runtime CLI is managed independently; startup validates its authenticated loopback endpoint and health response without an exact version gate, while contract parity is reviewed at upgrade and release time. The public `@opencode-ai/sdk` provides the same generated Promise contract through an alternative embedded host.
+CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport maps canonical `server.status()` to the discovered route. Discovery does not prove compatibility for other APIs. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
-- Promise client: `import { OpenCode } from "@opencode-ai/client"`
-- Service authentication headers: `import { Service } from "@opencode-ai/client/service"`
+Cross-runtime adaptation lives in `packages/server/src/opencode/compatibility/`. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Known published contracts select their serializer directly; unknown versions require authenticated bounded OpenAPI recognition before calls. Never add operation-specific retry fallbacks in UI stores or Yolo. See `dev-docs/OPENCODE_V2_COMPATIBILITY.md` for the evidence matrix and maintained issue register.
+
+- Promise client: `import { OpenCode } from "@opencode/client"`
+- Service authentication headers: `import { Service } from "@opencode/client/service"`
 - Client construction: `OpenCode.make({ baseUrl, headers?, fetch? })`
-- Declarations: `node_modules/@opencode-ai/client/dist/promise/`
+- Declarations: `node_modules/@opencode/client/dist/promise/`
 
 Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNomad intentionally changes to an embedded, process-owned host.
 
@@ -15,17 +17,23 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 
 | Area | Calls | CodeNomad caller |
 |---|---|---|
-| Service | CLI `service status/start/get password`; `Service.headers` for authenticated health/API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
+| Service | CLI `service status/start/get password`; authenticated `/api/status`, `/api/health`, `/api/info` in order, advancing only on 404; `Service.headers` for probes and API calls | `packages/server/src/workspaces/opencode-service.ts`, `packages/server/src/workspaces/opencode-cli-service.ts`, `packages/server/src/workspaces/host-opencode-service.ts`, `packages/server/src/workspaces/wsl-opencode-service.ts` |
 | Location | `client.location.get`, `client.debug.location.evict` | shared service wrapper |
 | Events | `client.event.subscribe()` | `packages/server/src/workspaces/instance-events.ts` |
-| Sessions | `list/get/create/fork/remove/rename/prompt/command/shell/interrupt` | UI session stores |
+| Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
 | Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
-| Forms | `client.form.request.list`, `client.form.reply`, `client.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
+| Forms | `client.form.list`, `client.session.form.reply`, `client.session.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; do not wrap calls in stale SDK response-unwrapping helpers.
 
-Native Forms own pending interruption state. The allowlisted Question request/reply/reject routes are compatibility-only. The Question tool renderer may display compatible output, but no Question queue/state architecture should return.
+Native Forms own pending interruption state. Global Forms use `sessionID: "global"` and `x-opencode-directory: encodeURIComponent(directory)`; ordinary session Forms derive location from the session. Question tool output rendering is independent of pending Forms.
+
+Earlier V2 location identity must survive modern generated-client field selection. Use `locationRequestOptions` (server) / `requestLocationOptions` (UI) for the explicit private context channel; the proxy authorizes the complete pair, translates its directory, and the selected transport serializes the appropriate legacy slots. Modern public APIs still reject workspace selectors. Session move/rollback uses `moveSessionToLocation`, not a cast adding fields to the modern method input.
+
+Stable mutations use `permission.reply({ decision })`, `session.command({ name })`, `session.interrupt({ resume })`, `session.fork({ before? })`, `session.inbox.update({ delivery })` and `session.message.get(...)`. Credential removal is global and takes only `credentialID`. There is no plugin activation-wait endpoint; catalog reads and `plugin.updated` supply native state.
+
+Wait, instructions, import/export, stats and log use `/api/experimental/session/...` paths. Cancellation is `DELETE /api/session/:sessionID/form/:formID`. Preserve generated response envelopes in the proxy: `session.active` consumes `{ data }`, while `project.list` consumes an array. Native `cursor.next` remains the sole continuation authority.
 
 ## Routing
 
@@ -37,7 +45,7 @@ Location-sensitive list/create calls include `directory` or `location`. Session-
 
 Do not look for these in the OpenCode client:
 
-- Workspace create/delete and worktree management
+- Workspace create/delete and worktree workflow routes (native OpenCode owns worktree discovery/create/remove; CodeNomad supplies directory/branch policy and verified session-family moves)
 - Git status/diff/stage/unstage/commit
 - Yolo toggle, persistence and auto-accept policy
 - Authentication, storage, speech, sidecars and previews

@@ -1,4 +1,4 @@
-import type { IntegrationInfo, ModelInfo, ProviderInfo } from "@opencode-ai/client"
+import type { IntegrationInfo, ModelInfo, ProviderInfo } from "@opencode/client"
 
 export type ListedProvider = {
   id: string

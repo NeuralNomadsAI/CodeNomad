@@ -1,7 +1,7 @@
 export {}
 
 import type { LoggerControls } from "../lib/logger"
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import type { SettingsSectionId } from "../stores/settings-screen"
 
 declare global {

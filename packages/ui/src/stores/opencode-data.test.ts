@@ -29,7 +29,7 @@ function stubAuthoritativeSession(client: any, sessionId: string, messages: () =
   client.session.active = async () => ({})
   client.session.inbox = { list: async () => [] }
   client.permission.list = async () => []
-  client.form.list = async () => []
+  client.session.form.list = async () => []
   client.message.list = messages
 }
 
@@ -67,7 +67,7 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("projects streamed-step timing and authoritative assistant content replacements", () => {
+  it("projects streamed-step timing with native assistant text", () => {
     const instanceId = "opencode-data-content-update"
     const sessionId = "session"
     const base = { sessionID: sessionId, assistantMessageID: "assistant" }
@@ -78,16 +78,11 @@ describe("OpenCode data projection", () => {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.text.started", base, 2)
       apply("session.text.delta", { ...base, ordinal: 0, delta: "draft" }, 3)
-      apply("session.step.streamed", base, 4)
-      const data = apply("session.message.content.updated", {
-        sessionID: sessionId,
-        messageID: "assistant",
-        content: [{ type: "text", text: "edited" }],
-      }, 5)
+      const data = apply("session.step.streamed", base, 4)
       projectOpenCodeMessages(instanceId, sessionId, data)
 
       const store = messageStoreBus.getOrCreate(instanceId)
-      assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "edited")
+      assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "draft")
       assert.equal(store.getMessageInfo("assistant")?.time?.streamed, 4)
     } finally {
       destroyOpenCodeData(instanceId)
@@ -958,7 +953,7 @@ describe("OpenCode data projection", () => {
     const client = getRootClient(instanceId)
     let reads = 0
     let applied = 0
-    ;(client.session as any).message = async ({ messageID }: { messageID: string }) => {
+    client.session.message.get = async ({ messageID }: { messageID: string }) => {
       reads += 1
       return { id: messageID, type: "model-switched", model: { providerID: "provider", id: "next" }, time: { created: 500 } }
     }
@@ -987,7 +982,7 @@ describe("OpenCode data projection", () => {
       projectOpenCodeMessages(instanceId, sessionId, data)
       await new Promise<void>((resolve) => setImmediate(resolve))
 
-      // With a connected transport, beta-19271 inserts the event immediately
+      // With a connected transport, the native client inserts the event immediately
       // and refreshes its authoritative message once. Rotation must not replay
       // the event and duplicate that SDK-owned refresh.
       assert.equal(reads, 1)
