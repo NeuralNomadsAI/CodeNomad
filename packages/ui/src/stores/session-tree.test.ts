@@ -220,7 +220,7 @@ describe("session tree", () => {
     const grandchild = sessions.get("grandchild")!
     const project = (worktreeDirectory: string, includeSubsessions = true) => projectSessionSearchResults(
       sessions.values(),
-      { sort: "activity", worktreeDirectory, includeSubsessions, getWorktreeLabel: directory => directory },
+      { sort: "activity", worktreeDirectory, includeMainSessions: true, includeSubsessions, getWorktreeLabel: directory => directory },
     )
     assert.deepEqual(project("D:\\repo").map(thread => thread.session.id), ["local-root", "grandchild", "child"])
     assert.deepEqual(collectSessionThreadIds(project("D:\\repo", false)), ["local-root"])
@@ -238,14 +238,14 @@ describe("session tree", () => {
     grandchild.status = "idle"
     assert.equal(project("D:\\repo").length, 3)
     const match = projectSessionSearchResults([grandchild], {
-      sort: "name", worktreeDirectory: "D:\\repo", includeSubsessions: true,
+      sort: "name", worktreeDirectory: "D:\\repo", includeMainSessions: true, includeSubsessions: true,
       matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
     })
     assert.deepEqual(collectSessionThreadIds(match), ["grandchild"], "a result renders even without its parents loaded")
     assert.equal(match[0].depth, 0)
     assert.equal(match[0].hasChildren, false)
     assert.equal(projectSessionSearchResults([grandchild], {
-      sort: "worktree", worktreeDirectory: parent.location.directory, includeSubsessions: true,
+      sort: "worktree", worktreeDirectory: parent.location.directory, includeMainSessions: true, includeSubsessions: true,
       matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
     }).length, 0, "text and directory must match the same session")
   })

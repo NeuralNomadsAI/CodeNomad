@@ -72,6 +72,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [filterQuery, setFilterQuery] = createSignal("")
   const [sortBy, setSortBy] = createSignal<SessionFamilySort>("activity")
   const [worktreeDirectory, setWorktreeDirectory] = createSignal("")
+  const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
   const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
   let failedSortExhaustion: string | undefined
@@ -241,6 +242,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       sort: sortBy(),
       worktreeDirectory: worktreeDirectory(),
       includeSubsessions: includeSubsessions(),
+      includeMainSessions: includeMainSessions(),
       getWorktreeLabel,
       ...(query && !hasSearchResults
         ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
@@ -877,15 +879,26 @@ const SessionList: Component<SessionListProps> = (props) => {
             </select>
           </div>
 
-          <label class="mt-2 flex items-center gap-2 text-xs text-secondary">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={includeSubsessions()}
-              onChange={(event) => setIncludeSubsessions(event.currentTarget.checked)}
-            />
-            {t("sessionList.filter.includeSubsessions")}
-          </label>
+          <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-secondary">
+            <label class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={includeMainSessions()}
+                onChange={(event) => setIncludeMainSessions(event.currentTarget.checked)}
+              />
+              {t("sessionList.filter.includeMainSessions")}
+            </label>
+            <label class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={includeSubsessions()}
+                onChange={(event) => setIncludeSubsessions(event.currentTarget.checked)}
+              />
+              {t("sessionList.filter.includeSubsessions")}
+            </label>
+          </div>
 
           <Show when={selectedCount() > 0}>
             <div class="mt-2 flex items-center justify-end gap-2">

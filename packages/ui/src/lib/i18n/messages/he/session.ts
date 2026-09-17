@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "הצגת סשנים ראשיים",
   "sessionList.filter.includeSubsessions": "הצגת תת־סשנים",
   "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",
   "session.pruning.unavailable": "תוסף הניקוי אינו זמין או שלא הגיב. יש לפתוח את CodeNomad מחדש ולנסות שוב.",

@@ -59,11 +59,12 @@ export function projectSessionFamilies(
 // the session itself, without adding ancestors or inheriting descendant activity.
 export function projectSessionSearchResults(
   sessions: Iterable<Session>,
-  options: SessionFamilyProjection & { includeSubsessions: boolean },
+  options: SessionFamilyProjection & { includeMainSessions: boolean; includeSubsessions: boolean },
 ): SessionThread[] {
   const rows = new Map<string, SessionThread>()
   for (const session of sessions) {
     if (session.parentId && !options.includeSubsessions) continue
+    if (!session.parentId && !options.includeMainSessions) continue
     rows.set(session.id, { session, children: [], depth: 0, hasChildren: false, latestUpdated: session.time.updated })
   }
   return projectSessionFamilies([...rows.values()], options)

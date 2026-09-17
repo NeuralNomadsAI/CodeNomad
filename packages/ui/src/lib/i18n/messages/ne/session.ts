@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "मुख्य सत्रहरू देखाउनुहोस्",
   "sessionList.filter.includeSubsessions": "उप-सत्रहरू देखाउनुहोस्",
   "session.pruning.maintenance_required": "सत्र वा यसको भण्डारण व्यस्त छ। हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",
   "session.pruning.unavailable": "सफाइ प्लगइन उपलब्ध छैन वा प्रतिक्रिया दिएन। CodeNomad फेरि खोलेर प्रयास गर्नुहोस्।",
