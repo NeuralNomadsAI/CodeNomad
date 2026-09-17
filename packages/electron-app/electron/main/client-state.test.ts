@@ -37,6 +37,7 @@ test("Preferences restoration survives final local-window shutdown and clears on
   const manager = h.create()
   const request = {
     section: "providers" as const,
+    scrollTop: 420,
     instanceId: "instance-1",
     location: { directory: "C:\\repo", workspaceID: "workspace-1" },
   }
@@ -50,6 +51,13 @@ test("Preferences restoration survives final local-window shutdown and clears on
   assert.equal(await manager.setPreferences(undefined), true)
   assert.equal(manager.preferences, undefined)
   assert.equal(JSON.parse(readFileSync(h.statePath, "utf8")).preferences, undefined)
+  const geometry = { bounds: { x: 40, y: 60, width: 1120, height: 780 }, maximized: true, fullscreen: false, zoomFactor: 1.25 }
+  assert.equal(await manager.savePreferencesWindow(geometry), true)
+  await manager.drainAndReleasePrimary()
+  const reopened = h.create()
+  assert.equal(reopened.preferences, undefined)
+  assert.deepEqual(reopened.lastPreferences, { section: "providers", scrollTop: 420 })
+  assert.deepEqual(reopened.preferencesWindow, geometry)
 })
 
 function harness(t: test.TestContext, initial?: unknown) {

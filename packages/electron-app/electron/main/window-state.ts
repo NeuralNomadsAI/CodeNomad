@@ -106,7 +106,7 @@ export function normalizeNativeWindowState(value: unknown): NativeWindowState | 
   }
 }
 
-export function clampWindowBounds(bounds: WindowBounds, displays: DisplayWorkArea[]): WindowBounds | undefined {
+export function clampWindowBounds(bounds: WindowBounds, displays: DisplayWorkArea[], minimum = { width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT }): WindowBounds | undefined {
   const normalized = normalizeNativeWindowState({ bounds, maximized: false, fullscreen: false, zoomFactor: 1 })?.bounds
   const usableDisplays = displays.filter(
     (area) =>
@@ -135,8 +135,8 @@ export function clampWindowBounds(bounds: WindowBounds, displays: DisplayWorkAre
   const physicalDisplay = physicalBounds(display, scaleFactor)
   const maximumWidth = Math.max(1, Math.floor(physicalDisplay.width))
   const maximumHeight = Math.max(1, Math.floor(physicalDisplay.height))
-  const minimumWidth = Math.min(MIN_WINDOW_WIDTH * scaleFactor, maximumWidth)
-  const minimumHeight = Math.min(MIN_WINDOW_HEIGHT * scaleFactor, maximumHeight)
+  const minimumWidth = Math.min(minimum.width * scaleFactor, maximumWidth)
+  const minimumHeight = Math.min(minimum.height * scaleFactor, maximumHeight)
   const width = clamp(physical.width, minimumWidth, maximumWidth)
   const height = clamp(physical.height, minimumHeight, maximumHeight)
   const x = clamp(physical.x, physicalDisplay.x, physicalDisplay.x + maximumWidth - width)
@@ -191,7 +191,7 @@ export class WindowStateTracker {
 
   constructor(
     private readonly window: BrowserWindow,
-    private readonly clientState: ClientStateManager,
+    private readonly clientState: Pick<ClientStateManager, "activeWindowId" | "saveWindowState" | "flush">,
     initialState?: NativeWindowState,
     private readonly windowId = clientState.activeWindowId,
   ) {
@@ -222,6 +222,7 @@ export class WindowStateTracker {
         window.webContents.setZoomFactor(this.desiredZoomFactor)
       }
     })
+    window.on("close", () => { void this.saveNow() })
     window.on("closed", () => this.clearTimer())
   }
 

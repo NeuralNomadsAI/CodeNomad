@@ -52,6 +52,7 @@ jobs:
       - tests-tauri-windows
       - tests-opencode-compatibility
       - tests-session-pruning-native
+      - tests-runtime-contracts
       - tests-tauri-macos
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-and-upload.yml
@@ -90,7 +91,7 @@ jobs:
           New-Item -ItemType Directory -Force $sandbox | Out-Null
           $package = npm pack ./packages/server/src/opencode/session-pruning --pack-destination $sandbox --json | ConvertFrom-Json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@beta' --ignore-scripts --no-audit --no-fund
+          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@2.0.4' --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "PRUNING_NATIVE_INSTALL=$sandbox" >> $env:GITHUB_ENV
       - name: Test the installed plugin with an isolated official runtime
@@ -99,8 +100,10 @@ jobs:
           $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
           $arch = node -p "process.arch"
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
-          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode2$extension"
+          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
           $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
+          $fixtures = node -p "require('node:path').join(require('node:fs').realpathSync(require('node:os').tmpdir()), 'opencode')"
+          "PRUNING_NATIVE_FIXTURES=$fixtures" >> $env:GITHUB_ENV
           node scripts/test-session-pruning-native.mjs $cli $plugin
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm run build:pruning --workspace @neuralnomads/codenomad
@@ -108,6 +111,18 @@ jobs:
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli --ui
+      - name: Upload isolated native failure diagnostics
+        if: ${{ failure() && env.PRUNING_NATIVE_FIXTURES != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-pruning-failure-${{ matrix.os }}
+          path: |
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/server.log
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/before-restart.log
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/discovery.json
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/ui-*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload opt-in plugin package
         if: success()
         uses: actions/upload-artifact@v4
@@ -116,6 +131,51 @@ jobs:
           path: ${{ runner.temp }}/pruning-native-install/*.tgz
           if-no-files-found: error
           retention-days: 7
+
+  tests-runtime-contracts:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 0.0.0-beta-19271
+            scope: '@opencode-ai'
+            binary: opencode2
+          - version: 2.0.3
+            scope: '@opencode'
+            binary: opencode
+          - version: 2.0.5
+            scope: '@opencode'
+            binary: opencode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build:pruning --workspace @neuralnomads/codenomad
+      - name: Cross the pinned client with an isolated runtime
+        shell: pwsh
+        env:
+          RUNTIME_VERSION: ${{ matrix.version }}
+          RUNTIME_SCOPE: ${{ matrix.scope }}
+          RUNTIME_BINARY: ${{ matrix.binary }}
+        run: |
+          $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
+          npm install --prefix $sandbox "$env:RUNTIME_SCOPE/cli@$env:RUNTIME_VERSION" --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $cli = Join-Path $sandbox "node_modules/$env:RUNTIME_SCOPE/cli-windows-x64/bin/$env:RUNTIME_BINARY.exe"
+          node scripts/test-session-pruning-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($env:RUNTIME_VERSION -eq '0.0.0-beta-19271' -or $env:RUNTIME_VERSION -eq '2.0.3') {
+            node scripts/test-session-pruning-native.mjs $cli --legacy-pruning
+          }
 
   tests:
     needs: authorize
@@ -211,11 +271,13 @@ jobs:
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
-          packages/ui/src/stores/plugin-activation.test.ts
+          packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
+          packages/ui/src/stores/workspace-session-scope.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
+          packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts
           packages/ui/src/types/session.test.ts
@@ -245,6 +307,8 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/session-status.test.ts
+          packages/ui/src/stores/worktree-ready.test.ts
+          packages/ui/src/stores/worktrees-delete.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

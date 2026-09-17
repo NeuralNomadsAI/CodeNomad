@@ -488,13 +488,23 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
     });
 }
 
-pub(crate) fn request(app: AppHandle) {
-    let labels = app
+fn renderer_labels(app: &AppHandle) -> Vec<String> {
+    let mut labels = app
         .state::<LocalWindows>()
         .records()
         .into_iter()
         .map(|record| record.label)
         .collect::<Vec<_>>();
+    if app.get_webview_window(crate::preferences_window::LABEL).is_some()
+        && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
+    {
+        labels.push(crate::preferences_window::LABEL.to_string());
+    }
+    labels
+}
+
+pub(crate) fn request(app: AppHandle) {
+    let labels = renderer_labels(&app);
     let Some(requests) = app.state::<ShutdownCoordinator>().begin_shutdown(labels) else {
         start_cleanup(app, false);
         return;
@@ -538,6 +548,12 @@ pub(crate) fn renderer_flushed(app: AppHandle, label: String, window_id: String,
         return;
     }
     finish_local_close(app, label, window_id, generation);
+}
+
+pub(crate) fn preferences_renderer_flushed(app: AppHandle, generation: u64) {
+    if app.state::<ShutdownCoordinator>().acknowledge_global(crate::preferences_window::LABEL, generation) {
+        start_cleanup(app, false);
+    }
 }
 
 fn start_cleanup(app: AppHandle, deadline_reached: bool) {
@@ -629,12 +645,7 @@ pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
 
 #[cfg(windows)]
 fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
-    let labels = app
-        .state::<LocalWindows>()
-        .records()
-        .into_iter()
-        .map(|record| record.label)
-        .collect::<Vec<_>>();
+    let labels = renderer_labels(app);
     let preparation = app
         .state::<ShutdownCoordinator>()
         .begin_windows_session_end(labels);

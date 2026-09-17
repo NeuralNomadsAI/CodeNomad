@@ -3,10 +3,11 @@ import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
-import type { OpenCodeClient, SessionInfo } from "@opencode-ai/client"
+import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -114,10 +115,16 @@ async function harness(
         return { data: { id, command: "npm run dev", cwd, shell: "sh", file: "/tmp/output", status: "running", pid: 42, metadata: {}, time: { started: 1 } } }
       },
     },
-  } as OpenCodeClient
+  } as unknown as OpenCodeClient
   const manager: InstanceProxyWorkspaceManager = {
     get: () => ({ id: "workspace", path: workspacePath }) as never,
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
+    getSharedServiceConnection: async () => ({
+      endpoint: { url: `http://127.0.0.1:${address.port}` }, client,
+      fetch: createRuntimeFetch({ url: `http://127.0.0.1:${address.port}` }),
+      assertCurrent: () => {}, invalidate: () => { invalidations += 1 },
+      profile: async () => "modern",
+    }),
     invalidateSharedServiceConnection: () => { invalidations += 1 },
     getInstanceAuthorizationHeader: () => "Basic internal-secret",
     getServiceDirectory: () => serviceDirectory,
@@ -136,8 +143,7 @@ async function harness(
     },
     getSharedServiceClient: async () => client,
     ownsLocation: async (_id, location) => owned.has(location.directory)
-      && (!location.workspaceID || location.workspaceID === (location.directory.includes("worktree") ? "worktree-location" : "owned-location")),
-    ownsLocationWorkspace: async (_id, workspaceID) => workspaceID === "owned-location" || workspaceID === "worktree-location",
+      && location.workspaceID === undefined,
     ownsDirectory: async (_id, directory) => owned.has(directory),
     ownsPath: async (_id, candidate) => {
       pathOwnershipChecks.push(candidate)
@@ -165,16 +171,16 @@ async function harness(
 describe("instance proxy location enforcement", () => {
   it("forwards native execution settlement only for a session owned by the workspace", async () => {
     const { app, requestCount, sessionGets } = await harness()
-    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/session/wait" })
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 200)
-    assert.equal(JSON.parse(response.body).url, "/api/session/session/wait")
+    assert.equal(JSON.parse(response.body).url, "/api/experimental/session/session/wait")
     assert.deepEqual(sessionGets, ["session"])
     assert.equal(requestCount(), 1)
   })
 
   it("rejects settlement waits for sessions belonging to another workspace", async () => {
     const { app, requestCount } = await harness("/other")
-    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/session/wait" })
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 403)
     assert.equal(requestCount(), 0)
   })
@@ -214,35 +220,33 @@ describe("instance proxy location enforcement", () => {
     assert.doesNotMatch(bodyResponse.body, /internal-secret/)
   })
 
-  it("preserves owned native workspace selectors and rejects mismatched pairs", async () => {
+  it("rejects removed workspace selectors even alongside owned directories", async () => {
     const { app, requestCount } = await harness()
     const query = await app.inject({
       method: "GET",
       url: "/workspaces/workspace/instance/api/model?location%5Bdirectory%5D=%2Frepo%2Fworktree&location%5Bworkspace%5D=worktree-location",
     })
-    assert.equal(query.statusCode, 200)
-    assert.match(JSON.parse(query.body).url, /location%5Bworkspace%5D=worktree-location/)
+    assert.equal(query.statusCode, 400)
 
     const create = await app.inject({
       method: "POST",
       url: "/workspaces/workspace/instance/api/session",
       payload: { location: { directory: "/repo", workspaceID: "owned-location" } },
     })
-    assert.equal(create.statusCode, 200)
-    assert.equal(JSON.parse(create.body).body.location.workspaceID, "owned-location")
+    assert.equal(create.statusCode, 400)
 
     const foreign = await app.inject({
       method: "GET",
       url: "/workspaces/workspace/instance/api/model?location%5Bdirectory%5D=%2Frepo%2Fworktree&location%5Bworkspace%5D=owned-location",
     })
-    assert.equal(foreign.statusCode, 403)
+    assert.equal(foreign.statusCode, 400)
 
     const unsupported = await app.inject({
       method: "GET",
       url: "/workspaces/workspace/instance/api/model?workspace=owned-location",
     })
     assert.equal(unsupported.statusCode, 400)
-    assert.equal(requestCount(), 2)
+    assert.equal(requestCount(), 0)
   })
 
   it("rejects session admission while a worktree deletion is pending", async () => {
@@ -431,7 +435,7 @@ describe("instance proxy location enforcement", () => {
     const ownedCursor = cursor({ directory: "/repo/worktree", anchor: { id: "session-1", time: 1, direction: "next" } })
     const response = await app.inject({
       method: "GET",
-      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother&workspace=foreign-location`,
+      url: `/workspaces/workspace/instance/api/session?cursor=${ownedCursor}&directory=%2Fother`,
     })
     assert.equal(response.statusCode, 200)
     const upstreamUrl = JSON.parse(response.body).url as string
@@ -455,12 +459,12 @@ describe("instance proxy location enforcement", () => {
     assert.equal((await app.inject({
       method: "GET",
       url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "foreign-location", directory: "/repo", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
-    })).statusCode, 403)
+    })).statusCode, 400)
     assert.equal((await app.inject({
       method: "GET",
       url: `/workspaces/workspace/instance/api/session?cursor=${cursor({ workspace: "owned-location", anchor: { id: "session-1", time: 1, direction: "next" } })}`,
-    })).statusCode, 200)
-    assert.equal(requestCount(), 2)
+    })).statusCode, 400)
+    assert.equal(requestCount(), 1)
   })
 
   it("filters PTYs and rejects foreign PTY access", async () => {
@@ -558,14 +562,14 @@ describe("instance proxy location enforcement", () => {
 
   it("permits only native global Forms actions without session hydration", async () => {
     const { app, sessionGets, requestCount } = await harness("/other")
-    for (const action of ["reply", "cancel"]) {
+    for (const [method, suffix] of [["POST", "/reply"], ["DELETE", ""]] as const) {
       const response = await app.inject({
-        method: "POST",
-        url: `/workspaces/workspace/instance/api/session/global/form/form-1/${action}`,
-        payload: action === "reply" ? { answers: {} } : {},
+        method,
+        url: `/workspaces/workspace/instance/api/session/global/form/form-1${suffix}`,
+        ...(method === "POST" ? { payload: { answer: {} } } : {}),
       })
       assert.equal(response.statusCode, 200)
-      assert.equal(JSON.parse(response.body).url, `/api/session/global/form/form-1/${action}?location%5Bdirectory%5D=%2Frepo`)
+      assert.equal(JSON.parse(response.body).url, `/api/session/global/form/form-1${suffix}?location%5Bdirectory%5D=%2Frepo`)
     }
     assert.deepEqual(sessionGets, [])
     assert.equal(requestCount(), 2)
@@ -578,14 +582,13 @@ describe("instance proxy location enforcement", () => {
     assert.deepEqual(sessionGets, ["global"])
   })
 
-  it("forwards a validated global Form root location and workspace", async () => {
+  it("forwards a validated global Form root directory", async () => {
     const { app } = await harness("/repo/worktree", {}, {}, "/repo", "/srv/repo")
     const response = await app.inject({
       method: "POST",
       url: "/workspaces/workspace/instance/api/session/global/form/form-1/reply",
       headers: {
         "x-opencode-directory": encodeURIComponent("/repo"),
-        "x-opencode-workspace": "owned-location",
       },
       payload: { answers: {} },
     })
@@ -593,7 +596,7 @@ describe("instance proxy location enforcement", () => {
     assert.equal(response.statusCode, 200)
     const upstream = JSON.parse(response.body)
     assert.equal(upstream.headers["x-opencode-directory"], encodeURIComponent("/srv/repo"))
-    assert.equal(upstream.headers["x-opencode-workspace"], "owned-location")
+    assert.equal(upstream.headers["x-opencode-workspace"], undefined)
   })
 
   it("translates and forwards a validated global Form worktree location", async () => {
@@ -602,8 +605,8 @@ describe("instance proxy location enforcement", () => {
       { "/repo/worktree": "/srv/worktree" },
     )
     const response = await app.inject({
-      method: "POST",
-      url: "/workspaces/workspace/instance/api/session/global/form/form-1/cancel",
+      method: "DELETE",
+      url: "/workspaces/workspace/instance/api/session/global/form/form-1",
       headers: { "x-opencode-directory": encodeURIComponent("/repo/worktree") },
       payload: {},
     })
@@ -636,7 +639,7 @@ describe("instance proxy location enforcement", () => {
         "x-opencode-workspace": "foreign-location",
       },
       payload: { answers: {} },
-    })).statusCode, 403)
+    })).statusCode, 400)
     assert.equal(requestCount(), 0)
   })
 
@@ -691,7 +694,7 @@ describe("instance proxy location enforcement", () => {
     })
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/active" })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(JSON.parse(response.body), { owned: { type: "running" } })
+    assert.deepEqual(JSON.parse(response.body), { data: { owned: { type: "running" } } })
     assert.deepEqual(sessionGets.sort(), ["foreign", "owned", "stale"])
     assert.equal(requestCount(), 0)
   })
@@ -726,15 +729,13 @@ describe("instance proxy location enforcement", () => {
       ["GET", "/workspaces/workspace/instance/api/session/owned/permission"],
       ["GET", "/workspaces/workspace/instance/api/session/owned/form"],
       ["POST", "/workspaces/workspace/instance/api/session/owned/background"],
-      ["POST", "/workspaces/workspace/instance/api/session/owned/revert/clear"],
+      ["DELETE", "/workspaces/workspace/instance/api/session/owned/revert"],
       ["GET", "/workspaces/workspace/instance/api/skill"],
       ["GET", "/workspaces/workspace/instance/api/reference"],
       ["GET", "/workspaces/workspace/instance/api/mcp/resource"],
       ["GET", "/workspaces/workspace/instance/api/websearch/provider"],
-      ["POST", "/workspaces/workspace/instance/api/plugin/await-activation"],
       ["DELETE", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1"],
-      ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/steer"],
-      ["POST", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1/queue"],
+      ["PATCH", "/workspaces/workspace/instance/api/session/owned/inbox/prompt-1"],
     ] as const
 
     for (const [method, url] of requests) {
@@ -861,7 +862,7 @@ describe("instance proxy location enforcement", () => {
     const { app, requestCount } = await harness()
     const accepted = await app.inject({
       method: "POST",
-      url: "/workspaces/workspace/instance/api/session/import",
+      url: "/workspaces/workspace/instance/api/experimental/session/import",
       payload: {
         info: { id: "session-1", metadata: { location: { directory: "/other" } } },
         messages: [{
@@ -881,9 +882,19 @@ describe("instance proxy location enforcement", () => {
     assert.deepEqual(body.messages[0].metadata.location, { directory: "/other" })
     assert.equal(body.messages[0].content[0].state.input.location, "/other")
 
+    const obsolete = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/experimental/session/import",
+      payload: {
+        info: { id: "old-selector", location: { directory: "/repo", workspaceID: "owned-location" } },
+        messages: [],
+      },
+    })
+    assert.equal(obsolete.statusCode, 400)
+
     const rejected = await app.inject({
       method: "POST",
-      url: "/workspaces/workspace/instance/api/session/import",
+      url: "/workspaces/workspace/instance/api/experimental/session/import",
       payload: {
         info: { id: "session-2", location: { directory: "/repo" } },
         messages: [{ type: "location-switched", location: { directory: "/repo/worktree" }, previous: { location: { directory: "/other" } } }],

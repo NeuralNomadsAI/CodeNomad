@@ -5,7 +5,9 @@ import {
 } from "../types/session"
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
-import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode-ai/client"
+import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
+import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
+import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode/client"
 
 import { instances, reconcilePendingSessionIndicators } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
@@ -50,6 +52,7 @@ import {
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
+  getSessionHasMore,
   getSessionNextCursor,
   getSessionListIds,
 } from "./session-state"
@@ -78,12 +81,13 @@ import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
 } from "./session-list-options"
+
+const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
 import { fetchCommands } from "./commands"
-import { toRequestLocation } from "./request-locations"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
-import { waitForPluginActivation } from "./plugin-activation"
 
 const log = getLogger("api")
 const sessionListRequestIds = new Map<string, number>()
@@ -94,6 +98,8 @@ const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
+const sessionExhaustionRequests = new Map<string, Promise<void>>()
+const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
 interface MessagePageRequest {
   controller: AbortController
   consumers: Set<symbol>
@@ -145,7 +151,7 @@ function invalidateMessageHistoryTraversal(instanceId: string, sessionId: string
 }
 
 function catalogLocationKey(location: LocationRef): string {
-  return `${location.directory}\0${location.workspaceID ?? ""}`
+  return locationAuthorityKey(location)
 }
 
 async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
@@ -186,6 +192,8 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
 
 function beginSessionListRequest(instanceId: string): number {
   const requestId = ++nextSessionListRequestId
+  sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
   sessionListRequestIds.set(instanceId, requestId)
   return requestId
 }
@@ -197,6 +205,8 @@ function isLatestSessionListRequest(instanceId: string, requestId: number): bool
 function clearSessionListRequestState(instanceId: string): void {
   sessionListRequestIds.delete(instanceId)
   sessionPageRequests.delete(instanceId)
+  sessionExhaustionRequests.delete(instanceId)
+  sessionPageTraversals.delete(instanceId)
   setSessionListError(instanceId, null)
   setLoading((prev) => {
     if (!prev.fetchingSessions.has(instanceId)) return prev
@@ -316,17 +326,23 @@ async function fetchCompleteSessionInventory(
 
   for (const scope of scopes) {
     const seenCursors = new Set<string>()
+    let pageCount = 1
     let response = await fetchV2Sessions(instanceId, scope, signal)
     while (true) {
       if (!isCurrent()) return []
       for (const session of response.data) inventory.set(session.id, session)
       if (!response.nextCursor) break
+      if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session inventory exceeded the page limit")
       if (seenCursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
       seenCursors.add(response.nextCursor)
       response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
     }
   }
-  return Array.from(inventory.values())
+  await ensureWorktreesLoaded(instanceId)
+  if (!isCurrent()) return []
+  signal?.throwIfAborted()
+  if (getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  return selectWorkspaceSessionFamilies(Array.from(inventory.values()), directory ?? "", getWorktrees(instanceId))
 }
 
 function getDisconnectedCapturedSessionIds(
@@ -510,11 +526,13 @@ async function fetchSessions(instanceId: string, options?: {
         next.set(instanceId, instanceSessions)
         return next
       })
+      // This directory page is only a partial view of the workspace. Keep
+      // existing worktree rows until the project inventory can reconcile them.
       setSessionPage(
         instanceId,
         rootApiSessions.filter((session) => !session.parentID && !deletedSessionIds.has(session.id)).map((session) => session.id),
         Boolean(response.nextCursor),
-        options?.reset ?? true,
+        false,
         response.nextCursor,
       )
     }
@@ -522,12 +540,16 @@ async function fetchSessions(instanceId: string, options?: {
     let inventoryComplete = false
     try {
       inventory = await fetchCompleteSessionInventory(instanceId, options?.signal, isCurrent)
-      inventoryComplete = hasProjectInventory && response.complete
+      inventoryComplete = hasProjectInventory
     } catch (error) {
       if (options?.signal?.aborted) throw error
+      if (options?.strictStatus) throw error
       log.warn("Failed to enrich the session list with project descendants", { instanceId, error })
     }
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
     const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
     const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
     const sessionMap = new Map<string, Session>()
@@ -556,7 +578,10 @@ async function fetchSessions(instanceId: string, options?: {
       return next
     })
     await ensureV2ParentChainsLoaded(instanceId, apiSessions, options?.signal, isCurrent)
-    if (!isCurrent()) return
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
 
     if (inventoryComplete || (!hasProjectInventory && response.complete)) {
       const authoritativeSessions = inventoryComplete ? apiSessions : rootApiSessions
@@ -573,7 +598,7 @@ async function fetchSessions(instanceId: string, options?: {
     const rootIds: string[] = []
     const seenRootIds = new Set<string>()
     const missingRootSessionIds: string[] = []
-    for (const apiSession of rootApiSessions) {
+    for (const apiSession of apiSessions) {
       const root = getSessionRoot(instanceId, apiSession.id)
       if (root) {
         if (!seenRootIds.has(root.id)) {
@@ -584,7 +609,7 @@ async function fetchSessions(instanceId: string, options?: {
         missingRootSessionIds.push(apiSession.id)
       }
     }
-    if (!response.complete) {
+    if (!inventoryComplete && (!response.complete || hasProjectInventory)) {
       for (const sessionId of existingCatalogIds) {
         const session = sessions().get(instanceId)?.get(sessionId)
         if (session?.parentId === null && !seenRootIds.has(sessionId)) {
@@ -611,6 +636,10 @@ async function fetchSessions(instanceId: string, options?: {
     }
 
     setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    sessionPageTraversals.set(instanceId, {
+      cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
+      pages: 1,
+    })
     for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
 
     reconcilePendingSessionIndicators(instanceId)
@@ -657,6 +686,33 @@ async function loadMoreSessions(instanceId: string): Promise<void> {
   return request
 }
 
+async function loadAllSessions(instanceId: string): Promise<void> {
+  const pending = sessionExhaustionRequests.get(instanceId)
+  if (pending) return pending
+  const listRequestId = sessionListRequestIds.get(instanceId)
+  const request = (async () => {
+    setSessionListError(instanceId, null)
+    try {
+      while (getSessionHasMore(instanceId)) {
+        const cursor = getSessionNextCursor(instanceId)
+        await loadMoreSessions(instanceId)
+        if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+        if (getSessionHasMore(instanceId) && getSessionNextCursor(instanceId) === cursor) {
+          throw new Error("Session pagination was interrupted")
+        }
+      }
+    } catch (error) {
+      if (sessionListRequestIds.get(instanceId) !== listRequestId) return
+      setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
+      throw error
+    }
+  })().finally(() => {
+    if (sessionExhaustionRequests.get(instanceId) === request) sessionExhaustionRequests.delete(instanceId)
+  })
+  sessionExhaustionRequests.set(instanceId, request)
+  return request
+}
+
 async function loadNextSessionPage(instanceId: string): Promise<void> {
   const cursor = getSessionNextCursor(instanceId)
   if (!cursor) return
@@ -676,6 +732,14 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     }),
   ])
   if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
+  const traversal = sessionPageTraversals.get(instanceId) ?? { cursors: new Set([cursor]), pages: 1 }
+  if (traversal.pages >= MAX_SESSION_LIST_PAGES) throw new Error("Session pagination exceeded the page limit")
+  if (response.nextCursor && traversal.cursors.has(response.nextCursor)) {
+    throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+  }
+  traversal.pages += 1
+  if (response.nextCursor) traversal.cursors.add(response.nextCursor)
+  sessionPageTraversals.set(instanceId, traversal)
   const pageSessions = response.data
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   setSessions((previous) => {
@@ -721,13 +785,27 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    const response = await fetchV2Sessions(instanceId, {
-      search: trimmedQuery,
-      directory: instance.folder,
-    })
-    if (!isCurrent()) return
-
-    const searchResults = getV2SessionItems(response)
+    await ensureWorktreesLoaded(instanceId)
+    const results = new Map<string, SDKSession>()
+    const worktreeDirectories = getInstanceMetadata(instanceId)?.project?.id === "global"
+      ? [] : getWorktrees(instanceId).map(entry => entry.serviceDirectory ?? entry.directory)
+    const directories = new Set([instance.folder, ...worktreeDirectories])
+    for (const directory of directories) {
+      if (!isCurrent()) return
+      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory })
+      const cursors = new Set<string>()
+      let pageCount = 1
+      while (true) {
+        if (!isCurrent()) return
+        for (const session of getV2SessionItems(response)) results.set(session.id, session)
+        if (!response.nextCursor) break
+        if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
+        if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
+        cursors.add(response.nextCursor)
+        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+      }
+    }
+    const searchResults = Array.from(results.values())
 
     if (searchResults.length === 0) {
       setSessionSearchResults(instanceId, trimmedQuery, [], requestId)
@@ -748,22 +826,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, undefined, isCurrent)
-
     if (!isCurrent()) return
 
-    const hydratedSessions = sessions().get(instanceId)
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
     const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
-    const hasUnrenderableChildResult = currentSearchResults.some((session) => {
-      const parentId = session.parentID
-      return Boolean(parentId && !hydratedSessions?.has(parentId))
-    })
-
-    if (hasUnrenderableChildResult) {
-      clearSessionSearch(instanceId)
-      return
-    }
 
     syncInstanceSessionIndicator(instanceId)
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
@@ -847,8 +913,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       model: defaultModel.providerId && defaultModel.modelId
         ? { providerID: defaultModel.providerId, id: defaultModel.modelId }
         : null,
-      location: activeLocation ?? { directory: instance.folder },
-    })
+      location: { directory: activeLocation?.directory ?? instance.folder },
+    }, requestLocationOptions(activeLocation))
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
     const session = toClientSessionV2(instanceId, info)
     session.agent = selectedAgent
@@ -927,9 +993,7 @@ async function forkSession(
 
   const request = {
     sessionID: sourceSessionId,
-    boundary: options?.messageId
-      ? { type: "before" as const, messageID: options.messageId }
-      : { type: "through" as const },
+    ...(options?.messageId ? { before: options.messageId } : {}),
   }
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
@@ -1113,12 +1177,11 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
   try {
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
-    await waitForPluginActivation(rootClient, location)
-    const response = await rootClient.agent.list({ location: requestLocation })
+    const response = await rootClient.agent.list({ location: requestLocation }, requestLocationOptions(location))
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
       try {
-        const result = await rootClient.agent.get({ agentID: id, location: requestLocation })
+        const result = await rootClient.agent.get({ agentID: id, location: requestLocation }, requestLocationOptions(location))
         agentsById.set(result.data.id, result.data)
       } catch (error) {
         log.warn("Failed to fetch built-in agent", { instanceId, agentId: id, error })
@@ -1188,11 +1251,10 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
   try {
     log.info(`[HTTP] GET /provider.list for instance ${instanceId}`)
     const request = { location: toRequestLocation(location) }
-    await waitForPluginActivation(rootClient, location)
     const [response, models, defaultModel] = await Promise.all([
-      rootClient.provider.list(request),
-      rootClient.model.list(request),
-      rootClient.model.default(request),
+      rootClient.provider.list(request, requestLocationOptions(location)),
+      rootClient.model.list(request, requestLocationOptions(location)),
+      rootClient.model.default(request, requestLocationOptions(location)),
     ])
     const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
     const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))
@@ -1651,6 +1713,7 @@ export {
   fetchSessions,
   hydrateRestoredSessionChain,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,

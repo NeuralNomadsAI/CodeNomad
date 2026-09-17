@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "Show main sessions",
+  "sessionList.filter.includeSubsessions": "Show subsessions",
   "session.pruning.maintenance_required": "The session or its storage is busy. Wait for the current operation to finish, then retry cleanup.",
   "session.pruning.unavailable": "The cleanup plugin is unavailable or did not respond. Reopen CodeNomad and retry.",
   "session.pruning.conflict": "The message changed since it was selected. Reload it and select the content again.",
@@ -54,6 +56,15 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "Search sessions…",
   "sessionList.filter.ariaLabel": "Search sessions",
+  "sessionList.sort.ariaLabel": "Sort sessions",
+  "sessionList.sort.activity": "Activity",
+  "sessionList.sort.name": "Name",
+  "sessionList.sort.worktree": "Worktree",
+  "sessionList.worktreeFilter.ariaLabel": "Filter sessions by worktree",
+  "sessionList.worktreeFilter.all": "All worktrees",
+  "sessionList.worktree.tooltip": "Worktree: {worktree}",
+  "sessionList.worktree.workspace": "Workspace",
+  "sessionList.worktreeMove.error": "Unable to move session family",
   "sessionList.loading.more": "Loading more sessions…",
   "sessionList.loading.initial": "Loading sessions…",
   "sessionList.loadError.title": "Unable to load sessions",

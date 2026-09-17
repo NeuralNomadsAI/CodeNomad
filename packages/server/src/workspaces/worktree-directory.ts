@@ -1,13 +1,14 @@
 import { lstat, realpath } from "fs/promises"
 import path from "node:path"
 import type { LogLike } from "./git-worktrees"
-import { listWorktrees, resolveRepoRoot } from "./git-worktrees"
+import type { WorktreeDescriptor } from "../api-types"
+
+type WorktreeSource = { loadWorktrees: () => Promise<WorktreeDescriptor[]> }
 
 type WorktreeCacheEntry = {
   expiresAt: number
-  repoRoot: string
-  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string }>
-  resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string }>
+  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string }>
+  resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
 }
 
 const WORKTREE_CACHE_TTL_MS = 10_000
@@ -24,7 +25,7 @@ async function normalizeDirectoryPath(directory: string): Promise<string> {
   }
 }
 
-async function getCachedWorktrees(params: { workspaceId: string; workspacePath: string; logger?: LogLike }) {
+async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike }) {
   const cached = worktreeCache.get(params.workspaceId)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -34,22 +35,22 @@ async function getCachedWorktrees(params: { workspaceId: string; workspacePath: 
   const pending = worktreeLoads.get(params.workspaceId)
   if (pending) return pending
 
-  const load = (async () => {
-    const { repoRoot } = await resolveRepoRoot(params.workspacePath, params.logger)
-    const worktrees = await listWorktrees({ repoRoot, workspaceFolder: params.workspacePath, logger: params.logger })
+  let load!: Promise<WorktreeCacheEntry>
+  load = (async () => {
+    const worktrees = await params.loadWorktrees()
     const entry: WorktreeCacheEntry = {
       expiresAt: Date.now() + WORKTREE_CACHE_TTL_MS,
-      repoRoot,
       worktrees: await Promise.all(
         worktrees.map(async (wt) => ({
           slug: wt.slug,
           directory: wt.directory,
           normalizedDirectory: await normalizeDirectoryPath(wt.directory),
+          worktreeDirectory: await normalizeDirectoryPath(wt.registeredDirectory ?? wt.directory),
         })),
       ),
       resolvedDirectories: new Map(),
     }
-    worktreeCache.set(params.workspaceId, entry)
+    if (worktreeLoads.get(params.workspaceId) === load) worktreeCache.set(params.workspaceId, entry)
     return entry
   })()
   worktreeLoads.set(params.workspaceId, load)
@@ -60,11 +61,17 @@ async function getCachedWorktrees(params: { workspaceId: string; workspacePath: 
   }
 }
 
-export function invalidateWorktreeCache(workspaceId: string): void {
-  worktreeCache.delete(workspaceId)
+export function invalidateWorktreeCache(workspaceId?: string): void {
+  if (workspaceId === undefined) {
+    worktreeCache.clear()
+    worktreeLoads.clear()
+  } else {
+    worktreeCache.delete(workspaceId)
+    worktreeLoads.delete(workspaceId)
+  }
 }
 
-export async function resolveWorktreeDirectory(params: {
+export async function resolveWorktreeDirectory(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   worktreeSlug: string
@@ -74,6 +81,7 @@ export async function resolveWorktreeDirectory(params: {
     workspaceId: params.workspaceId,
     workspacePath: params.workspacePath,
     logger: params.logger,
+    loadWorktrees: params.loadWorktrees,
   })
   const match = cached.worktrees.find((wt) => wt.slug === params.worktreeSlug)
   if (match) {
@@ -85,11 +93,12 @@ export async function resolveWorktreeDirectory(params: {
     workspaceId: params.workspaceId,
     workspacePath: params.workspacePath,
     logger: params.logger,
+    loadWorktrees: params.loadWorktrees,
   })
   return refreshed.worktrees.find((wt) => wt.slug === params.worktreeSlug)?.directory ?? null
 }
 
-export async function resolveWorktreeSlugForDirectory(params: {
+export async function resolveWorktreeSlugForDirectory(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   directory: string
@@ -102,6 +111,7 @@ export async function resolveWorktreeSlugForDirectory(params: {
     workspaceId: params.workspaceId,
     workspacePath: params.workspacePath,
     logger: params.logger,
+    loadWorktrees: params.loadWorktrees,
   })
   const match = cached.worktrees.find((wt) => wt.normalizedDirectory === target)
   if (match) {
@@ -113,6 +123,7 @@ export async function resolveWorktreeSlugForDirectory(params: {
     workspaceId: params.workspaceId,
     workspacePath: params.workspacePath,
     logger: params.logger,
+    loadWorktrees: params.loadWorktrees,
   })
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
 }
@@ -157,7 +168,7 @@ export function isPathWithinWorktree(root: string, candidate: string): boolean {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
-export async function resolveOwnedWorktreePath(params: {
+export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   directory: string
@@ -169,20 +180,21 @@ export async function resolveOwnedWorktreePath(params: {
     .filter((worktree) => isPathWithinWorktree(worktree.normalizedDirectory, target))
     .sort((left, right) => right.normalizedDirectory.length - left.normalizedDirectory.length)[0]
   let entry = await getCachedWorktrees(params)
-  const known = entry.resolvedDirectories.get(target)
-  if (known) return known
+  if (entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
   let match = find(entry.worktrees)
   if (!match || (match.slug === "root" && match.normalizedDirectory !== target)) {
-    invalidateWorktreeCache(params.workspaceId)
+    // Several foreign-location events can miss the same snapshot concurrently.
+    // Refresh that snapshot once; never discard another caller's pending load.
+    if (worktreeCache.get(params.workspaceId) === entry) worktreeCache.delete(params.workspaceId)
     entry = await getCachedWorktrees(params)
     match = find(entry.worktrees)
   }
-  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.normalizedDirectory } : null
-  if (resolved) entry.resolvedDirectories.set(target, resolved)
+  const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
+  entry.resolvedDirectories.set(target, resolved)
   return resolved
 }
 
-export async function isPathOwnedByWorktree(params: {
+export async function isPathOwnedByWorktree(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   candidate: string

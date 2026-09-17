@@ -58,6 +58,8 @@ export const ThemeSchemeSettings: Component = () => {
   const [creating, setCreating] = createSignal(false)
   const [dirty, setDirty] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
+  const [selecting, setSelecting] = createSignal(false)
+  const [pendingOption, setPendingOption] = createSignal<PaletteOption>()
   const [saveFailed, setSaveFailed] = createSignal(false)
 
   const options = createMemo<PaletteOption[]>(() => [
@@ -278,6 +280,23 @@ export const ThemeSchemeSettings: Component = () => {
     }
   }
 
+  const queuePaletteSelection = async (option: PaletteOption) => {
+    setPendingOption(option)
+    if (selecting()) return
+    setSelecting(true)
+    try {
+      // Keep the native picker focused and responsive while serializing writes.
+      // Repeated arrow presses replace the pending choice with the latest one.
+      while (pendingOption()) {
+        const next = pendingOption()!
+        await selectOption(next)
+        if (pendingOption() === next) setPendingOption(undefined)
+      }
+    } finally {
+      setSelecting(false)
+    }
+  }
+
   const colorsFor = (option: PaletteOption) => editingKey() === option.key ? draftColors() : option.colors
 
   return (
@@ -302,81 +321,77 @@ export const ThemeSchemeSettings: Component = () => {
         </div>
         <p class="settings-card-subtitle">{t("settings.appearance.palette.independent")}</p>
         <div class="theme-scheme-workbench">
-          <div class="theme-scheme-controls">
-            <select
-              class="selector-input theme-scheme-picker"
-              value={editingOption()?.key ?? ""}
-              disabled={saving()}
-              aria-label={t("settings.appearance.colorScheme.title")}
-              onChange={(event) => {
-                const select = event.currentTarget
-                const option = options().find((candidate) => candidate.key === select.value)
-                if (!option) return
-                void selectOption(option).then(() => { select.value = editingKey() })
-              }}
-            >
-              <For each={filteredOptions()}>{(option) => <option value={option.key} selected={editingKey() === option.key}>{option.name}</option>}</For>
-            </select>
-            <Show when={creating()}>
-              <label class="theme-scheme-name-editor">
-                <span>{t("settings.appearance.colorScheme.custom.name")}</span>
-                <input class="selector-input" value={draftName()} maxLength={80} onInput={(event) => setDraftName(event.currentTarget.value)} />
-              </label>
-            </Show>
-            <div class="theme-scheme-actions">
-              <Show when={editingOption()?.presetId}>
-                <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
-                  {t("settings.appearance.colorScheme.custom.delete")}
-                </button>
-              </Show>
-              <Show when={savedBuiltinOverride()}>
-                <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void resetBuiltin()}>
-                  {t("settings.appearance.colorScheme.custom.reset")}
-                </button>
-              </Show>
-              <Show when={!creating()}>
-                <button type="button" class="selector-button selector-button-secondary" disabled={saving()} onClick={startNewPreset}>
-                  {t("settings.appearance.colorScheme.custom.new")}
-                </button>
-              </Show>
-              <Show when={dirty()}>
-                <button type="button" class="selector-button selector-button-primary" disabled={!validDraft() || saving() || (creating() && !draftName().trim())} onClick={() => void savePreset()}>
-                  {t("settings.appearance.colorScheme.custom.save")}
-                </button>
-              </Show>
-            </div>
-            <Show when={saveFailed()}>
-              <p class="theme-scheme-warning" role="alert">{t("settings.appearance.colorScheme.custom.saveError")}</p>
-            </Show>
-          </div>
+          <select
+            class="selector-input theme-scheme-picker"
+            value={pendingOption()?.key ?? editingOption()?.key ?? ""}
+            disabled={saving() && !selecting()}
+            aria-busy={selecting()}
+            aria-label={t("settings.appearance.colorScheme.title")}
+            onChange={(event) => {
+              const select = event.currentTarget
+              const option = options().find((candidate) => candidate.key === select.value)
+              if (!option) return
+              void queuePaletteSelection(option)
+            }}
+          >
+            <For each={filteredOptions()}>{(option) => <option value={option.key} selected={(pendingOption()?.key ?? editingKey()) === option.key}>{option.name}</option>}</For>
+          </select>
           <Show when={editingOption()} keyed>{(option) => (
-            <div class="theme-scheme-card" title={option.description}>
-              <span class="theme-scheme-swatches">
-                <For each={COLOR_FIELDS}>{(field) => {
-                  const color = () => colorsFor(option)[field.key]
-                  const label = () => t(field.labelKey)
-                  return (
-                    <label class="theme-scheme-swatch" title={`${label()} · ${color()}`}>
-                      <input
-                        type="color"
-                        disabled={saving()}
-                        value={color()}
-                        aria-label={`${option.name} · ${label()} · ${color()}`}
-                        onInput={(event) => {
-                          const input = event.currentTarget
-                          void updateColor(option, field.key, input.value).then((updated) => {
-                            if (!updated) input.value = color()
-                          })
-                        }}
-                      />
-                      <span>{label()}</span>
-                    </label>
-                  )
-                }}</For>
-              </span>
+            <div class="theme-scheme-swatches">
+              <For each={COLOR_FIELDS}>{(field) => {
+                const color = () => colorsFor(option)[field.key]
+                const label = () => t(field.labelKey)
+                return (
+                  <label class="theme-scheme-swatch" title={label()}>
+                    <input
+                      type="color"
+                      disabled={saving()}
+                      value={color()}
+                      aria-label={`${option.name} · ${label()} · ${color()}`}
+                      onInput={(event) => {
+                        const input = event.currentTarget
+                        void updateColor(option, field.key, input.value).then((updated) => {
+                          if (!updated) input.value = color()
+                        })
+                      }}
+                    />
+                  </label>
+                )
+              }}</For>
             </div>
           )}</Show>
+          <div class="theme-scheme-actions">
+            <Show when={editingOption()?.presetId}>
+              <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
+                {t("settings.appearance.colorScheme.custom.delete")}
+              </button>
+            </Show>
+            <Show when={savedBuiltinOverride()}>
+              <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void resetBuiltin()}>
+                {t("settings.appearance.colorScheme.custom.reset")}
+              </button>
+            </Show>
+            <Show when={!creating()}>
+              <button type="button" class="selector-button selector-button-secondary" disabled={saving()} onClick={startNewPreset}>
+                {t("settings.appearance.colorScheme.custom.new")}
+              </button>
+            </Show>
+            <Show when={dirty()}>
+              <button type="button" class="selector-button selector-button-primary" disabled={!validDraft() || saving() || (creating() && !draftName().trim())} onClick={() => void savePreset()}>
+                {t("settings.appearance.colorScheme.custom.save")}
+              </button>
+            </Show>
+          </div>
         </div>
+        <Show when={creating()}>
+          <label class="theme-scheme-name-editor">
+            <span>{t("settings.appearance.colorScheme.custom.name")}</span>
+            <input class="selector-input" value={draftName()} maxLength={80} onInput={(event) => setDraftName(event.currentTarget.value)} />
+          </label>
+        </Show>
+        <Show when={saveFailed()}>
+          <p class="theme-scheme-warning" role="alert">{t("settings.appearance.colorScheme.custom.saveError")}</p>
+        </Show>
       </div>
     </div>
   )

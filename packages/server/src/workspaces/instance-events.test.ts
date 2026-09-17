@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { OpenCodeEvent } from "@opencode-ai/client"
+import type { LocationRef, OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
 import type { Logger } from "../logger"
 import { InstanceEventBridge } from "./instance-events"
@@ -19,8 +19,13 @@ function deferred<T>() {
 
 function waitFor(check: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for event")), 2000)
+    let expired = false
+    const timeout = setTimeout(() => {
+      expired = true
+      reject(new Error("Timed out waiting for event"))
+    }, 2000)
     const poll = () => {
+      if (expired) return
       if (check()) {
         clearTimeout(timeout)
         resolve()
@@ -38,8 +43,8 @@ function serverConnected(): OpenCodeEvent {
 
 function locationlessManager(
   events: OpenCodeEvent[],
-  sessionLocations: Record<string, string | Error>,
-  workspaces = [{ id: "a", path: "/repo-a" }],
+  sessionLocations: Record<string, string | LocationRef | Error>,
+  workspaces: Array<{ id: string; path: string; workspaceID?: string }> = [{ id: "a", path: "/repo-a" }],
 ) {
   let sessionGets = 0
   const manager = {
@@ -47,13 +52,16 @@ function locationlessManager(
     ownsDirectory: async (workspaceId: string, directory: string) => (
       workspaces.some((workspace) => workspace.id === workspaceId && workspace.path === directory)
     ),
+    ownsLocation: async (workspaceId: string, location: LocationRef) => workspaces.some(workspace => (
+      workspace.id === workspaceId && workspace.path === location.directory && workspace.workspaceID === location.workspaceID
+    )),
     getSharedServiceClient: async () => ({
       session: { get: async ({ sessionID }: { sessionID: string }) => {
         sessionGets++
         const location = sessionLocations[sessionID]
         if (location instanceof Error) throw location
         if (!location) throw new Error("Session not found")
-        return { id: sessionID, location: { directory: location } }
+        return { id: sessionID, location: typeof location === "string" ? { directory: location } : location }
       } },
     }),
     subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
@@ -66,6 +74,104 @@ function locationlessManager(
 }
 
 describe("InstanceEventBridge", () => {
+  it("keeps same-directory legacy identities separate for scoped and cached locationless events", async () => {
+    const one = { directory: "/repo", workspaceID: "one" }
+    const two = { directory: "/repo", workspaceID: "two" }
+    const events = [
+      { type: "session.text.delta", location: one, data: { sessionID: "s1", delta: "one" } },
+      { type: "session.text.delta", location: two, data: { sessionID: "s2", delta: "two" } },
+      { type: "session.text.delta", data: { sessionID: "s1", delta: "cached one" } },
+      { type: "session.text.delta", data: { sessionID: "s2", delta: "cached two" } },
+      { type: "session.text.delta", data: { sessionID: "s3", delta: "resolved two" } },
+      { type: "session.text.delta", data: { sessionID: "s3", delta: "cached resolved two" } },
+    ] as OpenCodeEvent[]
+    const { manager, sessionGets } = locationlessManager(events, { s3: two }, [
+      { id: "a", path: "/repo", workspaceID: "one" }, { id: "b", path: "/repo", workspaceID: "two" },
+    ])
+    let checks = 0
+    const owns = manager.ownsLocation.bind(manager)
+    manager.ownsLocation = async (...args) => { checks++; return owns(...args) }
+    const bus = new EventBus()
+    const received: string[] = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.instanceId) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === events.length)
+      assert.deepEqual(received, ["a", "b", "a", "b", "b", "b"])
+      assert.equal(checks, 4, "one lookup per full location and logical workspace")
+      assert.equal(sessionGets(), 1)
+    } finally { bridge.shutdown() }
+  })
+
+  it("retains scoped PTY and Shell identity for later locationless events", async () => {
+    const location = { directory: "/repo", workspaceID: "two" }
+    const events = [
+      { type: "pty.created", location, data: { info: { id: "p", cwd: "/repo" } } },
+      { type: "pty.updated", data: { info: { id: "p", cwd: "/repo/subdirectory" } } },
+      { type: "pty.deleted", data: { id: "p" } },
+      { type: "shell.created", location, data: { info: { id: "sh", cwd: "/repo" } } },
+      { type: "shell.exited", data: { id: "sh" } },
+      { type: "shell.deleted", data: { id: "sh" } },
+    ] as OpenCodeEvent[]
+    const { manager } = locationlessManager(events, {}, [
+      { id: "a", path: "/repo", workspaceID: "one" }, { id: "b", path: "/repo", workspaceID: "two" },
+    ])
+    const bus = new EventBus()
+    const received: string[] = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.instanceId) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === events.length)
+      assert.deepEqual(received, events.map(() => "b"))
+    } finally { bridge.shutdown() }
+  })
+
+  it("does not retain a moved session's old envelope identity", async () => {
+    const one = { directory: "/repo", workspaceID: "one" }
+    const two = { directory: "/repo", workspaceID: "two" }
+    const events = [
+      { type: "session.text.delta", location: one, data: { sessionID: "s", delta: "before" } },
+      { type: "session.moved", location: one, data: { sessionID: "s", location: two } },
+      { type: "session.text.delta", data: { sessionID: "s", delta: "after" } },
+    ] as OpenCodeEvent[]
+    const { manager, sessionGets } = locationlessManager(events, { s: two }, [
+      { id: "a", path: "/repo", workspaceID: "one" }, { id: "b", path: "/repo", workspaceID: "two" },
+    ])
+    const bus = new EventBus()
+    const received: string[] = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.instanceId) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === events.length)
+      assert.deepEqual(received, ["a", "a", "b"])
+      assert.equal(sessionGets(), 1)
+    } finally { bridge.shutdown() }
+  })
+
+  it("never treats the global Form sentinel as a session location cache key", async () => {
+    const location = { directory: "/repo", workspaceID: "one" }
+    const events = [
+      { type: "form.created", location, data: { form: { id: "scoped", sessionID: "global" } } },
+      { type: "form.created", data: { form: { id: "unscoped", sessionID: "global" } } },
+      { type: "model.updated", data: {} },
+    ] as OpenCodeEvent[]
+    const { manager, sessionGets } = locationlessManager(events, { global: location }, [
+      { id: "a", path: "/repo", workspaceID: "one" }, { id: "b", path: "/repo", workspaceID: "two" },
+    ])
+    const bus = new EventBus()
+    const received: Array<{ instanceId: string; event: OpenCodeEvent }> = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === 3)
+      assert.equal(received.filter(event => event.event.type === "form.created").length, 1)
+      assert.equal(sessionGets(), 0)
+    } finally { bridge.shutdown() }
+  })
   it("does not publish connected until the stream confirms with its first event", async () => {
     const gate = deferred<void>()
     const manager = {
@@ -312,7 +418,7 @@ describe("InstanceEventBridge", () => {
       subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
         yield serverConnected()
         yield { type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
-        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        yield { id: "model-update", created: 1, type: "model.updated", data: {} } satisfies OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
@@ -329,7 +435,7 @@ describe("InstanceEventBridge", () => {
       workspaces = [workspaces[1]]
       retry.resolve(false)
       await waitFor(() => received.length === 1)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
       assert.equal(received[0].instanceId, "flaky")
     } finally {
       bridge.shutdown()
@@ -393,7 +499,7 @@ describe("InstanceEventBridge", () => {
     const events = [
       { type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } },
       { type: "permission.asked", data: { id: "unknown", sessionID: "unknown" } },
-      { type: "catalog.updated", data: {} },
+      { type: "model.updated", data: {} },
     ] as OpenCodeEvent[]
     const { manager, sessionGets } = locationlessManager(events, { unknown: new Error("not found") })
     const bus = new EventBus()
@@ -407,7 +513,7 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 1)
       assert.equal(sessionGets(), 2)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
     } finally {
       bridge.shutdown()
     }
@@ -433,7 +539,7 @@ describe("InstanceEventBridge", () => {
         yield { type: "permission.asked", data: { id: "p1", sessionID: "missing" } } as OpenCodeEvent
         now = 3_001
         yield { type: "permission.asked", data: { id: "p2", sessionID: "missing" } } as OpenCodeEvent
-        yield { type: "catalog.updated", data: {} } as OpenCodeEvent
+        yield { id: "model-update", created: 1, type: "model.updated", data: {} } satisfies OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
     } as unknown as WorkspaceManager
@@ -448,7 +554,7 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 1)
       assert.equal(sessionGets, 2)
-      assert.equal(received[0].event.type, "catalog.updated")
+      assert.equal(received[0].event.type, "model.updated")
     } finally {
       Date.now = originalNow
       bridge.shutdown()
@@ -575,13 +681,43 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("scopes typed plugin events to the owner of their required native location", async () => {
+    const location = { directory: "/repo-b", workspaceID: "workspace-b" }
+    const events = [{
+      id: "rpc-event",
+      created: 1,
+      type: "rpc.example.updated",
+      location,
+      data: { itemID: "item" },
+    }] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b", workspaceID: "workspace-b" }]
+    const { manager, sessionGets } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 0)
+      assert.equal(received[0].instanceId, "b")
+      assert.equal(received[0].event.type, "rpc.example.updated")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("broadcasts safe global locationless service events", async () => {
     const events = [
       { type: "agent.updated", data: {} },
-      { type: "catalog.updated", data: {} },
+      { type: "model.updated", data: {} },
       { type: "command.updated", data: {} },
       { type: "config.updated", data: {} },
-      { type: "integration.connection.updated", data: { integrationID: "test" } },
+      { type: "provider.updated", data: {} },
+      { type: "plugin.updated", data: {} },
       { type: "integration.updated", data: {} },
       { type: "mcp.resources.changed", data: { server: "test" } },
       { type: "mcp.status.changed", data: { server: "test" } },
