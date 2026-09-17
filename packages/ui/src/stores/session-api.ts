@@ -826,22 +826,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       next.set(instanceId, instanceSessions)
       return next
     })
-    await ensureV2ParentChainsLoaded(instanceId, searchResults, undefined, isCurrent)
-
     if (!isCurrent()) return
 
-    const hydratedSessions = sessions().get(instanceId)
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
     const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
-    const hasUnrenderableChildResult = currentSearchResults.some((session) => {
-      const parentId = session.parentID
-      return Boolean(parentId && !hydratedSessions?.has(parentId))
-    })
-
-    if (hasUnrenderableChildResult) {
-      clearSessionSearch(instanceId)
-      return
-    }
 
     syncInstanceSessionIndicator(instanceId)
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)

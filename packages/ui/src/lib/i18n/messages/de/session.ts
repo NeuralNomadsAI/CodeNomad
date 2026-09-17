@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeSubsessions": "Untersitzungen anzeigen",
   "session.pruning.maintenance_required": "Die Sitzung oder ihr Speicher ist beschäftigt. Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
   "session.pruning.unavailable": "Das Bereinigungs-Plugin ist nicht verfügbar oder hat nicht geantwortet. Öffne CodeNomad erneut und versuche es noch einmal.",
   "session.pruning.conflict": "Die Nachricht wurde seit der Auswahl geändert. Lade sie neu und wähle den Inhalt erneut aus.",

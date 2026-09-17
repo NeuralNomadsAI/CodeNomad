@@ -302,18 +302,16 @@ describe("session request authority", () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)
     const search = deferred<any>()
-    const parents = deferred<any>()
     let calls = 0
     ;(client.session as any).list = () => { calls += 1; return search.promise }
-    ;(client.session as any).get = () => parents.promise
+    ;(client.session as any).get = () => { throw new Error("Flat search must not hydrate parents") }
 
     try {
       const request = searchSessions(instanceId, "child")
-      search.resolve({ data: [apiSession("child", "parent")] })
       await new Promise<void>((resolve) => setImmediate(resolve))
       removeSessionRuntimeState(instanceId, "child")
       removeSessionRuntimeState(instanceId, "parent")
-      parents.resolve(apiSession("parent"))
+      search.resolve({ data: [apiSession("child", "parent")] })
       await request
 
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)

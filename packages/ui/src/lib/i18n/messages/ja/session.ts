@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeSubsessions": "サブセッションを表示",
   "session.pruning.maintenance_required": "セッションまたはストレージが使用中です。現在の処理が完了してから、クリーンアップを再試行してください。",
   "session.pruning.unavailable": "クリーンアッププラグインが利用できないか、応答しませんでした。CodeNomadを開き直して再試行してください。",
   "session.pruning.conflict": "選択後にメッセージが変更されました。再読み込みして内容を選択し直してください。",
