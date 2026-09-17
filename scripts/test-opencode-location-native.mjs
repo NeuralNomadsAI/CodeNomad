@@ -209,20 +209,21 @@ async function runIsolated(cli) {
       await delay(20)
     }
     const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
-    const endpoint = { url: baseUrl, auth: { type: "basic", username: "opencode", password } }
-    const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-    let discovery = "status"
-    let response = await fetch(`${baseUrl}/api/status`, { headers: { authorization } })
-    if (response.status === 404) { discovery = "health"; response = await fetch(`${baseUrl}/api/health`, { headers: { authorization } }) }
-    assert.equal(response.status, 200)
-    const identity = await response.json()
-    const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
+    const { OpenCodeCliService } = await tsImport("../packages/server/src/workspaces/opencode-cli-service.ts", import.meta.url)
+    const { runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
+    // Replace only CLI discovery; exercise production authenticated health probes.
+    const lifecycle = new OpenCodeCliService({ label: "Fixture", timeoutMs: 30_000,
+      command: args => ({ command: cli, args, options: {} }),
+    }, { execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? password : baseUrl, stderr: "" }) })
+    const endpoint = await lifecycle.discover()
+    const identity = runtimeIdentity(endpoint)
     const { createRuntimeTransport } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
-    rememberRuntime(endpoint, { version: identity.version, pid: identity.pid, discovery })
     const transport = createRuntimeTransport(endpoint)
     const client = OpenCode.make({ baseUrl, fetch: transport.fetch })
     const connection = { endpoint, client, ...transport, assertCurrent() {}, invalidate() {} }
     console.log(`Testing official runtime ${identity.version}`)
+    assert.equal((await client.server.status()).version, identity.version)
+    console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.status()`)
     await testNativeLocationIdentity({ client, connection, root })
   } finally {
     child.kill()
