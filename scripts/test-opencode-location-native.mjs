@@ -14,6 +14,8 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import replyFrom from "@fastify/reply-from"
 import pino from "pino"
+import { testNativeWorktreeFamily } from "./test-worktree-families-native.mjs"
+import { testNativeWorktreeManagement } from "./test-native-worktree-management.mjs"
 
 export async function testNativeLocationIdentity({ client, connection, root }) {
   const { contractProfile, runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
@@ -33,6 +35,8 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
   const rootLocation = await client.location.get({ location: { directory } })
   const worktreeLocation = await client.location.get({ location: { directory: worktree } })
   assert.equal(rootLocation.project.id, worktreeLocation.project.id)
+  await testNativeWorktreeFamily({ client, profile, rootLocation, worktreeLocation })
+  await testNativeWorktreeManagement({ client, root })
   if (profile !== "legacy") {
     await assert.rejects(client.location.get({ location: { directory } }, locationRequestOptions({ directory, workspaceID: "wrk_fixture_one" })))
     console.log("PASS: native modern worktree location and obsolete-selector rejection")

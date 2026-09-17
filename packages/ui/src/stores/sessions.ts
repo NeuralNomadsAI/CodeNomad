@@ -70,7 +70,7 @@ import {
 import { isSessionBusy } from "./session-status"
 
 import { getDefaultModel } from "./session-models"
-import { handleWorktreeReady } from "./worktrees"
+import { handleWorktreeReady, reloadWorktrees } from "./worktrees"
 import {
   createSession,
   deleteSession,
@@ -84,6 +84,7 @@ import {
   getMessageNextCursor,
   loadMoreMessages,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,
@@ -129,6 +130,10 @@ sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
 sseManager.onWorktreeReady = handleWorktreeReady
+sseManager.onWorktreeUpdated = async (instanceId) => {
+  await reloadWorktrees(instanceId)
+  await fetchSessions(instanceId, { reset: true })
+}
 
 export {
   abortSession,
@@ -165,6 +170,7 @@ export {
   loadOldestMessageWindow,
   isLatestMessageWindow,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   getActiveParentSession,

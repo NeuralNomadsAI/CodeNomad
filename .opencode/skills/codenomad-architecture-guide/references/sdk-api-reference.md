@@ -45,7 +45,7 @@ Location-sensitive list/create calls include `directory` or `location`. Session-
 
 Do not look for these in the OpenCode client:
 
-- Workspace create/delete and worktree management
+- Workspace create/delete and worktree workflow routes (native OpenCode owns worktree discovery/create/remove; CodeNomad supplies directory/branch policy and verified session-family moves)
 - Git status/diff/stage/unstage/commit
 - Yolo toggle, persistence and auto-accept policy
 - Authentication, storage, speech, sidecars and previews

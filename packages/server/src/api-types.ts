@@ -91,23 +91,48 @@ export type WorktreeKind = "root" | "worktree"
 export interface WorktreeDescriptor {
   /** Stable identifier used by CodeNomad + clients ("root" for the selected workspace folder). */
   slug: string
+  /** Presentation only; the worktree identifier does not change with its branch. */
+  label?: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Equivalent path in the OpenCode service namespace (notably WSL). */
+  serviceDirectory?: string
+  /** Native checkout root (before mirroring a nested workspace folder). */
+  serviceRoot?: string
+  /** Exact path registered in Git's worktree inventory. */
+  registeredDirectory?: string
   kind: WorktreeKind
+  /** False for the opened folder and Git's main checkout. */
+  removable?: boolean
   /** Optional VCS branch name when available. */
   branch?: string
+  /** Commit recorded by the Git worktree inventory. */
+  head?: string
 }
 
 export interface WorktreeListResponse {
   worktrees: WorktreeDescriptor[]
+  /** Default creation parent in the OpenCode service namespace. */
+  defaultDirectory?: string
   /** True when the workspace folder resolves to a Git repository. */
   isGitRepo?: boolean
 }
 
 export interface WorktreeCreateRequest {
   slug: string
+  fromSlug?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
+}
+
+export interface WorktreeSessionMoveRequest {
+  worktreeSlug: string
+}
+
+export interface WorktreeSessionMoveResponse {
+  rootSessionId: string
+  sessionIds: string[]
+  worktreeSlug: string
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
