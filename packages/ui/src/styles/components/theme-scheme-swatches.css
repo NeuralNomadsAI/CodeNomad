@@ -1,28 +1,24 @@
 .theme-scheme-swatches {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  align-items: start;
-  gap: var(--space-sm) var(--space-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: 0;
+  overflow-x: auto;
+  padding: 3px;
 }
 
 .theme-scheme-swatch {
   display: flex;
-  min-width: 0;
-  flex-direction: column;
+  flex: 0 0 1.5rem;
+  height: 1.5rem;
   align-items: center;
-  gap: 3px;
-  color: var(--text-muted);
-  font-size: 0.625rem;
-  line-height: 1.1;
-  text-align: center;
-  overflow-wrap: anywhere;
+  justify-content: center;
   cursor: pointer;
 }
 
 .theme-scheme-swatches input[type="color"] {
-  width: 100%;
-  max-width: 2.75rem;
-  height: 1.375rem;
+  width: 1.125rem;
+  height: 1.125rem;
   flex: 0 0 auto;
   padding: 0;
   border: 1px solid color-mix(in oklab, var(--border-base) 75%, transparent);
@@ -47,6 +43,7 @@
 
 @media (pointer: coarse) {
   .theme-scheme-swatch {
+    flex-basis: var(--touch-target-size);
     min-height: var(--touch-target-size);
   }
 }

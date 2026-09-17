@@ -1,8 +1,9 @@
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import { listen } from "@tauri-apps/api/event"
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
 import type { SettingsSectionId } from "../../stores/settings-screen"
+import { getLogger } from "../logger"
 
 const sections = new Set<SettingsSectionId>([
   "general", "chat", "notifications", "speech", "remote", "opencode",
@@ -11,6 +12,7 @@ const sections = new Set<SettingsSectionId>([
 
 export interface NativePreferencesRequest {
   section: SettingsSectionId
+  scrollTop?: number
   instanceId?: string
   location?: LocationRef
 }
@@ -23,6 +25,7 @@ export function normalizeNativePreferencesRequest(value: unknown): NativePrefere
   const location = candidate.location
   return {
     section: candidate.section as SettingsSectionId,
+    ...(Number.isSafeInteger(candidate.scrollTop) && (candidate.scrollTop as number) >= 0 && (candidate.scrollTop as number) <= 10_000_000 ? { scrollTop: candidate.scrollTop as number } : {}),
     ...(typeof candidate.instanceId === "string" && candidate.instanceId ? { instanceId: candidate.instanceId } : {}),
     ...(location && typeof location === "object" && typeof (location as LocationRef).directory === "string"
       ? { location: location as LocationRef }
@@ -44,15 +47,15 @@ export function readPreferencesRequestFromUrl(url: string): NativePreferencesReq
   }
 }
 
-export async function openNativePreferences(request: NativePreferencesRequest, toggle = false): Promise<void> {
+export async function openNativePreferences(request: NativePreferencesRequest, toggle = false, resume = false): Promise<void> {
   if (runtimeEnv.host === "electron") {
     const open = window.electronAPI?.openPreferences
     if (!open) throw new Error("Native Preferences is unavailable")
-    await open(request.section, { instanceId: request.instanceId, location: request.location }, toggle)
+    await open(request.section, { instanceId: request.instanceId, location: request.location }, toggle, resume)
     return
   }
   if (runtimeEnv.host === "tauri") {
-    await invoke("open_preferences_window", { request, toggle })
+    await invoke("open_preferences_window", { request, toggle, resume })
     return
   }
   throw new Error("Native Preferences is unavailable")
@@ -66,12 +69,29 @@ export async function markNativePreferencesReady(): Promise<void> {
   }
 }
 
-export async function acceptNativePreferencesRequest(request: NativePreferencesRequest): Promise<void> {
+export async function acceptNativePreferencesRequest(request: NativePreferencesRequest, generation?: number): Promise<void> {
   if (isElectronHost()) {
     await window.electronAPI?.acceptPreferencesRequest?.(request)
   } else if (isTauriHost()) {
-    await invoke("preferences_accept_request", { request })
+    await invoke("preferences_accept_request", { request, generation })
   }
+}
+
+export async function onNativePreferencesFlushRequested(flush: (generation?: number) => Promise<void>): Promise<() => void> {
+  if (isElectronHost()) {
+    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    return () => {
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+        delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
+      }
+    }
+  }
+  if (isTauriHost()) {
+    return listen<{ generation: number }>("client-state:flush-requested", event => {
+      void flush(event.payload.generation).catch(error => getLogger("actions").warn("Preferences shutdown flush failed", error))
+    })
+  }
+  return () => undefined
 }
 
 export async function getNativePreferencesRequest(): Promise<NativePreferencesRequest> {

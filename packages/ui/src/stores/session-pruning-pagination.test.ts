@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
-import type { SessionMessageInfo } from "@opencode-ai/client"
+import type { SessionMessageInfo } from "@opencode/client"
 import type { Session } from "../types/session"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
@@ -56,7 +56,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       inbox: { list: async () => [{ id: "resynced", sessionID: sessionId, type: "compaction", payload: { reason: "auto" }, timeCreated: 1 }] },
     })
     client.permission.list = async () => []
-    client.form.list = async () => []
+    client.session.form.list = async () => []
     client.message.list = async input => {
       requests.push({ limit: input.limit, cursor: input.cursor })
       const limit = input.limit ?? 20

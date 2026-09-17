@@ -8,7 +8,7 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { sendMessage } from "./session-actions.ts"
 import { handleNativeSessionEvent, handleSessionError } from "./session-events.ts"
-import { clearInstanceDeletedSessionAuthority, setSessions } from "./session-state.ts"
+import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 import { partHasRenderableText } from "../types/message.ts"
 
 function session(instanceId: string, id: string): Session {
@@ -115,7 +115,7 @@ describe("optimistic send lifecycle", () => {
     try {
       setConversationModeEnabled(instanceId, true)
       await sendMessage(instanceId, sessionId, "hello")
-      assert.deepEqual(calls, ["put:codenomad.voice-mode", "prompt"])
+      assert.deepEqual(calls, ["put:codenomad.voice-mode", "put:codenomad.session-placement", "prompt"])
     } finally {
       cleanup()
     }
@@ -138,6 +138,47 @@ describe("optimistic send lifecycle", () => {
       assert.equal(store.getMessage(request.id), undefined)
       assert.equal(store.getMessage("pending")?.status, "sent")
       assert.equal(store.getMessage("pending")?.isEphemeral, false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("repairs placement context on an existing session without pinning its initial directory or replacing other entries", async () => {
+    const instanceId = "send-placement-repair"
+    const sessionId = "session"
+    const entries = new Map<string, unknown>([["user.context", "keep me"], ["codenomad.session-placement", "outdated"]])
+    let writes = 0
+    let instruction: unknown
+    const cleanup = setup(instanceId, sessionId, async () => {
+      instruction = entries.get("codenomad.session-placement")
+      assert.equal(typeof instruction, "string")
+      assert.notEqual(instruction, "outdated")
+      assert.equal(entries.get("user.context"), "keep me")
+    }, {
+      put: async (input) => {
+        assert.equal(input.sessionID, sessionId)
+        entries.set(input.key, input.value)
+        if (input.key === "codenomad.session-placement") writes++
+      },
+      remove: async (input) => { entries.delete(input.key) },
+    })
+
+    try {
+      await sendMessage(instanceId, sessionId, "work in another directory")
+      const originalInstruction = instruction
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.location, { directory: "/work" })
+      // A real move is reflected by native session reconciliation; the next send
+      // must preserve that choice, rather than reattaching to the original folder.
+      setSessions((prev) => new Map(prev).set(instanceId, new Map([
+        [sessionId, { ...session(instanceId, sessionId), location: { directory: "/worktree" } }],
+      ])))
+      entries.delete("codenomad.session-placement")
+      setConversationModeEnabled(instanceId, true)
+      await sendMessage(instanceId, sessionId, "continue here")
+      assert.equal(writes, 2)
+      assert.equal(instruction, originalInstruction)
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.location, { directory: "/worktree" })
+      assert.equal(entries.has("codenomad.voice-mode"), true)
     } finally {
       cleanup()
     }

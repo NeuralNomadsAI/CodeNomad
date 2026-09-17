@@ -69,7 +69,7 @@ dev-docs/             Development documentation
 - Project file structure
 - State management patterns
 - Shared OpenCode service and location ownership
-- Native `@opencode-ai/client` integration
+- Native `@opencode/client` integration
 - `/api/events` multiplexing
 - IPC communication
 - Error handling strategies
@@ -158,14 +158,14 @@ dev-docs/             Development documentation
 
 ### External:
 
-- OpenCode server API: https://opencode.ai/docs/server/
+- OpenCode V2 HTTP API: https://opencode.ai/v2/docs/api/
 - Electron docs: https://electronjs.org/docs
 - SolidJS docs: https://solidjs.com
 - Kobalte UI: https://kobalte.dev
 
 ## Current OpenCode Baseline
 
-- Experimental protocol client: server and UI follow `@opencode-ai/client@beta`; the runtime CLI is managed independently and startup validates its authenticated loopback health endpoint without an exact version gate
+- Stable protocol client: server and UI pin `@opencode/client@2.0.4`; the runtime CLI is managed independently and startup validates its authenticated loopback `/api/status` endpoint without an exact version gate
 - Service: one externally owned global endpoint with a CodeNomad-pinned host or WSL identity
 - Workspaces: native locations/directories
 - Database: OpenCode's global default; configured startup environment applies only when CodeNomad starts a missing daemon

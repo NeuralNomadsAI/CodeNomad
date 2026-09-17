@@ -57,9 +57,9 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   snapshot: () => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).map(id => messageStoreBus.getOrCreate(instanceId).getMessage(id)),
   preferences: () => updatePreferences({ showThinkingBlocks: true, thinkingBlocksExpansion: "collapsed", toolOutputExpansion: "collapsed", locale: "en" }),
 }
-void (async () => {
-  for await (const event of client.event.subscribe()) {
-    eventsReady = true
-    ;(sseManager as any).handleEvent(instanceId, event)
-  }
-})()
+const events = new EventSource("/fixture-events")
+events.onmessage = message => {
+  eventsReady = true
+  ;(sseManager as any).handleEvent(instanceId, JSON.parse(message.data))
+}
+window.addEventListener("pagehide", () => events.close(), { once: true })

@@ -20,7 +20,7 @@
 
 ## Prerequisites
 
-- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates its authenticated loopback health response rather than enforcing an exact CLI version string.
+- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates its authenticated loopback `/api/status` response rather than enforcing an exact CLI version string.
 - **OpenCode data**: The global daemon owns its platform-default storage, database, and service registration. Configured startup environment applies only when CodeNomad starts a missing daemon; an existing daemon is unchanged.
 - **Windows to WSL**: A configured WSL UNC binary uses Linux `service status`, `service start`, and `service get password`; Windows must have WSL localhost forwarding enabled to reach its loopback service.
 - Node.js 18+ and npm (for running or building from source).
@@ -232,7 +232,7 @@ Explicit **Stop Workspace** evicts that location and its resources from the glob
 
 CodeNomad holds one shared OpenCode V2 `client.event.subscribe()` stream. It routes native location-scoped events to logical workspaces and multiplexes them with CodeNomad events over `GET /api/events` for browser `EventSource` clients.
 
-The stream is volatile and has no replay guarantee. After reconnecting, clients must refetch authoritative sessions and pending permission, question, and form requests; file and config consumers must also refetch after `filesystem.changed` and `config.updated` invalidations.
+The stream is volatile and has no replay guarantee. After reconnecting, clients must refetch authoritative sessions and pending permission and Form requests; file and config consumers must also refetch after `filesystem.changed` and `config.updated` invalidations.
 
 ### Provider Plan Usage
 

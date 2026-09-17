@@ -1,4 +1,4 @@
-import type { PermissionReply as NativePermissionReply, PermissionReplied, PermissionRequest as NativePermissionRequest } from "@opencode-ai/client"
+import type { PermissionReply as NativePermissionReply, PermissionReplied, PermissionRequest as NativePermissionRequest } from "@opencode/client"
 
 export type PermissionReply = NativePermissionReply
 export type PermissionRequest = NativePermissionRequest

@@ -1,27 +1,35 @@
-import { isSessionNotFoundError, type OpenCodeEvent } from "@opencode-ai/client"
+import { isSessionNotFoundError, type LocationRef, type OpenCodeEvent } from "@opencode/client"
+import { readLocationRef } from "../opencode/compatibility/location"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
 import { InstanceStreamStatus } from "../api-types"
+import { invalidateWorktreeCache } from "./worktree-directory"
 
 const RECONNECT_DELAY_MS = 1000
-const DIRECTORY_OWNER_CACHE_MS = 2000
-const SESSION_DIRECTORY_CACHE_MS = 2000
+const LOCATION_OWNER_CACHE_MS = 2000
+const SESSION_LOCATION_CACHE_MS = 2000
 const GLOBAL_EVENT_TYPES = new Set([
-  "agent.updated",
   "catalog.updated",
+  "agent.updated",
   "command.updated",
   "config.updated",
   "credential.switched",
   "credential.updated",
-  "integration.connection.updated",
   "integration.updated",
   "installation.update-available",
   "installation.updated",
   "mcp.resources.changed",
   "mcp.status.changed",
   "models-dev.refreshed",
+  "model.updated",
+  "plugin.updated",
+  "provider.updated",
+  "reference.updated",
   "server.connected",
+  "skill.updated",
+  "websearch.updated",
+  "worktree.updated",
 ])
 
 interface InstanceEventBridgeOptions {
@@ -35,10 +43,10 @@ export class InstanceEventBridge {
   private status: InstanceStreamStatus = "connecting"
   private generation = 0
   private task?: Promise<void>
-  private readonly directoryOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
-  private readonly sessionDirectories = new Map<string, { expiresAt: number; directory: Promise<string | undefined> }>()
-  private readonly ptyDirectories = new Map<string, string>()
-  private readonly shellDirectories = new Map<string, string>()
+  private readonly locationOwners = new Map<string, { expiresAt: number; owners: Promise<string[]> }>()
+  private readonly sessionLocations = new Map<string, { expiresAt: number; location: Promise<LocationRef | undefined> }>()
+  private readonly ptyLocations = new Map<string, LocationRef>()
+  private readonly shellLocations = new Map<string, LocationRef>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
     this.clearLocationCaches()
     if (!this.task) this.task = this.run()
@@ -101,18 +109,24 @@ export class InstanceEventBridge {
   }
 
   private async publishEvent(event: OpenCodeEvent) {
+    if (event.type === "worktree.updated") {
+      invalidateWorktreeCache()
+      this.locationOwners.clear()
+    }
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
     const shellId = this.shellId(event)
-    if (event.type === "session.moved" && sessionId) this.sessionDirectories.delete(sessionId)
+    if (event.type === "session.moved" && sessionId) this.sessionLocations.delete(sessionId)
 
-    const directory = event.location?.directory
-      ?? this.ptyInfoDirectory(event)
-      ?? (ptyId ? this.ptyDirectories.get(ptyId) : undefined)
-      ?? this.shellInfoDirectory(event)
-      ?? (shellId ? this.shellDirectories.get(shellId) : undefined)
-      ?? (sessionId ? await this.resolveSessionDirectory(sessionId) : undefined)
-    if (!directory) {
+    // A scoped event is native location authority, not merely a cwd hint. Keep
+    // that full pair for subsequent locationless PTY/Shell/session events.
+    const location = event.location ? readLocationRef(event.location)
+      : (ptyId ? this.ptyLocations.get(ptyId) : undefined)
+        ?? this.ptyInfoLocation(event)
+        ?? (shellId ? this.shellLocations.get(shellId) : undefined)
+        ?? this.shellInfoLocation(event)
+        ?? (sessionId ? await this.resolveSessionLocation(sessionId) : undefined)
+    if (!location) {
       if (GLOBAL_EVENT_TYPES.has(event.type)) {
         this.broadcastEvent(event)
         return
@@ -121,39 +135,41 @@ export class InstanceEventBridge {
         // Deletion can make session.get return 404 before the event arrives. Session IDs are
         // service-global, so notifying every logical workspace cannot delete another session.
         this.broadcastEvent(event)
-        this.sessionDirectories.delete(sessionId)
+        this.sessionLocations.delete(sessionId)
       }
       return
     }
-    if (sessionId) {
-      this.sessionDirectories.set(sessionId, {
-        expiresAt: Date.now() + SESSION_DIRECTORY_CACHE_MS,
-        directory: Promise.resolve(directory),
+    // The moved envelope can refer to the old location. The next locationless
+    // event must resolve the native session rather than cache that old owner.
+    if (sessionId && event.type !== "session.moved") {
+      this.sessionLocations.set(sessionId, {
+        expiresAt: Date.now() + SESSION_LOCATION_CACHE_MS,
+        location: Promise.resolve(location),
       })
     }
-    if (ptyId) this.ptyDirectories.set(ptyId, directory)
-    if (shellId) this.shellDirectories.set(shellId, directory)
+    if (ptyId) this.ptyLocations.set(ptyId, location)
+    if (shellId) this.shellLocations.set(shellId, location)
 
-    const instanceIds = await this.resolveDirectoryOwners(directory)
+    const instanceIds = await this.resolveLocationOwners(location)
     if (instanceIds.length === 0) {
-      if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
-      if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
-      if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
+      if (event.type === "session.deleted" && sessionId) this.sessionLocations.delete(sessionId)
+      if (event.type === "pty.deleted" && ptyId) this.ptyLocations.delete(ptyId)
+      if (event.type === "shell.deleted" && shellId) this.shellLocations.delete(shellId)
       return
     }
 
     for (const instanceId of instanceIds) {
       this.options.eventBus.publish({ type: "instance.event", instanceId, event })
     }
-    if (event.type === "session.deleted" && sessionId) this.sessionDirectories.delete(sessionId)
-    if (event.type === "pty.deleted" && ptyId) this.ptyDirectories.delete(ptyId)
-    if (event.type === "shell.deleted" && shellId) this.shellDirectories.delete(shellId)
+    if (event.type === "session.deleted" && sessionId) this.sessionLocations.delete(sessionId)
+    if (event.type === "pty.deleted" && ptyId) this.ptyLocations.delete(ptyId)
+    if (event.type === "shell.deleted" && shellId) this.shellLocations.delete(shellId)
   }
 
   private sessionId(event: OpenCodeEvent): string | undefined {
     const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
     const sessionId = data.sessionID ?? (event.type === "form.created" ? data.form?.sessionID : undefined)
-    return typeof sessionId === "string" && sessionId ? sessionId : undefined
+    return typeof sessionId === "string" && sessionId && sessionId !== "global" ? sessionId : undefined
   }
 
   private ptyId(event: OpenCodeEvent): string | undefined {
@@ -163,10 +179,10 @@ export class InstanceEventBridge {
     return typeof id === "string" && id ? id : undefined
   }
 
-  private ptyInfoDirectory(event: OpenCodeEvent): string | undefined {
+  private ptyInfoLocation(event: OpenCodeEvent): LocationRef | undefined {
     if (event.type !== "pty.created" && event.type !== "pty.updated") return undefined
     const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
-    return typeof cwd === "string" && cwd ? cwd : undefined
+    return typeof cwd === "string" && cwd ? { directory: cwd } : undefined
   }
 
   private shellId(event: OpenCodeEvent): string | undefined {
@@ -176,10 +192,10 @@ export class InstanceEventBridge {
     return typeof id === "string" && id ? id : undefined
   }
 
-  private shellInfoDirectory(event: OpenCodeEvent): string | undefined {
+  private shellInfoLocation(event: OpenCodeEvent): LocationRef | undefined {
     if (event.type !== "shell.created") return undefined
     const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
-    return typeof cwd === "string" && cwd ? cwd : undefined
+    return typeof cwd === "string" && cwd ? { directory: cwd } : undefined
   }
 
   private broadcastEvent(event: OpenCodeEvent): void {
@@ -188,48 +204,52 @@ export class InstanceEventBridge {
     }
   }
 
-  private resolveSessionDirectory(sessionId: string): Promise<string | undefined> {
+  private resolveSessionLocation(sessionId: string): Promise<LocationRef | undefined> {
     const now = Date.now()
-    const cached = this.sessionDirectories.get(sessionId)
-    if (cached && cached.expiresAt > now) return cached.directory
+    const cached = this.sessionLocations.get(sessionId)
+    if (cached && cached.expiresAt > now) return cached.location
 
     const resolve = () => this.options.workspaceManager.getSharedServiceClient()
       .then((client) => client.session.get({ sessionID: sessionId }))
-      .then((session) => session.location.directory)
-    const directory = resolve().catch((error) => {
+      .then((session) => readLocationRef(session.location))
+    const location = resolve().catch((error) => {
       if (isSessionNotFoundError(error)) return undefined
       return resolve().catch((retryError) => {
         this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
         return undefined
       })
     })
-    const entry = { expiresAt: Number.POSITIVE_INFINITY, directory }
-    this.sessionDirectories.set(sessionId, entry)
-    const settle = () => { entry.expiresAt = Date.now() + SESSION_DIRECTORY_CACHE_MS }
-    void directory.then(settle, settle)
-    return directory
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, location }
+    this.sessionLocations.set(sessionId, entry)
+    const settle = () => { entry.expiresAt = Date.now() + SESSION_LOCATION_CACHE_MS }
+    void location.then(settle, settle)
+    return location
   }
 
-  private resolveDirectoryOwners(directory: string): Promise<string[]> {
+  private resolveLocationOwners(location: LocationRef): Promise<string[]> {
     const now = Date.now()
-    const cached = this.directoryOwners.get(directory)
+    const key = JSON.stringify([location.directory, location.workspaceID])
+    const cached = this.locationOwners.get(key)
     if (cached && cached.expiresAt > now) return cached.owners
 
     const workspaces = this.options.workspaceManager.list()
+    const owns = (id: string) => location.workspaceID === undefined
+      ? this.options.workspaceManager.ownsDirectory(id, location.directory)
+      : this.options.workspaceManager.ownsLocation(id, location)
     const owners = Promise.allSettled(workspaces.map((workspace) => (
-      this.options.workspaceManager.ownsDirectory(workspace.id, directory)
+      owns(workspace.id)
     )))
       .then(async (ownership) => {
         if (ownership.some((result) => result.status === "rejected")) {
           ownership = await Promise.allSettled(ownership.map((result, index) => (
             result.status === "fulfilled"
               ? Promise.resolve(result.value)
-              : this.options.workspaceManager.ownsDirectory(workspaces[index].id, directory)
+              : owns(workspaces[index].id)
           )))
         }
         const failed = ownership.find((result) => result.status === "rejected")
         if (failed) {
-          this.options.logger.warn({ err: failed.reason, directory }, "Failed to resolve instance event directory owner")
+          this.options.logger.warn({ err: failed.reason, location }, "Failed to resolve instance event location owner")
         }
         const currentIds = new Set(this.options.workspaceManager.list().map((workspace) => workspace.id))
         return ownership.flatMap((result, index) => {
@@ -238,17 +258,17 @@ export class InstanceEventBridge {
         })
       })
     const entry = { expiresAt: Number.POSITIVE_INFINITY, owners }
-    this.directoryOwners.set(directory, entry)
-    const settle = () => { entry.expiresAt = Date.now() + DIRECTORY_OWNER_CACHE_MS }
+    this.locationOwners.set(key, entry)
+    const settle = () => { entry.expiresAt = Date.now() + LOCATION_OWNER_CACHE_MS }
     void owners.then(settle, settle)
     return owners
   }
 
   private clearLocationCaches(): void {
-    this.directoryOwners.clear()
-    this.sessionDirectories.clear()
-    this.ptyDirectories.clear()
-    this.shellDirectories.clear()
+    this.locationOwners.clear()
+    this.sessionLocations.clear()
+    this.ptyLocations.clear()
+    this.shellLocations.clear()
   }
 
   private updateStatus(status: InstanceStreamStatus, reason?: string) {

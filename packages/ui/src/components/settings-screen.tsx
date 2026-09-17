@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import type { LocationRef } from "@opencode-ai/client"
+import type { LocationRef } from "@opencode/client"
 import { Settings, Bell, ChevronDown, FileCog, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
@@ -27,6 +27,7 @@ import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
+import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -39,6 +40,8 @@ interface SettingsScreenProps {
   providerContext?: { instanceId?: string; location?: LocationRef }
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
+  scrollPosition?: { scrollTop?: number }
+  onScrollPositionChange?: (top: number) => void
 }
 
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
@@ -119,6 +122,10 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   })
   let settingsShell: HTMLDivElement | undefined
   let settingsScroll: HTMLDivElement | undefined
+  createSettingsScrollRestoration(() => settingsScroll, () => {
+    activeSettingsSection()
+    return props.scrollPosition
+  }, top => props.onScrollPositionChange?.(top))
   let dragStart: { x: number; y: number; pointerX: number; pointerY: number; minX: number; maxX: number; minY: number; maxY: number } | undefined
 
   const handleDragStart = (event: PointerEvent) => {

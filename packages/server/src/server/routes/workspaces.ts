@@ -361,6 +361,7 @@ async function resolveGitWorktreeDirectory(
     workspaceId: workspace.id,
     workspacePath: workspace.path,
     worktreeSlug,
+    loadWorktrees: async () => (await workspaceManager.getWorktrees(workspace.id)).worktrees,
     logger,
   })
   if (!directory) {

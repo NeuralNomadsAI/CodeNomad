@@ -42,6 +42,8 @@ import type {
   WorkspaceEventType,
   WorktreeListResponse,
   WorktreeCreateRequest,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
@@ -208,6 +210,13 @@ export const serverApi = {
     const suffix = params.toString() ? `?${params.toString()}` : ""
     return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
       method: "DELETE",
+    })
+  },
+
+  moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+    return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
 

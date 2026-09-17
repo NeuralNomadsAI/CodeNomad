@@ -1264,7 +1264,7 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
 }
 
 fn set_target_zoom(app: &AppHandle, window: &tauri::WebviewWindow, zoom: f64) {
-    if identity::local_window_id(window.label()).is_ok() {
+    if identity::local_window_id(window.label()).is_ok() || window.label() == preferences_window::LABEL {
         client_state::set_local_window_zoom(app, window.label(), zoom);
         return;
     }
@@ -1277,7 +1277,7 @@ fn set_target_zoom(app: &AppHandle, window: &tauri::WebviewWindow, zoom: f64) {
 }
 
 fn target_zoom(app: &AppHandle, window: &tauri::WebviewWindow) -> f64 {
-    if identity::local_window_id(window.label()).is_ok() {
+    if identity::local_window_id(window.label()).is_ok() || window.label() == preferences_window::LABEL {
         client_state::local_window_zoom(app, window.label())
     } else {
         app.state::<AppState>()
@@ -1777,6 +1777,7 @@ fn main() {
                 ..
             } => {
                 if label == preferences_window::LABEL {
+                    client_state::capture_and_flush_window(&app_handle, &label);
                     if shutdown::exit_allowed(&app_handle) {
                         return;
                     }

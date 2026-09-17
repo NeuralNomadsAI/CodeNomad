@@ -12,7 +12,8 @@ import { revision } from "./planner"
 // Exercise the real RPC handlers, storage challenge and file-backed transaction.
 // No shared service, user configuration or real conversation is involved.
 for (const version of ["0.0.0-beta-19425", "future-release", undefined]) {
-  test(`pruning uses storage capabilities, not runtime version ${version}`, async () => {
+ for (const workspaceID of [undefined, "legacy-native-workspace"]) {
+  test(`pruning uses storage capabilities, not runtime version ${version}, workspace ${workspaceID}`, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "pruning-capabilities-"))
     const filename = path.join(root, "fixture.db")
     const db = new DatabaseSync(filename)
@@ -29,13 +30,14 @@ for (const version of ["0.0.0-beta-19425", "future-release", undefined]) {
         CREATE TABLE event(aggregate_id TEXT);
         CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,time_created INTEGER,time_updated INTEGER);
         CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT);`)
-      db.prepare("INSERT INTO session_v2 VALUES('s',?,'p',NULL,NULL,NULL,NULL)").run(storageDirectory(root))
+      db.prepare("INSERT INTO session_v2 VALUES('s',?,'p',?,NULL,NULL,NULL)").run(storageDirectory(root), workspaceID ?? null)
       db.prepare("INSERT INTO session_message VALUES('m','s','assistant',?)").run(JSON.stringify(data))
+      const location = { directory: root, workspaceID, project: { id: "p" } }
       cleanup = await plugin.setup({
         app: { version },
         options: { databasePath: filename },
-        location: { directory: root, project: { id: "p" } },
-        session: { get: async () => ({ location: { directory: root }, projectID: "p" }) },
+        location,
+        session: { get: async () => ({ location: { directory: root, workspaceID }, projectID: "p" }) },
         storage: {
           set: async (key: string, value: unknown) => {
             db.prepare("INSERT INTO kv VALUES(?,?,1,1)").run(storageKey(key), JSON.stringify(value))
@@ -49,6 +51,15 @@ for (const version of ["0.0.0-beta-19425", "future-release", undefined]) {
       } as any)
       assert.equal((await handlers.preview({ sessionID: "s", messageID: "m" })).liveMutation, true)
       const call = { signal: new AbortController().signal }
+      location.workspaceID = "foreign-context"
+      assert.deepEqual(await handlers.preview({ sessionID: "s", messageID: "m" }), { status: "blocked", reason: "not_deletable" })
+      assert.deepEqual(await handlers.prune(input, call), { status: "blocked", reason: "not_deletable" })
+      assert.equal(db.prepare("SELECT count(*) AS n FROM kv").get()!.n, 0)
+      location.workspaceID = workspaceID
+      db.exec("UPDATE session_v2 SET workspace_id='foreign-storage'")
+      assert.deepEqual(await handlers.preview({ sessionID: "s", messageID: "m" }), { status: "blocked", reason: "unavailable" })
+      assert.deepEqual(await handlers.prune(input, call), { status: "blocked", reason: "not_deletable" })
+      db.prepare("UPDATE session_v2 SET workspace_id=?").run(workspaceID ?? null)
       // Native storage capabilities still fail closed irrespective of the label.
       db.exec("ALTER TABLE session_v2 RENAME COLUMN time_suspended TO missing_claim")
       assert.deepEqual(await handlers.prune(input, call), { status: "blocked", reason: "unsupported_storage" })
@@ -70,4 +81,5 @@ for (const version of ["0.0.0-beta-19425", "future-release", undefined]) {
       await rm(root, { recursive: true, force: true })
     }
   })
+ }
 }
