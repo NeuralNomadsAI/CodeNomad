@@ -23,6 +23,8 @@ Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM c
 
 The desktop process managers start and supervise the CodeNomad backend. They do not own or stop the shared OpenCode daemon.
 
+The backend delegates only the official `service start` command through its private stdout/stdin native-parent bridge (`opencode.service.start`). Both hosts execute the starter outside backend containment, so the shared daemon cannot inherit Tauri's kill-on-close Job Object or Electron's backend process-tree cleanup. Status, password retrieval and authenticated health remain in the server lifecycle adapter. Standalone servers execute the same official CLI directly. Never expose the starter as renderer IPC or attach its daemon descendants to backend cleanup.
+
 ## Native Abstractions
 
 - Shared dispatch and dialogs: `packages/ui/src/lib/native/native-functions.ts`

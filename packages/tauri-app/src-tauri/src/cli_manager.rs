@@ -45,6 +45,9 @@ use windows_sys::Win32::System::JobObjects::{
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
+#[cfg(test)]
+#[path = "cli_service_lifetime_tests.rs"]
+mod service_lifetime_tests;
 #[cfg(windows)]
 const CLI_SHUTDOWN_COMMAND: &[u8] = b"codenomad:shutdown\n";
 
