@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "Show main sessions",
   "sessionList.filter.includeSubsessions": "Show subsessions",
   "session.pruning.maintenance_required": "The session or its storage is busy. Wait for the current operation to finish, then retry cleanup.",
   "session.pruning.unavailable": "The cleanup plugin is unavailable or did not respond. Reopen CodeNomad and retry.",

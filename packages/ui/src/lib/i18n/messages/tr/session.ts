@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "Ana oturumları göster",
   "sessionList.filter.includeSubsessions": "Alt oturumları göster",
   "session.pruning.maintenance_required": "Oturum veya depolama alanı meşgul. Geçerli işlem bitince temizlemeyi yeniden deneyin.",
   "session.pruning.unavailable": "Temizleme eklentisi kullanılamıyor veya yanıt vermedi. CodeNomad'i yeniden açıp tekrar deneyin.",

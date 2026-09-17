@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "显示主会话",
   "sessionList.filter.includeSubsessions": "显示子会话",
   "session.pruning.maintenance_required": "会话或其存储正忙。请等待当前操作完成后重试清理。",
   "session.pruning.unavailable": "清理插件不可用或未响应。请重新打开 CodeNomad 后重试。",
