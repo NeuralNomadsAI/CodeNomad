@@ -10,7 +10,7 @@ interface PreferencesIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): { window: BrowserWindow } | undefined
   resolvePreferences(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openPreferences(request: PreferencesRequest, toggle?: boolean): Promise<void>
+  openPreferences(request: PreferencesRequest, toggle?: boolean, resume?: boolean): Promise<void>
   getRequest(window: BrowserWindow): PreferencesRequest | undefined
   markReady(window: BrowserWindow): void
   acceptRequest(window: BrowserWindow, request: PreferencesRequest): void | Promise<void>
@@ -39,10 +39,11 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
     return window
   }
 
-  ipcMain.handle("preferences:open", async (event, section: unknown, context: unknown, toggle: unknown) => {
+  ipcMain.handle("preferences:open", async (event, section: unknown, context: unknown, toggle: unknown, resume: unknown) => {
     local(event)
     if (typeof toggle !== "undefined" && typeof toggle !== "boolean") throw new Error("Invalid Preferences toggle")
-    await dependencies.openPreferences(requirePreferencesRequest(section, context), toggle === true)
+    if (typeof resume !== "undefined" && typeof resume !== "boolean") throw new Error("Invalid Preferences resume flag")
+    await dependencies.openPreferences(requirePreferencesRequest(section, context), toggle === true, resume === true)
     return { ok: true }
   })
   ipcMain.handle("preferences:getSection", (event) => {
