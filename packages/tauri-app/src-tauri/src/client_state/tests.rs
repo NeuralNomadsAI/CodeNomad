@@ -43,6 +43,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
     let request = crate::preferences_window::PreferencesRequest {
+        scroll_top: Some(420),
         section: "providers".into(),
         instance_id: Some("instance-1".into()),
         location: Some(crate::preferences_window::PreferencesLocation {
@@ -74,6 +75,20 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
         serde_json::from_slice(&fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap())
             .unwrap();
     assert!(persisted.get("preferences").is_none());
+    let bounds = WindowBounds { x: 40, y: 60, width: 1120, height: 780 };
+    assert!(state.queue_window_capture("preferences", Some(bounds.clone()), true, false, 1.25));
+    state.flush().unwrap();
+    drop(state);
+    let reopened = ClientState::initialize_at(directory.path()).unwrap();
+    assert_eq!(reopened.preferences(), None);
+    let last = reopened.last_preferences().unwrap();
+    assert_eq!(last.section, "providers");
+    assert_eq!(last.scroll_top, Some(420));
+    assert_eq!(last.instance_id, None);
+    assert_eq!(last.location, None);
+    assert_eq!(reopened.state.lock().unwrap().preferences_window, Some(NativeWindowState {
+        bounds, maximized: true, fullscreen: false, zoom_factor: 1.25,
+    }));
 }
 use std::time::Duration;
 use tempfile::TempDir;
