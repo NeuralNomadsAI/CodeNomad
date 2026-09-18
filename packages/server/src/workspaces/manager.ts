@@ -32,6 +32,7 @@ import {
 import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { WorktreeInventory } from "./worktree-inventory"
 import { resolveRepoRoot } from "./git-worktrees"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
@@ -317,25 +318,33 @@ export class WorkspaceManager {
     }
   }
 
-  private readonly worktreeInventoryRequests = new Map<string, ReturnType<typeof listNativeWorktrees>>()
+  private readonly worktreeInventory = new WorktreeInventory({
+    load: (id) => this.nativeWorktreeContext(id).then(listNativeWorktrees),
+    changed: (id) => {
+      invalidateWorktreeCache(id)
+      this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
+    },
+    failed: (id, error) => this.options.logger.warn({ workspaceId: id, err: error }, "Failed to refresh worktree inventory"),
+    now: () => this.now(),
+  })
 
-  async getWorktrees(id: string) {
-    const pending = this.worktreeInventoryRequests.get(id)
-    if (pending) return pending
-    const task = this.nativeWorktreeContext(id).then(listNativeWorktrees)
-    this.worktreeInventoryRequests.set(id, task)
-    try { return await task }
-    finally { if (this.worktreeInventoryRequests.get(id) === task) this.worktreeInventoryRequests.delete(id) }
+  getWorktrees(id: string, mode: "cached" | "validated" | "fresh" = "cached") {
+    return this.worktreeInventory.read(id, mode)
+  }
+
+  invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
+    this.worktreeInventory.invalidate(undefined, mode)
+    invalidateWorktreeCache()
   }
 
   async createWorktree(id: string, branch: string, fromSlug?: string) {
     try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
-    finally { invalidateWorktreeCache() }
+    finally { this.invalidateWorktrees("blocking") }
   }
 
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
-    finally { invalidateWorktreeCache() }
+    finally { this.invalidateWorktrees("blocking") }
   }
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
@@ -347,7 +356,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       directory,
-      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })) !== null
   }
@@ -372,7 +381,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       directory: hostDirectory,
-      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })
   }
@@ -391,7 +400,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       candidate,
-      loadWorktrees: async () => (await this.getWorktrees(record.id)).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })
   }
@@ -1042,6 +1051,8 @@ export class WorkspaceManager {
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
+    this.worktreeInventory.forget(id)
+    invalidateWorktreeCache(id)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, reason)
   }

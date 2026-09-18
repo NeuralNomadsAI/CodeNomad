@@ -3,10 +3,11 @@ import path from "node:path"
 import type { LogLike } from "./git-worktrees"
 import type { WorktreeDescriptor } from "../api-types"
 
-type WorktreeSource = { loadWorktrees: () => Promise<WorktreeDescriptor[]> }
+type WorktreeSource = { loadWorktrees: (refresh?: boolean) => Promise<WorktreeDescriptor[]> }
 
 type WorktreeCacheEntry = {
   expiresAt: number
+  refreshedOnMiss: boolean
   worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string }>
   resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
 }
@@ -25,7 +26,10 @@ async function normalizeDirectoryPath(directory: string): Promise<string> {
   }
 }
 
-async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike }) {
+async function getCachedWorktrees(
+  params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike },
+  refresh = false,
+): Promise<WorktreeCacheEntry> {
   const cached = worktreeCache.get(params.workspaceId)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -37,9 +41,10 @@ async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string
 
   let load!: Promise<WorktreeCacheEntry>
   load = (async () => {
-    const worktrees = await params.loadWorktrees()
+    const worktrees = await params.loadWorktrees(refresh)
     const entry: WorktreeCacheEntry = {
       expiresAt: Date.now() + WORKTREE_CACHE_TTL_MS,
+      refreshedOnMiss: false,
       worktrees: await Promise.all(
         worktrees.map(async (wt) => ({
           slug: wt.slug,
@@ -50,7 +55,10 @@ async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string
       ),
       resolvedDirectories: new Map(),
     }
-    if (worktreeLoads.get(params.workspaceId) === load) worktreeCache.set(params.workspaceId, entry)
+    // A native snapshot update or mutation can invalidate during load/realpath.
+    // Never return the obsolete ownership to callers already awaiting this load.
+    if (worktreeLoads.get(params.workspaceId) !== load) return getCachedWorktrees(params)
+    worktreeCache.set(params.workspaceId, entry)
     return entry
   })()
   worktreeLoads.set(params.workspaceId, load)
@@ -94,7 +102,7 @@ export async function resolveWorktreeDirectory(params: WorktreeSource & {
     workspacePath: params.workspacePath,
     logger: params.logger,
     loadWorktrees: params.loadWorktrees,
-  })
+  }, true)
   return refreshed.worktrees.find((wt) => wt.slug === params.worktreeSlug)?.directory ?? null
 }
 
@@ -124,7 +132,7 @@ export async function resolveWorktreeSlugForDirectory(params: WorktreeSource & {
     workspacePath: params.workspacePath,
     logger: params.logger,
     loadWorktrees: params.loadWorktrees,
-  })
+  }, true)
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
 }
 
@@ -182,11 +190,13 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   let entry = await getCachedWorktrees(params)
   if (entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
   let match = find(entry.worktrees)
-  if (!match || (match.slug === "root" && match.normalizedDirectory !== target)) {
-    // Several foreign-location events can miss the same snapshot concurrently.
-    // Refresh that snapshot once; never discard another caller's pending load.
+  if (!entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
+    // Refresh once for this cache lifetime, including sequential misses from
+    // distinct foreign event locations. Otherwise every miss discards the last
+    // negative result and stalls the serial native event bridge on inventory I/O.
     if (worktreeCache.get(params.workspaceId) === entry) worktreeCache.delete(params.workspaceId)
-    entry = await getCachedWorktrees(params)
+    entry = await getCachedWorktrees(params, true)
+    entry.refreshedOnMiss = true
     match = find(entry.worktrees)
   }
   const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null

@@ -61,6 +61,82 @@ test("worktree actions use click/keyboard/touch without selecting or moving the 
   } finally { await context.close() }
 })
 
+test("background inventory completion updates the selector after an older HTTP response", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    await page.locator(".selector-trigger").click()
+    await page.getByRole("option", { name: /feature/ }).waitFor()
+    await page.getByRole("option", { name: /feature/ }).focus()
+    const focused = await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.key)
+    await page.evaluate(() => (window as any).fixture.backgroundUpdate())
+    await page.waitForFunction(() => (window as any).fixture.worktrees().some((entry: any) => entry.label === "renamed in background"))
+    await page.getByRole("option", { name: /renamed in background/ }).waitFor()
+    assert.ok(focused)
+    assert.equal(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.key), focused)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+    assert.equal(await page.evaluate(() => (window as any).fixture.location()), "/repo")
+  } finally { await page.close() }
+})
+
+test("selecting the current worktree dismisses the menu without moving the session", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    const trigger = page.locator(".selector-trigger")
+    await trigger.click()
+    await page.getByRole("option", { name: "Workspace", exact: true }).click()
+    await page.getByRole("listbox").waitFor({ state: "hidden" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+    await trigger.focus()
+    await page.keyboard.press("Enter")
+    await page.getByRole("listbox").waitFor()
+    await page.keyboard.press("Enter")
+    await page.getByRole("listbox").waitFor({ state: "hidden" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+  } finally { await page.close() }
+})
+
+test("coalesces a refresh burst into one trailing HTTP read", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    assert.equal(await page.evaluate(() => (window as any).fixture.refreshBurst()), 2)
+  } finally { await page.close() }
+})
+
+test("keeps an inline action focused through a background rename", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    await page.locator(".selector-trigger").click()
+    await page.getByRole("option", { name: /feature/ }).getByRole("button", { name: "Copy path", exact: true }).focus()
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Copy path", "inline action must be focusable before refresh")
+    await page.evaluate(() => (window as any).fixture.backgroundUpdate())
+    const copy = page.getByRole("option", { name: /renamed in background/ }).getByRole("button", { name: "Copy path", exact: true })
+    await copy.waitFor()
+    assert.equal(await copy.evaluate(element => element === document.activeElement), true, await page.evaluate(() => document.activeElement?.outerHTML))
+    await page.keyboard.press("Enter")
+    await page.waitForFunction(() => (window as any).copied === "/repo/.codenomad/worktrees/feature")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+  } finally { await page.close() }
+})
+
+test("opens cached options before refresh completes and keeps a dismissed menu closed", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    await page.evaluate(() => (window as any).fixture.holdRefresh())
+    await page.locator(".selector-trigger").click()
+    await page.getByRole("option", { name: /feature/ }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.getByRole("listbox").waitFor({ state: "hidden" })
+    await page.evaluate(() => (window as any).fixture.releaseRefresh())
+    assert.equal(await page.locator(".selector-trigger").getAttribute("aria-expanded"), "false")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+  } finally { await page.close() }
+})
+
 test("creation uses the selected source and the returned stable worktree ID", async () => {
   const page = await browser.newPage()
   try {

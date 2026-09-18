@@ -7,6 +7,31 @@ import type { Session } from "../types/session.ts"
 import { sessions, setSessions } from "./session-state.ts"
 
 describe("handleWorktreeReady", () => {
+  it("reports a failed trailing reload and retains the successful initial snapshot", async () => {
+    const original = serverApi.fetchWorktrees
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let calls = 0
+    serverApi.fetchWorktrees = async () => {
+      if (++calls > 1) throw new Error("trailing refresh failed")
+      await gate
+      return { isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] }
+    }
+    try {
+      const initial = ensureWorktreesLoaded("failed-trailing-read")
+      await Promise.resolve()
+      const reload = reloadWorktrees("failed-trailing-read")
+      const rejected = assert.rejects(Promise.all([initial, reload]), /trailing refresh failed/)
+      release()
+      await rejected
+      assert.equal(calls, 2)
+      assert.equal(getWorktrees("failed-trailing-read")[0]?.slug, "root")
+    } finally {
+      release()
+      serverApi.fetchWorktrees = original
+    }
+  })
+
   it("refreshes worktrees", async () => {
     const calls: string[] = []
 
@@ -106,6 +131,7 @@ describe("handleWorktreeReady", () => {
 
     try {
       const initial = ensureWorktreesLoaded(instanceId)
+      await Promise.resolve()
       const reload = reloadWorktrees(instanceId)
       await Promise.resolve()
 
@@ -115,8 +141,7 @@ describe("handleWorktreeReady", () => {
         isGitRepo: true,
         worktrees: [{ slug: "root", directory: "/repo", kind: "root" }],
       })
-      await initial
-      await Promise.resolve()
+      await new Promise<void>(resolve => setImmediate(resolve))
 
       assert.equal(requestCount, 2)
 
@@ -127,7 +152,7 @@ describe("handleWorktreeReady", () => {
           { slug: "feature", directory: "/repo-feature", kind: "worktree" },
         ],
       })
-      await reload
+      await Promise.all([initial, reload])
 
       assert.deepEqual(getWorktrees(instanceId).map((worktree) => worktree.slug), ["root", "feature"])
     } finally {

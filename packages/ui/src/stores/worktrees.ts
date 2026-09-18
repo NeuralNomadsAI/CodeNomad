@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { serverEvents } from "../lib/server-events"
 import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
@@ -14,6 +15,7 @@ const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, W
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
 const worktreeRequests = new Map<string, Promise<void>>()
+const pendingWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
 const defaultDirectories = new Map<string, string>()
@@ -21,8 +23,12 @@ const defaultDirectories = new Map<string, string>()
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
-  const previous = worktreeRequests.get(instanceId)
-  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+  const existing = worktreeRequests.get(instanceId)
+  if (existing) {
+    if (!initial) pendingWorktreeRefreshes.add(instanceId)
+    return existing
+  }
+  const load = async (initialRead: boolean) => {
     try {
       const response = await serverApi.fetchWorktrees(instanceId)
       if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
@@ -39,8 +45,8 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
         return next
       })
     } catch (error) {
-      log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initial) throw error
+      log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+      if (!initialRead) throw error
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -56,6 +62,20 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
         return next
       })
     }
+  }
+  // Like the provider/model catalogue, retain one in-flight read and one dirty
+  // bit. A burst requests one trailing read, not an unbounded HTTP queue.
+  const task = Promise.resolve().then(async () => {
+    let initialRead = initial
+    do {
+      pendingWorktreeRefreshes.delete(instanceId)
+      try {
+        await load(initialRead)
+      } catch (error) {
+        if (!pendingWorktreeRefreshes.has(instanceId)) throw error
+      }
+      initialRead = false
+    } while (pendingWorktreeRefreshes.has(instanceId))
   })
 
   worktreeRequests.set(instanceId, task)
@@ -83,6 +103,15 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
   await queueWorktreeRequest(instanceId, false)
 }
+
+serverEvents.on("workspace.worktreesChanged", (event) => {
+  if (event.type !== "workspace.worktreesChanged") return
+  const id = event.workspaceId
+  // Refresh consumers that already requested this inventory. Queue behind an
+  // older HTTP response so it cannot overwrite the completed background scan.
+  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id)) return
+  void reloadWorktrees(id).catch(error => log.warn("Failed to receive refreshed worktrees", { instanceId: id, error }))
+})
 
 async function handleWorktreeReady(
   instanceId: string,
