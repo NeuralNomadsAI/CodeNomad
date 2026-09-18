@@ -5,7 +5,7 @@
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:1420", "http://tauri.localhost/*", "https://tauri.localhost/*"]
   },
-  "windows": ["local-*"],
+  "webviews": ["local-*"],
   "permissions": [
     "core:default",
     "core:menu:default",
@@ -47,7 +47,11 @@
     "allow-install-stable-update",
     "allow-open-workspace-target",
     "allow-set-workspace-menu-enabled",
-    "allow-developer-mode-get",
-    "allow-developer-mode-set"
+    "allow-browser-target-register",
+    "allow-browser-target-update",
+    "allow-browser-target-action",
+    "allow-browser-target-unregister",
+    "allow-browser-target-claim-open",
+    "allow-browser-target-release-open"
   ]
 }

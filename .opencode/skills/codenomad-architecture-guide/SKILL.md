@@ -18,14 +18,14 @@ description: |
 
 - Server and UI pin the official `@opencode/client@2.0.4` together; the pruning plugin pins `@opencode/plugin@2.0.4`. Review official V2 docs, installed declarations, generated wire paths and native integration tests when upgrading. The runtime CLI is managed independently and startup has no exact version gate.
 - Do not use `@opencode-ai/sdk`, `@opencode-ai/sdk/v2/client`, or `createOpencodeClient()`; follow installed `@opencode/client` declarations.
-- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The reviewed exceptions are the project-local Developer Mode adapter and bundled session-pruning RPC; see `dev-docs/DEVELOPER_MODE.md` and `dev-docs/SESSION_PRUNING_RPC.md`.
+- There is no legacy `packages/opencode-plugin/`. Do not restore the V1 compatibility runtime or add general plugin extension points. The narrow integrations are the bundled `codenomad.automation` plugin and bundled session-pruning RPC; see `dev-docs/DEVELOPER_MODE.md`, `dev-docs/BROWSER_AUTOMATION.md` and `dev-docs/SESSION_PRUNING_RPC.md`. All automation tools follow backend presence without a Developer Mode gate, sharing the authenticated native transport and execution-time session/window fences.
 - The server uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global OpenCode daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and uses no cross-namespace PID operations.
 - The UI uses generated Promise clients from `OpenCode.make()` through the CodeNomad proxy.
 - OpenCode owns session APIs, native Forms, session Shell (`client.session.shell`), session instructions (`client.session.instructions.entry`), location-scoped background Shells, and interactive PTYs. Forms list through `client.form.list({ location })` and settle through `client.session.form.reply/cancel`; global Forms use the encoded directory header. The Status panel lists `client.shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Interactive `client.pty.*` terminals remain separate.
 - CodeNomad owns explicit Stop Workspace eviction, directory authorization, Git status/diff/stage/unstage/commit, Yolo persistence/auto-replies, and `/api/events`. Tab/window close only detaches local UI and never evicts.
 - OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only to `service start` for a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
 - Native desktop identity is channel plus config profile: one singleton process/backend per profile and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable/dev/non-default profiles isolate native state; OpenCode sessions/messages are shared while tabs/drafts/views are per-window.
-- Client-state V3 is a per-window envelope over the V2 content-addressed partition graph with atomic publication/migration, ownership-fenced writes, and conservative post-commit GC. Native SideCar/browser previews are sandboxed without same-origin access; DOM comment inspection is web-only.
+- Client-state V3 is a per-window envelope over the V2 content-addressed partition graph with atomic publication/migration, ownership-fenced writes, and conservative post-commit GC. Iframe preview fallbacks are sandboxed without same-origin access; native browser guests use isolated storage and no application capabilities. DOM comment inspection is web-only.
 
 ## Package Map
 
@@ -67,7 +67,7 @@ description: |
 | Legacy SDK or beta-client examples | Installed stable `@opencode/client` declarations and generated routes |
 | One `opencode serve` per workspace | One externally owned global daemon through the official CLI lifecycle |
 | Per-worktree clients/processes | Root proxy client plus native location/directory inputs |
-| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; narrow reviewed Developer Mode and session-pruning integrations |
+| Reintroducing the V1 `packages/opencode-plugin` or general server plugin/background-process paths | Native OpenCode APIs; narrow reviewed Developer Mode/browser-preview and session-pruning integrations |
 | OpenCode APIs for stage/commit/Yolo policy | CodeNomad routes and managers |
 | Hardcoded UI strings | `t()` / `tGlobal()` and every locale |
 

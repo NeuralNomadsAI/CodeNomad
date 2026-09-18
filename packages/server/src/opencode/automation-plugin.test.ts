@@ -9,6 +9,7 @@ import {
   automationBridgeDirectory,
   automationBridgeDirectories,
   createAutomationBridgeRegistration,
+  parseBrowserAction,
   parseDeveloperAction,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
@@ -76,6 +77,20 @@ test("validates Developer Mode actions", () => {
   })
   assert.deepEqual(parseDeveloperAction({ action: "restart" }), { action: "restart" })
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
+})
+
+test("validates browser actions", () => {
+  assert.deepEqual(parseBrowserAction({ action: "open", url: "https://example.com" }), {
+    action: "open",
+    url: "https://example.com",
+  })
+  assert.deepEqual(parseBrowserAction({ action: "type", ref: "e2", text: "hello", clear: false }), {
+    action: "type",
+    ref: "e2",
+    text: "hello",
+    clear: false,
+  })
+  assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
 })
 
 test("registers developer tools while execution remains session-gated", async () => {

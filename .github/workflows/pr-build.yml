@@ -150,6 +150,9 @@ jobs:
           - version: 2.0.5
             scope: '@opencode'
             binary: opencode
+          - version: 2.0.7
+            scope: '@opencode'
+            binary: opencode
     steps:
       - uses: actions/checkout@v4
         with:
@@ -160,6 +163,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
+      - run: npm run build:automation --workspace @neuralnomads/codenomad
       - name: Cross the pinned client with an isolated runtime
         shell: pwsh
         env:
@@ -171,6 +175,8 @@ jobs:
           npm install --prefix $sandbox "$env:RUNTIME_SCOPE/cli@$env:RUNTIME_VERSION" --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $cli = Join-Path $sandbox "node_modules/$env:RUNTIME_SCOPE/cli-windows-x64/bin/$env:RUNTIME_BINARY.exe"
+          node scripts/test-automation-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ($env:RUNTIME_VERSION -eq '0.0.0-beta-19271' -or $env:RUNTIME_VERSION -eq '2.0.3') {
@@ -202,6 +208,7 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             zsh \
+            xvfb \
             pkg-config \
             libgtk-3-dev \
             libglib2.0-dev \
@@ -215,6 +222,9 @@ jobs:
 
       - name: Typecheck desktop clients
         run: npm run typecheck
+
+      - name: Build bundled automation integration
+        run: npm run build:automation --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
         run: node --test scripts/desktop-server-resources.test.cjs
@@ -250,6 +260,7 @@ jobs:
           packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/server-meta.test.ts
           packages/ui/src/lib/theme-scheme.test.ts
@@ -317,7 +328,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Test browser transcript rendering and navigation
-        run: npm run test:browser --workspace @codenomad/ui
+        run: xvfb-run -a npm run test:browser --workspace @codenomad/ui
 
       - name: Prepare Tauri test resources
         run: >-

@@ -566,7 +566,7 @@ fn open_workspace_target_impl(
 
 #[tauri::command]
 pub async fn open_workspace_target(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     state: State<'_, AppState>,
     target: String,
     instance_id: String,
@@ -574,13 +574,13 @@ pub async fn open_workspace_target(
     path: Option<String>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    crate::identity::local_window_id(window.label())?;
+    crate::identity::local_window_id(webview.label())?;
     let config = state
         .manager
         .local_cli_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
-    let current = window.url().map_err(|error| error.to_string())?;
+    let current = webview.url().map_err(|error| error.to_string())?;
     if current.origin() != expected.origin() {
         return Err("Workspace open requests require the local CodeNomad origin".into());
     }

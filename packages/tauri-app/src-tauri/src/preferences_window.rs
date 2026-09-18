@@ -109,7 +109,10 @@ impl PreferencesWindow {
     }
 
     pub(crate) fn renderer_ready(&self) -> bool {
-        self.state.lock().unwrap_or_else(|error| error.into_inner()).renderer_ready
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .renderer_ready
     }
 }
 
@@ -201,8 +204,8 @@ fn navigate_authenticated(
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn is_trusted_renderer_origin(window: &tauri::WebviewWindow, url: &Url) -> bool {
-    window
+pub(crate) fn is_trusted_renderer_origin(webview: &tauri::Webview, url: &Url) -> bool {
+    webview
         .app_handle()
         .state::<PreferencesWindow>()
         .state
@@ -214,7 +217,7 @@ pub(crate) fn is_trusted_renderer_origin(window: &tauri::WebviewWindow, url: &Ur
 
 #[tauri::command]
 pub(crate) async fn open_preferences_window(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
@@ -222,10 +225,13 @@ pub(crate) async fn open_preferences_window(
     toggle: Option<bool>,
     resume: Option<bool>,
 ) -> Result<(), String> {
-    crate::require_local_app_window(&window, &app_state)?;
+    crate::require_local_app_webview(&webview, &app_state)?;
     let mut request = validate_request(request)?;
     if resume.unwrap_or(false) {
-        if let Some(last) = app.state::<crate::client_state::ClientState>().last_preferences() {
+        if let Some(last) = app
+            .state::<crate::client_state::ClientState>()
+            .last_preferences()
+        {
             request.section = last.section;
             request.scroll_top = last.scroll_top;
         }
@@ -311,7 +317,9 @@ fn open_preferences(
     #[cfg(not(target_os = "macos"))]
     let _ = preferences_window.hide_menu();
 
-    if let Err(error) = crate::client_state::setup_local_window(app, &preferences_window, LABEL, true) {
+    if let Err(error) =
+        crate::client_state::setup_local_window(app, &preferences_window, LABEL, true)
+    {
         let _ = preferences_window.destroy();
         return Err(error);
     }
@@ -386,12 +394,12 @@ pub(crate) fn emit_section(app: &AppHandle) {
 
 #[tauri::command]
 pub(crate) fn preferences_window_ready(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_window(&window, &app_state)?;
-    if window.label() != LABEL {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    if webview.label() != LABEL {
         return Err("Preferences readiness requires the Preferences window".to_string());
     }
     preferences
@@ -404,12 +412,12 @@ pub(crate) fn preferences_window_ready(
 
 #[tauri::command]
 pub(crate) fn preferences_get_request(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
 ) -> Result<PreferencesRequest, String> {
-    crate::require_preferences_or_local_app_window(&window, &app_state)?;
-    if window.label() != LABEL {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    if webview.label() != LABEL {
         return Err("Preferences request access requires the Preferences window".to_string());
     }
     Ok(preferences.request())
@@ -417,15 +425,15 @@ pub(crate) fn preferences_get_request(
 
 #[tauri::command]
 pub(crate) fn preferences_accept_request(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     request: PreferencesRequest,
     generation: Option<u64>,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_window(&window, &app_state)?;
-    if window.label() != LABEL {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    if webview.label() != LABEL {
         return Err("Preferences request acceptance requires the Preferences window".to_string());
     }
     let request = validate_request(request)?;
@@ -440,15 +448,15 @@ pub(crate) fn preferences_accept_request(
 
 #[tauri::command]
 pub(crate) fn preferences_resolve_transition(
-    window: tauri::WebviewWindow,
+    webview: tauri::Webview,
     app: AppHandle,
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
     id: u64,
     approved: bool,
 ) -> Result<(), String> {
-    crate::require_preferences_or_local_app_window(&window, &app_state)?;
-    if window.label() != LABEL {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    if webview.label() != LABEL {
         return Err("Preferences transition response requires the Preferences window".to_string());
     }
     let transition = {

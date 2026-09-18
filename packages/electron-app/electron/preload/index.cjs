@@ -71,8 +71,15 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
-  getDeveloperMode: () => ipcRenderer.invoke("developer-mode:get"),
-  setDeveloperMode: (enabled) => ipcRenderer.invoke("developer-mode:set", Boolean(enabled)),
+  registerBrowserTarget: (payload) => ipcRenderer.invoke("browser-target:register", payload),
+  unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
+  claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
+  releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
+  onBrowserOpenRequest: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:open", handler)
+    return () => ipcRenderer.removeListener("browser-target:open", handler)
+  },
 }
 
 const remoteElectronAPI = {

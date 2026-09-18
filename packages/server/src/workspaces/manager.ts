@@ -76,7 +76,11 @@ interface WorkspaceManagerOptions {
   eventBus: EventBus
   logger: Logger
   sharedService?: SharedService
-  prepareSessionPruning?: (launch: ServiceLaunchSpec, environment: NodeJS.ProcessEnv) => Promise<void>
+  prepareDesktopPlugins?: (
+    launch: ServiceLaunchSpec,
+    connection: import("./opencode-service").ServiceConnection,
+    deadlineAt?: number,
+  ) => Promise<boolean>
   shutdownTimeoutMs?: number
   launchSettlementTimeoutMs?: number
   launchTimeoutMs?: number
@@ -611,7 +615,6 @@ export class WorkspaceManager {
       const startupEnvironment = launch.kind === "wsl"
         ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
         : this.serviceStartupEnvironment()
-      await this.options.prepareSessionPruning?.(launch, startupEnvironment)
       const serviceOptions: OpenCodeSharedServiceOptions = {
         kind: "lifecycle",
         identity: launch.kind === "host"
@@ -625,6 +628,9 @@ export class WorkspaceManager {
         lifecycle: launch.kind === "host"
           ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
           : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
+        prepareDesktopPlugins: this.options.prepareDesktopPlugins
+          ? (connection, deadlineAt) => this.options.prepareDesktopPlugins!(launch, connection, deadlineAt)
+          : undefined,
       }
       state.serviceOptions = serviceOptions
       this.throwIfCancelled(record)

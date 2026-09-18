@@ -64,8 +64,12 @@ fn main() {
             "install_stable_update",
             "open_workspace_target",
             "set_workspace_menu_enabled",
-            "developer_mode_get",
-            "developer_mode_set",
+            "browser_target_register",
+            "browser_target_update",
+            "browser_target_action",
+            "browser_target_unregister",
+            "browser_target_claim_open",
+            "browser_target_release_open",
         ]),
     ))
     .expect("build Tauri application and command ACL")
