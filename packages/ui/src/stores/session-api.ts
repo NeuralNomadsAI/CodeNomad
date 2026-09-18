@@ -667,6 +667,16 @@ async function fetchSessions(instanceId: string, options?: {
     throw error
   } finally {
     if (isLatestSessionListRequest(instanceId, requestId)) {
+      // The first server.connected marker can arrive after startup began its
+      // HTTP read. It advances projection authority without a disconnect, so the
+      // reconnect gate will not schedule recovery. Replace that obsolete read
+      // instead of leaving an empty, uninitialized catalogue spinning forever.
+      // A newer request, disposal, abort or strict foreground recovery owns its
+      // own outcome and must not be restarted here.
+      if (!generationCurrent() && instances().get(instanceId)?.client === client
+        && !options?.signal?.aborted && !options?.strictStatus) {
+        return fetchSessions(instanceId, options)
+      }
       setLoading((prev) => {
         const next = { ...prev }
         next.fetchingSessions.set(instanceId, false)
