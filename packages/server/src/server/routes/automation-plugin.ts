@@ -55,7 +55,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(404).send({ error: "Session not found" })
     }
     const owned = (await Promise.all(deps.workspaceManager.list().map((workspace) =>
-      deps.workspaceManager.ownsLocation(workspace.id, location),
+      deps.workspaceManager.ownsLocation(workspace.id, location).catch(() => false),
     ))).some(Boolean)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
 
@@ -94,7 +94,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       && typeof status.nativeIdentity === "string" && typeof status.cdpUrl === "string" && typeof status.windowId === "string"
     if (!available) {
       if (typeof status?.runId === "string") deps.developerCdp.close(status.runId)
-      return reply.code(404).send({ error: "Developer Mode has no active CodeNomad session" })
+      return reply.code(404).send({ error: "Native automation has no active CodeNomad session" })
     }
 
     const selection: DeveloperCdpSelection = {

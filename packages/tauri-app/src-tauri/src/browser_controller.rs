@@ -70,6 +70,7 @@ struct OpenClaim {
 #[derive(Default)]
 struct Inner {
     registrations: HashMap<String, Registration>,
+    renderer_versions: HashMap<String, u64>,
     refs: HashMap<String, HashMap<String, i64>>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
@@ -109,6 +110,7 @@ impl BrowserController {
             .parse()
             .map_err(|error| format!("failed to prepare browser preview: {error}"))?;
         validate_bounds(input.bounds)?;
+        let renderer_version = self.renderer_version(window.label())?;
         let label = format!("browser-{}", input.registration_id);
         let registration_id = input.registration_id.clone();
         let generation = self.registration_sequence.fetch_add(1, Ordering::Relaxed);
@@ -173,39 +175,71 @@ impl BrowserController {
             generation,
             visible: true,
         };
-        let (inner, ready) = &*self.inner;
-        let mut inner = inner.lock().map_err(|error| error.to_string())?;
-        let previous = inner
-            .registrations
-            .insert(input.registration_id.clone(), registration);
-        inner.refs.remove(&input.registration_id);
-        inner
-            .navigation_versions
-            .insert(input.registration_id.clone(), 0);
-        inner.page_load_sequence = inner.page_load_sequence.wrapping_add(1);
-        let load_sequence = inner.page_load_sequence;
-        inner.page_load_expectations.insert(
-            input.registration_id.clone(),
-            PageLoadExpectation {
-                sequence: load_sequence,
-                url: url.to_string(),
-                navigation_id: None,
-                result: None,
-            },
-        );
-        drop(inner);
+        let previous = match self.publish_registration(registration, renderer_version, url.as_str())
+        {
+            Ok(previous) => previous,
+            Err(error) => {
+                let _ = webview.close();
+                return Err(error);
+            }
+        };
         if let Some(previous) = previous {
             if let Some(previous_webview) = window.app_handle().get_webview(&previous.webview_label)
             {
                 let _ = previous_webview.close();
             }
         }
-        ready.notify_all();
         if let Err(error) = webview.navigate(url) {
             let _ = self.unregister(window.app_handle(), window.label(), &input.registration_id);
             return Err(error.to_string());
         }
         Ok(())
+    }
+
+    fn renderer_version(&self, window_label: &str) -> Result<u64, String> {
+        let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+        Ok(inner
+            .renderer_versions
+            .get(window_label)
+            .copied()
+            .unwrap_or(0))
+    }
+
+    fn publish_registration(
+        &self,
+        registration: Registration,
+        renderer_version: u64,
+        url: &str,
+    ) -> Result<Option<Registration>, String> {
+        let (inner, ready) = &*self.inner;
+        let mut inner = inner.lock().map_err(|error| error.to_string())?;
+        if inner
+            .renderer_versions
+            .get(&registration.window_label)
+            .copied()
+            .unwrap_or(0)
+            != renderer_version
+        {
+            return Err("Browser preview renderer is no longer current".to_string());
+        }
+        let id = registration.registration_id.clone();
+        let previous = inner.registrations.insert(id.clone(), registration);
+        inner.refs.remove(&id);
+        inner.navigation_versions.insert(id.clone(), 0);
+        inner.page_load_sequence = inner.page_load_sequence.wrapping_add(1);
+        let sequence = inner.page_load_sequence;
+        inner.page_load_expectations.insert(
+            id,
+            PageLoadExpectation {
+                sequence,
+                url: url.to_string(),
+                navigation_id: None,
+                result: None,
+            },
+        );
+        drop(inner);
+        ready.notify_all();
+        Ok(previous)
     }
 
     #[cfg(not(windows))]
@@ -354,8 +388,23 @@ impl BrowserController {
         Some(claim.clone())
     }
 
-    pub(crate) fn remove_window(&self, app: &AppHandle, window_label: &str) {
+    pub(crate) fn renderer_page_started<R: tauri::Runtime>(&self, webview: &tauri::Webview<R>) {
+        // A child navigation never ends the owning renderer's lifetime. A full
+        // primary-renderer load does: its native children otherwise survive reload.
+        if webview.label() == webview.window().label()
+            && crate::identity::local_window_id(webview.label()).is_ok()
+        {
+            self.remove_window(webview.app_handle(), webview.label());
+        }
+    }
+
+    pub(crate) fn remove_window<R: tauri::Runtime>(&self, app: &AppHandle<R>, window_label: &str) {
         let (labels, retries) = if let Ok(mut inner) = self.inner.0.lock() {
+            let version = inner
+                .renderer_versions
+                .entry(window_label.to_string())
+                .or_default();
+            *version = version.wrapping_add(1);
             let ids = inner
                 .registrations
                 .values()
@@ -603,7 +652,11 @@ impl BrowserController {
         result
     }
 
-    fn emit_open_request(app: &AppHandle, request_id: &str, claim: &OpenClaim) {
+    fn emit_open_request<R: tauri::Runtime>(
+        app: &AppHandle<R>,
+        request_id: &str,
+        claim: &OpenClaim,
+    ) {
         for record in app.state::<crate::local_windows::LocalWindows>().records() {
             if let Some(webview) = app.get_webview(&record.label) {
                 let _ = webview.emit(
@@ -733,21 +786,44 @@ impl BrowserController {
             length += line.len() + 1;
             lines.push(line);
         }
+        let url = self.finish_snapshot(registration, navigation_version, refs, || {
+            webview.url().map_err(|error| error.to_string())
+        })?;
+        Ok(json!({
+            "url": url,
+            "snapshot": if lines.is_empty() { "No accessible elements found".to_string() } else { lines.join("\n") },
+        }))
+    }
+
+    fn finish_snapshot(
+        &self,
+        registration: &Registration,
+        navigation_version: Option<u64>,
+        refs: HashMap<String, i64>,
+        read_url: impl FnOnce() -> Result<tauri::Url, String>,
+    ) -> Result<tauri::Url, String> {
+        // Native getters wait for the UI thread, whose navigation callbacks
+        // need inner. Read without the lock, then fence publication against
+        // navigation or target replacement while that getter was pending.
+        let url = read_url()?;
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-        if inner
-            .navigation_versions
-            .get(&registration.registration_id)
-            .copied()
-            == navigation_version
+        if navigation_version.is_some()
+            && inner
+                .navigation_versions
+                .get(&registration.registration_id)
+                .copied()
+                == navigation_version
+            && inner
+                .registrations
+                .get(&registration.registration_id)
+                .map(|item| item.generation)
+                == Some(registration.generation)
         {
             inner
                 .refs
                 .insert(registration.registration_id.clone(), refs);
         }
-        Ok(json!({
-            "url": webview.url().map_err(|error| error.to_string())?,
-            "snapshot": if lines.is_empty() { "No accessible elements found".to_string() } else { lines.join("\n") },
-        }))
+        Ok(url)
     }
 
     #[cfg(windows)]
@@ -772,6 +848,10 @@ impl BrowserController {
             .filter(|value| !value.is_empty())
         {
             return Err(format!("Browser navigation failed: {error}"));
+        }
+        if result.get("loaderId").and_then(Value::as_str).is_none() {
+            let current_url = webview.url().map_err(|error| error.to_string())?;
+            self.complete_same_document_navigation(registration, sequence, current_url.as_str())?;
         }
         self.wait_for_page_load(&registration.registration_id, sequence, deadline)
     }
@@ -914,6 +994,39 @@ impl BrowserController {
             },
         );
         Ok(sequence)
+    }
+
+    fn complete_same_document_navigation(
+        &self,
+        registration: &Registration,
+        sequence: u64,
+        current_url: &str,
+    ) -> Result<(), String> {
+        let (inner, ready) = &*self.inner;
+        let mut inner = inner.lock().map_err(|error| error.to_string())?;
+        if inner
+            .registrations
+            .get(&registration.registration_id)
+            .map(|item| item.generation)
+            != Some(registration.generation)
+        {
+            return Err("Browser preview navigation is no longer current".to_string());
+        }
+        let expectation = inner
+            .page_load_expectations
+            .get_mut(&registration.registration_id)
+            .filter(|expectation| {
+                expectation.sequence == sequence && expectation.url == current_url
+            })
+            .ok_or_else(|| "Browser preview navigation is no longer current".to_string())?;
+        // Page.navigate omits loaderId for same-document navigation. WebView2
+        // does not issue NavigationStarting/Completed for that operation.
+        if expectation.navigation_id.is_none() {
+            expectation.result = Some(Ok(()));
+        }
+        drop(inner);
+        ready.notify_all();
+        Ok(())
     }
 
     fn page_load_expectation(
@@ -1223,6 +1336,17 @@ fn install_webview2_handlers(
 }
 
 #[cfg(windows)]
+fn run_before_deadline<T>(
+    deadline: Instant,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    if Instant::now() >= deadline {
+        return Err("Native request expired before execution".to_string());
+    }
+    operation()
+}
+
+#[cfg(windows)]
 fn cdp(
     webview: &tauri::Webview,
     method: &str,
@@ -1235,36 +1359,41 @@ fn cdp(
     let (sender, receiver) = mpsc::sync_channel(1);
     let method = method.to_string();
     let params = params.to_string();
-    webview
-        .with_webview(move |platform| {
-            let core = match unsafe { platform.controller().CoreWebView2() } {
-                Ok(core) => core,
-                Err(error) => {
-                    let _ = sender.send(Err(error.to_string()));
-                    return;
+    run_before_deadline(deadline, || {
+        webview
+            .with_webview(move |platform| {
+                let core = match unsafe { platform.controller().CoreWebView2() } {
+                    Ok(core) => core,
+                    Err(error) => {
+                        let _ = sender.send(Err(error.to_string()));
+                        return;
+                    }
+                };
+                let callback_sender = sender.clone();
+                let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                    move |error, result| {
+                        let _ = callback_sender
+                            .send(error.map(|()| result).map_err(|error| error.to_string()));
+                        Ok(())
+                    },
+                ));
+                let method = CoTaskMemPWSTR::from(method.as_str());
+                let params = CoTaskMemPWSTR::from(params.as_str());
+                // Dispatch can outlive the caller's wait. Fence the actual protocol
+                // side effect too, not just the operation that queues this closure.
+                if let Err(error) = run_before_deadline(deadline, || unsafe {
+                    core.CallDevToolsProtocolMethod(
+                        *method.as_ref().as_pcwstr(),
+                        *params.as_ref().as_pcwstr(),
+                        &handler,
+                    )
+                    .map_err(|error| error.to_string())
+                }) {
+                    let _ = sender.send(Err(error));
                 }
-            };
-            let callback_sender = sender.clone();
-            let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
-                move |error, result| {
-                    let _ = callback_sender
-                        .send(error.map(|()| result).map_err(|error| error.to_string()));
-                    Ok(())
-                },
-            ));
-            let method = CoTaskMemPWSTR::from(method.as_str());
-            let params = CoTaskMemPWSTR::from(params.as_str());
-            if let Err(error) = unsafe {
-                core.CallDevToolsProtocolMethod(
-                    *method.as_ref().as_pcwstr(),
-                    *params.as_ref().as_pcwstr(),
-                    &handler,
-                )
-            } {
-                let _ = sender.send(Err(error.to_string()));
-            }
-        })
-        .map_err(|error| error.to_string())?;
+            })
+            .map_err(|error| error.to_string())
+    })?;
     let timeout = deadline
         .saturating_duration_since(Instant::now())
         .min(Duration::from_secs(20));
@@ -1276,6 +1405,10 @@ fn cdp(
         .map_err(|_| "WebView2 browser command timed out".to_string())??;
     serde_json::from_str(&result).map_err(|error| format!("Invalid WebView2 response: {error}"))
 }
+
+#[cfg(test)]
+#[path = "browser_controller_regressions.rs"]
+mod regressions;
 
 #[cfg(test)]
 mod tests {

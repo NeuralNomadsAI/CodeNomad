@@ -1,24 +1,15 @@
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::fs::OpenOptions;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::AppHandle;
 
 const RESTART_DELAY: Duration = Duration::from_millis(100);
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DeveloperModeState {
-    pub(crate) enabled: bool,
-    pub(crate) active: bool,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum DeveloperTargetState {
-    Stopped,
     Starting,
     Ready,
 }
@@ -38,51 +29,9 @@ struct DeveloperTargetStatus {
 }
 
 pub(crate) struct DeveloperMode {
-    active: bool,
     run_id: String,
     native_identity: String,
     devtools_active_port: Option<PathBuf>,
-    marker_path: PathBuf,
-}
-
-pub(crate) fn marker_path(home: &Path) -> PathBuf {
-    home.join(".config")
-        .join("codenomad")
-        .join("developer-mode")
-}
-
-pub(crate) fn read_enabled(marker_path: &Path) -> bool {
-    marker_path.exists()
-}
-
-fn write_enabled(enabled: bool, marker_path: &Path) -> io::Result<()> {
-    if !enabled {
-        return match std::fs::remove_file(marker_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        };
-    }
-
-    let parent = marker_path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "marker path has no parent"))?;
-    std::fs::create_dir_all(parent)?;
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut marker = options.open(marker_path)?;
-    marker.write_all(b"enabled\n")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        marker.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 pub(crate) fn append_node_option(value: Option<&str>, option: &str) -> String {
@@ -124,31 +73,28 @@ pub(crate) fn webview2_arguments(value: Option<&str>, port: Option<u16>) -> Stri
 }
 
 impl DeveloperMode {
-    pub(crate) fn new(
-        active: bool,
-        native_identity: String,
-        devtools_active_port: Option<PathBuf>,
-        marker_path: PathBuf,
-    ) -> Self {
+    pub(crate) fn new(native_identity: String, devtools_active_port: Option<PathBuf>) -> Self {
         Self {
-            active,
             run_id: uuid::Uuid::new_v4().to_string(),
             native_identity,
             devtools_active_port,
-            marker_path,
         }
     }
 
-    pub(crate) fn state(&self) -> DeveloperModeState {
-        DeveloperModeState {
-            enabled: read_enabled(&self.marker_path),
-            active: self.active,
+    // Call only after the native singleton has been acquired, before creating
+    // local WebViews. A second launch must not erase the primary's port file.
+    pub(crate) fn prepare_profile(&self) -> io::Result<()> {
+        let Some(path) = &self.devtools_active_port else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-    }
-
-    pub(crate) fn set_enabled(&self, enabled: bool) -> io::Result<DeveloperModeState> {
-        write_enabled(enabled, &self.marker_path)?;
-        Ok(self.state())
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn discovered_port(&self) -> Option<u16> {
@@ -163,15 +109,6 @@ impl DeveloperMode {
     }
 
     fn status(&self, port: Option<u16>, window_id: Option<String>) -> DeveloperTargetStatus {
-        if !self.active {
-            return DeveloperTargetStatus {
-                state: DeveloperTargetState::Stopped,
-                run_id: None,
-                native_identity: None,
-                cdp_url: None,
-                window_id: None,
-            };
-        }
         let ready = port.is_some() && window_id.is_some();
         DeveloperTargetStatus {
             state: if ready {
@@ -191,17 +128,21 @@ impl DeveloperMode {
             .and_then(|window| crate::identity::local_window_id(window.label()).ok())
     }
 
-    pub(crate) fn native_snapshot(&self, app: &AppHandle) -> Value {
+    pub(crate) fn native_snapshot(&self, app: &AppHandle) -> Result<Value, String> {
+        if !cfg!(windows) {
+            return Err("Native automation requires the Tauri Windows runtime".to_string());
+        }
         let port = self.discovered_port();
-        let window_id = (self.active && port.is_some())
+        let window_id = port
+            .is_some()
             .then(|| Self::focused_window_id(app))
             .flatten();
-        json!({ "status": self.status(port, window_id), "logs": [] })
+        Ok(json!({ "status": self.status(port, window_id), "logs": [] }))
     }
 
     pub(crate) fn request_restart(&self, app: &AppHandle) -> Result<Value, String> {
-        if !self.active {
-            return Err("Developer Mode is not active".to_string());
+        if !cfg!(windows) {
+            return Err("Native automation requires the Tauri Windows runtime".to_string());
         }
         let status = self.status(self.discovered_port(), None);
         let app = app.clone();
@@ -218,31 +159,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn marker_defaults_disabled_and_persists_transitions() {
-        let home = tempfile::tempdir().unwrap();
-        let marker = marker_path(home.path());
-        let mode = DeveloperMode::new(false, "tauri:test".to_string(), None, marker.clone());
-
-        assert_eq!(marker, home.path().join(".config/codenomad/developer-mode"));
+    fn normal_startup_prepares_stable_profile_and_clears_only_stale_endpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let port_file = root.path().join("local/EBWebView/DevToolsActivePort");
+        let mode = DeveloperMode::new("tauri:test".to_string(), Some(port_file.clone()));
+        mode.prepare_profile().unwrap();
+        let cookie_file = port_file.with_file_name("Cookies");
+        std::fs::write(&cookie_file, b"persisted").unwrap();
+        std::fs::write(&port_file, b"12345\n").unwrap();
+        mode.prepare_profile().unwrap();
+        assert!(!port_file.exists());
+        assert_eq!(std::fs::read(cookie_file).unwrap(), b"persisted");
         assert_eq!(
-            mode.state(),
-            DeveloperModeState {
-                enabled: false,
-                active: false
-            }
+            mode.status(None, None).state,
+            DeveloperTargetState::Starting
         );
-        assert_eq!(mode.set_enabled(true).unwrap().enabled, true);
-        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "enabled\n");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&marker).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-        assert_eq!(mode.set_enabled(false).unwrap().enabled, false);
-        assert!(!marker.exists());
     }
 
     #[test]
@@ -276,12 +207,10 @@ mod tests {
             format!("{port}\n/devtools/browser/test\n"),
         )
         .unwrap();
-        let mut mode = DeveloperMode {
-            active: true,
+        let mode = DeveloperMode {
             run_id: "run-1".to_string(),
             native_identity: "tauri:test".to_string(),
             devtools_active_port: Some(devtools_active_port),
-            marker_path: PathBuf::new(),
         };
         assert_eq!(
             json!(mode.status(mode.discovered_port(), Some("window-1".to_string()))),
@@ -302,10 +231,30 @@ mod tests {
                 "cdpUrl": format!("http://127.0.0.1:{port}")
             })
         );
-        mode.active = false;
-        assert_eq!(
-            json!(mode.status(mode.discovered_port(), None)),
-            json!({ "state": "stopped" })
-        );
+    }
+
+    #[test]
+    fn startup_enables_local_instrumentation_without_a_marker_or_global_remote_flags() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("configure_developer_environment();"));
+        assert!(source.contains("configure_developer_webview(&scope)"));
+        assert!(source.contains("Some(developer_mode::webview2_arguments(None, Some(0)))"));
+        assert!(source.contains("scope.webview_data_directory.join(\"developer-mode\")"));
+        assert!(!source.contains("developer_mode_active"));
+        assert!(!source.contains("developer_mode_get"));
+        assert!(!source.contains("developer_mode_set"));
+        // Only the singleton primary's setup removes a stale endpoint. Remote
+        // windows use a distinct profile without additional debugging arguments.
+        let setup = source.split(".setup(move |app| {").nth(1).unwrap();
+        assert!(setup.contains("developer_mode.prepare_profile()?"));
+        let remote = source
+            .split("let data_directory = app")
+            .nth(1)
+            .unwrap()
+            .split("let window = match builder.build()")
+            .next()
+            .unwrap();
+        assert!(remote.contains(".join(\"remote\")"));
+        assert!(!remote.contains("additional_browser_args"));
     }
 }

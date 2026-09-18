@@ -1,7 +1,6 @@
 import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron"
 import fs from "node:fs"
 import { requestMicrophoneAccess } from "./permissions"
-import type { DeveloperMode } from "./developer-mode"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
@@ -22,7 +21,6 @@ interface CliIPCDependencies {
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
-  developerMode: DeveloperMode
   browserController: BrowserController
 }
 
@@ -106,15 +104,6 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     if ((menu !== "file" && menu !== "edit" && menu !== "view" && menu !== "window" && menu !== "help")
       || typeof x !== "number" || typeof y !== "number") throw new Error("Invalid titlebar menu request")
     popupTitlebarMenu(window, menu as TitlebarMenu, x, y)
-  })
-  ipcMain.handle("developer-mode:get", async (event) => {
-    local(event)
-    return dependencies.developerMode.state()
-  })
-  ipcMain.handle("developer-mode:set", async (event, enabled: unknown) => {
-    local(event)
-    if (typeof enabled !== "boolean") throw new Error("Developer Mode requires a boolean value")
-    return dependencies.developerMode.setEnabled(enabled)
   })
   ipcMain.handle("browser-target:register", async (event, payload: { sessionId?: unknown; registrationId?: unknown; guestWebContentsId?: unknown }) => {
     const { window } = local(event)

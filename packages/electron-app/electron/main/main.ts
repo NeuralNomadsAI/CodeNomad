@@ -6,7 +6,7 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { appendNodeOption, DeveloperMode, readDeveloperModeEnabled } from "./developer-mode"
+import { appendNodeOption, DeveloperMode } from "./developer-mode"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { ClientStateManager } from "./client-state"
@@ -32,29 +32,28 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 
-function resolveStoragePaths(developerModeActive: boolean) {
+function resolveStoragePaths() {
   const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
   if (!app.isPackaged) app.setName("CodeNomad")
   const scope = resolveStorageScope({
     appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
     cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
-  const browserDataPath = developerModeActive ? join(scope.userDataPath, "developer-mode-browser-v2") : scope.userDataPath
-  const sessionDataPath = developerModeActive ? join(browserDataPath, "session-data") : scope.sessionDataPath
+  const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
+  const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
   return { scope, browserDataPath, sessionDataPath }
 }
 
-function configureBrowserStorage(browserDataPath: string, sessionDataPath: string, developerModeActive: boolean) {
+function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
   mkdirSync(browserDataPath, { recursive: true })
   mkdirSync(sessionDataPath, { recursive: true })
   app.setPath("userData", browserDataPath)
   app.setPath("sessionData", sessionDataPath)
-  if (developerModeActive) {
-    rmSync(join(browserDataPath, "DevToolsActivePort"), { force: true })
-    app.commandLine.appendSwitch("user-data-dir", browserDataPath)
-  }
+  rmSync(join(browserDataPath, "DevToolsActivePort"), { force: true })
+  rmSync(join(sessionDataPath, "DevToolsActivePort"), { force: true })
+  app.commandLine.appendSwitch("user-data-dir", browserDataPath)
 }
 
 function cleanupPackagedChromiumStorage() {
@@ -72,27 +71,19 @@ function argvForLaunch(argv: string[]): string[] {
   return argv.slice(app.isPackaged ? 1 : 2)
 }
 
-const developerModeActive = readDeveloperModeEnabled()
-if (developerModeActive) {
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
-  app.commandLine.appendSwitch("remote-debugging-port", "0")
-  app.commandLine.appendSwitch("enable-logging")
-  process.env.CODENOMAD_DEVELOPER_MODE = "1"
-  process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
-  process.setSourceMapsEnabled?.(true)
-} else {
-  app.commandLine.removeSwitch("remote-debugging-address")
-  app.commandLine.removeSwitch("remote-debugging-port")
-  delete process.env.CODENOMAD_DEVELOPER_MODE
-}
-const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths(developerModeActive)
+app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
+app.commandLine.appendSwitch("remote-debugging-port", "0")
+app.commandLine.appendSwitch("enable-logging")
+process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
+process.setSourceMapsEnabled?.(true)
+const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths()
 const developerNativeIdentity = `electron:${createHash("sha256")
   .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
   .digest("hex")
   .slice(0, 16)}`
 const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
 startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
-  configureBrowserStorage(browserDataPath, sessionDataPath, developerModeActive)
+  configureBrowserStorage(browserDataPath, sessionDataPath)
   runPrimary(initialIntent)
 })
 
@@ -104,7 +95,6 @@ function runPrimary(firstIntent: LaunchIntent) {
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
   let lifecycle: MultiwindowLifecycle
   const developerMode = new DeveloperMode({
-    active: developerModeActive,
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
     targetWindowId: () => {
@@ -333,7 +323,6 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
-    developerMode,
     browserController,
   })
   setupPreferencesIPC(ipcMain, {

@@ -239,7 +239,7 @@ pub(crate) fn handle_native_request(
             .browser_controller
             .handle_native(app, method, params, deadline),
         "opencode.service.start" => native_service_start::start(params, deadline),
-        "developer.status" => Ok(state.developer_mode.native_snapshot(app)),
+        "developer.status" => state.developer_mode.native_snapshot(app),
         "developer.restart" => state.developer_mode.request_restart(app),
         _ => Err(format!("Unsupported native request: {method}")),
     }
@@ -325,28 +325,6 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
         return false;
     };
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
-}
-
-#[tauri::command]
-fn developer_mode_get(
-    webview: tauri::Webview,
-    state: tauri::State<'_, AppState>,
-) -> Result<developer_mode::DeveloperModeState, String> {
-    require_local_app_webview(&webview, &state)?;
-    Ok(state.developer_mode.state())
-}
-
-#[tauri::command]
-fn developer_mode_set(
-    webview: tauri::Webview,
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> Result<developer_mode::DeveloperModeState, String> {
-    require_local_app_webview(&webview, &state)?;
-    state
-        .developer_mode
-        .set_enabled(enabled)
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1430,13 +1408,12 @@ fn set_windows_app_user_model_id(_identifier: &str) {}
 #[cfg(windows)]
 fn configure_developer_webview(
     scope: &identity::IdentityScope,
-    active: bool,
 ) -> std::io::Result<(
     Option<std::path::PathBuf>,
     std::path::PathBuf,
     Option<String>,
 )> {
-    let developer_profile = scope.webview_data_directory.join("developer-mode");
+    let profile = scope.webview_data_directory.join("developer-mode");
     let arguments = developer_mode::webview2_arguments(
         std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
             .ok()
@@ -1450,26 +1427,19 @@ fn configure_developer_webview(
     }
 
     std::env::remove_var("WEBVIEW2_USER_DATA_FOLDER");
-    let profile = if active {
-        developer_profile
-    } else {
-        scope.webview_data_directory.clone()
-    };
-    let devtools_active_port = active.then(|| {
+    let devtools_active_port = Some(
         profile
             .join("local")
             .join("EBWebView")
-            .join("DevToolsActivePort")
-    });
-    let developer_browser_arguments =
-        active.then(|| developer_mode::webview2_arguments(None, Some(0)));
+            .join("DevToolsActivePort"),
+    );
+    let developer_browser_arguments = Some(developer_mode::webview2_arguments(None, Some(0)));
     Ok((devtools_active_port, profile, developer_browser_arguments))
 }
 
 #[cfg(not(windows))]
 fn configure_developer_webview(
     scope: &identity::IdentityScope,
-    _active: bool,
 ) -> std::io::Result<(
     Option<std::path::PathBuf>,
     std::path::PathBuf,
@@ -1478,20 +1448,15 @@ fn configure_developer_webview(
     Ok((None, scope.webview_data_directory.clone(), None))
 }
 
-fn configure_developer_environment(active: bool) {
-    if active {
-        std::env::set_var("RUST_BACKTRACE", "1");
-        std::env::set_var(
-            "NODE_OPTIONS",
-            developer_mode::append_node_option(
-                std::env::var("NODE_OPTIONS").ok().as_deref(),
-                "--enable-source-maps",
-            ),
-        );
-        std::env::set_var("CODENOMAD_DEVELOPER_MODE", "1");
-    } else {
-        std::env::remove_var("CODENOMAD_DEVELOPER_MODE");
-    }
+fn configure_developer_environment() {
+    std::env::set_var("RUST_BACKTRACE", "1");
+    std::env::set_var(
+        "NODE_OPTIONS",
+        developer_mode::append_node_option(
+            std::env::var("NODE_OPTIONS").ok().as_deref(),
+            "--enable-source-maps",
+        ),
+    );
 }
 
 fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
@@ -1531,12 +1496,9 @@ fn main() {
         &home,
         &local_data,
     );
-    let developer_marker_path = developer_mode::marker_path(&home);
-    let developer_mode_active = developer_mode::read_enabled(&developer_marker_path);
-    configure_developer_environment(developer_mode_active);
+    configure_developer_environment();
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
-        configure_developer_webview(&scope, developer_mode_active)
-            .expect("configure Developer Mode browser profile");
+        configure_developer_webview(&scope).expect("configure native automation browser profile");
     let executable = std::env::current_exe()
         .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
         .unwrap_or_default();
@@ -1546,10 +1508,8 @@ fn main() {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
     let developer_mode = developer_mode::DeveloperMode::new(
-        developer_mode_active,
         format!("tauri:{developer_identity}"),
         devtools_active_port,
-        developer_marker_path,
     );
 
     let launch_queue = Arc::new(launch::LaunchQueue::default());
@@ -1623,6 +1583,13 @@ fn main() {
             scoped_profile: setup_scope.scoped,
         })
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                webview
+                    .app_handle()
+                    .state::<AppState>()
+                    .browser_controller
+                    .renderer_page_started(webview);
+            }
             if identity::local_window_id(webview.label()).is_ok()
                 && payload.event() == PageLoadEvent::Started
             {
@@ -1660,6 +1627,7 @@ fn main() {
         })
         .setup(move |app| {
             set_windows_app_user_model_id(&setup_scope.identifier);
+            app.state::<AppState>().developer_mode.prepare_profile()?;
             let client_state = client_state::ClientState::initialize(
                 &app.handle(),
                 setup_scope.client_state_directory.as_deref(),
@@ -1715,8 +1683,6 @@ fn main() {
             windows_update::install_stable_update,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
-            developer_mode_get,
-            developer_mode_set,
             browser_target_register,
             browser_target_update,
             browser_target_action,
@@ -1917,7 +1883,7 @@ fn main() {
                         None => {}
                     }
                 }
-                let windows = app_handle.webview_windows();
+                let windows = app_handle.windows();
                 let final_window =
                     is_final_application_window(&label, windows.keys().map(String::as_str));
                 if final_window {
@@ -1958,7 +1924,7 @@ fn main() {
                 }
                 update_workspace_menu_state(&app_handle);
                 update_fullscreen_shortcut(&app_handle);
-                if !app_handle.webview_windows().is_empty() {
+                if !app_handle.windows().is_empty() {
                     return;
                 }
 
@@ -2372,7 +2338,8 @@ mod menu_tests {
         assert_eq!(config["app"]["windows"], json!([]));
         let local: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
-        assert_eq!(local["windows"], json!(["local-*"]));
+        assert_eq!(local["webviews"], json!(["local-*"]));
+        assert!(local["windows"].is_null());
         assert!(local["permissions"]
             .as_array()
             .unwrap()

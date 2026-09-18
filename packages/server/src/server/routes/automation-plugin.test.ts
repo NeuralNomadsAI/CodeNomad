@@ -95,7 +95,7 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
   await app.close()
 })
 
-test("claims owned sessions and forwards browser commands through the automation bridge", async () => {
+test("browser works with an unavailable developer target and unrelated inventory failure", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: Array<{ method: string; params: unknown }> = []
   registerAutomationPluginRoute(app, {
@@ -104,13 +104,17 @@ test("claims owned sessions and forwards browser commands through the automation
     nativeParent: {
       request: async (method: string, params: unknown) => {
         nativeCalls.push({ method, params })
-        return method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
+        return method === "developer.status" ? { status: { state: "stopped" } }
+          : method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
       },
     },
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
-      list: () => [{ id: "workspace-1" }],
-      ownsLocation: async () => true,
+      list: () => [{ id: "unrelated-worktree" }, { id: "workspace-1" }],
+      ownsLocation: async (id: string) => {
+        if (id === "unrelated-worktree") throw new Error("Native worktree inventory is unavailable")
+        return true
+      },
     },
   } as never)
 
@@ -133,5 +137,8 @@ test("claims owned sessions and forwards browser commands through the automation
       params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
     },
   ])
+  const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
+  assert.equal(developer.statusCode, 404)
+  assert.match(developer.json().error, /Native automation has no active/)
   await app.close()
 })

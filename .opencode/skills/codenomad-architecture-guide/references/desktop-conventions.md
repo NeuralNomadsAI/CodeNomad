@@ -6,7 +6,7 @@ CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update
 
 OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 
-Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM comment inspection is web-only.
+Iframe SideCar/browser fallbacks are sandboxed without `allow-same-origin`; DOM comment inspection is web-only. Electron and Windows Tauri browser previews use isolated native guest webviews with no application capabilities. Tauri grants target primary webview labels, never parent-window wildcards, and native window counting must include windows containing multiple webviews.
 
 ## Current Host Paths
 

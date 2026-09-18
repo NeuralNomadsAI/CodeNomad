@@ -99,7 +99,7 @@ test("registers developer tools while execution remains session-gated", async ()
     tool: { transform: async (callback) => callback({ add: (value) => tools.push(value.name) }) },
   })
 
-  assert.deepEqual(tools, ["inspect", "act", "screenshot", "browser"])
+  assert.deepEqual(tools, ["inspect", "act", "screenshot"])
 })
 
 test("discovers the Windows bridge registry from a WSL plugin", () => {

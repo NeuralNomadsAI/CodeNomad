@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import type { Plugin } from "@opencode/plugin"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -41,24 +42,9 @@ export interface AutomationBridgeRegistration {
   startedAt: number
 }
 
-interface ToolContext {
-  readonly sessionID: string
-}
-
-interface ToolDraft {
-  add(tool: {
-    name: string
-    description: string
-    input: Record<string, unknown>
-    options: { namespace: string; codemode: false }
-    execute(input: unknown, context: ToolContext): Promise<{ content: string | Array<Record<string, string>> }>
-  }): void
-}
-
+type ToolDraft = Parameters<Parameters<Plugin.Context["tool"]["transform"]>[0]>[0]
 interface AutomationPluginContext {
-  tool: {
-    transform(callback: (draft: ToolDraft) => void): Promise<unknown>
-  }
+  tool: { transform(callback: (draft: Pick<ToolDraft, "add">) => void): Promise<unknown> }
 }
 
 interface BridgeResponse {
@@ -149,6 +135,12 @@ export async function removeLegacyAutomationPlugin(
   } catch {
     return false
   }
+  if (!isLegacyAutomationPlugin(source)) return false
+  await rm(pluginPath, { force: true })
+  return true
+}
+
+export function isLegacyAutomationPlugin(source: string): boolean {
   const match = /^export \{ default \} from ("(?:[^"\\]|\\.)*")\s*$/.exec(source)
   if (!match) return false
   let target: URL
@@ -160,7 +152,6 @@ export async function removeLegacyAutomationPlugin(
   if (target.protocol !== "file:" || !/(?:\/server\/dist|\/packages\/server\/src)\/opencode\/automation-plugin\.(?:js|ts)$/.test(target.pathname)) {
     return false
   }
-  await rm(pluginPath, { force: true })
   return true
 }
 
@@ -229,7 +220,7 @@ async function pruneDeadLocalRegistrations(directory: string): Promise<void> {
 }
 
 export function parseDeveloperAction(input: unknown): DeveloperAction {
-  if (!input || typeof input !== "object") throw new Error("Developer Mode input must be an object")
+  if (!input || typeof input !== "object") throw new Error("Native automation input must be an object")
   const value = input as Record<string, unknown>
   switch (value.action) {
     case "inspect":
@@ -243,7 +234,7 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
       if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
       return { action: "type", ref: value.ref, text: value.text }
     default:
-      throw new Error("Unsupported Developer Mode action")
+      throw new Error("Unsupported native automation action")
   }
 }
 
@@ -321,7 +312,7 @@ async function callBridge(
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
-    throw new Error("Developer Mode bridge response is too large")
+    throw new Error("Native automation bridge response is too large")
   }
   const reader = response.body?.getReader()
   const chunks: Buffer[] = []
@@ -333,7 +324,7 @@ async function callBridge(
       bytes += value.byteLength
       if (bytes > MAX_BRIDGE_RESPONSE_BYTES) {
         await reader.cancel()
-        throw new Error("Developer Mode bridge response is too large")
+        throw new Error("Native automation bridge response is too large")
       }
       chunks.push(Buffer.from(value))
     }
@@ -372,13 +363,13 @@ function callWindowsBridge(
     }
     const timer = setTimeout(() => {
       child.kill()
-      finish(new Error("Developer Mode bridge request timed out"))
+      finish(new Error("Native automation bridge request timed out"))
     }, timeoutMs)
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_BRIDGE_RESPONSE_BYTES + 16) {
         child.kill()
-        finish(new Error("Developer Mode bridge response is too large"))
+        finish(new Error("Native automation bridge response is too large"))
         return
       }
       stdout.push(chunk)
@@ -393,13 +384,13 @@ function callWindowsBridge(
       const separator = output.lastIndexOf("\n")
       const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
       if (code !== 0 || !Number.isInteger(status)) {
-        reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || "Windows Developer Mode bridge request failed"))
+        reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || "Windows native automation bridge request failed"))
         return
       }
       try {
         resolve({ status, body: JSON.parse(output.slice(0, separator)) as BridgeResponse })
       } catch {
-        reject(new Error("Developer Mode bridge returned an invalid response"))
+        reject(new Error("Native automation bridge returned an invalid response"))
       }
     })
     child.stdin.on("error", (error) => finish(error))
@@ -410,10 +401,10 @@ function callWindowsBridge(
 function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (result?.image) {
-    const content: Array<Record<string, string>> = [
+    const content = [
       { type: "text", text: screenshot.text },
       { type: "file", uri: `data:${result.image.mime};base64,${result.image.data}`, mime: result.image.mime, name: screenshot.name },
-    ]
+    ] as const
     return {
       content,
     }
@@ -471,7 +462,7 @@ async function probeBrowserBridges(
   return found.slice(0, 2)
 }
 
-async function executeBrowserTool(sessionID: string, input: unknown) {
+export async function executeBrowserTool(sessionID: string, input: unknown) {
   const command = parseBrowserAction(input)
   const mode = command.action === "open" ? "browser-claim" : "browser-probe"
   const targets = await probeBrowserBridges(await registrations(), sessionID, mode)
@@ -494,8 +485,8 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   let target = inspectedTargets.get(sessionID)
   if (command.action === "inspect") {
     const targets = await probeBridges(await registrations(), sessionID)
-    if (targets.length === 0) throw new Error("Developer Mode is not active for the visible CodeNomad session")
-    if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose Developer Mode for this session")
+    if (targets.length === 0) throw new Error("No visible CodeNomad session is available for native automation")
+    if (targets.length > 1) throw new Error("Multiple CodeNomad instances expose native automation for this session")
     target = targets[0]
   } else if (!target) {
     throw new Error("Run codenomad.inspect before acting on or restarting CodeNomad")
@@ -504,7 +495,7 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     ? new Set((await registrations()).map((registration) => registration.token))
     : undefined
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
-  if (response.status !== 200) throw new Error(response.body.error || `Developer Mode failed (${response.status})`)
+  if (response.status !== 200) throw new Error(response.body.error || `Native automation failed (${response.status})`)
   if (command.action === "restart") {
     return waitForRestart(inspectedTargets, sessionID, target.nativeIdentity, target.runId, existingTokens!)
   }
@@ -550,12 +541,12 @@ async function waitForRestart(
   throw new Error("CodeNomad did not reconnect to the persistent OpenCode session after restart")
 }
 
-export async function setupAutomationPlugin(context: AutomationPluginContext): Promise<void> {
+export function createDeveloperToolTransform() {
   const inspectedTargets = new Map<string, ProbedBridge>()
-  await context.tool.transform((draft) => {
+  return (draft: Pick<ToolDraft, "add">) => {
     draft.add({
       name: "inspect",
-      description: "Inspect the accessibility tree, runtime feedback, and visible session in the CodeNomad build running in Developer Mode.",
+      description: "Inspect the accessibility tree, runtime feedback, and visible session in the connected CodeNomad desktop build.",
       input: { type: "object", properties: {}, additionalProperties: false },
       options: { namespace: "codenomad", codemode: false },
       execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "inspect" }),
@@ -578,33 +569,14 @@ export async function setupAutomationPlugin(context: AutomationPluginContext): P
     })
     draft.add({
       name: "screenshot",
-      description: "Capture the visible page of the CodeNomad build running in Developer Mode.",
+      description: "Capture the visible page of the connected CodeNomad desktop build.",
       input: { type: "object", properties: {}, additionalProperties: false },
       options: { namespace: "codenomad", codemode: false },
       execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "screenshot" }),
     })
-    draft.add({
-      name: "browser",
-      description: "Open and control the browser attached to the current CodeNomad session. Use open when the preview is closed, then snapshot before click or type.",
-      input: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["open", "navigate", "snapshot", "click", "type", "screenshot"] },
-          url: { type: "string", description: "HTTP(S) URL for open or navigate" },
-          ref: { type: "string", description: "Element ref from the latest snapshot" },
-          text: { type: "string", description: "Text for type" },
-          clear: { type: "boolean", description: "Clear the field before typing (default true)" },
-        },
-        required: ["action"],
-        additionalProperties: false,
-      },
-      options: { namespace: "codenomad", codemode: false },
-      execute: (input, tool) => executeBrowserTool(tool.sessionID, input),
-    })
-  })
+  }
 }
 
-export default {
-  id: "codenomad.automation",
-  setup: setupAutomationPlugin,
+export async function setupAutomationPlugin(context: AutomationPluginContext): Promise<void> {
+  await context.tool.transform(createDeveloperToolTransform())
 }

@@ -12,7 +12,7 @@
 - Use `OpenCodeSharedService` in `packages/server/src/workspaces/opencode-service.ts`.
 - Keep one shared-service adapter and one event subscription for all workspaces. Use the selected host or WSL CLI's official status/start/password lifecycle, own no private service state/PID, and never stop the externally owned global daemon on backend shutdown.
 - Model workspaces with native `LocationRef`/directories in `packages/server/src/workspaces/manager.ts`.
-- Never spawn or stop OpenCode per workspace or add general plugin installation/packaging. The reviewed exceptions are the project-local, execution-gated adapter shared by Developer Mode and browser previews, and the bundled session-pruning RPC under `src/opencode/session-pruning/`. Browser tool definitions remain global until OpenCode supports dynamic location-scoped registration.
+- Never spawn or stop OpenCode per workspace or add general plugin installation/packaging. The narrow integrations are the bundled `codenomad.automation` plugin and the bundled session-pruning RPC under `src/opencode/session-pruning/`. Bundled definitions follow backend presence through native V2 discovery; execution still validates the invoking session's current location. Tool availability must not depend on the source checkout or Developer Mode.
 - Explicit Stop Workspace evicts the location; ordinary UI close never calls workspace deletion. WSL requires localhost forwarding and no cross-namespace PID operations.
 - Leave global service state/database ownership to OpenCode. Pass allowed environment only when starting a missing daemon; leave an existing daemon unchanged and ignore `OPENCODE_DB`/`XDG_STATE_HOME`.
 

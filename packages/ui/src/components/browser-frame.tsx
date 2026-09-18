@@ -120,12 +120,17 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [nativeTarget, setNativeTarget] = createSignal(props.initialAddress ?? "")
   let iframeRef: HTMLIFrameElement | undefined
   let webviewRef: ElectronBrowserWebviewElement | undefined
+  // Electron exposes the methods before its guest is ready to accept them.
+  let webviewReady = false
+  let webviewObservedUrl: string | undefined
   let frameWrapRef: HTMLDivElement | undefined
   let cleanupFrameListeners: (() => void) | null = null
   let cleanupWebviewListeners: (() => void) | null = null
   let cleanupTauriTarget: (() => void) | null = null
   let tauriRegistered = false
-  let browserRegistrationId = crypto.randomUUID()
+  // Iframe previews also run on HTTP LAN origins without crypto.randomUUID.
+  let browserRegistrationId = nativeBrowserAvailable ? crypto.randomUUID() : ""
+  let disposed = false
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv)
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
@@ -287,11 +292,27 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     attachCommentListeners()
   }
 
-  const reportNativeError = (error: unknown) => props.onNavigationError?.(error)
+  const reportNativeError = (error: unknown) => {
+    if (!disposed) props.onNavigationError?.(error)
+  }
+
+  const requestNativeTarget = (address: string) => {
+    webviewObservedUrl = undefined
+    const previousTarget = nativeTarget()
+    setNativeTarget(address)
+    // Electron reflects redirects into src, while the desired-URL signal can
+    // still hold the original URL. Reapply that explicit intent when the signal
+    // is unchanged; setting src is safe even before the guest APIs are ready.
+    if (webviewRef && previousTarget === address && webviewRef.getAttribute("src") !== address) {
+      webviewRef.setAttribute("src", address)
+    }
+  }
 
   const bindWebview = (webview: ElectronBrowserWebviewElement) => {
     cleanupWebviewListeners?.()
     webviewRef = webview
+    webviewReady = false
+    webviewObservedUrl = undefined
     let active = true
     let registered = false
     let registeredSessionId = ""
@@ -300,8 +321,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     let registrationErrorReported = false
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     const syncLocation = (event: Event) => {
-      const url = (event as Event & { url?: string }).url ?? webview.getURL()
+      if (!active || webviewRef !== webview) return
+      const url = (event as Event & { url?: string }).url ?? (webviewReady ? webview.getURL() : undefined)
       if (!url) return
+      webviewObservedUrl = url
       setPathInput(url)
       props.onFrameLocation?.(url)
     }
@@ -312,6 +335,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const retryRegistration = (error: unknown) => {
       registering = false
+      if (!active) return
       registrationFailures += 1
       if (registrationFailures >= 5 && !registrationErrorReported) {
         registrationErrorReported = true
@@ -323,7 +347,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const rect = webview.getBoundingClientRect()
       const visible = active && rect.width > 0 && rect.height > 0
       const sessionId = props.sessionId
-      if (!sessionId || registering) return
+      if (!webviewReady || !sessionId || registering) return
       if (registered && registeredSessionId !== sessionId) {
         const previousId = browserRegistrationId
         browserRegistrationId = crypto.randomUUID()
@@ -354,13 +378,18 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const register = window.electronAPI?.registerBrowserTarget
       if (!register) return
       registering = true
+      const registrationId = browserRegistrationId
       try {
         void register({
           sessionId,
-          registrationId: browserRegistrationId,
+          registrationId,
           guestWebContentsId: webview.getWebContentsId(),
         }).then(() => {
           registering = false
+          if (!active) {
+            void window.electronAPI?.unregisterBrowserTarget?.(registrationId).catch(reportNativeError)
+            return
+          }
           registered = true
           registeredSessionId = sessionId
           registrationFailures = 0
@@ -372,12 +401,17 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       }
     }
     const resizeObserver = new ResizeObserver(syncRegistration)
+    const handleReady = () => {
+      if (!active) return
+      webviewReady = true
+      syncRegistration()
+    }
     resizeObserver.observe(webview)
     createEffect(syncRegistration)
     webview.addEventListener("did-navigate", syncLocation)
     webview.addEventListener("did-navigate-in-page", syncLocation)
     webview.addEventListener("did-fail-load", reportLoadError)
-    webview.addEventListener("dom-ready", syncRegistration)
+    webview.addEventListener("dom-ready", handleReady)
     syncRegistration()
     cleanupWebviewListeners = () => {
       active = false
@@ -385,10 +419,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       webview.removeEventListener("did-navigate", syncLocation)
       webview.removeEventListener("did-navigate-in-page", syncLocation)
       webview.removeEventListener("did-fail-load", reportLoadError)
-      webview.removeEventListener("dom-ready", syncRegistration)
+      webview.removeEventListener("dom-ready", handleReady)
       resizeObserver.disconnect()
       if (registered) void window.electronAPI?.unregisterBrowserTarget?.(browserRegistrationId).catch(reportNativeError)
-      if (webviewRef === webview) webviewRef = undefined
+      if (webviewRef === webview) {
+        webviewRef = undefined
+        webviewReady = false
+        webviewObservedUrl = undefined
+      }
     }
   }
 
@@ -400,7 +438,17 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     let nativeVisible = false
     let registeredSessionId = ""
     let lastBounds = ""
+    let syncErrorReported = false
     let unlistenNavigation = () => {}
+    // Retry on the next layout/visibility event, never recursively on rejection.
+    // Reporting an alert also mutates the DOM, so report a failure streak once.
+    const reportSyncError = (error: unknown) => {
+      registering = false
+      lastBounds = ""
+      if (!active || syncErrorReported) return
+      syncErrorReported = true
+      reportNativeError(error)
+    }
     const bounds = () => {
       if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
       const rect = element.getBoundingClientRect()
@@ -422,10 +470,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           registering = true
           void updateTauriBrowserTarget(browserRegistrationId, undefined, false).then(() => {
             nativeVisible = false
-          }).catch(reportNativeError).finally(() => {
+            syncErrorReported = false
             registering = false
             if (active) syncBounds()
-          })
+          }).catch(reportSyncError)
         }
         return
       }
@@ -452,19 +500,17 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         void updateTauriBrowserTarget(browserRegistrationId, next, true).then(() => {
           lastBounds = serialized
           nativeVisible = true
-        }).catch((error) => {
-          lastBounds = ""
-          reportNativeError(error)
-        }).finally(() => {
+          syncErrorReported = false
           registering = false
           if (active) syncBounds()
-        })
+        }).catch(reportSyncError)
         return
       }
       registering = true
       const target = nativeTarget()
       const registrationId = browserRegistrationId
       void onTauriBrowserNavigation(registrationId, (url) => {
+        if (!active) return
         setNativeTarget(url)
         setPathInput(url)
         props.onFrameLocation?.(url)
@@ -491,15 +537,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         registered = true
         nativeVisible = true
         tauriRegistered = true
+        syncErrorReported = false
         if (nativeTarget() !== target) {
           await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
         }
         syncBounds()
-      }).catch((error) => {
-        registering = false
-        lastBounds = ""
-        reportNativeError(error)
-      })
+      }).catch(reportSyncError)
     }
     const resizeObserver = new ResizeObserver(syncBounds)
     const overlayObserver = new MutationObserver(syncBounds)
@@ -530,9 +573,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       setFrameSrc(initialUrl)
       const address = initialAddress ?? getEditablePathFromUrl(initialUrl)
       setPathInput(address)
-      if (nativeMode() && webviewRef?.getURL() === address) return
+      // A redirect commits before dom-ready; do not reload it when its location
+      // notification comes back through the preview props.
+      if (nativeMode() && webviewRef && (webviewReady ? webviewRef.getURL() : webviewObservedUrl) === address) return
       const previousTarget = nativeTarget()
-      setNativeTarget(address)
+      requestNativeTarget(address)
       const nextNativeMode = nativeBrowserAvailable
       if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== address) {
         void controlTauriBrowserTarget(browserRegistrationId, "navigate", address).catch(reportNativeError)
@@ -555,6 +600,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   })
 
   onCleanup(() => {
+    disposed = true
     cleanupFrameListeners?.()
     cleanupWebviewListeners?.()
     cleanupTauriTarget?.()
@@ -565,7 +611,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     event.stopPropagation()
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError)
-      else if (webviewRef?.canGoBack()) webviewRef.goBack()
+      else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
       return
     }
     try {
@@ -578,7 +624,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const handleRefresh = () => {
     if (nativeMode()) {
       if (browserHost === "tauri") void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError)
-      else webviewRef?.reload()
+      else if (webviewReady) webviewRef?.reload()
       return
     }
     try {
@@ -599,13 +645,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
           setPathInput(target)
-          setNativeTarget(target)
-          if (nativeMode() && browserHost === "tauri") {
-            void controlTauriBrowserTarget(browserRegistrationId, "navigate", target).catch(reportNativeError)
-          } else if (nativeMode() && webviewRef) void webviewRef.loadURL(target).catch(reportNativeError)
-          else {
-            setNativeTarget(target)
-            setNativeMode(true)
+          if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
+            webviewRef.reload()
+          } else {
+            requestNativeTarget(target)
+            if (nativeMode() && browserHost === "tauri") {
+              void controlTauriBrowserTarget(browserRegistrationId, "navigate", target).catch(reportNativeError)
+            } else setNativeMode(true)
           }
           props.onFrameLocation?.(target)
         } catch {

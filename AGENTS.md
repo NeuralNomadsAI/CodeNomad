@@ -25,6 +25,10 @@
 
 ## Coding Principles
 
+- One bundled `codenomad.automation` V2 plugin uses native discovery and backend presence. All browser/developer tools are available without a Developer Mode toggle; native instrumentation starts with the desktop host. Loading, tool availability and execution targeting are separate: retain the authenticated bridge and session/window fences. Tauri preview children receive no application capabilities; primary-renderer reload must dispose them and final-window checks must count native windows. See `dev-docs/BROWSER_AUTOMATION.md`.
+
+- Desktop automation and pruning provisioning follows the authenticated OpenCode connection and its `config.get` global discovery directory, including reconnects. Never derive a running daemon's roots from backend/startup environment or CLI `debug paths`. New bundles/leases live under that root's `.codenomad/`; existing generated entries retain their recorded storage for older backends' leases. WSL translates the daemon-reported paths through the selected distro only for filesystem access.
+
 - Follow `dev-docs/CACHE_REFRESH_CONVENTIONS.md` for display snapshots, coalesced trailing refreshes, stale-response fencing and authoritative mutation reads. Check existing feature semantics before adding another cache or refresh policy.
 
 - Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
@@ -74,7 +78,7 @@ Behavior for agents:
 - Run them with `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`. `CODENOMAD_BROWSER_PATH` optionally selects an existing Chromium executable; it does not target the installed application or user sessions.
 
 ## V2 Runtime Launch
-- Enable **Developer Mode** from the session tab bar and fully restart CodeNomad once; do not configure a fixed CDP port or a manual WebView2 profile.
+- Native automation instrumentation starts automatically; no Developer Mode toggle or activation restart is required. Do not configure a fixed CDP port or a manual WebView2 profile.
 - Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
 
 ## Commit Message Guidelines
