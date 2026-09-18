@@ -13,6 +13,7 @@ mod linux_tls;
 mod local_windows;
 mod managed_node;
 mod native_request;
+mod native_service_start;
 mod preferences_window;
 mod shutdown;
 mod windows_update;
@@ -237,6 +238,7 @@ pub(crate) fn handle_native_request(
         "browser.probe" | "browser.execute" => state
             .browser_controller
             .handle_native(app, method, params, deadline),
+        "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => Ok(state.developer_mode.native_snapshot(app)),
         "developer.restart" => state.developer_mode.request_restart(app),
         _ => Err(format!("Unsupported native request: {method}")),
@@ -1356,7 +1358,9 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
 }
 
 fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
-    if identity::local_window_id(webview.label()).is_ok() {
+    if identity::local_window_id(webview.label()).is_ok()
+        || webview.label() == preferences_window::LABEL
+    {
         client_state::set_local_window_zoom(app, webview.label(), zoom);
         return;
     }
@@ -1369,7 +1373,9 @@ fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
 }
 
 fn target_zoom(app: &AppHandle, webview: &tauri::Webview) -> f64 {
-    if identity::local_window_id(webview.label()).is_ok() {
+    if identity::local_window_id(webview.label()).is_ok()
+        || webview.label() == preferences_window::LABEL
+    {
         client_state::local_window_zoom(app, webview.label())
     } else {
         app.state::<AppState>()
@@ -1880,6 +1886,7 @@ fn main() {
                 ..
             } => {
                 if label == preferences_window::LABEL {
+                    client_state::capture_and_flush_window(&app_handle, &label);
                     if shutdown::exit_allowed(&app_handle) {
                         return;
                     }

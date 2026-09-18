@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "显示主会话",
+  "sessionList.filter.includeSubsessions": "显示子会话",
   "session.pruning.maintenance_required": "会话或其存储正忙。请等待当前操作完成后重试清理。",
   "session.pruning.unavailable": "清理插件不可用或未响应。请重新打开 CodeNomad 后重试。",
   "session.pruning.conflict": "消息在选中后已更改。请重新加载并再次选择内容。",
@@ -54,6 +56,15 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "搜索会话…",
   "sessionList.filter.ariaLabel": "搜索会话",
+  "sessionList.sort.ariaLabel": "会话排序",
+  "sessionList.sort.activity": "活动时间",
+  "sessionList.sort.name": "名称",
+  "sessionList.sort.worktree": "工作树",
+  "sessionList.worktreeFilter.ariaLabel": "按工作树筛选会话",
+  "sessionList.worktreeFilter.all": "所有工作树",
+  "sessionList.worktree.tooltip": "工作树：{worktree}",
+  "sessionList.worktree.workspace": "工作区",
+  "sessionList.worktreeMove.error": "无法移动会话系列",
   "sessionList.loading.more": "正在加载更多会话…",
   "sessionList.loading.initial": "正在加载会话…",
   "sessionList.loadError.title": "无法加载会话",

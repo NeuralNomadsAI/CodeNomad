@@ -11,8 +11,11 @@ import {
   getDescendantSessionsFromMap,
   getSessionAncestorIdsFromMap,
   getSessionRootFromMap,
+  projectSessionFamilies,
+  projectSessionSearchResults,
   sortSessionIdsDeepestFirst,
 } from "./session-tree"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 function session(id: string, parentId: string | null, updated: number): Session {
   return { id, parentId, time: { created: updated, updated } } as Session
@@ -23,6 +26,14 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("preserves case in the Linux portion of WSL UNC paths", () => {
+    assert.equal(
+      normalizeSessionDirectory("\\\\WSL.localhost\\Ubuntu\\Repo\\Feature"),
+      "//wsl.localhost/ubuntu/Repo/Feature",
+    )
+    assert.equal(normalizeSessionDirectory("\\\\wsl$\\Ubuntu\\Repo\\Feature"), "//wsl$/ubuntu/Repo/Feature")
+  })
+
   it("preserves nesting and sorts siblings by descendant activity", () => {
     const sessions = sessionMap([
       ["root", null, 100],
@@ -176,5 +187,66 @@ describe("session tree", () => {
       sortSessionIdsDeepestFirst(sessions, ["root", "child", "grandchild"]),
       ["grandchild", "child", "root"],
     )
+  })
+
+  it("keeps a complete family when a descendant matches", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["matching-child", "root", 500],
+      ["sibling", "root", 200],
+    ])
+    const matched = projectSessionFamilies(buildSessionThreadsFromMap(sessions, ["root"]), {
+      sort: "activity",
+      matchesSession: (item) => item.id === "matching-child",
+      getWorktreeLabel: () => "root",
+    })
+    assert.deepEqual(collectSessionThreadIds(matched), ["root", "matching-child", "sibling"])
+  })
+
+  it("searches individual sessions without ancestors, inherited activity or hidden selection descendants", () => {
+    const sessions = sessionMap([
+      ["root", null, 100],
+      ["child", "root", 200],
+      ["grandchild", "child", 300],
+      ["local-root", null, 400],
+    ])
+    for (const item of sessions.values()) {
+      item.location = { directory: "D:\\repo" }
+      item.status = "idle"
+    }
+    const parent = sessions.get("root")!
+    parent.location = { directory: "D:\\worktrees\\feature" }
+    parent.status = "working"
+    const grandchild = sessions.get("grandchild")!
+    const project = (worktreeDirectory: string, includeSubsessions = true) => projectSessionSearchResults(
+      sessions.values(),
+      { sort: "activity", worktreeDirectory, includeMainSessions: true, includeSubsessions, getWorktreeLabel: directory => directory },
+    )
+    assert.deepEqual(project("D:\\repo").map(thread => thread.session.id), ["local-root", "grandchild", "child"])
+    assert.deepEqual(collectSessionThreadIds(project("D:\\repo", false)), ["local-root"])
+    assert.equal(project("D:/worktrees/feature")[0].session.id, "root")
+    assert.deepEqual(collectSessionThreadIds(project("")), ["local-root", "grandchild", "child", "root"], "each row uses its own activity")
+    assert.equal(project("", false).length, 2)
+    for (const status of ["working", "compacting"] as const) {
+      grandchild.status = status
+      assert.deepEqual(collectSessionThreadIds(project("D:\\repo")), ["local-root", "grandchild", "child"])
+      assert.deepEqual(collectSessionThreadIds(project("D:/worktrees/feature")), ["root"])
+    }
+    grandchild.location = { directory: "D:\\another-checkout" }
+    assert.equal(project("D:\\repo").length, 2)
+    grandchild.location = { directory: "D:\\repo" }
+    grandchild.status = "idle"
+    assert.equal(project("D:\\repo").length, 3)
+    const match = projectSessionSearchResults([grandchild], {
+      sort: "name", worktreeDirectory: "D:\\repo", includeMainSessions: true, includeSubsessions: true,
+      matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
+    })
+    assert.deepEqual(collectSessionThreadIds(match), ["grandchild"], "a result renders even without its parents loaded")
+    assert.equal(match[0].depth, 0)
+    assert.equal(match[0].hasChildren, false)
+    assert.equal(projectSessionSearchResults([grandchild], {
+      sort: "worktree", worktreeDirectory: parent.location.directory, includeMainSessions: true, includeSubsessions: true,
+      matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
+    }).length, 0, "text and directory must match the same session")
   })
 })

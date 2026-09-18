@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
-import { listWorktrees } from "../git-worktrees"
+import { fixtureCatalogue } from "./native-worktree-fixture"
 
 describe("listWorktrees", () => {
   it("uses the selected workspace folder for the root worktree directory", async () => {
@@ -19,7 +19,7 @@ describe("listWorktrees", () => {
       execFileSync("git", ["-C", repoRoot, "add", "README.md"])
       execFileSync("git", ["-C", repoRoot, "-c", "user.name=CodeNomad Test", "-c", "user.email=test@codenomad.local", "commit", "-m", "test"])
 
-      const worktrees = await listWorktrees({ repoRoot, workspaceFolder })
+      const { worktrees } = await fixtureCatalogue(workspaceFolder)
 
       assert.equal(worktrees[0]?.slug, "root")
       assert.equal(worktrees[0]?.directory, workspaceFolder)

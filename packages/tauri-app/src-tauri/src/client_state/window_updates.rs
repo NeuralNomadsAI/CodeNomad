@@ -71,6 +71,8 @@ impl ClientState {
             pending.mutation.as_ref().filter(|(id, _)| id == window_id)
         {
             window.as_ref()
+        } else if window_id == crate::preferences_window::LABEL {
+            state.preferences_window.as_ref()
         } else {
             let Ok(record) = state.record(window_id) else {
                 return false;
@@ -117,6 +119,11 @@ impl ClientState {
         }
         let mut applied = false;
         for (id, capture) in pending.latest.drain() {
+            if id == crate::preferences_window::LABEL {
+                state.preferences_window = Some(capture);
+                applied = true;
+                continue;
+            }
             if let Ok(record) = state.record_mut(&id) {
                 if record.writes_enabled {
                     record.window = Some(capture);

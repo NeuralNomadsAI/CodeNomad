@@ -36,6 +36,10 @@ Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect beh
 
 Autonomous native browser previews, shared automation bridge routing, host security, and focused validation.
 
+### [WORKTREE_SESSION_PLACEMENT.md](WORKTREE_SESSION_PLACEMENT.md)
+
+Native project/location versus CodeNomad conversation attachment, user-authorized movement, session instruction synchronization, and Windows directory-spelling diagnostics.
+
 ---
 
 ## Specification Documents

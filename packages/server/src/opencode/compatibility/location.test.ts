@@ -96,3 +96,44 @@ test("directory-only credential context is native-scoped on legacy and global on
     await client.credential.remove({ credentialID: "credential" }, locationRequestOptions({ directory: "/repo" }, { includeDirectory: true }))
   }
 })
+test("worktree refresh retains canonical project requests and adapts legacy directory context", () => {
+  const location = { directory: "/repo", workspaceID: "native" }
+  const legacyUrl = new URL("http://localhost/api/worktree/refresh")
+  const headers = new Headers(locationRequestOptions(location)?.headers)
+  assert.equal(applyLocationContext(legacyUrl, "POST", { projectID: "project" }, headers, "legacy"), undefined)
+  assert.equal(legacyUrl.searchParams.get("location[directory]"), "/repo")
+  assert.equal(legacyUrl.searchParams.get("location[workspace]"), "native")
+  const modernUrl = new URL("http://localhost/api/worktree/refresh")
+  const modernHeaders = new Headers(locationRequestOptions({ directory: "/repo" }, { includeDirectory: true })?.headers)
+  assert.deepEqual(applyLocationContext(modernUrl, "POST", { projectID: "project" }, modernHeaders, "modern"), { projectID: "project" })
+  assert.equal(modernUrl.search, "")
+})
+
+test("generated worktree methods retain their payload while adapting the legacy location scope", async () => {
+  for (const version of ["2.0.3", "2.0.4"]) {
+    const endpoint = { url: "http://localhost:4321", auth: { type: "basic" as const, username: "fixture", password: "fixture" } }
+    rememberRuntime(endpoint, { version, pid: 1, discovery: version === "2.0.3" ? "health" : "status" })
+    const requests: Array<{ method: string; url: URL; body: any }> = []
+    const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
+      const request = new Request(input, init)
+      requests.push({ method: request.method, url: new URL(request.url), body: request.body ? await request.json() : undefined })
+      if (request.method === "GET") return Response.json([{ directory: "/repo", strategy: "git" }])
+      if (request.method === "POST") return Response.json({ directory: "/repo/.codenomad/worktrees/new" })
+      return new Response(null, { status: 204 })
+    }) })
+    const options = locationRequestOptions({ directory: "/repo" }, { includeDirectory: true })
+    await client.worktree.list({ projectID: "project" }, options)
+    await client.worktree.create({ projectID: "project", from: "/source", branch: "revision", directory: "/repo/.codenomad/worktrees", name: "new" }, options)
+    await client.worktree.remove({ projectID: "project", directory: "/repo/.codenomad/worktrees/new", force: false }, options)
+    const legacy = version === "2.0.3"
+    for (const request of requests) {
+      assert.equal(request.url.searchParams.get("location[directory]"), legacy ? "/repo" : null)
+      if (request.method === "GET") assert.equal(request.url.searchParams.get("projectID"), legacy ? null : "project")
+      else assert.equal(request.body.projectID, legacy ? undefined : "project")
+    }
+    assert.equal(requests[1].body.branch, "revision")
+    assert.equal(requests[1].body.from, "/source")
+    assert.equal(requests[2].body.directory, "/repo/.codenomad/worktrees/new")
+    assert.equal(requests[2].body.force, false)
+  }
+})

@@ -27,6 +27,7 @@ import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
+import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -136,6 +137,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const preferencesWindows = new PreferencesWindowRegistry()
   let pendingPreferencesRestore = clientState.preferences
   let preferencesNavigation: ClientStateNavigationController | null = null
+  let preferencesTracker: WindowStateTracker | null = null
   let preferencesTransition: { id: number; key: string; run: () => void } | undefined
   let preferencesTransitionId = 0
 
@@ -148,6 +150,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window,
+    flushSupportWindows: async () => {
+      const window = preferencesWindows.current()
+      if (window && preferencesWindows.isReady(window)) {
+        await flushRendererClientStateBeforeShutdown(window, clientState.isPrimary, url => isAllowedRendererOrigin(url, getAllowedOrigins(window)))
+      }
+      await preferencesTracker?.flush()
+    },
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
@@ -463,18 +472,23 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest, toggle = false): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false): Promise<void> {
+    if (resume && clientState.lastPreferences) request = { ...request, section: clientState.lastPreferences.section, scrollTop: clientState.lastPreferences.scrollTop }
     if (toggle && preferencesWindows.current()) {
       preferencesWindows.current()?.close()
       return
     }
-    if (preferencesWindows.reuse(request)) {
-      await clientState.setPreferences(request)
+    const reused = preferencesWindows.reuse(request)
+    if (reused) {
+      if (!preferencesWindows.isReady(reused)) await clientState.setPreferences(request)
       return
     }
     if (!backendTargetUrl) throw new Error("Local CodeNomad server is unavailable")
+    const saved = clientState.preferencesWindow
+    const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map(display => ({ ...display.workArea, scaleFactor: display.scaleFactor })), { width: 760, height: 560 }) : undefined
     const window = new BrowserWindow({
-      width: 1100, height: 760, minWidth: 760, minHeight: 560,
+      width: bounds?.width ?? 1100, height: bounds?.height ?? 760, minWidth: 760, minHeight: 560,
+      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), show: false,
       useContentSize: true, frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
@@ -485,6 +499,16 @@ function runPrimary(firstIntent: LaunchIntent) {
     const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
     preferencesWindows.register(window, request)
+    const tracker = new WindowStateTracker(window, {
+      activeWindowId: "preferences",
+      saveWindowState: state => clientState.savePreferencesWindow(state),
+      flush: () => clientState.flush(),
+    }, saved && bounds ? { ...saved, bounds } : saved)
+    preferencesTracker = tracker
+    window.on("closed", () => { if (preferencesTracker === tracker) preferencesTracker = null })
+    restoreWindowState(window, saved, bounds)
+    installWindowZoomInput(window, level => tracker.setZoomLevel(level))
+    window.show()
     preferencesNavigation = new ClientStateNavigationController(window, {
       clientStateManager: { isPrimary: false },
       isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedOrigins(window)),

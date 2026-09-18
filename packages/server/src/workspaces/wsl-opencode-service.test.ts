@@ -164,9 +164,24 @@ describe("WslOpenCodeService", () => {
     assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
   })
 
+  it("falls back to authenticated Windows info for a current WSL V2 service", async () => {
+    const requests: string[] = []
+    const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async (input, init) => {
+        requests.push(String(input))
+        assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
+        assert.equal(init?.redirect, "error")
+        return requests.length < 3 ? new Response(null, { status: 404 })
+          : Response.json({ version: "2.0.7", pid: 123, urls: [url] })
+      },
+    }).service.discover()
+    assert.equal(endpoint?.url, url)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+  })
+
   it("rejects missing, unauthenticated, malformed and oversized fallback health responses", async () => {
     for (const [response, expected] of [
-      [() => new Response(null, { status: 404 }), /health check failed.*404/],
+      [() => new Response(null, { status: 404 }), /info check failed.*404/],
       [() => new Response(null, { status: 401 }), /authentication failed.*401/],
       [() => new Response(null, { status: 503 }), /health check failed.*503/],
       [() => new Response("invalid JSON"), /invalid health response/],
@@ -186,7 +201,7 @@ describe("WslOpenCodeService", () => {
           return requests.length === 1 ? new Response(null, { status: 404 }) : response()
         },
       }).service.discover(), expected)
-      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, ...(response().status === 404 ? [`${url}/api/info`] : [])])
     }
   })
 

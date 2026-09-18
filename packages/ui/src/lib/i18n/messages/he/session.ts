@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "הצגת סשנים ראשיים",
+  "sessionList.filter.includeSubsessions": "הצגת תת־סשנים",
   "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",
   "session.pruning.unavailable": "תוסף הניקוי אינו זמין או שלא הגיב. יש לפתוח את CodeNomad מחדש ולנסות שוב.",
   "session.pruning.conflict": "ההודעה השתנתה מאז שנבחרה. יש לטעון אותה מחדש ולבחור את התוכן שוב.",
@@ -54,6 +56,15 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "חפש סשנים…",
   "sessionList.filter.ariaLabel": "חפש סשנים",
+  "sessionList.sort.ariaLabel": "מיון סשנים",
+  "sessionList.sort.activity": "פעילות",
+  "sessionList.sort.name": "שם",
+  "sessionList.sort.worktree": "Worktree",
+  "sessionList.worktreeFilter.ariaLabel": "סינון סשנים לפי worktree",
+  "sessionList.worktreeFilter.all": "כל ה-worktrees",
+  "sessionList.worktree.tooltip": "Worktree: {worktree}",
+  "sessionList.worktree.workspace": "סביבת עבודה",
+  "sessionList.worktreeMove.error": "לא ניתן להעביר את משפחת הסשנים",
   "sessionList.loading.more": "טוען עוד סשנים…",
   "sessionList.loading.initial": "טוען סשנים…",
   "sessionList.loadError.title": "לא ניתן לטעון את הסשנים",

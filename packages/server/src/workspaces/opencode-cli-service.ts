@@ -29,6 +29,7 @@ export interface ServiceExecResult {
 
 export interface OpenCodeCliServiceDependencies {
   execFile: (file: string, args: string[], options: ServiceExecOptions) => Promise<ServiceExecResult>
+  startFile?: OpenCodeCliServiceDependencies["execFile"]
   fetch: typeof globalThis.fetch
 }
 
@@ -93,7 +94,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     let result: ServiceExecResult
     try {
       result = await this.withDeadline(
-        this.dependencies.execFile(spec.command, spec.args, options),
+        (start ? this.dependencies.startFile ?? this.dependencies.execFile : this.dependencies.execFile)(spec.command, spec.args, options),
         deadlineAt,
         commandLabel,
       )
@@ -121,13 +122,20 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
   }
 
   private async validateStatus(endpoint: Endpoint, deadlineAt: number): Promise<void> {
-    let kind: "status" | "health" = "status"
+    let kind: "status" | "health" | "info" = "status"
     let response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
     // Earlier V2 runtimes expose health instead of status. Negotiate only on
     // route absence, using the same authenticated endpoint and deadline.
     if (response.status === 404) {
       await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, "status response")
       kind = "health"
+      response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
+    }
+    // The current service exposes server.info. Discover by route presence,
+    // never by a release-number allowlist, and only retry this read on 404.
+    if (response.status === 404) {
+      await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, "health response")
+      kind = "info"
       response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
     }
     if (response.status === 401) {
@@ -148,18 +156,19 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     } catch {
       throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
-    if (!(kind === "status" ? isServiceStatusResponse(payload) : isServiceHealthResponse(payload))) {
+    if (!(kind === "health" ? isServiceHealthResponse(payload) : isServiceStatusResponse(payload))) {
       throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
     const { version, pid } = payload as { version: string; pid: number }
     rememberRuntime(endpoint, { version, pid, discovery: kind })
   }
 
-  private async fetchServiceStatus(endpoint: Endpoint, kind: "status" | "health", deadlineAt: number): Promise<Response> {
+  private async fetchServiceStatus(endpoint: Endpoint, kind: "status" | "health" | "info", deadlineAt: number): Promise<Response> {
     try {
       const timeout = this.remaining(deadlineAt, `${kind} validation`)
       return await this.withDeadline(this.dependencies.fetch(new URL(`/api/${kind}`, endpoint.url), {
         headers: Service.headers(endpoint),
+        redirect: "error",
         signal: AbortSignal.timeout(timeout),
       }), deadlineAt, `${kind} validation`)
     } catch {

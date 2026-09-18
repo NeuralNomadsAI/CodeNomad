@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "sessionList.filter.includeMainSessions": "Hauptsitzungen anzeigen",
+  "sessionList.filter.includeSubsessions": "Untersitzungen anzeigen",
   "session.pruning.maintenance_required": "Die Sitzung oder ihr Speicher ist beschäftigt. Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
   "session.pruning.unavailable": "Das Bereinigungs-Plugin ist nicht verfügbar oder hat nicht geantwortet. Öffne CodeNomad erneut und versuche es noch einmal.",
   "session.pruning.conflict": "Die Nachricht wurde seit der Auswahl geändert. Lade sie neu und wähle den Inhalt erneut aus.",
@@ -54,6 +56,15 @@ export const sessionMessages = {
 
   "sessionList.filter.placeholder": "Sitzungen suchen...",
   "sessionList.filter.ariaLabel": "Sitzungen suchen",
+  "sessionList.sort.ariaLabel": "Sitzungen sortieren",
+  "sessionList.sort.activity": "Aktivität",
+  "sessionList.sort.name": "Name",
+  "sessionList.sort.worktree": "Worktree",
+  "sessionList.worktreeFilter.ariaLabel": "Sitzungen nach Worktree filtern",
+  "sessionList.worktreeFilter.all": "Alle Worktrees",
+  "sessionList.worktree.tooltip": "Worktree: {worktree}",
+  "sessionList.worktree.workspace": "Arbeitsbereich",
+  "sessionList.worktreeMove.error": "Sitzungsfamilie konnte nicht verschoben werden",
   "sessionList.loading.more": "Weitere Sitzungen werden geladen...",
   "sessionList.loading.initial": "Sitzungen werden geladen...",
   "sessionList.loadError.title": "Sitzungen konnten nicht geladen werden",

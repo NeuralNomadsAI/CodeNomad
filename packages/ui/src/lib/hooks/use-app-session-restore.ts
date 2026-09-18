@@ -128,10 +128,14 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
         if (!id) return null
         claimedIds.add(id)
         attachInstanceTab(id, { source: "restore" })
+        const tabId = getInstanceAppTabId(id)
+        // Project selection belongs to the restored tab binding, not to the
+        // slower conversation hydration (which can also settle in capture).
+        if (match.tabIndex === snapshot.activeTabIndex
+          && capture.restoredTabIds()[match.tabIndex] === tabId) context.selectActive(tabId, true)
         const created = creation?.reused === false
         if (created) createdId = id
         try {
-          const tabId = getInstanceAppTabId(id)
           const isCurrentBinding = () => capture.hasRestoredTabBinding(match.tabIndex, tabId)
           if (!isCurrentBinding()) return id
           // Restore the exact saved session before the potentially expensive
@@ -150,8 +154,7 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
           if (!unavailable || !isCurrentBinding()) return id
           if (creation?.requestId) await releaseRestoreCreatedInstance(id, creation.requestId)
           if (operationSignal.aborted) throw getAbortReason(operationSignal)
-          if (capture.settleRestoredTab(match.tabIndex, tabId, tabId, unavailable)
-            && match.tabIndex === snapshot.activeTabIndex) context.selectActive(tabId, true)
+          capture.settleRestoredTab(match.tabIndex, tabId, tabId, unavailable)
         } catch (error) {
           if (!existingId && creation?.requestId) {
             capture.settleRestoredTab(match.tabIndex, getInstanceAppTabId(id), null)

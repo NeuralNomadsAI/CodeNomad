@@ -42,12 +42,15 @@ import type {
   WorkspaceEventType,
   WorktreeListResponse,
   WorktreeCreateRequest,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 
 const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
 const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
@@ -135,7 +138,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (!response.ok) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new Error(message || `Request failed with ${response.status}`)
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"))
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -208,6 +211,13 @@ export const serverApi = {
     const suffix = params.toString() ? `?${params.toString()}` : ""
     return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
       method: "DELETE",
+    })
+  },
+
+  moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+    return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
 
@@ -322,7 +332,7 @@ export const serverApi = {
   searchWorkspaceFiles(
     id: string,
     query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all" },
+    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal },
   ): Promise<WorkspaceFileSearchResponse> {
     const trimmed = query.trim()
     if (!trimmed) {
@@ -335,9 +345,11 @@ export const serverApi = {
     if (opts?.type) {
       params.set("type", opts.type)
     }
-    return request<WorkspaceFileSearchResponse>(
+    const search = () => request<WorkspaceFileSearchResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
+      { signal: opts?.signal },
     )
+    return opts?.signal ? retryFileSearch(search, opts.signal) : search()
   },
   readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
