@@ -39,3 +39,17 @@ The worktree cache is in memory. It does not reduce the first native inventory s
 the cost of mandatory authoritative scans, or all latency in the serial event relay.
 An isolated native fixture covers warm-cache create/remove visibility; browser
 fixtures cover menu updates, focus, old responses and refresh bursts.
+
+## Initial session hydration
+
+Project identity and worktree discovery start independently. The root-directory
+session page can publish before checkout discovery finishes; complete project-family
+reconciliation still waits for verified worktree membership. Metadata-dependent
+callers retain the combined worktree/project readiness barrier.
+
+Restored composer catalogues and MCP/plugin decoration wait for initial session
+hydration rather than filling the browser's per-origin HTTP queue ahead of it.
+Delayed catalogue refreshes recheck client, location and request ownership before
+dispatch. The first native connection can supersede an initial HTTP read without
+passing through the reconnect recovery gate, so the current non-strict session-list
+loader replaces that read unless a newer request, cancellation or disposal owns it.

@@ -1,6 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
+import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
 import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
@@ -25,7 +26,10 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
 
   createEffect(() => {
     if (instanceProviders().length === 0) {
-      fetchProviders(props.instanceId).catch((error) => log.error("Failed to fetch providers", error))
+      const instanceId = props.instanceId
+      void waitForInstanceInitialSessionHydration(instanceId)
+        .then(() => fetchProviders(instanceId))
+        .catch((error) => log.error("Failed to fetch providers", error))
     }
   })
 
