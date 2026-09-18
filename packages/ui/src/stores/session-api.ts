@@ -9,7 +9,7 @@ import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktre
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import type { LocationRef, SessionInfo as SDKSession, SessionMessagesResponse } from "@opencode/client"
 
-import { instances, reconcilePendingSessionIndicators } from "./instances"
+import { instances, reconcilePendingSessionIndicators, waitForInstanceInitialSessionHydration } from "./instances"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
@@ -168,6 +168,9 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
   }
   const state = { key, promise: Promise.resolve(), pending: false }
   state.promise = (async () => {
+    await waitForInstanceInitialSessionHydration(instanceId)
+    if (instances().get(instanceId)?.client !== client || catalogRefreshes.get(instanceId) !== state
+      || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== key) return
     let refresh = force
     do {
       state.pending = false

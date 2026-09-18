@@ -889,24 +889,30 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   const worktreeHydration = force
     ? reloadWorktrees(instanceId)
     : ensureWorktreesLoaded(instanceId)
-  const workspaceMetadata = worktreeHydration.then(async () => {
+  const projectMetadata = Promise.resolve().then(async () => {
     const instance = instances().get(instanceId)
     if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
       log.warn("Failed to load project metadata before session hydration", { instanceId, error })
     })
   })
-  void worktreeHydration.then(async () => {
-    const instance = instances().get(instanceId)
-    if (instance?.client) {
-      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
-    }
-  }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
-  const sessions = workspaceMetadata.then(async () => {
+  const workspaceMetadata = Promise.all([worktreeHydration, projectMetadata]).then(() => {})
+  // Session hydration can outlive a failed forced worktree read. Observe the
+  // rejection immediately while retaining it for metadata-dependent callers.
+  void workspaceMetadata.catch((error) => log.warn("Failed to hydrate workspace metadata", { instanceId, error }))
+  // Publish the root directory page without waiting for checkout discovery.
+  // Full family reconciliation still awaits that inventory in session-api.
+  const sessions = projectMetadata.then(async () => {
     resetSessionPagination(instanceId)
     await fetchSessions(instanceId).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
+  void sessions.then(async () => {
+    const instance = instances().get(instanceId)
+    if (instance?.client) {
+      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
+    }
+  }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   return { sessions, workspaceMetadata }
 }
 
