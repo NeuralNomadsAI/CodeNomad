@@ -6,7 +6,8 @@ import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { setSessions } from "../../../src/stores/session-state"
-import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import { ensureWorktreesLoaded, reloadWorktrees, getWorktrees } from "../../../src/stores/worktrees"
+import { serverEvents } from "../../../src/lib/server-events"
 import "../../../src/index.css"
 
 const id = "worktree-fixture"
@@ -43,4 +44,41 @@ render(() => <ConfigProvider><I18nProvider><div style={{ width: "380px", margin:
   <WorktreeSelector instanceId={id} sessionId={session.id} />
 </div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { calls, location: () => session.location.directory }
+;(window as any).fixture = {
+  calls,
+  location: () => session.location.directory,
+  worktrees: () => getWorktrees(id),
+  holdRefresh: () => {
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    serverApi.fetchWorktrees = async () => {
+      await pending
+      return { isGitRepo: true, worktrees: entries.map(entry => ({ ...entry })) }
+    }
+    ;(window as any).fixture.releaseRefresh = async () => {
+      release()
+      await reloadWorktrees(id)
+    }
+  },
+  backgroundUpdate: async () => {
+    const old = entries.map(entry => ({ ...entry }))
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    let requests = 0
+    serverApi.fetchWorktrees = async () => {
+      requests++
+      if (requests === 1) {
+        await pending
+        return { isGitRepo: true, worktrees: old }
+      }
+      return { isGitRepo: true, worktrees: entries }
+    }
+    const initial = reloadWorktrees(id)
+    await Promise.resolve()
+    entries[1] = { ...entries[1], label: "renamed in background" }
+    // Exercise the production dispatcher while an older HTTP reply is pending.
+    ;(serverEvents as any).dispatchBatch([{ type: "workspace.worktreesChanged", workspaceId: id }])
+    release()
+    await initial
+  },
+}

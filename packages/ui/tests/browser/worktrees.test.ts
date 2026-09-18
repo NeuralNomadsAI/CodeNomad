@@ -61,6 +61,35 @@ test("worktree actions use click/keyboard/touch without selecting or moving the 
   } finally { await context.close() }
 })
 
+test("background inventory completion updates the selector after an older HTTP response", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    await page.locator(".selector-trigger").click()
+    await page.getByRole("option", { name: /feature/ }).waitFor()
+    await page.evaluate(() => (window as any).fixture.backgroundUpdate())
+    await page.waitForFunction(() => (window as any).fixture.worktrees().some((entry: any) => entry.label === "renamed in background"))
+    await page.getByRole("option", { name: /renamed in background/ }).waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+    assert.equal(await page.evaluate(() => (window as any).fixture.location()), "/repo")
+  } finally { await page.close() }
+})
+
+test("opens cached options before refresh completes and keeps a dismissed menu closed", async () => {
+  const page = await browser.newPage()
+  try {
+    await prepare(page)
+    await page.evaluate(() => (window as any).fixture.holdRefresh())
+    await page.locator(".selector-trigger").click()
+    await page.getByRole("option", { name: /feature/ }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.getByRole("listbox").waitFor({ state: "hidden" })
+    await page.evaluate(() => (window as any).fixture.releaseRefresh())
+    assert.equal(await page.locator(".selector-trigger").getAttribute("aria-expanded"), "false")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), [])
+  } finally { await page.close() }
+})
+
 test("creation uses the selected source and the returned stable worktree ID", async () => {
   const page = await browser.newPage()
   try {

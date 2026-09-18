@@ -4,7 +4,6 @@ import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
 import { InstanceStreamStatus } from "../api-types"
-import { invalidateWorktreeCache } from "./worktree-directory"
 
 const RECONNECT_DELAY_MS = 1000
 const LOCATION_OWNER_CACHE_MS = 2000
@@ -110,7 +109,7 @@ export class InstanceEventBridge {
 
   private async publishEvent(event: OpenCodeEvent) {
     if (event.type === "worktree.updated") {
-      invalidateWorktreeCache()
+      this.options.workspaceManager.invalidateWorktrees()
       this.locationOwners.clear()
     }
     const sessionId = this.sessionId(event)

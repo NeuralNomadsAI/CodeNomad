@@ -468,6 +468,7 @@ export type WorkspaceEventType =
   | "workspace.error"
   | "workspace.stopped"
   | "workspace.log"
+  | "workspace.worktreesChanged"
   | "sidecar.updated"
   | "sidecar.removed"
   | "storage.configChanged"
@@ -484,6 +485,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
+  | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }

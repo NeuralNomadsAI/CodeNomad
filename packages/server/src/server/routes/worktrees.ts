@@ -47,7 +47,6 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 
     try {
       const response: WorktreeListResponse = await deps.workspaceManager.getWorktrees(workspace.id)
-      invalidateWorktreeCache(workspace.id)
       return response
     } catch (error) {
       return handleError(error, reply)
@@ -85,7 +84,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
         return { error: "Workspace is not a Git repository" }
       }
 
-      const catalogue = await deps.workspaceManager.getWorktrees(workspace.id)
+      const catalogue = await deps.workspaceManager.getWorktrees(workspace.id, "fresh")
       const source = catalogue.worktrees.find(entry => entry.slug === (body.fromSlug ?? "root"))
       if (!source) throw new ProjectSessionError("Source worktree not found", 404)
       const identities = await Promise.all(catalogue.worktrees.map(entry => (
@@ -265,7 +264,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
 }
 
 function strictWorktrees(manager: WorkspaceManager, workspaceId: string) {
-  return manager.getWorktrees(workspaceId).then(result => result.worktrees).catch((error) => {
+  return manager.getWorktrees(workspaceId, "fresh").then(result => result.worktrees).catch((error) => {
     throw new ProjectSessionError(error instanceof Error ? error.message : "Unable to read native worktree inventory", 502)
   })
 }

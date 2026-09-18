@@ -7,6 +7,7 @@ import { tsImport } from "tsx/esm/api"
 // Invoked by the isolated daemon fixture only. No service discovery/user state.
 export async function testNativeWorktreeManagement({ client, root }) {
   const { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } = await tsImport("../packages/server/src/workspaces/native-worktrees.ts", import.meta.url)
+  const { WorktreeInventory } = await tsImport("../packages/server/src/workspaces/worktree-inventory.ts", import.meta.url)
   const repo = path.join(root, "worktree-policy")
   const external = path.join(root, "agent-created")
   const clone = path.join(root, "independent-clone")
@@ -64,5 +65,42 @@ export async function testNativeWorktreeManagement({ client, root }) {
   const fromLinked = await listNativeWorktrees({ ...context, workspacePath: external, location: { directory: external } })
   assert.equal(fromLinked.defaultDirectory, catalogue.defaultDirectory, "opening a linked checkout must not nest the default parent")
   assert.equal(fromLinked.worktrees.find(entry => entry.branch === "main").removable, false)
+  let scans = 0
+  const changed = []
+  const inventory = new WorktreeInventory({
+    load: async () => { assert.ok(++scans < 8, "native refresh events must not cause a scan loop"); return listNativeWorktrees(context) },
+    changed: id => changed.push(id),
+    failed: (_id, error) => { throw error },
+  })
+  const controller = new AbortController()
+  let connected
+  const ready = new Promise(resolve => { connected = resolve })
+  const events = (async () => {
+    for await (const event of client.event.subscribe({ signal: controller.signal })) {
+      if (event.type === "server.connected") connected()
+      if (event.type === "worktree.updated") inventory.invalidate()
+    }
+  })()
+  try {
+    await ready
+    const cached = await inventory.read("fixture")
+    assert.equal(await inventory.read("fixture"), cached)
+    assert.equal(scans, 1, "sequential display reads must reuse the completed native scan")
+    git(external, "branch", "-m", "agent-renamed")
+    inventory.invalidate("fixture")
+    assert.equal(scans, 1, "invalidation must stay lazy")
+    assert.equal(await inventory.read("fixture"), cached, "display must not wait for background Git")
+    const updated = await inventory.read("fixture", "validated")
+    assert.equal(updated.worktrees.find(entry => entry.slug === source.slug).branch, "agent-renamed")
+    assert.deepEqual(changed, ["fixture"])
+    assert.equal(scans, 2)
+    await inventory.read("fixture", "fresh")
+    assert.equal(scans, 3, "family validation must bypass a warm display cache")
+    assert.deepEqual(changed, ["fixture"], "an unchanged scan must not create a reload feedback loop")
+    console.log("PASS: native worktree cache reuse, lazy rename refresh and forced family validation")
+  } finally {
+    controller.abort()
+    await events.catch(error => { if (!controller.signal.aborted) throw error })
+  }
   console.log("PASS: native worktree discovery/create/remove, clone scope, selected HEAD, default parent, named branches, stable identity, nested paths and dirty/checked-out guards")
 }

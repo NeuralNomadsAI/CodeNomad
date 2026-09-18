@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { serverEvents } from "../lib/server-events"
 import { getSessionRoot, sessions } from "./session-state"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
@@ -83,6 +84,15 @@ async function reloadWorktrees(instanceId: string): Promise<void> {
   if (!instanceId) return
   await queueWorktreeRequest(instanceId, false)
 }
+
+serverEvents.on("workspace.worktreesChanged", (event) => {
+  if (event.type !== "workspace.worktreesChanged") return
+  const id = event.workspaceId
+  // Refresh consumers that already requested this inventory. Queue behind an
+  // older HTTP response so it cannot overwrite the completed background scan.
+  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id)) return
+  void reloadWorktrees(id).catch(error => log.warn("Failed to receive refreshed worktrees", { instanceId: id, error }))
+})
 
 async function handleWorktreeReady(
   instanceId: string,

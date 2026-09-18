@@ -317,14 +317,16 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         open={isOpen()}
         onOpenChange={(open) => {
           if (!open) { setIsOpen(false); return }
+          setIsOpen(true)
           void reloadWorktrees(props.instanceId).catch(error => log.warn("Failed to refresh worktrees", error))
-            .then(() => setIsOpen(true))
         }}
         value={selectedOption() ?? null}
         onChange={(value) => {
           void handleChange(value).catch((error) => log.warn("Failed to change worktree", error))
         }}
         options={worktreeOptions()}
+        // Inventory reconciliation is not a user selection and must not close the menu.
+        allowDuplicateSelectionEvents={false}
         optionValue="key"
         optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.raw.label ?? opt.slug)}
         placeholder={t("sessionList.sort.worktree")}
