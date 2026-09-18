@@ -79,3 +79,38 @@ test("resolves nested and junction paths to their canonical owning worktree", as
   assert.equal(isPathWithinWorktree("\\\\wsl.localhost\\Ubuntu\\repo\\Foo", "\\\\wsl.localhost\\Ubuntu\\repo\\Foo\\nested"), true)
   assert.equal(isPathWithinWorktree("\\\\WSL.LOCALHOST\\ubuntu\\repo\\Foo", "\\\\wsl.localhost\\Ubuntu\\repo\\Foo\\nested"), true)
 })
+
+test("distinct foreign event directories share one ownership refresh until invalidation", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() })
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-foreign-events-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  const root = path.join(temp, "repo")
+  mkdirSync(root)
+  let loads = 0
+  const inventory = [{ slug: "root", directory: root, kind: "root" as const }]
+  const params = {
+    workspaceId: temp, workspacePath: root,
+    loadWorktrees: async () => { loads++; return inventory },
+  }
+  await resolveOwnedWorktreePath({ ...params, directory: root })
+  // The global native stream contains unrelated projects and temporary checkouts.
+  // Its serial router must not reload every repository's inventory for each one.
+  const foreign = Array.from({ length: 20 }, (_, i) => path.join(temp, `foreign-${i}`))
+  for (const directory of foreign) {
+    mkdirSync(directory)
+    assert.equal(await resolveOwnedWorktreePath({ ...params, directory }), null)
+  }
+  assert.equal(loads, 2, "at most one miss refresh for the current inventory")
+  assert.equal(await resolveOwnedWorktreePath({ ...params, directory: foreign[0] }), null)
+  assert.equal(loads, 2)
+  // A native worktree event invalidates the snapshot, including negative matches.
+  inventory.push({ slug: "linked", directory: foreign[0], kind: "root" })
+  invalidateWorktreeCache(temp)
+  assert.equal((await resolveOwnedWorktreePath({ ...params, directory: foreign[0] }))?.slug, "linked")
+  assert.equal(loads, 3)
+  // An external change without an event is still discovered after the cache TTL.
+  inventory.push({ slug: "external", directory: foreign[1], kind: "root" })
+  t.mock.timers.tick(10_001)
+  assert.equal((await resolveOwnedWorktreePath({ ...params, directory: foreign[1] }))?.slug, "external")
+  assert.equal(loads, 4)
+})

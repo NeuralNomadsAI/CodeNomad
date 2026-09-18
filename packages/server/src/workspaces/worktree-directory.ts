@@ -7,6 +7,7 @@ type WorktreeSource = { loadWorktrees: () => Promise<WorktreeDescriptor[]> }
 
 type WorktreeCacheEntry = {
   expiresAt: number
+  refreshedOnMiss: boolean
   worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string }>
   resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
 }
@@ -40,6 +41,7 @@ async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string
     const worktrees = await params.loadWorktrees()
     const entry: WorktreeCacheEntry = {
       expiresAt: Date.now() + WORKTREE_CACHE_TTL_MS,
+      refreshedOnMiss: false,
       worktrees: await Promise.all(
         worktrees.map(async (wt) => ({
           slug: wt.slug,
@@ -182,11 +184,13 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   let entry = await getCachedWorktrees(params)
   if (entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
   let match = find(entry.worktrees)
-  if (!match || (match.slug === "root" && match.normalizedDirectory !== target)) {
-    // Several foreign-location events can miss the same snapshot concurrently.
-    // Refresh that snapshot once; never discard another caller's pending load.
+  if (!entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
+    // Refresh once for this cache lifetime, including sequential misses from
+    // distinct foreign event locations. Otherwise every miss discards the last
+    // negative result and stalls the serial native event bridge on inventory I/O.
     if (worktreeCache.get(params.workspaceId) === entry) worktreeCache.delete(params.workspaceId)
     entry = await getCachedWorktrees(params)
+    entry.refreshedOnMiss = true
     match = find(entry.worktrees)
   }
   const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
