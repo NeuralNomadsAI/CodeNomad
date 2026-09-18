@@ -6,6 +6,7 @@ type Entry = {
   expiresAt: number
   retryAt: number
   revision: number
+  requireValidation?: boolean
   pending?: Promise<WorktreeListResponse>
 }
 
@@ -33,7 +34,7 @@ export class WorktreeInventory {
     }
     const now = this.now()
     if (mode !== "fresh" && entry.value && entry.expiresAt > now) return entry.value
-    if (mode === "cached" && entry.value) {
+    if (mode === "cached" && entry.value && !entry.requireValidation) {
       if (!entry.pending && entry.retryAt <= now) void this.load(id, entry).catch(error => this.options.failed(id, error))
       return entry.value
     }
@@ -41,13 +42,14 @@ export class WorktreeInventory {
   }
 
   // Invalidation is lazy: retain the display snapshot, but fence any running scan.
-  invalidate(id?: string): void {
+  invalidate(id?: string, mode: "lazy" | "blocking" = "lazy"): void {
     const entries = id === undefined ? this.entries.values() : [this.entries.get(id)]
     for (const entry of entries) {
       if (!entry) continue
       entry.revision += 1
       entry.expiresAt = 0
       entry.retryAt = 0
+      if (mode === "blocking") entry.requireValidation = true
     }
   }
 
@@ -70,6 +72,7 @@ export class WorktreeInventory {
       entry.value = value
       entry.expiresAt = this.now() + MAX_AGE_MS
       entry.retryAt = 0
+      entry.requireValidation = false
       if (previous && JSON.stringify(previous) !== JSON.stringify(value)) this.options.changed(id)
       return value
     }).catch(error => {

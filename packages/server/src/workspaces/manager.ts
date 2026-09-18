@@ -332,19 +332,19 @@ export class WorkspaceManager {
     return this.worktreeInventory.read(id, mode)
   }
 
-  invalidateWorktrees(): void {
-    this.worktreeInventory.invalidate()
+  invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
+    this.worktreeInventory.invalidate(undefined, mode)
     invalidateWorktreeCache()
   }
 
   async createWorktree(id: string, branch: string, fromSlug?: string) {
     try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
-    finally { this.invalidateWorktrees() }
+    finally { this.invalidateWorktrees("blocking") }
   }
 
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
-    finally { this.invalidateWorktrees() }
+    finally { this.invalidateWorktrees("blocking") }
   }
 
   private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
@@ -356,7 +356,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       directory,
-      loadWorktrees: async () => (await this.getWorktrees(record.id, "validated")).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })) !== null
   }
@@ -381,7 +381,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       directory: hostDirectory,
-      loadWorktrees: async () => (await this.getWorktrees(record.id, "validated")).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })
   }
@@ -400,7 +400,7 @@ export class WorkspaceManager {
       workspaceId: record.id,
       workspacePath: record.path,
       candidate,
-      loadWorktrees: async () => (await this.getWorktrees(record.id, "validated")).worktrees,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
       logger: this.options.logger,
     })
   }

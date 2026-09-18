@@ -1,6 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
-import { Show, createMemo, createSignal, createUniqueId } from "solid-js"
+import { Show, createMemo, createSignal, createUniqueId, untrack } from "solid-js"
 import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
@@ -148,9 +148,29 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
   const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
   const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable())
+  let listbox: HTMLUListElement | undefined
 
   const worktreeOptions = createMemo<WorktreeOption[]>(() => {
     const list = getWorktrees(props.instanceId)
+    // Kobalte recreates option DOM when its collection changes. Keep the user's
+    // keyboard target (including an inline action) through lazy inventory updates.
+    const focused = document.activeElement as HTMLElement | null
+    const option = focused?.closest<HTMLElement>("[role=option]")
+    const key = option?.dataset.key
+    const actionLabel = focused?.closest("button")?.getAttribute("aria-label")
+    if (key && listbox?.contains(focused) && untrack(isOpen)) {
+      queueMicrotask(() => {
+        if (!isOpen() || focused?.isConnected || !listbox?.isConnected) return
+        if (document.activeElement !== document.body && !listbox.contains(document.activeElement)) return
+        const replacement = Array.from(listbox.querySelectorAll<HTMLElement>("[role=option]")).find(item => item.dataset.key === key)
+        const action = actionLabel ? Array.from(replacement?.querySelectorAll("button") ?? []).find(button => button.getAttribute("aria-label") === actionLabel) : undefined
+        const target = action ?? replacement
+        // Update Kobalte's focused key before focusing a nested button; a button
+        // focus alone leaves the previous option as its keyboard target.
+        if (action) replacement?.focus({ preventScroll: true })
+        ;(target ?? listbox).focus({ preventScroll: true })
+      })
+    }
     const mapped: WorktreeOption[] = list.map((wt) => ({
       kind: "worktree",
       key: wt.slug,
@@ -347,7 +367,17 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           }
 
           return (
-            <Select.Item item={itemProps.item} class="selector-option worktree-selector-item">
+            <Select.Item
+              item={itemProps.item}
+              class="selector-option worktree-selector-item"
+              onClick={() => { if (opt.slug === currentSlug()) setIsOpen(false) }}
+              onKeyDown={(event) => {
+                if (opt.slug === currentSlug() && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault()
+                  setIsOpen(false)
+                }
+              }}
+            >
               <div class="flex flex-col gap-1 flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <Select.ItemLabel class="selector-option-label flex-1 min-w-0 truncate">
@@ -470,7 +500,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
         <Select.Portal>
           <Select.Content class="selector-popover session-sidebar-selector-popover">
-            <Select.Listbox class="selector-listbox" />
+            <Select.Listbox ref={listbox} class="selector-listbox" />
           </Select.Content>
         </Select.Portal>
       </Select>

@@ -15,6 +15,7 @@ const [worktreesByInstance, setWorktreesByInstance] = createSignal<Map<string, W
 const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<string, boolean | null>>(new Map())
 
 const worktreeRequests = new Map<string, Promise<void>>()
+const pendingWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
 const defaultDirectories = new Map<string, string>()
@@ -22,8 +23,12 @@ const defaultDirectories = new Map<string, string>()
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
-  const previous = worktreeRequests.get(instanceId)
-  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+  const existing = worktreeRequests.get(instanceId)
+  if (existing) {
+    if (!initial) pendingWorktreeRefreshes.add(instanceId)
+    return existing
+  }
+  const load = async (initialRead: boolean) => {
     try {
       const response = await serverApi.fetchWorktrees(instanceId)
       if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
@@ -40,8 +45,8 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
         return next
       })
     } catch (error) {
-      log.warn(initial ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initial) throw error
+      log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+      if (!initialRead) throw error
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -57,6 +62,20 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
         return next
       })
     }
+  }
+  // Like the provider/model catalogue, retain one in-flight read and one dirty
+  // bit. A burst requests one trailing read, not an unbounded HTTP queue.
+  const task = Promise.resolve().then(async () => {
+    let initialRead = initial
+    do {
+      pendingWorktreeRefreshes.delete(instanceId)
+      try {
+        await load(initialRead)
+      } catch (error) {
+        if (!pendingWorktreeRefreshes.has(instanceId)) throw error
+      }
+      initialRead = false
+    } while (pendingWorktreeRefreshes.has(instanceId))
   })
 
   worktreeRequests.set(instanceId, task)

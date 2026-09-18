@@ -151,3 +151,18 @@ it("never republishes a scan after workspace disposal and isolates workspace key
   f.scans[3].resolve(snapshot("reopened"))
   assert.deepEqual(await reopened, snapshot("reopened"))
 })
+
+it("waits for the post-mutation inventory instead of returning a pre-create display snapshot", async () => {
+  const f = fixture()
+  await seed(f)
+  f.cache.invalidate(undefined, "blocking")
+  let settled = false
+  const read = f.cache.read("repo").then(value => { settled = true; return value })
+  await turn()
+  assert.equal(settled, false)
+  const created = snapshot("main")
+  created.worktrees.push({ slug: "new", directory: "/repo/new", kind: "worktree" })
+  f.scans[1].resolve(created)
+  assert.deepEqual(await read, created)
+  assert.deepEqual(f.changes, ["repo"])
+})

@@ -25,6 +25,8 @@
 
 ## Coding Principles
 
+- Follow `dev-docs/CACHE_REFRESH_CONVENTIONS.md` for display snapshots, coalesced trailing refreshes, stale-response fencing and authoritative mutation reads. Check existing feature semantics before adding another cache or refresh policy.
+
 - Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
 - Worktree inventory snapshots live in `workspaces/worktree-inventory.ts`: display reads serve cached data and lazily revalidate, directory authorization uses validated reads, and family transactions force fresh reads. Invalidation retains display data and fences pending scans; `workspace.worktreesChanged` refreshes existing UI consumers after a changed snapshot is published. Keep selector opening independent of refresh completion and suppress duplicate selection events during inventory reconciliation.
 

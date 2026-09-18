@@ -48,6 +48,22 @@ await updatePreferences({ locale: "en" })
   calls,
   location: () => session.location.directory,
   worktrees: () => getWorktrees(id),
+  refreshBurst: async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let requests = 0
+    serverApi.fetchWorktrees = async () => {
+      requests++
+      if (requests === 1) await gate
+      return { isGitRepo: true, worktrees: entries }
+    }
+    const first = reloadWorktrees(id)
+    await Promise.resolve()
+    const burst = Array.from({ length: 40 }, () => reloadWorktrees(id))
+    release()
+    await Promise.all([first, ...burst])
+    return requests
+  },
   holdRefresh: () => {
     let release!: () => void
     const pending = new Promise<void>(resolve => { release = resolve })

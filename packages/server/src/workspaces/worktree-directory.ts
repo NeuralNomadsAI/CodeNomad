@@ -3,7 +3,7 @@ import path from "node:path"
 import type { LogLike } from "./git-worktrees"
 import type { WorktreeDescriptor } from "../api-types"
 
-type WorktreeSource = { loadWorktrees: () => Promise<WorktreeDescriptor[]> }
+type WorktreeSource = { loadWorktrees: (refresh?: boolean) => Promise<WorktreeDescriptor[]> }
 
 type WorktreeCacheEntry = {
   expiresAt: number
@@ -26,7 +26,10 @@ async function normalizeDirectoryPath(directory: string): Promise<string> {
   }
 }
 
-async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike }) {
+async function getCachedWorktrees(
+  params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike },
+  refresh = false,
+): Promise<WorktreeCacheEntry> {
   const cached = worktreeCache.get(params.workspaceId)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -38,7 +41,7 @@ async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string
 
   let load!: Promise<WorktreeCacheEntry>
   load = (async () => {
-    const worktrees = await params.loadWorktrees()
+    const worktrees = await params.loadWorktrees(refresh)
     const entry: WorktreeCacheEntry = {
       expiresAt: Date.now() + WORKTREE_CACHE_TTL_MS,
       refreshedOnMiss: false,
@@ -52,7 +55,10 @@ async function getCachedWorktrees(params: WorktreeSource & { workspaceId: string
       ),
       resolvedDirectories: new Map(),
     }
-    if (worktreeLoads.get(params.workspaceId) === load) worktreeCache.set(params.workspaceId, entry)
+    // A native snapshot update or mutation can invalidate during load/realpath.
+    // Never return the obsolete ownership to callers already awaiting this load.
+    if (worktreeLoads.get(params.workspaceId) !== load) return getCachedWorktrees(params)
+    worktreeCache.set(params.workspaceId, entry)
     return entry
   })()
   worktreeLoads.set(params.workspaceId, load)
@@ -96,7 +102,7 @@ export async function resolveWorktreeDirectory(params: WorktreeSource & {
     workspacePath: params.workspacePath,
     logger: params.logger,
     loadWorktrees: params.loadWorktrees,
-  })
+  }, true)
   return refreshed.worktrees.find((wt) => wt.slug === params.worktreeSlug)?.directory ?? null
 }
 
@@ -126,7 +132,7 @@ export async function resolveWorktreeSlugForDirectory(params: WorktreeSource & {
     workspacePath: params.workspacePath,
     logger: params.logger,
     loadWorktrees: params.loadWorktrees,
-  })
+  }, true)
   return refreshed.worktrees.find((wt) => wt.normalizedDirectory === target)?.slug ?? null
 }
 
@@ -189,7 +195,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     // distinct foreign event locations. Otherwise every miss discards the last
     // negative result and stalls the serial native event bridge on inventory I/O.
     if (worktreeCache.get(params.workspaceId) === entry) worktreeCache.delete(params.workspaceId)
-    entry = await getCachedWorktrees(params)
+    entry = await getCachedWorktrees(params, true)
     entry.refreshedOnMiss = true
     match = find(entry.worktrees)
   }

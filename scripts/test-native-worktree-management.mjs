@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process"
 import { mkdir, writeFile, rm, realpath } from "node:fs/promises"
 import path from "node:path"
 import { tsImport } from "tsx/esm/api"
+import pino from "pino"
 
 // Invoked by the isolated daemon fixture only. No service discovery/user state.
 export async function testNativeWorktreeManagement({ client, root }) {
@@ -101,6 +102,38 @@ export async function testNativeWorktreeManagement({ client, root }) {
   } finally {
     controller.abort()
     await events.catch(error => { if (!controller.signal.aborted) throw error })
+  }
+  const { WorkspaceManager } = await tsImport("../packages/server/src/workspaces/manager.ts", import.meta.url)
+  const { EventBus } = await tsImport("../packages/server/src/events/bus.ts", import.meta.url)
+  // Exercise the production manager's post-mutation invalidation using only
+  // this fixture's authenticated client. No native discovery/user service.
+  const manager = new WorkspaceManager({
+    rootDir: root,
+    settings: { getOwner: () => ({ environmentVariables: {} }) },
+    binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Isolated fixture" }) },
+    eventBus: new EventBus(),
+    logger: pino({ level: "silent" }),
+    sharedService: {
+      client: async () => client,
+      headers: async () => ({}),
+      validateLocation: async location => client.location.get({ location }),
+      shutdown: async () => {},
+    },
+  })
+  try {
+    const { workspace } = await manager.create(repo)
+    const before = await manager.getWorktrees(workspace.id)
+    const added = await manager.createWorktree(workspace.id, "cached-create")
+    const afterCreate = await manager.getWorktrees(workspace.id)
+    assert.equal(afterCreate.worktrees.length, before.worktrees.length + 1)
+    assert.ok(afterCreate.worktrees.some(entry => entry.slug === added.slug), "create-and-use must receive the new ID immediately")
+    await manager.removeWorktree(workspace.id, added.serviceRoot, false)
+    const afterRemove = await manager.getWorktrees(workspace.id)
+    assert.equal(afterRemove.worktrees.length, before.worktrees.length)
+    assert.ok(!afterRemove.worktrees.some(entry => entry.slug === added.slug), "post-delete refresh must not resurrect a cached checkout")
+    console.log("PASS: production manager warm-cache create/remove read-your-writes")
+  } finally {
+    await manager.shutdown()
   }
   console.log("PASS: native worktree discovery/create/remove, clone scope, selected HEAD, default parent, named branches, stable identity, nested paths and dirty/checked-out guards")
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import fs from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { syncBuiltinESMExports } from "node:module"
 import path from "node:path"
 import { describe, it } from "node:test"
 
@@ -20,13 +21,16 @@ describe("worktree git status singleflight", () => {
     let canonicalized = 0
     let ready!: () => void
     const bothCanonicalized = new Promise<void>((resolve) => { ready = resolve })
-    t.mock.method(fs, "realpath", async (value: string) => {
+    const canonicalization = t.mock.method(fs, "realpath", async (value: string) => {
       const result = await realpath(value)
       canonicalized += 1
       if (canonicalized === 2) ready()
       await bothCanonicalized
       return result
     })
+    // Native ESM named imports do not see default-export monkey patches until
+    // synchronized. The CI runner uses ESM even when a local tsx run uses CJS.
+    syncBuiltinESMExports()
     const run = async () => {
       calls += 1
       await blocked
@@ -49,6 +53,8 @@ describe("worktree git status singleflight", () => {
       assert.equal(calls, 10)
     } finally {
       release()
+      canonicalization.mock.restore()
+      syncBuiltinESMExports()
       await rm(directory, { recursive: true, force: true })
     }
   })
