@@ -4,6 +4,7 @@ const os = require("node:os")
 const path = require("node:path")
 const test = require("node:test")
 const {
+  materializePrebuiltWorkspacePackage,
   resolveNpmTarget,
   stagePrebuiltWorkspacePackage,
   validateServerProductionLock,
@@ -53,6 +54,35 @@ test("stages prebuilt workspace packages without install lifecycle scripts", (t)
   const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
   assert.equal(manifest.scripts, undefined)
   assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export {}\n")
+})
+
+test("materializes workspace packages instead of retaining install links", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-workspace-materialize-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, "source")
+  const linkedSource = path.join(root, "linked-source")
+  const nodeModules = path.join(root, "node_modules")
+  const destination = path.join(nodeModules, "@codenomad", "example")
+  fs.mkdirSync(path.join(source, "dist"), { recursive: true })
+  fs.mkdirSync(linkedSource, { recursive: true })
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({
+    name: "@codenomad/example",
+    version: "1.0.0",
+    scripts: { prepare: "npm run build" },
+  }))
+  fs.writeFileSync(path.join(source, "dist", "index.js"), "export const value = 'packaged'\n")
+  fs.writeFileSync(path.join(linkedSource, "sentinel"), "keep\n")
+  fs.symlinkSync(linkedSource, destination, process.platform === "win32" ? "junction" : "dir")
+
+  assert.equal(fs.lstatSync(destination).isSymbolicLink(), true)
+  assert.equal(materializePrebuiltWorkspacePackage(source, nodeModules), destination)
+
+  assert.equal(fs.lstatSync(destination).isSymbolicLink(), false)
+  assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export const value = 'packaged'\n")
+  assert.equal(fs.readFileSync(path.join(linkedSource, "sentinel"), "utf8"), "keep\n")
+  const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
+  assert.equal(manifest.scripts, undefined)
 })
 
 test("rejects an unpinned production dependency despite an otherwise valid lock", () => {

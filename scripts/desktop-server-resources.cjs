@@ -80,6 +80,23 @@ function stagePrebuiltWorkspacePackage(source, destination) {
   fs.cpSync(sourceDist, path.join(destination, "dist"), { recursive: true })
 }
 
+function materializePrebuiltWorkspacePackage(source, nodeModulesRoot) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(source, "package.json"), "utf8"))
+  const packageName = manifest.name
+  const packageParts = typeof packageName === "string" ? packageName.split("/") : []
+  const validShape = packageParts.length === 1
+    ? !packageParts[0].startsWith("@")
+    : packageParts.length === 2 && packageParts[0].startsWith("@")
+  if (!validShape || packageParts.some((part) => !part || part === "." || part === ".." || part.includes("\\"))) {
+    throw new Error(`Invalid workspace package name in ${source}`)
+  }
+
+  const destination = path.join(nodeModulesRoot, ...packageParts)
+  fs.rmSync(destination, { recursive: true, force: true })
+  stagePrebuiltWorkspacePackage(source, destination)
+  return destination
+}
+
 function stagePackagedServer(options) {
   const { workspaceRoot, serverRoot, log = () => {}, env = process.env } = options
   const npmTarget = resolveNpmTarget(options.target || env.CODENOMAD_NODE_TARGET)
@@ -88,6 +105,7 @@ function stagePackagedServer(options) {
 
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-server-"))
   const stagedServerRoot = path.join(stagingRoot, "packages", "server")
+  const workspacePackageSources = []
   try {
     fs.mkdirSync(stagedServerRoot, { recursive: true })
     fs.copyFileSync(path.join(workspaceRoot, "package.json"), path.join(stagingRoot, "package.json"))
@@ -98,6 +116,7 @@ function stagePackagedServer(options) {
       const source = path.join(workspaceRoot, packagePath)
       const destination = path.join(stagingRoot, packagePath)
       stagePrebuiltWorkspacePackage(source, destination)
+      workspacePackageSources.push(source)
     }
 
     log(`installing production server dependencies from the workspace lock for ${npmTarget.target}`)
@@ -129,6 +148,14 @@ function stagePackagedServer(options) {
     fs.rmSync(path.join(rootModules, "@neuralnomads", "codenomad"), { recursive: true, force: true })
     fs.cpSync(rootModules, serverModules, { recursive: true, dereference: true })
     if (fs.existsSync(serverOverrides)) fs.cpSync(serverOverrides, serverModules, { recursive: true, dereference: true })
+    // Recursive copies retain nested npm workspace links on POSIX. Replace them
+    // explicitly so desktop packagers never receive links back into the checkout.
+    for (const source of workspacePackageSources) {
+      materializePrebuiltWorkspacePackage(source, serverModules)
+    }
+    if (workspacePackageSources.length > 0) {
+      log(`materialized ${workspacePackageSources.length} prebuilt workspace package(s)`)
+    }
     for (const artifact of ["public", "dist"]) {
       fs.cpSync(path.join(serverRoot, artifact), path.join(stagedServerRoot, artifact), { recursive: true })
     }
@@ -345,6 +372,7 @@ function pruneKnownServerDependencies(root, log) {
 
 module.exports = {
   copyPackagedServerResources,
+  materializePrebuiltWorkspacePackage,
   resolveNpmTarget,
   stagePrebuiltWorkspacePackage,
   stagePackagedServer,
