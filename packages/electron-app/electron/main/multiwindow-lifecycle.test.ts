@@ -235,6 +235,7 @@ test("global shutdown asks all renderers concurrently before aggregate persisten
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
+    flushSupportWindows: async () => { await gate; calls.push("native:preferences") },
     removeWindowState: async () => true, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.registerAppEvents()
@@ -245,6 +246,8 @@ test("global shutdown asks all renderers concurrently before aggregate persisten
   release()
   await tick(); await tick()
   assert.ok(calls.indexOf("aggregate") > calls.indexOf("native:two"))
+  assert.ok(calls.indexOf("native:preferences") >= 0)
+  assert.ok(calls.indexOf("release") > calls.indexOf("native:preferences"))
 })
 
 test("final close retains its record and shutdown stops/releases once", async () => {

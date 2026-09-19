@@ -162,7 +162,12 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     return fetchWorkspaceSnapshot(workspaceId)
   }
  
+  let searchController: AbortController | undefined
+
   async function loadFilesForQuery(rawQuery: string, workspaceId: string) {
+    searchController?.abort()
+    const controller = new AbortController()
+    searchController = controller
     const normalizedQuery = normalizeQuery(rawQuery)
     const requestId = ++activeRequestId
     const hasCachedSnapshot =
@@ -186,12 +191,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
       const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
+        signal: controller.signal,
       })
       if (!shouldApplyResults(requestId, workspaceId)) {
         return
       }
       applyFileResults(mapEntriesToFileItems(results))
     } catch (error) {
+      if (controller.signal.aborted) return
       if (workspaceId === props.workspaceId) {
         log.error(`[UnifiedPicker] Failed to fetch files:`, error)
         if (shouldApplyResults(requestId, workspaceId)) {
@@ -213,6 +220,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
 
   function scheduleLoadFilesForQuery(rawQuery: string, workspaceId: string, immediate = false) {
+    searchController?.abort()
+    activeRequestId += 1
     clearQueryDebounce()
     const normalizedQuery = normalizeQuery(rawQuery)
     const shouldDebounce = !immediate && normalizedQuery.length > 0
@@ -236,6 +245,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
  
   function resetPickerState() {
+    searchController?.abort()
     clearQueryDebounce()
     setFiles([])
     setAllFiles([])
@@ -246,10 +256,11 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     lastWorkspaceId = null
     lastQuery = ""
     lastCommandQuery = ""
-    activeRequestId = 0
+    activeRequestId += 1
   }
 
   onCleanup(() => {
+    searchController?.abort()
     clearQueryDebounce()
   })
 

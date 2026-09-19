@@ -80,6 +80,33 @@ The native fixture now resolves its temporary root with `realpath` **before** co
 
 The corrected full native suite passes on Linux/WSL 2.0.4 with a symlinked TEMP root, and the Windows 2.0.4 rendered/native suite passes. Script syntax, workflow YAML parsing and whitespace checks pass; an independent gatekeeper review reports no actionable findings. This corrects the fixture namespace rather than preinstalling the plugin, restarting the daemon, or extending the timeout. Actual macOS confirmation requires the next CI run; the prior runner's raw watcher paths were not retained. Existing user daemons configured through symlinked config roots remain an upstream watcher limitation, not a production fix claimed by this fixture change.
 
+### Server-info discovery follow-up (2026-09-17)
+
+The installed 2.0.7 daemon returns 404 for both `/api/status` and `/api/health`,
+and exposes authenticated `/api/info`. Lifecycle validation now tries the three
+read routes in that order, advancing only on 404 and sharing the same credentials,
+response-size bound and absolute deadline. Redirects are rejected. Earlier V2
+services still stop at `/api/health`; no minimum release or new version exception
+is introduced. Unknown versions still negotiate their actual OpenAPI contract.
+
+The connection records `info` discovery so canonical `client.server.status()`
+uses `/api/info` too. Translation is limited to GET and does not retry a failed
+request with another route. A comparison of the 132 pinned-client HTTP method/path
+pairs with the installed 2.0.7 schema found 131 unchanged pairs and this single
+status/info difference. Experimental paths were already part of the merged modern
+contract; this is not another experimental-route migration.
+
+Host/WSL regressions cover the third probe, credentials, body validation and shared
+deadline. Client regressions cover 2.0.0 health, 2.0.4 status, negotiated 2.0.7 info
+and an unknown future version. The isolated location fixture exercises production
+lifecycle validation and canonical `client.server.status()` before location tests.
+On Windows, that fixture passes against real isolated 2.0.0 and 2.0.7 daemons:
+2.0.0 takes the health route and passes the legacy identity/Form/Shell/PTY/SSE/
+cursor/rollback cases; 2.0.7 takes the info route and passes modern location and
+obsolete-selector checks. The 44 focused lifecycle/transport/negotiation tests
+and server typecheck also pass.
+Route presence and these targeted checks do not certify every runtime behavior.
+
 ### Validation boundaries
 
 UI/server/Electron typechecks and production builds pass. The Windows Tauri release executable also builds (`npm run build --workspace @codenomad/tauri-app -- --no-bundle`). Electron and Tauri packaged-resource smoke checks pass. Full desktop interaction through Developer Mode could not run: the visible application reports Developer Mode inactive. Interactive TUI validation is not claimed. No shared daemon or user database is used by the native fixtures.

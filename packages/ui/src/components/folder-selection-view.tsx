@@ -519,7 +519,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto p-2 inline-flex items-center justify-center"
-              onClick={() => openSettings("general")}
+              onClick={() => openSettings()}
               aria-label={t("settings.open.title")}
               title={t("settings.open.title")}
             >

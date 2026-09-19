@@ -19,6 +19,7 @@ interface Dependencies {
   getLocalWindows(): LifecycleWindow[]
   getAllWindows(): BrowserWindow[]
   isSupportWindow?(window: BrowserWindow): boolean
+  flushSupportWindows?(): Promise<void>
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
@@ -175,7 +176,10 @@ export class MultiwindowLifecycle {
   }
 
   private flushLocalWindows(): Promise<void> {
-    return Promise.all(this.dependencies.getLocalWindows().map((record) => this.flushWindow(record))).then(() => undefined)
+    return Promise.all([
+      ...this.dependencies.getLocalWindows().map((record) => this.flushWindow(record)),
+      this.dependencies.flushSupportWindows?.(),
+    ]).then(() => undefined)
   }
 
   private prepareSessionEnd(): void {

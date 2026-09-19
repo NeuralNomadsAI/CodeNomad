@@ -62,8 +62,6 @@ declare global {
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
-    getDeveloperMode?: () => Promise<{ enabled: boolean; active: boolean }>
-    setDeveloperMode?: (enabled: boolean) => Promise<{ enabled: boolean; active: boolean }>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
@@ -71,6 +69,11 @@ declare global {
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
     clearClientState?: (accessToken: string) => Promise<boolean>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
+    unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
+    claimBrowserOpen?: (requestID: string) => Promise<boolean>
+    releaseBrowserOpen?: (requestID: string) => Promise<boolean>
+    onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
 
      showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {
@@ -81,7 +84,7 @@ declare global {
       proxySessionId?: string
       skipTlsVerify: boolean
     }) => Promise<{ ok: boolean }>
-    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; location?: LocationRef }, toggle?: boolean) => Promise<unknown>
+    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>
     preferencesReady?: () => Promise<unknown>

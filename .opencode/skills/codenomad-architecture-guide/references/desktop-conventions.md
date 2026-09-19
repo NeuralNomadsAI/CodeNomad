@@ -6,7 +6,7 @@ CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is update
 
 OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 
-Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM comment inspection is web-only.
+Iframe SideCar/browser fallbacks are sandboxed without `allow-same-origin`; DOM comment inspection is web-only. Electron and Windows Tauri browser previews use isolated native guest webviews with no application capabilities. Tauri grants target primary webview labels, never parent-window wildcards, and native window counting must include windows containing multiple webviews.
 
 ## Current Host Paths
 
@@ -22,6 +22,8 @@ Native SideCar/browser previews are sandboxed without `allow-same-origin`; DOM c
 | Workspace open | `packages/electron-app/electron/main/workspace-open.ts` | `packages/tauri-app/src-tauri/src/workspace_open.rs` |
 
 The desktop process managers start and supervise the CodeNomad backend. They do not own or stop the shared OpenCode daemon.
+
+The backend delegates only the official `service start` command through its private stdout/stdin native-parent bridge (`opencode.service.start`). Both hosts execute the starter outside backend containment, so the shared daemon cannot inherit Tauri's kill-on-close Job Object or Electron's backend process-tree cleanup. Status, password retrieval and authenticated health remain in the server lifecycle adapter. Standalone servers execute the same official CLI directly. Never expose the starter as renderer IPC or attach its daemon descendants to backend cleanup.
 
 ## Native Abstractions
 

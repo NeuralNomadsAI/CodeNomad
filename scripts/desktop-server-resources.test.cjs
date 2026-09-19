@@ -9,6 +9,7 @@ const {
   validateServerProductionLock,
 } = require("./desktop-server-resources.cjs")
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
+const { copyPackagedServerResources } = require("./desktop-server-resources.cjs")
 
 test("maps every supported desktop target to npm OS and CPU", () => {
   assert.deepEqual(resolveNpmTarget("darwin-x64"), { target: "darwin-x64", os: "darwin", cpu: "x64" })
@@ -81,4 +82,28 @@ test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
     executable: path.join(platformRoot, "bin", "esbuild"),
     version: "0.25.12",
   })
+})
+
+test("both desktop resource layouts retain a self-contained unified automation bundle", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-automation-resources-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const serverRoot = path.join(root, "source")
+  for (const name of ["public", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
+  fs.writeFileSync(path.join(serverRoot, "package.json"), JSON.stringify({ type: "module" }))
+  const relative = path.join("dist", "plugins", "automation", "plugin.mjs")
+  await require("esbuild").build({
+    entryPoints: [path.join(__dirname, "../packages/server/src/opencode/automation/desktop-plugin.ts")],
+    outfile: path.join(serverRoot, relative), bundle: true, platform: "node", format: "esm", target: "node22",
+  })
+  for (const host of ["electron", "tauri"]) {
+    const serverDest = path.join(root, host, "server")
+    copyPackagedServerResources({ serverRoot, serverDest })
+    const target = path.join(serverDest, relative)
+    assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(serverRoot, relative)))
+    const { desktopPlugin } = await import(require("node:url").pathToFileURL(target).href)
+    const plugin = desktopPlugin(path.join(root, "absent-presence"))
+    assert.equal(plugin.id, "codenomad.automation")
+    const cleanup = await plugin.setup({})
+    await cleanup()
+  }
 })

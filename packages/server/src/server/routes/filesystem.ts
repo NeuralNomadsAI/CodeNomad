@@ -26,7 +26,7 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
     const query = FilesystemQuerySchema.parse(request.query ?? {})
 
     try {
-      return deps.fileSystemBrowser.browse(query.path, {
+      return await deps.fileSystemBrowser.browse(query.path, {
         includeFiles: query.includeFiles,
       })
     } catch (error) {
@@ -39,7 +39,7 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
     const body = FilesystemCreateFolderSchema.parse(request.body ?? {})
 
     try {
-      const created = deps.fileSystemBrowser.createFolder(body.parentPath, body.name)
+      const created = await deps.fileSystemBrowser.createFolder(body.parentPath, body.name)
       reply.code(201)
       return created
     } catch (error) {
@@ -61,7 +61,7 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
     const query = FilesystemFileContentQuerySchema.parse(request.query ?? {})
 
     try {
-      return deps.fileSystemBrowser.readFileContent(query.path, { encoding: query.encoding })
+      return await deps.fileSystemBrowser.readFileContent(query.path, { encoding: query.encoding })
     } catch (error) {
       reply.code(400).type("text/plain").send((error as Error).message)
     }

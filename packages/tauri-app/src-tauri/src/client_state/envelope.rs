@@ -53,6 +53,10 @@ pub(super) struct PersistedClientState {
     pub(super) windows: HashMap<String, WindowRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) preferences: Option<PreferencesRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) last_preferences: Option<PreferencesRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) preferences_window: Option<window::NativeWindowState>,
     #[serde(skip)]
     pub(super) unsupported_future_envelope: bool,
 }
@@ -71,6 +75,8 @@ impl PersistedClientState {
             window_order: vec![window_id.clone()],
             windows: HashMap::from([(window_id, WindowRecord::default())]),
             preferences: None,
+            last_preferences: None,
+            preferences_window: None,
             unsupported_future_envelope: false,
         }
     }
@@ -236,6 +242,8 @@ fn parse_v3(value: &serde_json::Map<String, Value>) -> Option<PersistedClientSta
             "windowOrder",
             "windows",
             "preferences",
+            "lastPreferences",
+            "preferencesWindow",
         ],
     ) {
         return None;
@@ -275,12 +283,25 @@ fn parse_v3(value: &serde_json::Map<String, Value>) -> Option<PersistedClientSta
         ),
         None => None,
     };
+    let last_preferences = match value.get("lastPreferences") {
+        Some(request) => Some(
+            validate_request(serde_json::from_value::<PreferencesRequest>(request.clone()).ok()?)
+                .ok()?,
+        ),
+        None => preferences.clone(),
+    };
+    let preferences_window = match value.get("preferencesWindow") {
+        Some(window) => Some(window::normalize_window_state(window)?),
+        None => None,
+    };
     Some(PersistedClientState {
         version: VERSION,
         active_window_id,
         window_order,
         windows,
         preferences,
+        last_preferences,
+        preferences_window,
         unsupported_future_envelope: false,
     })
 }

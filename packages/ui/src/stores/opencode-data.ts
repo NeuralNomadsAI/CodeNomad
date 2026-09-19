@@ -546,6 +546,10 @@ export function applyOpenCodeDataEvent(
 ): Data {
   if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const primary = ensureData(instanceId, directory)
+  // This native reducer owns transcript/inbox projection only. CodeNomad's
+  // stores already reconcile catalogues, Shells and connection state. Even
+  // with sync:false, feeding these events to createData starts HTTP refreshes.
+  if (!/^(session|permission|form)\./.test(event.type)) return primary.data
   const sessionId = eventSessionId(event)
   if (event.type === "session.deleted" && typeof sessionId === "string") {
     const key = messageRevisionKey(instanceId, sessionId)
