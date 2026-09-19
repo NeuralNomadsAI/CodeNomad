@@ -7,6 +7,7 @@
 - Prefer smaller, focused style files (≈150 lines or less) over large monoliths. Split by component or feature area if a file grows beyond that size.
 - Co-locate reusable UI patterns (buttons, selectors, dropdowns, etc.) under `src/styles/components/` and avoid redefining the same utility classes elsewhere.
 - Use the shared `.window-*` primitives from `src/styles/components/window.css` for dialog, popover, and floating-window headers, toolbars, bodies, footers, titles, and actions.
+- Persistent command/search utility windows use `components/dismissible-window.tsx`: non-modal, no scrim, outside interactions keep them open, and explicit toggles use `.icon-toggle` with `aria-expanded`/`aria-controls`. Keep search state scoped to its instance/session and close it when that view becomes inactive.
 - Keep agent, model, and thinking controls in the composer footer via `PromptContextControls`; adapt that footer with the named `prompt-composer` container rather than viewport-only breakpoints.
 - Session rows keep actions inline until their measured title, badges, and controls no longer fit. Keep responsive action styles in `styles/components/session-row-actions.css`; hidden inline controls remain measurable but inert, and an open overflow menu stays mounted until dismissal.
 - Session hierarchy geometry lives in `styles/components/session-tree.css`; connector axes follow the parent expander at every depth, including selection mode, RTL and touch layouts.

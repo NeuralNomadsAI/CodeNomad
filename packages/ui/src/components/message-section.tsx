@@ -2,6 +2,8 @@ import { Show, batch, createEffect, createMemo, createSignal, onCleanup, on, unt
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
+import DismissibleWindow from "./dismissible-window"
+import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
@@ -261,7 +263,8 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const [isSearchOpen, setIsSearchOpen] = createSignal(false)
+  const isSearchOpen = () => isSessionSearchOpen(props.instanceId, props.sessionId)
+  const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
   const [searchedQuery, setSearchedQuery] = createSignal("")
@@ -658,7 +661,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function openSearch() {
     setIsSearchOpen(true)
-    requestAnimationFrame(() => searchInputRef?.focus())
+    requestAnimationFrame(() => { if (isSearchOpen()) searchInputRef?.focus() })
   }
 
   function closeSearch() {
@@ -1069,13 +1072,6 @@ export default function MessageSection(props: MessageSectionProps) {
         }
       }
 
-      if (event.key === "Escape" && isSearchOpen()) {
-        event.preventDefault()
-        event.stopPropagation()
-        closeSearch()
-        return
-      }
-
     }
     document.addEventListener("keydown", handleKeyDown)
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
@@ -1092,11 +1088,15 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   onCleanup(() => {
+    setIsSearchOpen(false)
     timelineSegmentCache.clear()
     clearQuoteSelection()
   })
 
   const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+
+  createEffect(on(isSearchOpen, open => { if (!open) closeSearch() }, { defer: true }))
+  createEffect(() => { if (!isActive()) setIsSearchOpen(false) })
 
   return (
     <div
@@ -1293,8 +1293,15 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderOverlay={() => (
             <>
-              <Show when={isSearchOpen()}>
-                <div class="message-search-popover modal-surface" role="search" aria-label={t("messageSection.search.ariaLabel")}>
+              <DismissibleWindow
+                id={sessionSearchWindowId(props.instanceId, props.sessionId)}
+                open={isSearchOpen()}
+                onClose={closeSearch}
+                title={t("messageSection.search.ariaLabel")}
+                class="message-search-popover"
+                inline
+              >
+                <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
                   <div class="modal-search-container message-search-container">
                     <div class="message-search-input-row">
                       <Search class="w-4 h-4 modal-search-icon" aria-hidden="true" />
@@ -1316,10 +1323,6 @@ export default function MessageSection(props: MessageSectionProps) {
                             event.preventDefault()
                             moveSearchMatch(event.shiftKey ? -1 : 1)
                             return
-                          }
-                          if (event.key === "Escape") {
-                            event.preventDefault()
-                            closeSearch()
                           }
                         }}
                       />
@@ -1389,7 +1392,7 @@ export default function MessageSection(props: MessageSectionProps) {
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>
-              </Show>
+              </DismissibleWindow>
 
               <Show when={Boolean(quoteSelection())}>
                 <div class="message-quote-popover" style={{ top: `${quoteSelection()!.top}px`, left: `${quoteSelection()!.left}px` }}>
