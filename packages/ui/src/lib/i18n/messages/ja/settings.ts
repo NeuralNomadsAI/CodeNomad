@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "変数を削除",
   "envEditor.actions.add.title": "変数を追加",
   "envEditor.empty": "環境変数が設定されていません。上で変数を追加して OpenCode 環境をカスタマイズしてください。",
-  "envEditor.help": "これらの変数はインスタンス起動時に OpenCode 環境で利用できます。",
+  "envEditor.help": "各プロンプトまたはセッションコマンドの送信前に、CodeNomad はこのプロファイルの変数を会話のローカルシェル環境に適用します。変更は次回の送信時に反映されます。停止中の OpenCode サービスの起動時にも渡されますが、既存のサービスは再起動されません。",
+  "envEditor.applyFailed": "プロファイルの環境を適用できませんでした。何も送信されていません。変数と OpenCode のバージョンを確認して、再試行してください。",
 
   "contextUsagePanel.headings.tokens": "トークン",
   "contextUsagePanel.headings.context": "コンテキスト",

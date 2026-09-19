@@ -6,7 +6,9 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { appendNodeOption, DeveloperMode, readDeveloperModeEnabled } from "./developer-mode"
+import { appendNodeOption, DeveloperMode } from "./developer-mode"
+import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
+import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -16,7 +18,7 @@ import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnable
 import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
-import { configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
+import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager } from "./process-manager"
@@ -25,33 +27,33 @@ import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
+import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 
-function resolveStoragePaths(developerModeActive: boolean) {
+function resolveStoragePaths() {
   const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
   if (!app.isPackaged) app.setName("CodeNomad")
   const scope = resolveStorageScope({
     appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
     cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
-  const browserDataPath = developerModeActive ? join(scope.userDataPath, "developer-mode-browser-v2") : scope.userDataPath
-  const sessionDataPath = developerModeActive ? join(browserDataPath, "session-data") : scope.sessionDataPath
+  const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
+  const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
   return { scope, browserDataPath, sessionDataPath }
 }
 
-function configureBrowserStorage(browserDataPath: string, sessionDataPath: string, developerModeActive: boolean) {
+function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
   mkdirSync(browserDataPath, { recursive: true })
   mkdirSync(sessionDataPath, { recursive: true })
   app.setPath("userData", browserDataPath)
   app.setPath("sessionData", sessionDataPath)
-  if (developerModeActive) {
-    rmSync(join(browserDataPath, "DevToolsActivePort"), { force: true })
-    app.commandLine.appendSwitch("user-data-dir", browserDataPath)
-  }
+  rmSync(join(browserDataPath, "DevToolsActivePort"), { force: true })
+  rmSync(join(sessionDataPath, "DevToolsActivePort"), { force: true })
+  app.commandLine.appendSwitch("user-data-dir", browserDataPath)
 }
 
 function cleanupPackagedChromiumStorage() {
@@ -69,27 +71,19 @@ function argvForLaunch(argv: string[]): string[] {
   return argv.slice(app.isPackaged ? 1 : 2)
 }
 
-const developerModeActive = readDeveloperModeEnabled()
-if (developerModeActive) {
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
-  app.commandLine.appendSwitch("remote-debugging-port", "0")
-  app.commandLine.appendSwitch("enable-logging")
-  process.env.CODENOMAD_DEVELOPER_MODE = "1"
-  process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
-  process.setSourceMapsEnabled?.(true)
-} else {
-  app.commandLine.removeSwitch("remote-debugging-address")
-  app.commandLine.removeSwitch("remote-debugging-port")
-  delete process.env.CODENOMAD_DEVELOPER_MODE
-}
-const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths(developerModeActive)
+app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
+app.commandLine.appendSwitch("remote-debugging-port", "0")
+app.commandLine.appendSwitch("enable-logging")
+process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
+process.setSourceMapsEnabled?.(true)
+const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths()
 const developerNativeIdentity = `electron:${createHash("sha256")
   .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
   .digest("hex")
   .slice(0, 16)}`
 const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
 startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
-  configureBrowserStorage(browserDataPath, sessionDataPath, developerModeActive)
+  configureBrowserStorage(browserDataPath, sessionDataPath)
   runPrimary(initialIntent)
 })
 
@@ -101,7 +95,6 @@ function runPrimary(firstIntent: LaunchIntent) {
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
   let lifecycle: MultiwindowLifecycle
   const developerMode = new DeveloperMode({
-    active: developerModeActive,
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
     targetWindowId: () => {
@@ -110,10 +103,18 @@ function runPrimary(firstIntent: LaunchIntent) {
     },
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
-  const cli = new CliProcessManager((method) => developerMode.handleNativeRequest(method))
+  const browserController = new BrowserController((sessionID, url, requestID) => {
+    for (const record of registry.all()) {
+      if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
+    }
+  })
+  const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
+    ? handleNativeBrowserRequest(browserController, method, params, deadline)
+    : developerMode.handleNativeRequest(method))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
+  const securedBrowserSessions = new WeakSet<Electron.Session>()
   let backendUrl: string | null = null
   let backendTargetUrl: string | null = null
   const remoteWindows = new RemoteWindowRegistry((sessionId) => {
@@ -126,6 +127,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const preferencesWindows = new PreferencesWindowRegistry()
   let pendingPreferencesRestore = clientState.preferences
   let preferencesNavigation: ClientStateNavigationController | null = null
+  let preferencesTracker: WindowStateTracker | null = null
   let preferencesTransition: { id: number; key: string; run: () => void } | undefined
   let preferencesTransitionId = 0
 
@@ -138,6 +140,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window,
+    flushSupportWindows: async () => {
+      const window = preferencesWindows.current()
+      if (window && preferencesWindows.isReady(window)) {
+        await flushRendererClientStateBeforeShutdown(window, clientState.isPrimary, url => isAllowedRendererOrigin(url, getAllowedOrigins(window)))
+      }
+      await preferencesTracker?.flush()
+    },
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
@@ -219,7 +228,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: 800, minHeight: 600,
       frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
-        preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
+        preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
         additionalArguments: ["--codenomad-window-context=local", `--codenomad-window-id=${windowId}`],
       },
@@ -241,6 +250,34 @@ function runPrimary(firstIntent: LaunchIntent) {
     lifecycle.attach(record)
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : window.webContents.setZoomLevel(level))
     setupNavigationGuards(window, navigation, getAllowedOrigins, getLoadingUrl)
+    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (!secureBrowserWebview(webPreferences, params)) {
+        event.preventDefault()
+        return
+      }
+      const browserSession = session.fromPartition(params.partition)
+      if (!securedBrowserSessions.has(browserSession)) {
+        securedBrowserSessions.add(browserSession)
+        configureBrowserPermissionHandlers(browserSession)
+        browserSession.on("will-download", (downloadEvent) => downloadEvent.preventDefault())
+      }
+    })
+    window.webContents.on("did-attach-webview", (_event, guest) => {
+      browserController.observeGuest(window.webContents, guest)
+      const guardNavigation = (event: Electron.Event, url: string) => {
+        if (!isBrowserUrlAllowed(url)) event.preventDefault()
+      }
+      guest.on("will-navigate", guardNavigation)
+      guest.on("will-redirect", guardNavigation)
+      guest.setWindowOpenHandler(({ url }) => {
+        if (isBrowserUrlAllowed(url)) queueMicrotask(() => {
+          try {
+            if (!guest.isDestroyed()) void guest.loadURL(url).catch(() => undefined)
+          } catch {}
+        })
+        return { action: "deny" }
+      })
+    })
     window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
       if (isMainFrame) setWorkspaceMenuEnabled(window, false)
     })
@@ -250,6 +287,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       clearWorkspaceMenuWindow(webContentsId)
       remoteOrigins.delete(nativeWindowId)
       insecureOrigins.delete(webContentsId)
+      browserController.removeOwner(window.webContents)
     })
     if (isMac) window.webContents.session.setSpellCheckerEnabled(false)
     if (process.env.NODE_ENV === "development") window.webContents.openDevTools({ mode: "detach" })
@@ -285,7 +323,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
-    developerMode,
+    browserController,
   })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),
@@ -423,18 +461,23 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest, toggle = false): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false): Promise<void> {
+    if (resume && clientState.lastPreferences) request = { ...request, section: clientState.lastPreferences.section, scrollTop: clientState.lastPreferences.scrollTop }
     if (toggle && preferencesWindows.current()) {
       preferencesWindows.current()?.close()
       return
     }
-    if (preferencesWindows.reuse(request)) {
-      await clientState.setPreferences(request)
+    const reused = preferencesWindows.reuse(request)
+    if (reused) {
+      if (!preferencesWindows.isReady(reused)) await clientState.setPreferences(request)
       return
     }
     if (!backendTargetUrl) throw new Error("Local CodeNomad server is unavailable")
+    const saved = clientState.preferencesWindow
+    const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map(display => ({ ...display.workArea, scaleFactor: display.scaleFactor })), { width: 760, height: 560 }) : undefined
     const window = new BrowserWindow({
-      width: 1100, height: 760, minWidth: 760, minHeight: 560,
+      width: bounds?.width ?? 1100, height: bounds?.height ?? 760, minWidth: 760, minHeight: 560,
+      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), show: false,
       useContentSize: true, frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
@@ -445,6 +488,16 @@ function runPrimary(firstIntent: LaunchIntent) {
     const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
     preferencesWindows.register(window, request)
+    const tracker = new WindowStateTracker(window, {
+      activeWindowId: "preferences",
+      saveWindowState: state => clientState.savePreferencesWindow(state),
+      flush: () => clientState.flush(),
+    }, saved && bounds ? { ...saved, bounds } : saved)
+    preferencesTracker = tracker
+    window.on("closed", () => { if (preferencesTracker === tracker) preferencesTracker = null })
+    restoreWindowState(window, saved, bounds)
+    installWindowZoomInput(window, level => tracker.setZoomLevel(level))
+    window.show()
     preferencesNavigation = new ClientStateNavigationController(window, {
       clientStateManager: { isPrimary: false },
       isTrustedOrigin: (url) => isAllowedRendererOrigin(url, getAllowedOrigins(window)),

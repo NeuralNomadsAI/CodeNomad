@@ -250,8 +250,27 @@ export class ClientStateManager {
   setPreferences(request: PreferencesRequest | undefined): Promise<boolean> {
     return this.mutateWindowListAndPersist((state) => {
       if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
-      if (request) state.preferences = request
+      if (request) {
+        state.preferences = request
+        state.lastPreferences = { section: request.section, ...(request.scrollTop === undefined ? {} : { scrollTop: request.scrollTop }) }
+      }
       else delete state.preferences
+    })
+  }
+
+  get lastPreferences(): PreferencesRequest | undefined {
+    return this.isPrimary && !this.unsupportedFutureEnvelope ? this.state.lastPreferences : undefined
+  }
+
+  get preferencesWindow(): NativeWindowState | undefined {
+    return this.isPrimary && !this.unsupportedFutureEnvelope ? this.state.preferencesWindow : undefined
+  }
+
+  savePreferencesWindow(window: NativeWindowState): Promise<boolean> {
+    const normalized = normalizeNativeWindowState(window)
+    return this.mutateWindowListAndPersist((state) => {
+      if (!normalized || !this.isPrimary || this.unsupportedFutureEnvelope) return false
+      state.preferencesWindow = normalized
     })
   }
 

@@ -95,12 +95,14 @@ pub(super) fn clamp_window_bounds(
     bounds: &WindowBounds,
     displays: &[DisplayArea],
 ) -> Option<WindowBounds> {
-    clamp_window_bounds_for_restore(bounds, displays).map(|bounds| bounds.logical)
+    clamp_window_bounds_for_restore(bounds, displays, (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT))
+        .map(|bounds| bounds.logical)
 }
 
 fn clamp_window_bounds_for_restore(
     bounds: &WindowBounds,
     displays: &[DisplayArea],
+    minimum: (i32, i32),
 ) -> Option<ClampedBounds> {
     let display = displays
         .iter()
@@ -129,8 +131,8 @@ fn clamp_window_bounds_for_restore(
     let maximum_height = display.height.min(i32::MAX as u32) as i32;
     let requested_width = (f64::from(bounds.width) * scale).round() as i32;
     let requested_height = (f64::from(bounds.height) * scale).round() as i32;
-    let minimum_width = (f64::from(MIN_WINDOW_WIDTH) * scale).round() as i32;
-    let minimum_height = (f64::from(MIN_WINDOW_HEIGHT) * scale).round() as i32;
+    let minimum_width = (f64::from(minimum.0) * scale).round() as i32;
+    let minimum_height = (f64::from(minimum.1) * scale).round() as i32;
     let width = requested_width.clamp(minimum_width.min(maximum_width), maximum_width);
     let height = requested_height.clamp(minimum_height.min(maximum_height), maximum_height);
     let minimum_x = i64::from(display.x);
@@ -189,13 +191,14 @@ fn capture_window_in_memory(
     let Some(client_state) = app.try_state::<ClientState>() else {
         return false;
     };
-    let Some(window) = app.get_webview_window(window_label) else {
+    let Some(webview) = app.get_webview(window_label) else {
         return false;
     };
+    let window = webview.window();
     client_state.capture_window_geometry(window_id, || read_window_geometry(&window))
 }
 
-fn read_window_geometry(window: &tauri::WebviewWindow) -> WindowGeometry {
+fn read_window_geometry(window: &tauri::Window) -> WindowGeometry {
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(false);
@@ -309,11 +312,12 @@ pub fn setup_local_window(
 
     let saved_window = {
         let state = client_state.state.lock().map_err(|err| err.to_string())?;
-        let record = state.record(window_id)?;
-        record
-            .restore_enabled
-            .then(|| record.window.clone())
-            .flatten()
+        if window_id == crate::preferences_window::LABEL {
+            state.preferences_window.clone()
+        } else {
+            let record = state.record(window_id)?;
+            record.restore_enabled.then(|| record.window.clone()).flatten()
+        }
     };
     if let Some(mut saved_window) = saved_window {
         let displays = window
@@ -331,7 +335,12 @@ pub fn setup_local_window(
                 }
             })
             .collect::<Vec<_>>();
-        if let Some(bounds) = clamp_window_bounds_for_restore(&saved_window.bounds, &displays) {
+        let minimum = if window_id == crate::preferences_window::LABEL {
+            (760, 560)
+        } else {
+            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        };
+        if let Some(bounds) = clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum) {
             let _ = window.set_size(PhysicalSize::new(
                 bounds.physical.width as u32,
                 bounds.physical.height as u32,
@@ -361,6 +370,9 @@ pub fn setup_local_window(
             saved_window.fullscreen,
             saved_window.zoom_factor,
         );
+        if let Ok(mut levels) = client_state.zoom_levels.lock() {
+            levels.insert(window_id.to_string(), saved_window.zoom_factor);
+        }
         let _ = window.set_zoom(saved_window.zoom_factor);
         if saved_window.maximized {
             let _ = window.maximize();
@@ -378,6 +390,7 @@ pub fn setup_local_window(
     }
     let app_handle = app.clone();
     let window_label = window.label().to_string();
+    let show = window_id != crate::preferences_window::LABEL;
     let window_id = window_id.to_string();
     window.on_window_event(move |event| match event {
         WindowEvent::Resized(_)
@@ -389,31 +402,34 @@ pub fn setup_local_window(
         }
         _ => {}
     });
-    let _ = window.show();
+    if show {
+        let _ = window.show();
+    }
     Ok(())
 }
 
 pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64) {
-    let Some(window) = app.get_webview_window(window_label) else {
+    let Some(webview) = app.get_webview(window_label) else {
         return;
     };
     let normalized = normalize_zoom_level(Some(next_zoom));
-    if window.set_zoom(normalized).is_err() {
+    if webview.set_zoom(normalized).is_err() {
         return;
     }
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };
-    let Ok(window_id) = crate::identity::local_window_id(window_label) else {
+    let Ok(window_id) = native_state_id(window_label) else {
         return;
     };
     if let Ok(mut zoom_levels) = client_state.zoom_levels.lock() {
         zoom_levels.insert(window_id.clone(), normalized);
     }
-    let persisted = app
-        .try_state::<crate::local_windows::LocalWindows>()
-        .and_then(|windows| windows.record(window_label))
-        .is_some_and(|record| record.persisted);
+    let persisted = window_label == crate::preferences_window::LABEL
+        || app
+            .try_state::<crate::local_windows::LocalWindows>()
+            .and_then(|windows| windows.record(window_label))
+            .is_some_and(|record| record.persisted);
     if capture_window_in_memory(app, window_label, &window_id, persisted) {
         schedule_flush(app);
     }
@@ -422,7 +438,7 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
 pub fn local_window_zoom(app: &AppHandle, window_label: &str) -> f64 {
     app.try_state::<ClientState>()
         .and_then(|state| {
-            let window_id = crate::identity::local_window_id(window_label).ok()?;
+            let window_id = native_state_id(window_label).ok()?;
             state
                 .zoom_levels
                 .lock()
@@ -433,6 +449,15 @@ pub fn local_window_zoom(app: &AppHandle, window_label: &str) -> f64 {
 }
 
 pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {
+    if window_label == crate::preferences_window::LABEL {
+        capture_window_in_memory(app, window_label, window_label, true);
+        if let Some(state) = app.try_state::<ClientState>() {
+            if let Err(err) = state.flush() {
+                eprintln!("[client-state] failed to flush Preferences window state: {err}");
+            }
+        }
+        return;
+    }
     let Some(record) = app
         .try_state::<crate::local_windows::LocalWindows>()
         .and_then(|windows| windows.record(window_label))
@@ -448,6 +473,12 @@ pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {
 }
 
 pub fn capture_and_flush_all_windows(app: &AppHandle) {
+    capture_window_in_memory(
+        app,
+        crate::preferences_window::LABEL,
+        crate::preferences_window::LABEL,
+        true,
+    );
     if let Some(windows) = app.try_state::<crate::local_windows::LocalWindows>() {
         for record in windows.records() {
             capture_window_in_memory(app, &record.label, &record.id, record.persisted);
@@ -457,5 +488,13 @@ pub fn capture_and_flush_all_windows(app: &AppHandle) {
         if let Err(err) = state.flush() {
             eprintln!("[client-state] failed to flush local window state: {err}");
         }
+    }
+}
+
+fn native_state_id(label: &str) -> Result<String, String> {
+    if label == crate::preferences_window::LABEL {
+        Ok(label.to_string())
+    } else {
+        crate::identity::local_window_id(label)
     }
 }

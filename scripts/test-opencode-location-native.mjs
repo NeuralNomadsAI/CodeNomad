@@ -14,6 +14,9 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import replyFrom from "@fastify/reply-from"
 import pino from "pino"
+import { testNativeWorktreeFamily } from "./test-worktree-families-native.mjs"
+import { testNativeWorktreeManagement } from "./test-native-worktree-management.mjs"
+import { testNativeEventRelay } from "./test-native-event-relay.mjs"
 
 export async function testNativeLocationIdentity({ client, connection, root }) {
   const { contractProfile, runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
@@ -33,6 +36,9 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
   const rootLocation = await client.location.get({ location: { directory } })
   const worktreeLocation = await client.location.get({ location: { directory: worktree } })
   assert.equal(rootLocation.project.id, worktreeLocation.project.id)
+  await testNativeEventRelay({ client, location: rootLocation })
+  await testNativeWorktreeFamily({ client, profile, rootLocation, worktreeLocation })
+  await testNativeWorktreeManagement({ client, root })
   if (profile !== "legacy") {
     await assert.rejects(client.location.get({ location: { directory } }, locationRequestOptions({ directory, workspaceID: "wrk_fixture_one" })))
     console.log("PASS: native modern worktree location and obsolete-selector rejection")
@@ -45,6 +51,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
     assert.equal(resolved.workspaceID, location.workspaceID)
   }
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
+  const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
   const { createInstanceFetch } = await tsImport("../packages/ui/src/lib/sdk-manager.ts", import.meta.url)
   const { EventBus } = await tsImport("../packages/server/src/events/bus.ts", import.meta.url)
   const { InstanceEventBridge } = await tsImport("../packages/server/src/workspaces/instance-events.ts", import.meta.url)
@@ -62,6 +69,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
     getSharedServiceConnection: async () => connection,
     getSharedServiceEndpoint: async () => connection.endpoint,
     getSharedServiceClient: async () => client,
+    getSessionEnvironment: () => sessionEnvironment({}),
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from(`${connection.endpoint.auth.username}:${connection.endpoint.auth.password}`).toString("base64")}`,
     getServiceDirectory: () => rootLocation.directory,
     getServiceDirectoryForPath: async (_id, candidate) => ownsDirectory(candidate) ? candidate : undefined,
@@ -209,20 +217,21 @@ async function runIsolated(cli) {
       await delay(20)
     }
     const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
-    const endpoint = { url: baseUrl, auth: { type: "basic", username: "opencode", password } }
-    const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-    let discovery = "status"
-    let response = await fetch(`${baseUrl}/api/status`, { headers: { authorization } })
-    if (response.status === 404) { discovery = "health"; response = await fetch(`${baseUrl}/api/health`, { headers: { authorization } }) }
-    assert.equal(response.status, 200)
-    const identity = await response.json()
-    const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
+    const { OpenCodeCliService } = await tsImport("../packages/server/src/workspaces/opencode-cli-service.ts", import.meta.url)
+    const { runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
+    // Replace only CLI discovery; exercise production authenticated health probes.
+    const lifecycle = new OpenCodeCliService({ label: "Fixture", timeoutMs: 30_000,
+      command: args => ({ command: cli, args, options: {} }),
+    }, { execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? password : baseUrl, stderr: "" }) })
+    const endpoint = await lifecycle.discover()
+    const identity = runtimeIdentity(endpoint)
     const { createRuntimeTransport } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
-    rememberRuntime(endpoint, { version: identity.version, pid: identity.pid, discovery })
     const transport = createRuntimeTransport(endpoint)
     const client = OpenCode.make({ baseUrl, fetch: transport.fetch })
     const connection = { endpoint, client, ...transport, assertCurrent() {}, invalidate() {} }
     console.log(`Testing official runtime ${identity.version}`)
+    assert.equal((await client.server.status()).version, identity.version)
+    console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.status()`)
     await testNativeLocationIdentity({ client, connection, root })
   } finally {
     child.kill()

@@ -27,6 +27,7 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
   for (const [subscribe, channel] of [
     ["onCliStatus", "cli:status"],
     ["onCliError", "cli:error"],
+    ["onBrowserOpenRequest", "browser-target:open"],
   ] as const) {
     const calls: string[] = []
     const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
@@ -94,7 +95,7 @@ test("Preferences preload exposes only section and frame controls", () => {
   assert.deepEqual(transitions, [{ id: 4 }])
 })
 
-test("Developer Mode is exposed to local windows only", () => {
+test("native titlebar controls remain local and obsolete automation toggles are absent", () => {
   const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
   const expose = (argv: string[]) => {
     let api: Record<string, Function> | undefined
@@ -109,8 +110,8 @@ test("Developer Mode is exposed to local windows only", () => {
     return api!
   }
 
-  assert.equal(typeof expose([]).getDeveloperMode, "function")
-  assert.equal(typeof expose([]).setDeveloperMode, "function")
+  assert.equal(expose([]).getDeveloperMode, undefined)
+  assert.equal(expose([]).setDeveloperMode, undefined)
   assert.equal(typeof expose([]).showTitlebarMenu, "function")
   assert.equal(expose(["--codenomad-window-context=remote"]).getDeveloperMode, undefined)
   assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)

@@ -116,7 +116,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "Откатить",
   "messageItem.actions.revertTitle": "Отменить изменения до этого места (удалит сообщения)",
   "messageItem.actions.fork": "Форк",
-  "messageItem.actions.forkTitle": "Форкнуть от этого сообщения",
+  "messageItem.actions.forkTitle": "Создать форк после этого сообщения",
   "messageItem.actions.copy": "Копировать",
   "messageItem.actions.copyTitle": "Копировать сообщение",
   "messageItem.actions.copied": "Скопировано!",

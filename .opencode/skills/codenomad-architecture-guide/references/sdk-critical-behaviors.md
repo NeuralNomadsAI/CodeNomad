@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Server and UI pin `@opencode/client@2.0.4`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/status`, falling back only on HTTP 404 to earlier V2 `/api/health`. Both probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed status failures do not trigger fallback. Discovery alone does not prove client/API compatibility. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
+- Server and UI pin `@opencode/client@2.0.4`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404. All probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed response failures do not trigger fallback. The shared transport maps canonical `server.status()` to the discovered route. Discovery alone does not prove client/API compatibility. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
@@ -23,7 +23,7 @@
 - WSL requires Windows localhost forwarding, executes lifecycle commands inside Linux, and never uses cross-namespace PID operations.
 - A workspace stop evicts its location; it does not stop a dedicated process or the global daemon.
 - The worktree deletion fence covers OpenCode proxy writes plus CodeNomad file and Git mutations for the same canonical worktree identity.
-- OpenCode owns standard state/database. Allowed configured environment variables apply only when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored.
+- OpenCode owns standard state/database. Allowed configured environment variables are passed when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored. Independently, before each session prompt/command/shell send, the authorized proxy awaits `session.environment` with the profile's complete execution-host snapshot. A failure blocks the send; it is never silently skipped or retried.
 - The native event stream is volatile. Reconnect must reconcile authoritative state; use current `session.*`, `filesystem.changed`, and `config.updated` names rather than obsolete event aliases.
 
 ## Ownership Matrix

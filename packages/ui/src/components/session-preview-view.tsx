@@ -1,5 +1,4 @@
 import { createSignal, type Component } from "solid-js"
-import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { openSessionPreview, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
@@ -9,8 +8,6 @@ import { runtimeEnv } from "../lib/runtime-env"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
-  onBackToChat: () => void
-  onClose: () => void
   onInsertComment: (markdown: string) => void
 }
 
@@ -60,21 +57,8 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
 
   return (
     <div class="flex h-full min-h-0 flex-col bg-surface">
-      <div class="flex shrink-0 items-center justify-between gap-3 px-3 py-2" style={{ "border-bottom": "1px solid var(--border-base)" }}>
-        <div class="min-w-0">
-          <div class="text-sm font-medium text-primary truncate">{t("sessionPreview.title")}</div>
-          <div class="text-xs text-muted truncate">{props.preview.targetUrl}</div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button type="button" class="selector-button selector-button-secondary" onClick={props.onBackToChat}>
-            {t("sessionPreview.backToChat")}
-          </button>
-          <button type="button" class="new-tab-button" onClick={props.onClose} aria-label={t("sessionPreview.close")} title={t("sessionPreview.close")}>
-            <X class="h-4 w-4" />
-          </button>
-        </div>
-      </div>
       <BrowserFrame
+        sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
         initialUrl={frameSource()}
         initialAddress={props.preview.targetUrl}
@@ -92,6 +76,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
           back: t("sidecars.back"),
           refresh: t("sidecars.refresh"),
           path: t("sessionPreview.open.label"),
+          invalidUrl: t("sessionPreview.open.invalidUrl"),
           go: t("sidecars.go"),
           viewport: t("browserFrame.viewport"),
           viewportResponsive: t("browserFrame.viewport.responsive"),

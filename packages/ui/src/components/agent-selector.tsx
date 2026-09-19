@@ -1,6 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { agents, fetchAgents, sessions } from "../stores/sessions"
+import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { findAgentById, getSelectableAgentsForSession, type Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
@@ -38,7 +39,10 @@ export default function AgentSelector(props: AgentSelectorProps) {
 
   createEffect(() => {
     if (instanceAgents().length === 0) {
-      fetchAgents(props.instanceId).catch((error) => log.error("Failed to fetch agents", error))
+      const instanceId = props.instanceId
+      void waitForInstanceInitialSessionHydration(instanceId)
+        .then(() => fetchAgents(instanceId))
+        .catch((error) => log.error("Failed to fetch agents", error))
     }
   })
 

@@ -81,6 +81,7 @@ async function harness(
       ],
     },
     session: {
+      environment: async () => {},
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionGets.push(sessionID)
         const location = sessionLocations[sessionID] ?? sessionDirectory
@@ -142,6 +143,7 @@ async function harness(
       return pathMappings[candidate] ?? candidate
     },
     getSharedServiceClient: async () => client,
+    getSessionEnvironment: async () => ({}),
     ownsLocation: async (_id, location) => owned.has(location.directory)
       && location.workspaceID === undefined,
     ownsDirectory: async (_id, directory) => owned.has(directory),
@@ -158,6 +160,7 @@ async function harness(
   await app.ready()
   return {
     app,
+    manager,
     servicePathCalls,
     sessionGets,
     worktreeDeletionFence,
@@ -169,6 +172,17 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("authorizes transcript reads without resolving the mutation checkout identity", async () => {
+    const { app, manager, sessionGets } = await harness()
+    manager.getWorktreeIdentityForPath = async () => { throw new Error("Unexpected Git mutation identity read") }
+    const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/session/message?limit=200" })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(sessionGets, ["session"])
+    manager.ownsLocation = async () => false
+    const denied = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/session/message" })
+    assert.equal(denied.statusCode, 403)
+  })
+
   it("forwards native execution settlement only for a session owned by the workspace", async () => {
     const { app, requestCount, sessionGets } = await harness()
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })

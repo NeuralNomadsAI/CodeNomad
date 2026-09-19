@@ -34,7 +34,15 @@ Measured DEV-v2 growth analysis, maintainer position on test volume, ranked redu
 
 ### [DEVELOPER_MODE.md](DEVELOPER_MODE.md)
 
-Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
+Always-available Electron/Tauri automation, OpenCode feedback tools, reconnect behavior, and trust boundaries (formerly Developer Mode).
+
+### [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)
+
+Autonomous native browser previews, shared automation bridge routing, host security, and focused validation.
+
+### [WORKTREE_SESSION_PLACEMENT.md](WORKTREE_SESSION_PLACEMENT.md)
+
+Native project/location versus CodeNomad conversation attachment, user-authorized movement, session instruction synchronization, and Windows directory-spelling diagnostics.
 
 ---
 
