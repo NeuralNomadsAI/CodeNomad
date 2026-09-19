@@ -6,10 +6,11 @@ import { BinaryResolver, type ResolvedBinary } from "../settings/binaries"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { probeBinaryVersion } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
+import { legacyOpenCodeRemoval } from "./legacy-package"
 
-const OPENCODE_PACKAGE_NAME = "@opencode-ai/cli"
-const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode-ai%2Fcli/dist-tags"
-export const TARGET_OPENCODE_CHANNEL = "beta"
+const OPENCODE_PACKAGE_NAME = "@opencode/cli"
+const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode%2Fcli/dist-tags"
+export const TARGET_OPENCODE_CHANNEL = "latest"
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
@@ -124,7 +125,7 @@ export class OpenCodeUpdateService {
     } catch (error) {
       throw new OpenCodeUpdateError(
         "update_check_failed",
-        error instanceof Error ? error.message : "Unable to resolve the latest OpenCode beta",
+        error instanceof Error ? error.message : "Unable to resolve the latest stable OpenCode release",
       )
     }
   }
@@ -172,12 +173,25 @@ export function buildOpenCodeUpgradeCommand(
   return { command: "npm", args: ["install", "-g", packageSpec] }
 }
 
-export function installOpenCodeCli(
+export async function installOpenCodeCli(
   binary: ResolvedBinary,
   version: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<UpgradeResult> {
-  const upgrade = buildOpenCodeUpgradeCommand(version, detectOpenCodePackageManager(binary.path, env))
+  const manager = detectOpenCodePackageManager(binary.path, env)
+  const removal = legacyOpenCodeRemoval(binary.path, manager)
+  if (removal) {
+    const result = await runPackageManager(removal, version, env)
+    if (!result.success) return result
+  }
+  return runPackageManager(buildOpenCodeUpgradeCommand(version, manager), version, env)
+}
+
+function runPackageManager(
+  upgrade: { command: string; args: string[] },
+  version: string,
+  env: NodeJS.ProcessEnv,
+): Promise<UpgradeResult> {
   return new Promise((resolve) => {
     const child = spawn(upgrade.command, upgrade.args, {
       env,
@@ -214,7 +228,7 @@ export async function resolveLatestOpenCodeVersion(fetchRegistry: RegistryFetch 
 
   const metadata = (await response.json()) as Record<string, unknown>
   const version = metadata[TARGET_OPENCODE_CHANNEL]
-  if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a valid version`)
   }
   return version
