@@ -11,6 +11,10 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* The loaded message window is not a session-wide scrollbar. Keep native
+     scrolling without reserving a scrollbar lane beside the timeline. */
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
   outline: none;
   background-color: var(--surface-base);
   color: inherit;
@@ -25,6 +29,10 @@
 
   /* Prevent browser scroll anchoring fighting our virtualization compensation. */
   overflow-anchor: none;
+}
+
+.message-stream::-webkit-scrollbar {
+  display: none;
 }
 
 .message-stream [data-virtual-follow-key] {
