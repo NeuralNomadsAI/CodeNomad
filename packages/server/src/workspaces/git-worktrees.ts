@@ -28,6 +28,17 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
   return git(folder, ["--version"]).then(() => true, error => error.code !== "ENOENT")
 }
 
+// A different physical common directory cannot belong to this local repository,
+// even when independent clones share OpenCode's project ID. This is only a
+// negative preflight; a match still requires the native worktree inventory.
+export async function sharesGitCommonDirectory(left: string, right: string): Promise<boolean> {
+  const common = async (directory: string) => realpath(await git(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
+  try {
+    const [a, b] = await Promise.all([common(left), common(right)])
+    return a === b
+  } catch { return false }
+}
+
 // Git annotations and branch policy, not another worktree registry. Native
 // OpenCode owns discovery, creation and removal of the physical checkouts.
 export async function readCheckout(directory: string) {

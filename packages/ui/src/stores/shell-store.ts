@@ -87,40 +87,51 @@ export function createShellApi(client: OpenCodeClient): ShellApi {
 
 export function createShellStore(apiForInstance: (instanceId: string) => ShellApi) {
   const [states, setStates] = createSignal<Map<string, ShellState>>(new Map())
-  const generations = new Map<string, number>()
+  const requests = new Map<string, { promise: Promise<void>; dirty: boolean }>()
   const key = (instanceId: string, directory: string, workspaceID?: string) => JSON.stringify([instanceId, directory, workspaceID])
   const setState = (stateKey: string, state: ShellState) => setStates((current) => new Map(current).set(stateKey, state))
   const readState = (stateKey: string): ShellState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
 
-  const load = async (instanceId: string, directory: string, workspaceID?: string): Promise<void> => {
+  const load = async (instanceId: string, directory: string, workspaceID?: string, refresh = false): Promise<void> => {
     if (!instanceId || !directory) return
     const stateKey = key(instanceId, directory, workspaceID)
-    const generation = (generations.get(stateKey) ?? 0) + 1
-    generations.set(stateKey, generation)
-    setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
-    try {
-      const items = await apiForInstance(instanceId).list(directory, workspaceID)
-      if (generations.get(stateKey) === generation) setState(stateKey, { items, loading: false, failed: false })
-    } catch {
-      if (generations.get(stateKey) === generation) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
+    const pending = requests.get(stateKey)
+    if (pending) {
+      if (refresh) pending.dirty = true
+      return pending.promise
     }
+    const request = { promise: Promise.resolve(), dirty: false }
+    requests.set(stateKey, request)
+    setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
+    request.promise = Promise.resolve().then(async () => {
+      do {
+        request.dirty = false
+        try {
+          const items = await apiForInstance(instanceId).list(directory, workspaceID)
+          if (!request.dirty) setState(stateKey, { items, loading: false, failed: false })
+        } catch {
+          if (!request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
+        }
+      } while (request.dirty)
+    }).finally(() => requests.delete(stateKey))
+    return request.promise
   }
 
   const refreshForEvent = async (instanceId: string, event: ShellRefreshEvent): Promise<void> => {
     if (!SHELL_EVENTS.has(event.type)) return
     const eventDirectory = event.location?.directory ?? event.data?.info?.cwd
-    const tracked = Array.from(states().keys())
+    const tracked = Array.from(untrack(states).keys())
       .map((stateKey): [string, string, string | null] => JSON.parse(stateKey))
       .filter(([trackedInstanceId]) => trackedInstanceId === instanceId)
     const matching = eventDirectory ? tracked.filter(([, directory, workspaceID]) => sameDirectory(directory, eventDirectory)
       && (event.location?.workspaceID === undefined || event.location.workspaceID === workspaceID)) : tracked
-    await Promise.all((matching.length ? matching : tracked).map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined)))
+    await Promise.all((matching.length ? matching : tracked).map(([, directory, workspaceID]) => load(instanceId, directory, workspaceID ?? undefined, true)))
   }
 
   const remove = async (instanceId: string, directory: string, shellId: string, workspaceID?: string): Promise<boolean> => {
     try {
       await apiForInstance(instanceId).remove(directory, shellId, workspaceID)
-      await load(instanceId, directory, workspaceID)
+      await load(instanceId, directory, workspaceID, true)
       return true
     } catch { return false }
   }

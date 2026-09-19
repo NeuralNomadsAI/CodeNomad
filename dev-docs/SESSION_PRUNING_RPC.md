@@ -60,9 +60,11 @@ and its dependencies under `dist/plugins/session-pruning/`, copied by both deskt
 Provisioning uses the shared authenticated connection's `config.get` discovery
 sources, including after reconnect. The first directory is the daemon's global
 root; startup-environment overrides and CLI `debug paths` are not authoritative
-for an existing daemon. New managed payloads/leases use `<root>/.codenomad/`;
-existing generated entries retain their recorded storage so older backends keep
-their independent leases. WSL maps the reported Linux paths through the selected
+for an existing daemon. New managed payloads/leases use a sibling
+`<parent>/.codenomad/<root-hash>/` namespace: OpenCode watches the entire discovery
+root, so heartbeats inside it cause repeated configuration reloads. Existing
+outside-root storage is retained; inside-root storage migrates while the plugin
+continues reading older backends' independent leases. WSL maps native paths through the selected
 distro for filesystem access, never through a new shell's environment.
 
 The UI keeps individual, per-message, group and session cleanup entry points. It

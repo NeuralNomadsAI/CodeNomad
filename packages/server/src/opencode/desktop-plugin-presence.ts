@@ -15,7 +15,7 @@ export async function hasPresence(directory: string, now = Date.now()): Promise<
 
 // Serial reconciliation prevents overlapping setup/dispose and resurrection on unload.
 export async function followPresence(
-  directory: string,
+  directory: string | readonly string[],
   register: () => Promise<() => void | Promise<void>>,
   onError: (error: unknown) => void = console.error,
 ) {
@@ -25,7 +25,8 @@ export async function followPresence(
   const reconcile = () => {
     if (pending) return pending
     pending = (async () => {
-      const active = !stopped && await hasPresence(directory)
+      const directories = typeof directory === "string" ? [directory] : directory
+      const active = !stopped && (await Promise.all(directories.map(path => hasPresence(path)))).some(Boolean)
       if (active && !dispose && !stopped) dispose = await register()
       if ((!active || stopped) && dispose) {
         await dispose()

@@ -10,7 +10,7 @@ import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
-import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../stores/instances"
+import { instances, waitForInstanceReady } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
@@ -353,7 +353,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     instanceId: () => props.instanceId,
     session,
     loadMessages,
-    waitForHydration: waitForInstanceWorkspaceMetadataHydration,
+    waitForHydration: waitForInstanceReady,
     onError: (error) => log.error("Failed to load messages", error),
   })
 

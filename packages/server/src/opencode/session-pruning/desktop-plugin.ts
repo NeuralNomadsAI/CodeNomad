@@ -3,7 +3,7 @@ import { followPresence } from "./presence"
 
 // The bundled factory is wrapped by a tiny auto-discovered native entry.
 // No tools, commands or model hooks are registered, even while CodeNomad is open.
-export function desktopPlugin(presenceDirectory: string) {
+export function desktopPlugin(presenceDirectory: string | readonly string[]) {
   return {
     ...plugin,
     setup: (ctx: Parameters<typeof plugin.setup>[0]) => followPresence(presenceDirectory, async () => {

@@ -14,7 +14,7 @@ Inspect before acting; refs belong to the latest inspection. Rebuild before rest
 All tools require the intended native window and session to remain available.`
 
 // Definitions follow backend presence. Per-session routing remains authoritative.
-export function desktopPlugin(presenceDirectory: string): Plugin.Plugin {
+export function desktopPlugin(presenceDirectory: string | readonly string[]): Plugin.Plugin {
   return {
     id: "codenomad.automation",
     setup: (ctx) => {

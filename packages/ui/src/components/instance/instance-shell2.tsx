@@ -1133,6 +1133,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
+                  <Show when={!activeSessionIdForInstance()} fallback={
+                    <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
+                      <MessageSection
+                        instanceId={props.instance.id}
+                        sessionId={activeSessionIdForInstance()!}
+                        loading={true}
+                        isActive={props.isActiveInstance}
+                        showSidebarToggle={showEmbeddedSidebarToggle()}
+                        onSidebarToggle={() => setLeftOpen(true)}
+                        forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                      />
+                    </div>
+                  }>
                   <div class="session-view">
                     <MessageSection
                       instanceId={props.instance.id}
@@ -1183,6 +1196,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       registerPromptInputApi={registerDraftPromptInputApi}
                     />
                   </div>
+                  </Show>
                 }
               >
                 <For each={cachedSessionIds()}>

@@ -30,10 +30,10 @@ import {
   type OpenCodeSharedServiceOptions,
 } from "./opencode-service"
 import { WslOpenCodeService } from "./wsl-opencode-service"
-import { invalidateWorktreeCache, isPathOwnedByWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
 import { WorktreeInventory } from "./worktree-inventory"
-import { resolveRepoRoot } from "./git-worktrees"
+import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -288,6 +288,14 @@ export class WorkspaceManager {
   async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
+    // Directory authorization does not need the checkout's Git mutation identity.
+    // Resolve aliases against the explicitly opened folder without spawning Git.
+    if (!record.wslDistro) {
+      const [target, root] = await Promise.all([
+        realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+      ])
+      if (target && target === root) return target
+    }
     const owned = await this.resolveOwnedWorktree(record, directory)
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
@@ -356,6 +364,7 @@ export class WorkspaceManager {
       realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
     ])
     if (target && target === root) return true
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
     return (await resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
@@ -381,6 +390,7 @@ export class WorkspaceManager {
       const { repoRoot } = await resolveRepoRoot(root)
       return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
     }
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
     return resolveOwnedWorktreePath({
       workspaceId: record.id,
       workspacePath: record.path,
