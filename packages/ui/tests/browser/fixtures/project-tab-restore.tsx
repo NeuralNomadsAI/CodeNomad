@@ -4,6 +4,7 @@ import { initializeClientState } from "../../../src/stores/client-state"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
+import { activeSessionId } from "../../../src/stores/session-state"
 
 await initializeClientState()
 function Fixture() {
@@ -17,6 +18,7 @@ function Fixture() {
     <For each={appTabs()}>{tab => <button
       role="tab"
       aria-selected={activeAppTabId() === tab.id}
+      data-session-selection={tab.kind === "instance" ? activeSessionId().get(tab.instance.id) : undefined}
       onClick={() => selectAppTab(tab.id)}
     >{tab.kind === "instance" ? tab.instance.folder : tab.sidecarTab.sidecarId}</button>}</For>
   </div>

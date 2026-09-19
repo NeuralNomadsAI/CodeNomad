@@ -8,6 +8,7 @@ import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { normalizeSessionDirectory } from "./session-list-options"
+import { backgroundReads } from "../lib/background-read-queue"
 
 const log = getLogger("api")
 
@@ -30,7 +31,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
   }
   const load = async (initialRead: boolean) => {
     try {
-      const response = await serverApi.fetchWorktrees(instanceId)
+      const response = await backgroundReads.run(new AbortController().signal, () => serverApi.fetchWorktrees(instanceId))
       if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
       else defaultDirectories.delete(instanceId)
       setWorktreesByInstance((prev) => {

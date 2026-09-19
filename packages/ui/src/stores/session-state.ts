@@ -790,8 +790,20 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  writeActiveParentSession(instanceId, parentSessionId)
-  writeActiveSession(instanceId, sessionId)
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeActiveSession(instanceId, sessionId)
+  })
+}
+
+// Restore selection identity before HTTP hydration, without starting any
+// session-scoped effects until the native session has actually been resolved.
+function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
+  if (hasAuthoritativeSessionSelection(instanceId)) return
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  })
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
@@ -1260,6 +1272,7 @@ export {
   clearActiveSession,
   clearActiveParentSession,
   hydrateActiveSessionSelection,
+  seedRestoredSessionSelection,
   hasAuthoritativeSessionSelection,
   clearInstanceSessionSelection,
   getActiveSession,

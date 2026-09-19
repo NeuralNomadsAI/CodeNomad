@@ -59,10 +59,12 @@ test("connection A cannot install after root discovery is superseded by connecti
   resume.release()
   await rejected
   assert.equal(automationReads, 1, "Only valid connection B may start the second installer")
+  const resolvedPaths = await resolveDesktopPluginPaths({ client: { config: { get: async () => [{ type: "directory", path: b }] } }, assertCurrent() {} } as never,
+    { kind: "host", platform: process.platform, binary: "fixture" })
   for (const feature of ["session-pruning", "automation"]) {
     await assert.rejects(readFile(entryFor(a, feature)), { code: "ENOENT" })
     await assert.rejects(readdir(leasesFor(a, feature)), { code: "ENOENT" })
-    assert.equal((await readdir(leasesFor(b, feature))).length, 1)
+    assert.equal((await readdir(path.join(resolvedPaths.data, feature, "presence"))).length, 1)
   }
 })
 

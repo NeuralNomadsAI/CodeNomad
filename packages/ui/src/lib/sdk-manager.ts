@@ -1,5 +1,6 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
+import { backgroundReads } from "./background-read-queue"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -44,10 +45,15 @@ export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
-    return globalThis.fetch(new URL(relativeUrl, baseUrl), {
+    const read = () => globalThis.fetch(new URL(relativeUrl, baseUrl), {
       ...init,
       credentials: init?.credentials ?? "include",
     })
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    if (method === "GET" && /^\/api\/(?:project|session\/active)\/?$/.test(requestUrl.pathname)) {
+      return backgroundReads.run(init?.signal ?? new AbortController().signal, read)
+    }
+    return read()
   }
 }
 

@@ -1,4 +1,5 @@
 import path from "node:path"
+import { createHash } from "node:crypto"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { ServiceLaunchSpec } from "../workspaces/spawn"
 import type { DesktopPluginPaths } from "./desktop-plugin-installation"
@@ -23,10 +24,14 @@ export async function resolveDesktopPluginPaths(
     throw new Error("Connected OpenCode daemon did not report an absolute global plugin discovery directory")
   }
   const config = paths.normalize(directory)
-  // The API does not expose the daemon's data root. Keep CodeNomad-owned
-  // immutable payloads and leases under its reported config root, outside the
-  // auto-discovered plugins directory, without deriving another environment.
-  const data = paths.join(config, ".codenomad")
+  // OpenCode recursively watches the entire discovery root, not just plugins/.
+  // A lease heartbeat inside it reloads configuration in every loaded location.
+  // Derive a sibling namespace from the authenticated root, never our process's
+  // environment. The hash keeps distinct discovery roots independent.
+  if (paths.dirname(config) === config) throw new Error("OpenCode discovery root has no unwatched parent")
+  const identity = launch.kind !== "wsl" && launch.platform === "win32" ? config.toLowerCase() : config
+  const namespace = createHash("sha256").update(identity).digest("hex")
+  const data = paths.join(paths.dirname(config), ".codenomad", namespace)
   if (launch.kind !== "wsl") return { config, data }
   if (config.includes("\\") || config.startsWith("//")) {
     throw new Error("Connected WSL daemon reported a path that cannot be accessed through its distro")

@@ -13,15 +13,23 @@ export interface DesktopPluginPaths {
 }
 export type DesktopPluginFeature = "session-pruning" | "automation"
 
-// Retain the explicitly recorded managed storage on upgrade: another backend
-// may still be heartbeating there. Only parse our exact generated entry shape.
+// Only parse our exact generated entry shape. Older backend leases remain
+// readable during migration, but new heartbeats must leave the watched root.
 function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths) {
   if (!existing?.startsWith(marker)) return undefined
-  const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\(("(?:[^"\\]|\\.)*")\)\n$/.exec(existing.slice(marker.length))
+  const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\((.+)\)\n$/.exec(existing.slice(marker.length))
   if (!match) throw new Error("Invalid managed CodeNomad plugin entry")
   const url = new URL(JSON.parse(match[1]) as string)
-  const nativeLeases: string = JSON.parse(match[2])
+  const argument: unknown = JSON.parse(match[2])
+  const presenceDirectories = typeof argument === "string" ? [argument] : argument
   const nativePaths = paths.nativeData ? path.posix : path
+  if (!Array.isArray(presenceDirectories) || !presenceDirectories.length || presenceDirectories.length > 8
+    || !presenceDirectories.every(directory => typeof directory === "string" && nativePaths.isAbsolute(directory)
+      && !directory.includes("\0") && nativePaths.basename(directory) === "presence"
+      && nativePaths.basename(nativePaths.dirname(directory)) === feature)) {
+    throw new Error("Invalid managed CodeNomad plugin presence")
+  }
+  const nativeLeases = presenceDirectories[0] as string
   const nativeDirectory = nativePaths.dirname(nativeLeases)
   const plugin = paths.nativeData ? decodeURIComponent(url.pathname) : fileURLToPath(url)
   if (url.protocol !== "file:" || url.search || url.hash || (paths.nativeData && url.hostname)
@@ -30,10 +38,15 @@ function managedStorage(feature: DesktopPluginFeature, existing: string | undefi
     || !/^[a-f\d]{64}\.mjs$/.test(nativePaths.basename(plugin))) {
     throw new Error("Invalid managed CodeNomad plugin storage")
   }
-  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory }
+  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
   const uncRoot = /^(\\\\wsl(?:\.localhost|\$)\\[^\\]+)/i.exec(paths.config)?.[1]
   if (!uncRoot || nativeDirectory.includes("\\")) throw new Error("Invalid managed WSL plugin storage")
-  return { directory: `${uncRoot}${nativeDirectory.replaceAll("/", "\\")}`, nativeDirectory }
+  return { directory: `${uncRoot}${nativeDirectory.replaceAll("/", "\\")}`, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
+}
+
+function within(directory: string, root: string): boolean {
+  const relative = path.relative(root, directory)
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
 }
 
 export async function installDesktopPluginPresence(
@@ -56,15 +69,17 @@ export async function installDesktopPluginPresence(
     throw new Error(`Existing plugin entry is not managed by CodeNomad: ${entry}`)
   }
   const storage = managedStorage(feature, existing, marker, paths)
-  const directory = storage?.directory ?? path.join(paths.data, feature)
-  const nativeDirectory = storage?.nativeDirectory ?? (paths.nativeData ? path.posix.join(paths.nativeData, feature) : directory)
+  const retainStorage = storage && !within(storage.directory, paths.config)
+  const directory = retainStorage ? storage.directory : path.join(paths.data, feature)
+  const nativeDirectory = retainStorage ? storage.nativeDirectory : (paths.nativeData ? path.posix.join(paths.nativeData, feature) : directory)
   const leases = path.join(directory, "presence")
   const nativeLeases = paths.nativeData ? path.posix.join(nativeDirectory, "presence") : leases
   const plugin = path.join(directory, `${hash}.mjs`)
   const nativeUrl = new URL("file:///")
   nativeUrl.pathname = `${nativeDirectory}/${hash}.mjs`
   const pluginUrl = paths.nativeData ? nativeUrl.href : pathToFileURL(plugin).href
-  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(nativeLeases)})\n`
+  const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
+  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)})\n`
   await mkdir(leases, { recursive: true })
   assertCurrent()
   await mkdir(path.dirname(entry), { recursive: true })

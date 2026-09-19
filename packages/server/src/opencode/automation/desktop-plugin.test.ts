@@ -8,6 +8,7 @@ import type { Plugin } from "@opencode/plugin"
 import { desktopPlugin } from "./desktop-plugin"
 import { installDesktopPluginPresence } from "../desktop-plugin-installation"
 import { PRESENCE_EXPIRY_MS, PRESENCE_INTERVAL_MS } from "../desktop-plugin-presence"
+import { followPresence } from "../desktop-plugin-presence"
 
 test("all unified tools follow independent backend leases, expiry, and unload", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-presence-"))
@@ -134,6 +135,43 @@ test("a new storage default retains existing managed leases for older backends",
       await assert.rejects(readdir(path.join(config, ".codenomad", feature)), { code: "ENOENT" })
     }
   } finally {
+    await Promise.all(disposals.map(dispose => dispose()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("watched-root storage migrates heartbeats without losing a live older backend", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-watched-presence-"))
+  const config = path.join(root, "config")
+  const oldData = path.join(config, ".codenomad")
+  const data = path.join(root, "unwatched-data")
+  const entry = path.join(config, "plugins", "codenomad-automation.ts")
+  const oldLeases = path.join(oldData, "automation", "presence")
+  const newLeases = path.join(data, "automation", "presence")
+  const disposals: Array<() => Promise<void>> = []
+  let stop: (() => Promise<void>) | undefined
+  try {
+    const old = await installDesktopPluginPresence("automation", Buffer.from("old bundle"), { config, data: oldData })
+    disposals.push(old)
+    const original = await readdir(oldLeases)
+    const latest = await installDesktopPluginPresence("automation", Buffer.from("new bundle"), { config, data })
+    disposals.push(latest)
+    const source = await readFile(entry, "utf8")
+    assert(source.includes(JSON.stringify([newLeases, oldLeases])))
+    assert.deepEqual(await readdir(oldLeases), original, "The new backend never writes another watched lease")
+    assert.equal((await readdir(newLeases)).length, 1)
+    const next = await installDesktopPluginPresence("automation", Buffer.from("new bundle"), { config, data })
+    disposals.push(next)
+    assert.equal(await readFile(entry, "utf8"), source, "Subsequent starts retain migration readers without rewriting the entry")
+    await next(); await latest()
+    let active = false
+    stop = await followPresence([newLeases, oldLeases], async () => { active = true; return () => { active = false } })
+    assert(active, "The older backend remains registered after both new backends close")
+    await old()
+    for (let i = 0; i < 40 && active; i++) await delay(100)
+    assert.equal(active, false)
+  } finally {
+    await stop?.()
     await Promise.all(disposals.map(dispose => dispose()))
     await rm(root, { recursive: true, force: true })
   }

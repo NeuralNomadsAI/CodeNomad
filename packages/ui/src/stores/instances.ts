@@ -29,7 +29,9 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
+import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
+import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
@@ -299,16 +301,19 @@ const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 let nextPendingRequestSyncGeneration = 0
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true): Promise<T> {
   const controller = new AbortController()
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
   pendingRequestControllers.set(instanceId, controllers)
-  const timeout = setTimeout(() => controller.abort(), 10_000)
   try {
-    return await run(controller.signal)
+    const timed = async () => {
+      const timeout = setTimeout(() => controller.abort(), 10_000)
+      try { return await run(controller.signal) }
+      finally { clearTimeout(timeout) }
+    }
+    return await (background ? backgroundReads.run(controller.signal, timed) : timed())
   } finally {
-    clearTimeout(timeout)
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
       pendingRequestControllers.delete(instanceId)
@@ -862,7 +867,7 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   let sessionError: unknown
   if (hasRunningSession || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
-      await withPendingRequestTimeout(instanceId, (signal) => fetchSessions(instanceId, { reset: true, signal }))
+      await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
     } catch (error) {
       sessionError = error
     }
@@ -929,9 +934,12 @@ async function hydrateInstanceData(instanceId: string, options?: {
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
       : startInstanceSessionHydration(instanceId, options?.force)
-    await hydration.sessions
-    await hydration.workspaceMetadata
-    await refreshSessionCatalog(instanceId, options?.force)
+    // Composer catalogues must not wait for the complete historical inventory.
+    await Promise.all([
+      hydration.sessions,
+      hydration.workspaceMetadata,
+      refreshSessionCatalog(instanceId, options?.force),
+    ])
     await ensureInstanceConfigLoaded(instanceId)
     await syncPendingRequests(instanceId)
   } catch (error) {

@@ -22,9 +22,11 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const userSelection of [false, true]) {
-test(`${host} restores the active project before session hydration${userSelection ? " and respects a subsequent user selection" : ""}`, async () => {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout"] as const) {
+const userSelection = mode === "user"
+test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
+  if (mode === "timeout") await page.clock.install()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: `{
@@ -84,7 +86,15 @@ test(`${host} restores the active project before session hydration${userSelectio
     const selected = page.getByRole("tab", { name: "D:/second", exact: true })
     await selected.waitFor()
     assert.equal(await selected.getAttribute("aria-selected"), "true", "project selection must not wait for its conversation requests")
+    assert.equal(await selected.getAttribute("data-session-selection"), "saved-session", "saved session identity must not wait for HTTP hydration")
     if (userSelection) await page.getByRole("tab", { name: "D:/first", exact: true }).click()
+    if (mode === "timeout") {
+      await page.getByRole("tab", { name: "D:/first", exact: true }).waitFor()
+      await page.clock.fastForward(61_000)
+      await page.locator('[data-restoring="false"]').waitFor()
+      assert.equal(await page.getByRole("tab").count(), 2, "session timeout must not remove a bound project tab")
+      assert.equal(await selected.getAttribute("data-session-selection"), "saved-session")
+    }
     releaseSessions()
     await page.locator('[data-restoring="false"]').waitFor()
     assert.equal(await page.getByRole("tab", { name: userSelection ? "D:/first" : "D:/second", exact: true }).getAttribute("aria-selected"), "true")

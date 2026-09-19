@@ -901,12 +901,14 @@ async function proxyWorkspaceRequest(args: {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
-    if (!sessionWorktree) {
-      reply.code(403).send({ error: "Session does not belong to workspace" })
-      return
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
+      if (!sessionWorktree) {
+        reply.code(403).send({ error: "Session does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(sessionWorktree)
     }
-    mutationIdentities.add(sessionWorktree)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))

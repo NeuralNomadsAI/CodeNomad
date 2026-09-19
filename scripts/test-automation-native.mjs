@@ -2,6 +2,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
+import { watch } from "node:fs"
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -117,7 +118,10 @@ try {
   removeBridge = await publishAutomationBridge(registration)
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
   await mkdir(path.join(root, "fixture-plugin"))
-  await writeFile(path.join(root, "fixture-plugin", "index.ts"), `export default { id: 'automation-fixture', async setup(ctx) {
+  const setupLog = path.join(root, "plugin-setup.log")
+  await writeFile(path.join(root, "fixture-plugin", "index.ts"), `import { appendFile } from 'node:fs/promises'
+  export default { id: 'automation-fixture', async setup(ctx) {
+    await appendFile(${JSON.stringify(setupLog)}, 'setup\\n')
     await ctx.session.hook('http.request', event => event.request.headers.set('x-automation-kind', event.kind))
   } }`)
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
@@ -178,6 +182,20 @@ try {
   await until(async () => (await sample()).includes("codenomad_browser"))
   const allTools = ["codenomad_act", "codenomad_browser", "codenomad_inspect", "codenomad_screenshot"]
   assert.deepEqual(await sample(), allTools, "Backend presence exposes all tools independently of Developer Mode")
+  // Keep project discovery disabled to exclude real ancestor configuration.
+  // That also disables OpenCode's config watcher, so explicitly observe the
+  // same directory with an OS watcher rather than accept a false-positive test.
+  await delay(2_500)
+  const setupBeforeHeartbeat = await readFile(setupLog, "utf8")
+  const configChanges = []
+  const configWatcher = watch(env.OPENCODE_CONFIG_DIR, { recursive: true }, (event, filename) => configChanges.push({ event, filename }))
+  try {
+    await delay(5_000)
+    assert.deepEqual(configChanges, [], "Backend heartbeats must not modify the watched configuration tree")
+  } finally {
+    configWatcher.close()
+  }
+  assert.equal(await readFile(setupLog, "utf8"), setupBeforeHeartbeat, "Backend heartbeats must not reload native configuration/plugins")
   const skills = await client.skill.list({ location })
   assert(JSON.stringify(skills).includes("codenomad-browser"), "Bundled skill is visible in an arbitrary project")
   callBrowser = true
@@ -200,7 +218,7 @@ try {
   first = await openPresence()
   await until(async () => (await sample()).length === 4)
   assert.deepEqual(await sample(), allTools)
-  console.log(`PASS ${version}: connected-daemon discovery despite backend environment mismatch, automation and pruning provisioning, late native discovery, arbitrary project, all definitions without Developer Mode, browser execution, native target fences, independent leases, clean shutdown and reopening`)
+  console.log(`PASS ${version}: connected-daemon discovery despite backend environment mismatch, automation and pruning provisioning, stable native plugins across heartbeats, late native discovery, arbitrary project, all definitions without Developer Mode, browser execution, native target fences, independent leases, clean shutdown and reopening`)
 } finally {
   await first?.(); await second?.(); await removeBridge?.()
   child?.kill()
