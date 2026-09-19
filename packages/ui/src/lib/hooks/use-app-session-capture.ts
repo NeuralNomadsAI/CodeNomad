@@ -19,7 +19,7 @@ import {
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
 import { showFolderSelection } from "../../stores/ui"
-import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
+import { instances } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -263,7 +263,7 @@ export function useAppSessionCapture() {
           && instances().has(event.instanceId)
           && hasRestoredTabBinding(preservation, sourceIndex, workspace.runtimeTabId),
         )
-        if (snapshot && instances().has(event.instanceId)) void waitForInstanceInitialSessionHydration(event.instanceId).then(() => {
+        if (snapshot && instances().has(event.instanceId)) void Promise.resolve().then(() => {
           if (!isCurrentBinding()) return null
           return hydrateRestoredWorkspaceState(event.instanceId, snapshot, hydrationController.signal, isCurrentBinding)
         }).then((unavailable) => {

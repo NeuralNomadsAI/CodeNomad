@@ -1,14 +1,10 @@
 import { promises as fsp } from "fs"
 import path from "path"
-import { resolveRepoRoot } from "./git-worktrees"
+import { resolveRepoRoot, gitExcludePath } from "./git-worktrees"
 import type { LogLike } from "./git-worktrees"
 
-function getGitExcludePath(repoRoot: string): string {
-  return path.join(repoRoot, ".git", "info", "exclude")
-}
-
 async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<void> {
-  const excludePath = getGitExcludePath(repoRoot)
+  const excludePath = await gitExcludePath(repoRoot)
   try {
     await fsp.mkdir(path.dirname(excludePath), { recursive: true })
   } catch {

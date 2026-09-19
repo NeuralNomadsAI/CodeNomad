@@ -9,6 +9,7 @@ import { tsImport } from "tsx/esm/api"
 // Called only by the isolated native fixture; no discovery or user storage.
 export async function testNativeProxy({ client, baseUrl, root, authorization, runtimeFetch, connection, exercise }) {
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
+  const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
   const { createInstanceFetch } = await tsImport("../packages/ui/src/lib/sdk-manager.ts", import.meta.url)
   const app = Fastify()
   await app.register(replyFrom)
@@ -21,6 +22,7 @@ export async function testNativeProxy({ client, baseUrl, root, authorization, ru
       getInstanceAuthorizationHeader: () => authorization,
       getServiceDirectory: () => root,
       getSharedServiceClient: async () => client,
+      getSessionEnvironment: () => sessionEnvironment({}),
       ...(runtimeFetch ? { getSharedServiceFetch: async () => runtimeFetch } : {}),
       getWorktreeIdentityForPath: async (_id, directory) => owns(directory) ? root : undefined,
       ownsDirectory: async (_id, directory) => owns(directory),

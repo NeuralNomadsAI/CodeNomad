@@ -1,6 +1,7 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { withFileAccess } from "./file-access"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
@@ -38,7 +39,7 @@ export class FileSystemBrowser {
     this.isWindows = (options.platform ?? process.platform) === "win32"
   }
 
-  list(relativePath = ".", options: { includeFiles?: boolean } = {}): FileSystemEntry[] {
+  async list(relativePath = ".", options: { includeFiles?: boolean } = {}): Promise<FileSystemEntry[]> {
     if (this.unrestricted) {
       throw new Error("Relative listing is unavailable when running with unrestricted root")
     }
@@ -52,7 +53,7 @@ export class FileSystemBrowser {
     })
   }
 
-  browse(targetPath?: string, options: { includeFiles?: boolean } = {}): FileSystemListResponse {
+  async browse(targetPath?: string, options: { includeFiles?: boolean } = {}): Promise<FileSystemListResponse> {
     const includeFiles = options.includeFiles ?? true
     if (this.unrestricted) {
       return this.listUnrestricted(targetPath, includeFiles)
@@ -60,7 +61,7 @@ export class FileSystemBrowser {
     return this.listRestrictedWithMetadata(targetPath, includeFiles)
   }
 
-  createFolder(parentPath: string | undefined, folderName: string): FileSystemCreateFolderResponse {
+  async createFolder(parentPath: string | undefined, folderName: string): Promise<FileSystemCreateFolderResponse> {
     const name = this.normalizeFolderName(folderName)
 
     if (this.unrestricted) {
@@ -68,64 +69,66 @@ export class FileSystemBrowser {
       if (this.isWindows && resolvedParent === WINDOWS_DRIVES_ROOT) {
         throw new Error("Cannot create folders at drive root")
       }
-      this.assertDirectoryExists(resolvedParent)
+      await this.assertDirectoryExists(resolvedParent)
       const absolutePath = this.resolveAbsoluteChild(resolvedParent, name)
-      fs.mkdirSync(absolutePath)
+      await fs.promises.mkdir(absolutePath)
       return { path: absolutePath, absolutePath }
     }
 
     const normalizedParent = this.normalizeRelativePath(parentPath)
     const parentAbsolute = this.toRestrictedAbsolute(normalizedParent)
-    this.assertDirectoryExists(parentAbsolute)
+    await this.assertDirectoryExists(parentAbsolute)
 
     const relativePath = this.buildRelativePath(normalizedParent, name)
     const absolutePath = this.toRestrictedAbsolute(relativePath)
-    fs.mkdirSync(absolutePath)
+    await fs.promises.mkdir(absolutePath)
     return { path: relativePath, absolutePath }
   }
 
-  writeFile(relativePath: string, contents: string): void {
+  async writeFile(relativePath: string, contents: string): Promise<void> {
     if (this.unrestricted) {
       throw new Error("writeFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    fs.writeFileSync(resolved, contents, "utf-8")
+    await withFileAccess(resolved, () => fs.promises.writeFile(resolved, contents, "utf-8"))
   }
 
-  readFile(relativePath: string): string {
+  async readFile(relativePath: string): Promise<string> {
     if (this.unrestricted) {
       throw new Error("readFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return fs.readFileSync(resolved, "utf-8")
+    return withFileAccess(resolved, () => fs.promises.readFile(resolved, "utf-8"))
   }
 
-  readFileBase64(relativePath: string): string {
+  async readFileBase64(relativePath: string): Promise<string> {
     if (this.unrestricted) {
       throw new Error("readFileBase64 is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return fs.readFileSync(resolved).toString("base64")
+    return withFileAccess(resolved, async () => (await fs.promises.readFile(resolved)).toString("base64"))
   }
 
-  readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): FileSystemFileContentResponse {
+  async readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
     const encoding = options?.encoding ?? "utf-8"
     const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
-    const stats = fs.statSync(resolved)
-    if (!stats.isFile()) {
-      throw new Error("Selected path is not a file")
-    }
-    if (stats.size > MAX_READABLE_FILE_BYTES) {
-      throw new Error("Selected file is too large to attach")
-    }
-    const contents = encoding === "base64" ? fs.readFileSync(resolved).toString("base64") : fs.readFileSync(resolved, "utf-8")
-    return { path: targetPath, contents, encoding }
+    return withFileAccess(resolved, async () => {
+      const stats = await fs.promises.stat(resolved)
+      if (!stats.isFile()) {
+        throw new Error("Selected path is not a file")
+      }
+      if (stats.size > MAX_READABLE_FILE_BYTES) {
+        throw new Error("Selected file is too large to attach")
+      }
+      const contents = (await fs.promises.readFile(resolved)).toString(encoding)
+      return { path: targetPath, contents, encoding }
+    })
   }
 
-  private listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): FileSystemListResponse {
+  private async listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): Promise<FileSystemListResponse> {
     const normalizedPath = this.normalizeRelativePath(relativePath)
     const absolutePath = this.toRestrictedAbsolute(normalizedPath)
-    const entries = this.readDirectoryEntries(absolutePath, {
+    const entries = await this.readDirectoryEntries(absolutePath, {
       includeFiles,
       formatPath: (entryName) => this.buildRelativePath(normalizedPath, entryName),
       formatAbsolutePath: (entryName) => this.resolveRestrictedAbsoluteChild(normalizedPath, entryName),
@@ -144,14 +147,14 @@ export class FileSystemBrowser {
     return { entries, metadata }
   }
 
-  private listUnrestricted(targetPath: string | undefined, includeFiles: boolean): FileSystemListResponse {
+  private async listUnrestricted(targetPath: string | undefined, includeFiles: boolean): Promise<FileSystemListResponse> {
     const resolvedPath = this.resolveUnrestrictedPath(targetPath)
 
     if (this.isWindows && resolvedPath === WINDOWS_DRIVES_ROOT) {
       return this.listWindowsDrives()
     }
 
-    const entries = this.readDirectoryEntries(resolvedPath, {
+    const entries = await this.readDirectoryEntries(resolvedPath, {
       includeFiles,
       formatPath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
       formatAbsolutePath: (entryName) => this.resolveAbsoluteChild(resolvedPath, entryName),
@@ -172,7 +175,7 @@ export class FileSystemBrowser {
     return { entries, metadata }
   }
 
-  private listWindowsDrives(): FileSystemListResponse {
+  private async listWindowsDrives(): Promise<FileSystemListResponse> {
     if (!this.isWindows) {
       throw new Error("Drive listing is only supported on Windows hosts")
     }
@@ -181,14 +184,13 @@ export class FileSystemBrowser {
     for (const letter of WINDOWS_DRIVE_LETTERS) {
       const drivePath = `${letter}:\\`
       try {
-        if (fs.existsSync(drivePath)) {
-          entries.push({
-            name: `${letter}:`,
-            path: drivePath,
-            absolutePath: drivePath,
-            type: "directory",
-          })
-        }
+        await fs.promises.access(drivePath)
+        entries.push({
+          name: `${letter}:`,
+          path: drivePath,
+          absolutePath: drivePath,
+          type: "directory",
+        })
       } catch {
         // Ignore inaccessible drives
       }
@@ -240,27 +242,23 @@ export class FileSystemBrowser {
     return name
   }
 
-  private assertDirectoryExists(directory: string) {
-    if (!fs.existsSync(directory)) {
-      throw new Error(`Directory does not exist: ${directory}`)
-    }
-    const stats = fs.statSync(directory)
+  private async assertDirectoryExists(directory: string) {
+    const stats = await fs.promises.stat(directory)
     if (!stats.isDirectory()) {
       throw new Error(`Path is not a directory: ${directory}`)
     }
   }
 
-  private readDirectoryEntries(directory: string, options: DirectoryReadOptions): FileSystemEntry[] {
-    const dirents = fs.readdirSync(directory, { withFileTypes: true })
+  private async readDirectoryEntries(directory: string, options: DirectoryReadOptions): Promise<FileSystemEntry[]> {
+    const dirents = await fs.promises.readdir(directory, { withFileTypes: true })
     const results: FileSystemEntry[] = []
 
     for (const entry of dirents) {
       const absoluteEntryPath = path.join(directory, entry.name)
       let stats: fs.Stats
       try {
-        // Use fs.statSync (not Dirent.isDirectory) so symlinks to directories
-        // are treated as directories in directory-only listings.
-        stats = fs.statSync(absoluteEntryPath)
+        // Follow symlinks so linked directories remain visible in folder listings.
+        stats = await fs.promises.stat(absoluteEntryPath)
       } catch {
         // Skip entries we cannot stat (insufficient permissions, etc.)
         continue

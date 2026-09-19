@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "चर हटाउनुहोस्",
   "envEditor.actions.add.title": "चर थप्नुहोस्",
   "envEditor.empty": "कुनै वातावरण चरहरू कन्फिगर गरिएको छैन।",
-  "envEditor.help": "यी चरहरू उदाहरण सुरु गर्दा OpenCode वातावरणमा उपलब्ध हुनेछन्।",
+  "envEditor.help": "प्रत्येक प्रम्प्ट वा सत्र आदेशअघि CodeNomad ले यस प्रोफाइलका चरहरू कुराकानीको स्थानीय शेल वातावरणमा लागू गर्छ। परिवर्तनहरू अर्को पठाइमा लागू हुन्छन्। रोकिएको OpenCode सेवा सुरु गर्दा पनि यी चरहरू पठाइन्छन्; चलिरहेको सेवा पुनः सुरु हुँदैन।",
+  "envEditor.applyFailed": "प्रोफाइलको वातावरण लागू गर्न सकिएन। केही पनि पठाइएन। चरहरू र OpenCode संस्करण जाँचेर फेरि प्रयास गर्नुहोस्।",
 
   "contextUsagePanel.headings.tokens": "टोकनहरू",
   "contextUsagePanel.headings.context": "सन्दर्भ (Context)",

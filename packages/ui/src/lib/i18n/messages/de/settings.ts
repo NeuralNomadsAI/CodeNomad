@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "Variable entfernen",
   "envEditor.actions.add.title": "Variable hinzufügen",
   "envEditor.empty": "Keine Umgebungsvariablen konfiguriert. Fügen Sie oben Variablen hinzu, um die OpenCode-Umgebung anzupassen.",
-  "envEditor.help": "Diese Variablen sind in der OpenCode-Umgebung beim Starten von Instanzen verfügbar.",
+  "envEditor.help": "Vor jedem Prompt oder Sitzungsbefehl wendet CodeNomad die Profilvariablen auf die lokale Shell-Umgebung der Unterhaltung an. Änderungen gelten ab dem nächsten Senden. Sie werden auch beim Start eines gestoppten OpenCode-Dienstes übergeben; ein laufender Dienst wird nicht neu gestartet.",
+  "envEditor.applyFailed": "Die Profilumgebung konnte nicht angewendet werden. Es wurde nichts gesendet. Prüfen Sie die Variablen und Ihre OpenCode-Version und versuchen Sie es erneut.",
 
   "contextUsagePanel.headings.tokens": "Token",
   "contextUsagePanel.headings.context": "Kontext",

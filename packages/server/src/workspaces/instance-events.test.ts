@@ -19,8 +19,13 @@ function deferred<T>() {
 
 function waitFor(check: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for event")), 2000)
+    let expired = false
+    const timeout = setTimeout(() => {
+      expired = true
+      reject(new Error("Timed out waiting for event"))
+    }, 2000)
     const poll = () => {
+      if (expired) return
       if (check()) {
         clearTimeout(timeout)
         resolve()
@@ -671,6 +676,35 @@ describe("InstanceEventBridge", () => {
       assert.equal(sessionGets(), 1)
       assert.equal(received[0].instanceId, "b")
       assert.equal(received[0].event.data.form.sessionID, "owned")
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("scopes typed plugin events to the owner of their required native location", async () => {
+    const location = { directory: "/repo-b", workspaceID: "workspace-b" }
+    const events = [{
+      id: "rpc-event",
+      created: 1,
+      type: "rpc.example.updated",
+      location,
+      data: { itemID: "item" },
+    }] as OpenCodeEvent[]
+    const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b", workspaceID: "workspace-b" }]
+    const { manager, sessionGets } = locationlessManager(events, {}, workspaces)
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(event)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1)
+      assert.equal(sessionGets(), 0)
+      assert.equal(received[0].instanceId, "b")
+      assert.equal(received[0].event.type, "rpc.example.updated")
     } finally {
       bridge.shutdown()
     }

@@ -28,6 +28,7 @@ const GLOBAL_EVENT_TYPES = new Set([
   "server.connected",
   "skill.updated",
   "websearch.updated",
+  "worktree.updated",
 ])
 
 interface InstanceEventBridgeOptions {
@@ -107,6 +108,10 @@ export class InstanceEventBridge {
   }
 
   private async publishEvent(event: OpenCodeEvent) {
+    if (event.type === "worktree.updated") {
+      this.options.workspaceManager.invalidateWorktrees()
+      this.locationOwners.clear()
+    }
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
     const shellId = this.shellId(event)

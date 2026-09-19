@@ -34,6 +34,12 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
   })
 }
 
+export function configureBrowserPermissionHandlers(targetSession: Session) {
+  targetSession.setPermissionCheckHandler(() => false)
+  targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  targetSession.setDevicePermissionHandler(() => false)
+}
+
 export async function requestMicrophoneAccess(): Promise<boolean> {
   if (!isMac) {
     return true

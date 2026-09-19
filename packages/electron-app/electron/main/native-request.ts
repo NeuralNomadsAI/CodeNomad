@@ -34,6 +34,9 @@ export async function dispatchNativeRequest(
   handler: (method: string, params: unknown, deadline: number) => Promise<unknown>,
   isCurrent: () => boolean,
 ): Promise<void> {
+  // Fence side effects as well as responses. Buffered stdout may arrive after
+  // shutdown starts, while the old backend is still alive and its pipe writable.
+  if (!isCurrent()) return
   let response: Record<string, unknown>
   try {
     if (Date.now() >= request.deadline) throw new Error("Native request expired before execution")
