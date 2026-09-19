@@ -14,7 +14,7 @@
 - Model workspaces with native `LocationRef`/directories in `packages/server/src/workspaces/manager.ts`.
 - Never spawn or stop OpenCode per workspace or add general plugin installation/packaging. The narrow integrations are the bundled `codenomad.automation` plugin and the bundled session-pruning RPC under `src/opencode/session-pruning/`. Bundled definitions follow backend presence through native V2 discovery; execution still validates the invoking session's current location. Tool availability must not depend on the source checkout or Developer Mode.
 - Explicit Stop Workspace evicts the location; ordinary UI close never calls workspace deletion. WSL requires localhost forwarding and no cross-namespace PID operations.
-- Leave global service state/database ownership to OpenCode. Pass allowed environment only when starting a missing daemon; leave an existing daemon unchanged and ignore `OPENCODE_DB`/`XDG_STATE_HOME`.
+- Leave global service state/database ownership to OpenCode. Pass startup environment when starting a missing daemon; leave an existing daemon unchanged and ignore `OPENCODE_DB`/`XDG_STATE_HOME`. Apply the profile's complete execution-host environment via `session.environment` before each authorized session prompt/command/shell send; see `dev-docs/SESSION_ENVIRONMENT.md`.
 
 ## Trust Boundaries
 
