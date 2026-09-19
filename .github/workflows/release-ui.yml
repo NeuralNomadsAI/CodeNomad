@@ -13,9 +13,6 @@ on:
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: 20
-
 jobs:
   release-ui:
     # Automated via reusable call (main releases); manual runs allowed on dev/main.
@@ -30,7 +27,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies

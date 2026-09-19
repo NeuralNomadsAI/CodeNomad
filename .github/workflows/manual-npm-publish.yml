@@ -46,7 +46,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      NODE_VERSION: 22
       PUBLISH_NPM_VERSION: 11.5.1
     steps:
       - name: Checkout
@@ -57,7 +56,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           registry-url: https://registry.npmjs.org
 
       - name: Prepare pinned npm CLI
