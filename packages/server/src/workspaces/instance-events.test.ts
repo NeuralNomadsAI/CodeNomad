@@ -93,12 +93,14 @@ describe("InstanceEventBridge", () => {
     manager.ownsLocation = async (...args) => { checks++; return owns(...args) }
     const bus = new EventBus()
     const received: string[] = []
-    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.instanceId) })
+    bus.on("instance.event", event => {
+      if (event.event.type === "session.text.delta") received.push(`${event.instanceId}:${event.event.data.delta}`)
+    })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
       await waitFor(() => received.length === events.length)
-      assert.deepEqual(received, ["a", "b", "a", "b", "b", "b"])
+      assert.deepEqual([...received].sort(), ["a:one", "b:two", "a:cached one", "b:cached two", "b:resolved two", "b:cached resolved two"].sort())
       assert.equal(checks, 4, "one lookup per full location and logical workspace")
       assert.equal(sessionGets(), 1)
     } finally { bridge.shutdown() }
@@ -234,6 +236,7 @@ describe("InstanceEventBridge", () => {
   })
 
   it("clears routing caches before reconnecting", async () => {
+    const firstDelivered = deferred<void>()
     let subscriptions = 0
     let ownershipChecks = 0
     const event = { type: "permission.asked", location: { directory: "/repo-a" }, data: { id: "p1" } } as OpenCodeEvent
@@ -246,6 +249,7 @@ describe("InstanceEventBridge", () => {
         return (async function* () {
           yield serverConnected()
           yield event
+          if (current === 1) await firstDelivered.promise
           if (current > 1) await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
         })()
       },
@@ -253,7 +257,10 @@ describe("InstanceEventBridge", () => {
     const bus = new EventBus()
     const received: unknown[] = []
     bus.on("instance.event", (value) => {
-      if (value.event.type !== "server.connected") received.push(value)
+      if (value.event.type !== "server.connected") {
+        received.push(value)
+        firstDelivered.resolve()
+      }
     })
     const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
     try {
@@ -397,7 +404,7 @@ describe("InstanceEventBridge", () => {
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 2)
-      assert.deepEqual(received, ["failed", "owner"])
+      assert.deepEqual(received, ["owner", "failed"], "the successful recipient must not wait for another recipient's retry")
       assert.equal(failedOwnerChecks, 2)
     } finally {
       bridge.shutdown()
@@ -411,13 +418,14 @@ describe("InstanceEventBridge", () => {
     const manager = {
       list: () => workspaces,
       ownsDirectory: async (workspaceId: string) => {
-        if (workspaceId === "owner") return true
+        if (workspaceId !== "owner") return false
         if (++checks === 1) throw new Error("temporary lookup failure")
         return retry.promise
       },
       subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
         yield serverConnected()
         yield { type: "permission.asked", location: { directory: "/repo" }, data: { id: "p1" } } as OpenCodeEvent
+        await retry.promise
         yield { id: "model-update", created: 1, type: "model.updated", data: {} } satisfies OpenCodeEvent
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
       })(),
@@ -433,7 +441,8 @@ describe("InstanceEventBridge", () => {
       bus.publish({ type: "workspace.started", workspace: workspaces[0] as any })
       await waitFor(() => checks === 2)
       workspaces = [workspaces[1]]
-      retry.resolve(false)
+      bus.publish({ type: "workspace.stopped", workspaceId: "owner" } as any)
+      retry.resolve(true)
       await waitFor(() => received.length === 1)
       assert.equal(received[0].event.type, "model.updated")
       assert.equal(received[0].instanceId, "flaky")
