@@ -27,6 +27,7 @@ where their authority, lifetime or runtime differs.
 | Git changes | Filesystem events debounce for 100 ms; one passive refresh plus a pending follow-up; hidden tab marked stale; request versions protect status/diff. Server shares concurrent status requests, not completed results. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
 | Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI requests coalesced. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |
 | Worktree authority | Validated reads await stale-inventory revalidation; family transactions force scans. Ownership misses can bypass a warm inventory once per directory-cache lifetime. Create/remove requires a validated next display read. | server `workspaces/worktree-directory.ts`, `manager.ts` |
+| Native event relay | Consume the shared SDK stream before slow I/O; resolve locations FIFO per session/PTY/Shell, then deliver FIFO per entity and recipient. Ownership promises/2 s results are shared by recipient and full native location; another recipient never delays successful delivery. | server `workspaces/instance-events.ts`, `instance-event-queue.ts` |
 | Render cache | Explicit versioned values scoped to instance/session; no network scheduler or TTL policy. | UI `lib/global-cache.ts` |
 | Background HTTP reads | Worktree display, project/status maps and pending-request scans share two browser request slots across instances. Queued scans observe cancellation; per-request timeouts start at dispatch. Session/message and composer catalogue reads stay independent. | UI `lib/background-read-queue.ts`, `lib/sdk-manager.ts`, `stores/instances.ts`, `stores/worktrees.ts` |
 | Virtualized lists | Session list, transcript and timeline use `virtua/solid`; virtualization limits rendered rows, not network refreshes. | UI `session-list.tsx`, `virtual-follow-list.tsx`, `message-timeline.tsx` |
@@ -37,9 +38,28 @@ native status. Continuous activity can sustain repeated full calculations and
 selected-diff reads. This is not a completed-result cache.
 
 The worktree cache is in memory. It does not reduce the first native inventory scan,
-the cost of mandatory authoritative scans, or all latency in the serial event relay.
+or the cost of mandatory authoritative scans. The event relay isolates these waits
+by entity and recipient; it never substitutes stale display data for authorization.
 An isolated native fixture covers warm-cache create/remove visibility; browser
 fixtures cover menu updates, focus, old responses and refresh bursts.
+
+### Event relay ordering and recovery
+
+- Ordering is per native session (including move/delete), PTY or Shell and recipient,
+  not a global order across unrelated sessions. Other scoped events retain FIFO for
+  their complete native location; global notifications have their own lane.
+- Worktree invalidation happens at ingestion and fences pending ownership checks.
+  Local inventory changes also invalidate routing ownership. Stopped/reopened
+  workspace incarnations and disconnected stream generations cannot publish late work.
+- Budgets are 2,048 retained jobs, 32 MiB of conservatively counted serialized event
+  payloads, and 60 s per routing job including its queue wait. A breach fails that subscriber, clears queued
+  work and emits the normal error/reconnect statuses for authoritative UI recovery.
+  Never silently discard an individual delta or restart the shared daemon.
+- Rate-limited slow-routing logs separate upstream event age, location resolution,
+  recipient-queue wait and ownership time. They contain event type/recipient metadata,
+  not message or tool contents.
+- The isolated native location fixture holds one recipient's ownership check while
+  testing ordered delivery to another and a second subscriber on the same SDK client.
 
 ## Initial session hydration
 
