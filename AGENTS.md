@@ -79,6 +79,7 @@ Behavior for agents:
 - Use the `write` tool only when creating new files from scratch.
 - Browser rendering regressions live in `packages/ui/tests/browser/`, with deterministic HTTP fixtures beside them in `fixtures/`. Exercise the real Solid components and native event dispatcher rather than reimplementing rendering logic.
 - Transcript rows retain pointer hit testing during virtualizer scrolling (`styles/messaging/virtual-follow-list.css`), so nested code/tool scrollers and message controls receive gestures at their visible target.
+- Keep the global scrollbar-width default at zero specificity (`:where(...)` in `src/index.css`) so component visibility rules win. Only the timeline rail uses `none`; the message transcript uses the shared thin scrollbar and nested code/tool outputs retain their own scrollbars. Validate with the full app stylesheet loaded.
 - Run them with `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`. `CODENOMAD_BROWSER_PATH` optionally selects an existing Chromium executable; it does not target the installed application or user sessions.
 
 ## V2 Runtime Launch
