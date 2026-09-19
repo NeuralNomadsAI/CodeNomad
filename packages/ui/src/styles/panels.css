@@ -8,4 +8,8 @@
 @import "./components/session-tree.css";
 @import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
+@import "./panels/mission-control.css";
+@import "./panels/mission-overview.css";
+@import "./panels/mission-route.css";
+@import "./panels/mission-mesh.css";
 @import "./panels/control-hover.css";

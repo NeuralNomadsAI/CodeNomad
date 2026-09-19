@@ -50,7 +50,7 @@ shared daemon is never stopped by this lifecycle.
 - Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
 - Inherit native durable JSON `SessionMetadata` directly from `SessionInfo`. Do not widen it to arbitrary `unknown` values or maintain a parallel CodeNomad-only metadata contract.
 - Read location-scoped native catalogs and refresh on `plugin.updated` and resource-specific updates. Stable 2.0.4 has no activation-wait endpoint.
-- Keep the narrow project-local `codenomad.automation` exception on the V2 `setup` and `tool.transform` contract; it remains active under `beta-19059`.
+- Keep the narrow project-local `codenomad.automation` and `codenomad.missions` definitions for developer feedback and native root-session coordination, alongside the reviewed bundled session-pruning RPC. None restores the removed V1 plugin runtime or installs a global shim.
 
 ### Beta 18866 Contract Review (Historical)
 
@@ -60,7 +60,7 @@ The `beta-18414` to `beta-18866` review found these additive client surfaces:
 | --- | --- | --- |
 | `plugin.check` | Deferred candidate for a future plugin inventory UI. | It is read-like and location-scoped, but CodeNomad currently has no plugin-management workflow. |
 | `plugin.update` | Keep blocked. | It installs or replaces executable plugin code and requires an explicit trusted update flow, confirmation, and mutation fencing. |
-| `rpc.call` and typed plugin RPC/events | Keep the generic route blocked; permit only reviewed RPC definitions through a constrained broker if a concrete integration needs them. | A blanket RPC proxy would bypass the method-specific allowlist. The existing Developer Mode bridge has different process and authentication boundaries and is not automatically replaced by plugin RPC. |
+| `rpc.call` and typed plugin RPC/events | Keep the generic route blocked. The only reviewed browser-facing broker is the location-owned `codenomad.missions.snapshot`; mission events are volatile invalidations. | A blanket RPC proxy would bypass the method-specific allowlist. The existing Developer Mode bridge has different process and authentication boundaries and is not replaced by plugin RPC. |
 | `experimental.persistentPty.read` | Keep blocked. | CodeNomad uses native Shell resources for background output and has no owned persistent-session-terminal lifecycle. |
 | `vcs.base` and diff base selection | Deferred read-only candidate. | The current Git Changes UI displays working-tree and index changes and does not yet offer base-branch comparison. |
 | `Service.stop({ pty })` handoff/clear behavior | Do not adopt. | CodeNomad does not own or stop the shared OpenCode service. |

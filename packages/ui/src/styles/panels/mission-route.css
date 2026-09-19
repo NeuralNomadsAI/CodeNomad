@@ -1,0 +1,129 @@
+.mission-route-list {
+  position: relative;
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding-block: 0;
+  padding-inline-start: var(--space-lg);
+  list-style: none;
+}
+
+.mission-route-list::before {
+  position: absolute;
+  inset-block: var(--space-sm);
+  inset-inline-start: 5px;
+  width: 1px;
+  background: var(--border-strong);
+  content: "";
+}
+
+.mission-route-task {
+  position: relative;
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-base);
+}
+
+.mission-route-node {
+  position: absolute;
+  inset-block-start: 14px;
+  inset-inline-start: calc(-1 * var(--space-lg) + 1px);
+  width: 9px;
+  height: 9px;
+  background: var(--surface-base);
+  border: 2px solid var(--text-muted);
+}
+
+.mission-route-task[data-status="ready"] .mission-route-node { border-color: var(--accent-primary); }
+.mission-route-task[data-status="dispatching"] .mission-route-node,
+.mission-route-task[data-status="queued"] .mission-route-node { background: var(--accent-primary); border-color: var(--accent-primary); }
+.mission-route-task[data-status="completed"] .mission-route-node { background: var(--status-success); border-color: var(--status-success); }
+.mission-route-task[data-status="needs-input"] .mission-route-node { background: var(--status-warning); border-color: var(--status-warning); }
+.mission-route-task[data-status="failed"] .mission-route-node { background: var(--status-error); border-color: var(--status-error); }
+
+.mission-route-content { min-width: 0; }
+
+.mission-route-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.mission-route-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-route-heading code,
+.mission-report summary code {
+  color: var(--accent-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+.mission-route-heading strong {
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-task-status {
+  flex: 0 0 auto;
+  padding: 1px var(--space-xs);
+  color: var(--text-muted);
+  background: var(--surface-control);
+  border: 1px solid var(--border-base);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.mission-route-task[data-status="ready"] .mission-task-status { color: var(--accent-primary); }
+.mission-route-task[data-status="completed"] .mission-task-status { color: var(--status-success); }
+.mission-route-task[data-status="needs-input"] .mission-task-status { color: var(--status-warning); }
+.mission-route-task[data-status="failed"] .mission-task-status { color: var(--status-error); }
+
+.mission-route-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.mission-route-meta span + span::before {
+  margin-inline-end: var(--space-sm);
+  color: var(--border-strong);
+  content: "/";
+}
+
+.mission-inline-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: var(--space-sm);
+  padding: 2px var(--space-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+}
+
+.mission-inline-session:hover,
+.mission-inline-session-active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.mission-inline-session:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}

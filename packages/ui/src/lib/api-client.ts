@@ -10,6 +10,7 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  MissionListResponse,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
@@ -505,6 +506,9 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
+  fetchMissions(instanceId: string): Promise<MissionListResponse> {
+    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -559,4 +563,4 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   return `${url.pathname}${url.search}`
 }
 
-export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }
+export type { MissionListResponse, WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }
