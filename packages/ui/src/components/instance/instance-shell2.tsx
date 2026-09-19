@@ -19,7 +19,8 @@ import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
-import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
+import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette } from "../../stores/command-palette"
+import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
@@ -85,7 +86,6 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
-const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const MIN_SESSION_CENTER_WIDTH = 480
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
@@ -607,17 +607,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   ) : renderPreviewToggleButton()
 
   const handleCommandPaletteClick = () => {
-    showCommandPalette(props.instance.id)
+    toggleCommandPalette(props.instance.id)
   }
 
   const handleChatSearchClick = () => {
-    if (typeof window === "undefined") return
-    window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
+    const id = activeSessionIdForInstance()
+    if (id && id !== "info") setSessionSearchOpen(props.instance.id, id, !isSessionSearchOpen(props.instance.id, id))
   }
+  const searchOpen = () => isSessionSearchOpen(props.instance.id, activeSessionIdForInstance() ?? "")
+  const searchWindowId = () => sessionSearchWindowId(props.instance.id, activeSessionIdForInstance() ?? "")
+  const paletteWindowId = () => `command-palette-${props.instance.id}`
 
   const headerActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = [{
       key: "commands",
+      checked: paletteOpen(),
       label: t("instanceShell.commandPalette.openAriaLabel"),
       icon: <CommandIcon class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleCommandPaletteClick,
@@ -626,6 +630,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     items.push(
       {
         key: "search",
+        checked: searchOpen(),
         label: t("instanceShell.chatSearch.openAriaLabel"),
         icon: <Search class="w-4 h-4" aria-hidden="true" />,
         onSelect: handleChatSearchClick,
@@ -645,6 +650,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
+  createEffect(() => { if (props.isActiveInstance === false) hideCommandPalette(props.instance.id) })
 
   const keyboardShortcuts = createMemo(() =>
     [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
@@ -1054,6 +1060,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <IconButton
                           color="inherit"
                           onClick={handleCommandPaletteClick}
+                          class="icon-toggle"
+                          aria-expanded={paletteOpen()}
+                          aria-controls={paletteWindowId()}
+                          aria-haspopup="dialog"
                           aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                           title={t("instanceShell.commandPalette.openAriaLabel")}
                           size="small"
@@ -1064,6 +1074,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           <IconButton
                             color="inherit"
                             onClick={handleChatSearchClick}
+                            class="icon-toggle"
+                            aria-expanded={searchOpen()}
+                            aria-controls={searchWindowId()}
+                            aria-haspopup="dialog"
                             aria-label={t("instanceShell.chatSearch.openAriaLabel")}
                             title={t("instanceShell.chatSearch.openAriaLabel")}
                             size="small"
@@ -1263,6 +1277,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </div>
 
       <CommandPalette
+        id={paletteWindowId()}
         open={paletteOpen()}
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}

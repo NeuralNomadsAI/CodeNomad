@@ -295,7 +295,7 @@
 .message-search-popover {
   position: absolute;
   top: 0.75rem;
-  inset-inline: 50% auto;
+  left: 50%;
   transform: translateX(-50%);
   z-index: 15;
   width: min(38rem, calc(100vw - 2rem));

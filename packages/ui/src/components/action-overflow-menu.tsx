@@ -22,6 +22,7 @@ interface ActionOverflowMenuProps {
 }
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
+  let selectedAction: ActionOverflowMenuItem["onSelect"] | undefined
   const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
   const enabledItems = () => props.items.filter((item) => !item.disabled)
   const hasItems = () => props.items.length >= (props.minItems ?? 1)
@@ -50,7 +51,13 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="action-overflow-content">
+          <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
+            // Kobalte restores the trigger after this callback. Launch selected
+            // actions afterwards so a newly opened window keeps its autofocus.
+            const action = selectedAction
+            selectedAction = undefined
+            if (action) queueMicrotask(() => { void action() })
+          }}>
             <For each={props.items}>
               {(item) => (
                 <DropdownMenu.Item
@@ -72,7 +79,7 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   }}
                   onSelect={() => {
                     clearHoveredItem()
-                    void item.onSelect()
+                    selectedAction = item.onSelect
                   }}
                 >
                   <Show when={item.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>
