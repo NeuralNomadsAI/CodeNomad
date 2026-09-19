@@ -159,7 +159,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
