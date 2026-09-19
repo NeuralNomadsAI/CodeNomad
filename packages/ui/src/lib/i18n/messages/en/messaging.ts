@@ -114,7 +114,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "Revert",
   "messageItem.actions.revertTitle": "Undo changes up to here (deletes messages)",
   "messageItem.actions.fork": "Fork",
-  "messageItem.actions.forkTitle": "Fork from this message",
+  "messageItem.actions.forkTitle": "Fork after this message",
   "messageItem.actions.copy": "Copy",
   "messageItem.actions.copyTitle": "Copy message",
   "messageItem.actions.copied": "Copied!",

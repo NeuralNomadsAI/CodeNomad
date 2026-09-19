@@ -116,7 +116,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "回退",
   "messageItem.actions.revertTitle": "撤销到此处的更改（会删除消息）",
   "messageItem.actions.fork": "分叉",
-  "messageItem.actions.forkTitle": "从这条消息分叉",
+  "messageItem.actions.forkTitle": "在这条消息之后分叉",
   "messageItem.actions.copy": "复制",
   "messageItem.actions.copyTitle": "复制消息",
   "messageItem.actions.copied": "已复制！",
