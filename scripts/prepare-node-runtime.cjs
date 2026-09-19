@@ -4,7 +4,12 @@ const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
 
-const MANAGED_NODE_VERSION = "v22.22.2"
+// Keep packaged runtimes and CI on the same exact LTS release.
+const nodeVersion = fs.readFileSync(path.join(__dirname, "..", ".node-version"), "utf8").trim()
+if (!/^\d+\.\d+\.\d+$/.test(nodeVersion)) {
+  throw new Error(".node-version must pin an exact Node.js release")
+}
+const MANAGED_NODE_VERSION = `v${nodeVersion}`
 
 const ARTIFACTS = {
   "darwin-x64": { archive: `node-${MANAGED_NODE_VERSION}-darwin-x64.tar.gz`, root: `node-${MANAGED_NODE_VERSION}-darwin-x64`, binary: path.join("bin", "node") },
