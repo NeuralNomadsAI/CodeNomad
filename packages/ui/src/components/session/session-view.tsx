@@ -21,7 +21,7 @@ import { useI18n } from "../../lib/i18n"
 import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
-import { closeSessionPreview, getSessionPreview, showSessionChat } from "../../stores/session-previews"
+import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
@@ -650,8 +650,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         >
           <SessionPreviewView
             preview={preview()!}
-            onBackToChat={() => showSessionChat(props.instanceFolder)}
-            onClose={() => void closeSessionPreview(props.instanceFolder)}
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
