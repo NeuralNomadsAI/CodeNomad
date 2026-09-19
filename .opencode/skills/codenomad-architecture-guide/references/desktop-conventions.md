@@ -33,7 +33,7 @@ The backend delegates only the official `service start` command through its priv
 - Tauri adapter: `packages/ui/src/lib/native/tauri/functions.ts`
 - Desktop file drop: `packages/ui/src/lib/native/desktop-file-drop.ts`
 - Client state: `packages/ui/src/lib/native/client-state.ts`
-- Remote windows: `packages/ui/src/lib/native/remote-window.ts`
+- Remote Control lifecycle: `packages/server/src/remote-control/manager.ts`
 - Runtime detection: `packages/ui/src/lib/runtime-env.ts`
 
 Use these abstractions instead of importing host APIs into feature components.

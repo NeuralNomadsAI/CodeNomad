@@ -49,7 +49,11 @@ function validateServerProductionLock(lock) {
     visited.add(packagePath)
     const pkg = packages[packagePath]
     if (!pkg) throw new Error(`Root package-lock.json is missing ${packagePath}`)
-    if (packagePath !== "packages/server" && (!pkg.version || !pkg.resolved || !pkg.integrity)) {
+    if (pkg.link && typeof pkg.resolved === "string") {
+      pending.push(pkg.resolved)
+      continue
+    }
+    if (!packagePath.startsWith("packages/") && (!pkg.version || !pkg.resolved || !pkg.integrity)) {
       throw new Error(`Root package-lock.json does not integrity-pin ${packagePath}`)
     }
     const dependencies = { ...pkg.dependencies, ...pkg.optionalDependencies }
@@ -62,11 +66,25 @@ function validateServerProductionLock(lock) {
   return visited
 }
 
+function stagePrebuiltWorkspacePackage(source, destination) {
+  const sourceManifest = path.join(source, "package.json")
+  const sourceDist = path.join(source, "dist")
+  if (!fs.existsSync(sourceDist)) {
+    throw new Error(`Missing prebuilt workspace artifact: ${sourceDist}`)
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(sourceManifest, "utf8"))
+  delete manifest.scripts
+  fs.mkdirSync(destination, { recursive: true })
+  fs.writeFileSync(path.join(destination, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
+  fs.cpSync(sourceDist, path.join(destination, "dist"), { recursive: true })
+}
+
 function stagePackagedServer(options) {
   const { workspaceRoot, serverRoot, log = () => {}, env = process.env } = options
   const npmTarget = resolveNpmTarget(options.target || env.CODENOMAD_NODE_TARGET)
   const lockPath = path.join(workspaceRoot, "package-lock.json")
-  validateServerProductionLock(JSON.parse(fs.readFileSync(lockPath, "utf8")))
+  const productionClosure = validateServerProductionLock(JSON.parse(fs.readFileSync(lockPath, "utf8")))
 
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-server-"))
   const stagedServerRoot = path.join(stagingRoot, "packages", "server")
@@ -75,6 +93,12 @@ function stagePackagedServer(options) {
     fs.copyFileSync(path.join(workspaceRoot, "package.json"), path.join(stagingRoot, "package.json"))
     fs.copyFileSync(lockPath, path.join(stagingRoot, "package-lock.json"))
     fs.copyFileSync(path.join(serverRoot, "package.json"), path.join(stagedServerRoot, "package.json"))
+    for (const packagePath of productionClosure) {
+      if (!packagePath.startsWith("packages/") || packagePath === "packages/server" || packagePath.includes("/node_modules/")) continue
+      const source = path.join(workspaceRoot, packagePath)
+      const destination = path.join(stagingRoot, packagePath)
+      stagePrebuiltWorkspacePackage(source, destination)
+    }
 
     log(`installing production server dependencies from the workspace lock for ${npmTarget.target}`)
     const npmArgs = [
@@ -322,6 +346,7 @@ function pruneKnownServerDependencies(root, log) {
 module.exports = {
   copyPackagedServerResources,
   resolveNpmTarget,
+  stagePrebuiltWorkspacePackage,
   stagePackagedServer,
   validateServerProductionLock,
 }
