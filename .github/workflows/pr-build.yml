@@ -82,6 +82,8 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Build Remote Control protocol for UI checks
+        run: npm run build --workspace @codenomad/remote-control-protocol
       - name: Install browser for native pruning UI checks
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
       - name: Pack and install outside the checkout
