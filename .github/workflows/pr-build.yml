@@ -79,7 +79,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Install browser for native pruning UI checks
@@ -159,7 +159,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
@@ -196,7 +196,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust
@@ -241,7 +241,7 @@ jobs:
         run: npm run build:automation --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs
 
       - name: Test Electron client state
         env:
@@ -372,7 +372,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust
@@ -412,7 +412,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -445,7 +445,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust

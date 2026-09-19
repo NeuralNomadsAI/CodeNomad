@@ -52,9 +52,6 @@ on:
 # Permissions are intentionally omitted here so callers can choose
 # least-privilege (e.g. dev CI uses read-only; releases grant write).
 
-env:
-  NODE_VERSION: 20
-
 jobs:
   build-macos:
     runs-on: macos-15-intel
@@ -71,7 +68,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Set workspace versions
@@ -242,7 +239,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Set workspace versions
@@ -292,7 +289,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Set workspace versions
@@ -426,7 +423,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust (Tauri)
@@ -499,7 +496,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust (Tauri)
@@ -572,7 +569,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust (Tauri)
@@ -649,7 +646,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust (Tauri)
@@ -836,7 +833,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: .node-version
           cache: npm
 
       - name: Setup Rust (Tauri)

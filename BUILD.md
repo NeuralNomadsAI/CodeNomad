@@ -5,8 +5,24 @@ This guide explains how to build distributable binaries for CodeNomad.
 ## Prerequisites
 
 - **Bun** - Package manager and runtime
-- **Node.js** - For electron-builder
+- **Node.js 24 LTS** - Use the exact release pinned in `.node-version` for builds and tests
 - **Electron Builder** - Installed via devDependencies
+
+### Bundled server runtime
+
+Both Tauri and Electron ship a separate Node.js executable for the CodeNomad
+server. `scripts/prepare-node-runtime.cjs` reads the same `.node-version` pin as
+CI, downloads the official target archive, and verifies its SHA-256 before
+packaging. Only the executable is bundled, not npm or Corepack. Updating this
+pin does not update Electron's internal Node/Chromium, WebView2, the system Node
+installation, or the independently managed OpenCode daemon.
+
+For a runtime update, run the server and desktop tests with the pinned Node,
+then rebuild and smoke-test the packaged applications on Windows, macOS, and
+Linux. Check the upstream Node platform requirements before changing the pin;
+Node 24 requires macOS 13.5 or later. Keep both desktop bundle minimum versions
+aligned. Keep the version exact rather than resolving `latest` or `lts/*` at
+build time so release inputs remain reproducible.
 
 ## Quick Start
 
@@ -111,8 +127,8 @@ The Tauri build directory uses Tauri's native Debian filename. CI renames the pa
 
 ### macOS
 
-- **Build on:** macOS 10.13+
-- **Run on:** macOS 10.13+
+- **Build on:** macOS 13.5+ with the required Xcode tools (CI uses macOS 15)
+- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by bundled Node 24)
 - **Code signing:** Optional (recommended for distribution)
 
 ### Windows
