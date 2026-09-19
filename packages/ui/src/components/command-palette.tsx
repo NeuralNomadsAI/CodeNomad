@@ -1,4 +1,4 @@
-import { Component, createSignal, For, Show, createEffect, createMemo } from "solid-js"
+import { Component, createSignal, For, Show, createEffect, createMemo, on } from "solid-js"
 import DismissibleWindow from "./dismissible-window"
 import { resolveResolvable, type Command } from "../lib/commands"
 import Kbd from "./kbd"
@@ -7,6 +7,7 @@ import { useI18n } from "../lib/i18n"
 interface CommandPaletteProps {
   id: string
   open: boolean
+  focusRequest: number
   onClose: () => void
   commands: Command[]
   onExecute: (command: Command) => void
@@ -30,6 +31,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const [query, setQuery] = createSignal("")
   const [selectedCommandId, setSelectedCommandId] = createSignal<string | null>(null)
   const [isPointerSelecting, setIsPointerSelecting] = createSignal(false)
+  let inputRef: HTMLInputElement | undefined
   let listRef: HTMLDivElement | undefined
 
   const categoryOrder = ["Custom Commands", "Instance", "Session", "Agent & Model", "Input & Focus", "System", "Other"] as const
@@ -132,6 +134,10 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       setIsPointerSelecting(false)
     }
   })
+
+  createEffect(on(() => props.focusRequest, () => {
+    if (props.open) inputRef?.focus({ preventScroll: true })
+  }))
  
   createEffect(() => {
     const ordered = orderedCommands()
@@ -162,13 +168,6 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
 
   function handleKeyDown(e: KeyboardEvent) {
     const ordered = orderedCommands()
-
-    if (e.key === "Escape") {
-      e.preventDefault()
-      e.stopPropagation()
-      props.onClose()
-      return
-    }
 
     if (ordered.length === 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
@@ -238,6 +237,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                   />
                 </svg>
                 <input
+                  ref={inputRef}
                   type="text"
                   value={query()}
                   onInput={(e) => {

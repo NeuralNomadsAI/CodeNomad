@@ -19,7 +19,7 @@ import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
-import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette } from "../../stores/command-palette"
+import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
@@ -1279,6 +1279,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <CommandPalette
         id={paletteWindowId()}
         open={paletteOpen()}
+        focusRequest={getCommandPaletteFocusRequest(props.instance.id)}
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}

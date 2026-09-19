@@ -19,6 +19,13 @@ export default function DismissibleWindow(props: {
       id={props.id}
       class={`modal-surface window-shell ${props.class}`}
       onKeyDown={props.onKeyDown}
+      onEscapeKeyDown={event => {
+        // Kobalte invokes this only for the topmost layer. Consume the native
+        // event before unmounting so lower windows and global Stop stay idle.
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        props.onClose()
+      }}
       onInteractOutside={event => event.preventDefault()}
       onCloseAutoFocus={(event) => {
         event.preventDefault()

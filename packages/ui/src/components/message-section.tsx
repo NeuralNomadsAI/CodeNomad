@@ -1324,10 +1324,6 @@ export default function MessageSection(props: MessageSectionProps) {
                             moveSearchMatch(event.shiftKey ? -1 : 1)
                             return
                           }
-                          if (event.key === "Escape") {
-                            event.preventDefault()
-                            closeSearch()
-                          }
                         }}
                       />
                       <span class="message-search-count" aria-live="polite">

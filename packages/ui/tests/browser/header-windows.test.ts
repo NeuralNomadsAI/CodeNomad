@@ -141,3 +141,53 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
     }
   } finally { await page.close() }
 })
+
+test("Escape consumes only the top utility window before the global Stop shortcut", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setWorking())
+    await page.keyboard.press("Control+Shift+p")
+    const palette = page.locator('[role="dialog"][id^="command-palette-"]')
+    await palette.waitFor()
+    await page.keyboard.press("Control+f")
+    const search = page.getByRole("searchbox")
+    await search.waitFor()
+    await page.locator("#outside").click()
+    await page.keyboard.press("Escape")
+    await search.waitFor({ state: "hidden" })
+    assert.equal(await palette.isVisible(), true, "one Escape must not dismiss both layers")
+    await page.keyboard.press("Escape")
+    await palette.waitFor({ state: "hidden" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.escapeStates().includes(true)), false)
+    assert.equal(await page.evaluate(() => (window as any).fixture.interrupts()), 0)
+    // After explicit window dismissal, the usual double-Escape still works.
+    await page.keyboard.press("Escape")
+    assert.equal(await page.evaluate(() => (window as any).fixture.escapeStates().at(-1)), true)
+    await page.keyboard.press("Escape")
+    await page.waitForFunction(() => (window as any).fixture.interrupts() === 1)
+  } finally { await page.close() }
+})
+
+test("repeated palette shortcut refocuses its input without erasing the query or editing the composer", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.keyboard.press("Control+Shift+p")
+    const input = page.locator('[role="dialog"][id^="command-palette-"] input')
+    await input.fill("Fixture")
+    const composer = page.locator("textarea.prompt-input")
+    await composer.fill("Draft to preserve")
+    await page.keyboard.press("Control+Shift+p")
+    await page.waitForFunction(() => document.activeElement?.matches('[id^="command-palette-"] input'))
+    assert.equal(await input.inputValue(), "Fixture")
+    await page.keyboard.press("End")
+    await page.keyboard.type(" command")
+    assert.equal(await input.inputValue(), "Fixture command")
+    assert.equal(await composer.inputValue(), "Draft to preserve")
+  } finally { await page.close() }
+})
