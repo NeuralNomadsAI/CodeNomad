@@ -304,6 +304,7 @@ jobs:
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-pagination.test.ts
+          packages/ui/src/stores/session-fork.test.ts
           packages/ui/src/stores/workspace-session-scope.test.ts
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts

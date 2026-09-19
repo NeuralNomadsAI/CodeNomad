@@ -5,6 +5,7 @@ import {
 } from "../types/session"
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
+import { forkAfterMessage } from "./session-fork"
 import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
@@ -1069,7 +1070,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
 async function forkSession(
   instanceId: string,
   sourceSessionId: string,
-  options?: { messageId?: string },
+  options?: { afterMessageId?: string },
 ): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -1081,11 +1082,12 @@ async function forkSession(
 
   const request = {
     sessionID: sourceSessionId,
-    ...(options?.messageId ? { before: options.messageId } : {}),
   }
 
   log.info(`[HTTP] POST /session.fork for instance ${instanceId}`, request)
-  const info = await client.session.fork(request)
+  const info = options?.afterMessageId
+    ? await forkAfterMessage(client, sourceSessionId, options.afterMessageId, generationCurrent)
+    : await client.session.fork(request)
   if (!generationCurrent()) throw new Error("Session fork was superseded by reconnect")
   const forkedSession = toClientSessionV2(instanceId, info)
 

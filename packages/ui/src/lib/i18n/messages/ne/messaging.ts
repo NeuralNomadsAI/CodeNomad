@@ -114,7 +114,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "फिर्ता",
   "messageItem.actions.revertTitle": "यहाँ सम्मका परिवर्तनहरू फिर्ता लिनुहोस् (सन्देशहरू मेटाउँछ)",
   "messageItem.actions.fork": "फोर्क",
-  "messageItem.actions.forkTitle": "यो सन्देशबाट फोर्क गर्नुहोस्",
+  "messageItem.actions.forkTitle": "यो सन्देशपछि फोर्क गर्नुहोस्",
   "messageItem.actions.copy": "प्रतिलिपि गर्नुहोस्",
   "messageItem.actions.copyTitle": "सन्देश प्रतिलिपि गर्नुहोस्",
   "messageItem.actions.copied": "प्रतिलिपि गरियो!",

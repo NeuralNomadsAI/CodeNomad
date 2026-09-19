@@ -114,7 +114,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "Rückgängig",
   "messageItem.actions.revertTitle": "Änderungen bis hierhin rückgängig machen (löscht Nachrichten)",
   "messageItem.actions.fork": "Abzweigen",
-  "messageItem.actions.forkTitle": "Von dieser Nachricht abzweigen (Fork)",
+  "messageItem.actions.forkTitle": "Nach dieser Nachricht abzweigen (Fork)",
   "messageItem.actions.copy": "Kopieren",
   "messageItem.actions.copyTitle": "Nachricht kopieren",
   "messageItem.actions.copied": "Kopiert!",

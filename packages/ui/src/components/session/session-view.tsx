@@ -566,15 +566,14 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function handleFork(messageId?: string) {
     if (!messageId) {
-      log.warn("Fork requires a user message id")
+      log.warn("Fork requires a message id")
       return
     }
 
-    const restoredText = getUserMessageText(messageId)
     const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
 
     try {
-      const forkedSession = await forkSession(props.instanceId, props.sessionId, { messageId })
+      const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
 
       renameSession(props.instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
         log.error("Failed to rename forked session", error)
@@ -584,15 +583,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       setActiveSessionFromList(props.instanceId, forkedSession.id)
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
-
-       if (restoredText) {
-         if (promptInputApi) {
-           promptInputApi.setPromptText(restoredText, { focus: true })
-         } else {
-           pendingPromptText = restoredText
-           pendingQueuedPayload = undefined
-         }
-       }
     } catch (error) {
       log.error("Failed to fork session", error)
       showAlertDialog(t("sessionView.alerts.forkFailed.message"), {
