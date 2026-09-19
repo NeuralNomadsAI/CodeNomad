@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
+import os from "node:os"
 import path from "node:path"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { describe, it } from "node:test"
+import { execFileSync } from "node:child_process"
 import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
 import pino from "pino"
 
@@ -120,6 +123,32 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("rejects another clone before scanning the native worktree inventory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-foreign-owner-"))
+    const repo = path.join(root, "repo")
+    const clone = path.join(root, "clone")
+    const linked = path.join(root, "linked")
+    const git = (...args: string[]) => execFileSync("git", args, { stdio: "pipe", windowsHide: true })
+    const { manager } = createHarness()
+    try {
+      git("init", repo)
+      git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+      git("clone", repo, clone)
+      git("-C", repo, "worktree", "add", "-b", "linked", linked)
+      const { workspace } = await manager.create(repo)
+      let scans = 0
+      manager.getWorktrees = async () => {
+        scans += 1
+        return { isGitRepo: true, worktrees: [{ slug: "linked", directory: linked, kind: "worktree" }] }
+      }
+      assert.equal(await manager.ownsDirectory(workspace.id, clone), false)
+      assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }), false)
+      assert.equal(scans, 0)
+      assert.equal(await manager.ownsDirectory(workspace.id, linked), true)
+      assert.equal(scans, 1)
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+  })
+
   it("validates native directory ownership and rejects removed workspace selectors", async () => {
     const service = new ControlledSharedService()
     service.debugLocations = [
@@ -156,6 +185,18 @@ describe("workspace manager shared service lifecycle", () => {
       canonicalWorktreeIdentity("\\\\wsl$\\Ubuntu\\repo\\Foo", "win32"),
       canonicalWorktreeIdentity("\\\\wsl.localhost\\Ubuntu\\repo\\foo", "win32"),
     )
+  })
+
+  it("keeps WSL worktree reservation paths case-sensitive", { skip: process.platform !== "win32" }, async () => {
+    const { manager } = createHarness(new ControlledSharedService(), { platform: "win32" })
+    const releaseUpper = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo")
+    const releaseLower = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\foo")
+    await assert.rejects(
+      () => manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo\\nested"),
+      /already in progress/,
+    )
+    releaseLower()
+    releaseUpper()
   })
 
   it("retains and validates native identity rather than authorizing an arbitrary owned-directory selector", async () => {
@@ -530,6 +571,21 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.evictionCalls.length, 1)
     assert.deepEqual(harness.service.evictionCalls[0]?.location, { directory: process.cwd() })
     assert.equal(harness.service.evictionCalls[0]?.signal, undefined)
+  })
+
+  it("refuses deletion while another workspace occupies the worktree", async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), "codenomad-worktree-owner-"))
+    const worktree = path.join(temp, "worktree")
+    const nested = path.join(worktree, "apps", "web")
+    await mkdir(nested, { recursive: true })
+    const harness = createHarness()
+    try {
+      const { workspace } = await harness.manager.create(nested)
+      await assert.rejects(() => harness.manager.reserveWorktreeDeletion(worktree), /open as another workspace/)
+      await harness.manager.delete(workspace.id)
+    } finally {
+      await rm(temp, { recursive: true, force: true })
+    }
   })
 
   it("evicts a ready location on explicit final deletion without stopping the daemon", async () => {

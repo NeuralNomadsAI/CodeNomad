@@ -15,12 +15,12 @@ describe("FileSystemBrowser", () => {
     }
   })
 
-  it("starts unrestricted browsing from the configured root", () => {
+  it("starts unrestricted browsing from the configured root", async () => {
     const rootDir = createTempRoot()
     fs.mkdirSync(path.join(rootDir, "project"))
 
     const browser = new FileSystemBrowser({ rootDir, unrestricted: true })
-    const listing = browser.browse()
+    const listing = await browser.browse()
 
     assert.equal(listing.metadata.scope, "unrestricted")
     assert.equal(listing.metadata.currentPath, rootDir)
@@ -30,44 +30,44 @@ describe("FileSystemBrowser", () => {
     assert.ok(listing.entries.some((entry) => entry.name === "project" && entry.absolutePath === path.join(rootDir, "project")))
   })
 
-  it("treats dot as the configured unrestricted root", () => {
+  it("treats dot as the configured unrestricted root", async () => {
     const rootDir = createTempRoot()
     const browser = new FileSystemBrowser({ rootDir, unrestricted: true })
 
-    const listing = browser.browse(".")
+    const listing = await browser.browse(".")
 
     assert.equal(listing.metadata.currentPath, rootDir)
     assert.equal(listing.metadata.rootPath, rootDir)
   })
 
-  it("allows unrestricted browsing outside the configured root", () => {
+  it("allows unrestricted browsing outside the configured root", async () => {
     const rootDir = createTempRoot()
     const parentDir = path.dirname(rootDir)
     const browser = new FileSystemBrowser({ rootDir, unrestricted: true })
 
-    const listing = browser.browse(parentDir)
+    const listing = await browser.browse(parentDir)
 
     assert.equal(listing.metadata.currentPath, parentDir)
     assert.equal(listing.metadata.rootPath, rootDir)
     assert.ok(listing.entries.some((entry) => entry.absolutePath === rootDir))
   })
 
-  it("creates folders under the configured unrestricted root by default", () => {
+  it("creates folders under the configured unrestricted root by default", async () => {
     const rootDir = createTempRoot()
     const browser = new FileSystemBrowser({ rootDir, unrestricted: true })
 
-    const created = browser.createFolder(undefined, "created-folder")
+    const created = await browser.createFolder(undefined, "created-folder")
 
     assert.equal(created.path, path.join(rootDir, "created-folder"))
     assert.equal(created.absolutePath, path.join(rootDir, "created-folder"))
     assert.equal(fs.statSync(created.absolutePath).isDirectory(), true)
   })
 
-  it("reports the configured root for the Windows drives pseudo-root", () => {
+  it("reports the configured root for the Windows drives pseudo-root", async () => {
     const rootDir = createTempRoot()
     const browser = new FileSystemBrowser({ rootDir, unrestricted: true, platform: "win32" })
 
-    const listing = browser.browse(WINDOWS_DRIVES_ROOT)
+    const listing = await browser.browse(WINDOWS_DRIVES_ROOT)
 
     assert.equal(listing.metadata.scope, "unrestricted")
     assert.equal(listing.metadata.currentPath, WINDOWS_DRIVES_ROOT)

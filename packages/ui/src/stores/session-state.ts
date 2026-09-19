@@ -790,8 +790,20 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  writeActiveParentSession(instanceId, parentSessionId)
-  writeActiveSession(instanceId, sessionId)
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeActiveSession(instanceId, sessionId)
+  })
+}
+
+// Restore selection identity before HTTP hydration, without starting any
+// session-scoped effects until the native session has actually been resolved.
+function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
+  if (hasAuthoritativeSessionSelection(instanceId)) return
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  })
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
@@ -907,29 +919,13 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   return buildSessionThreads(instanceId, getSessionListIds(instanceId))
 }
 
-function getSessionSearchThreads(instanceId: string): SessionThread[] {
-  const resultIds = getSessionSearchResultIds(instanceId)
-  if (resultIds.length === 0) return []
-
+function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
-
-  const rootIds: string[] = []
-  const childIds = new Set<string>()
-
-  for (const sessionId of resultIds) {
-    const session = instanceSessions.get(sessionId)
-    if (!session) continue
-    if (session.parentId === null) {
-      if (!rootIds.includes(session.id)) rootIds.push(session.id)
-    } else {
-      childIds.add(session.id)
-      const root = getSessionRootFromMap(instanceSessions, session.id)
-      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
-    }
-  }
-
-  return buildSessionThreads(instanceId, rootIds, childIds)
+  return getSessionSearchResultIds(instanceId).flatMap(id => {
+    const session = instanceSessions.get(id)
+    return session ? [session] : []
+  })
 }
 
 function isSessionExpanded(instanceId: string, sessionId: string): boolean {
@@ -1276,6 +1272,7 @@ export {
   clearActiveSession,
   clearActiveParentSession,
   hydrateActiveSessionSelection,
+  seedRestoredSessionSelection,
   hasAuthoritativeSessionSelection,
   clearInstanceSessionSelection,
   getActiveSession,
@@ -1287,7 +1284,7 @@ export {
   getSessionRoot,
   getSessionFamily,
   getSessionThreads,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getVisibleSessionIds,
   expandedSessions,
   isSessionExpanded,

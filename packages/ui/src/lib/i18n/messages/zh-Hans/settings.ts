@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "移除变量",
   "envEditor.actions.add.title": "添加变量",
   "envEditor.empty": "未配置环境变量。在上方添加变量以自定义 OpenCode 环境。",
-  "envEditor.help": "启动实例时，这些变量将在 OpenCode 环境中可用。",
+  "envEditor.help": "每次发送提示或会话命令前，CodeNomad 会将此配置的变量应用于该会话的本地 Shell 环境。更改在下次发送时生效。启动已停止的 OpenCode 服务时也会传入这些变量，但不会重启正在运行的服务。",
+  "envEditor.applyFailed": "无法应用配置环境，未发送任何内容。请检查变量和 OpenCode 版本后重试。",
 
   "contextUsagePanel.headings.tokens": "令牌",
   "contextUsagePanel.headings.context": "上下文",

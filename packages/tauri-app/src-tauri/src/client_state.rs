@@ -328,18 +328,36 @@ impl ClientState {
             if state.preferences == request {
                 return Ok(true);
             }
-            let previous = state.preferences.clone();
+            let previous = (state.preferences.clone(), state.last_preferences.clone());
+            if let Some(request) = &request {
+                state.last_preferences = Some(crate::preferences_window::PreferencesRequest {
+                    section: request.section.clone(),
+                    scroll_top: request.scroll_top,
+                    instance_id: None,
+                    location: None,
+                });
+            }
             state.preferences = request;
             previous
         };
         if let Err(error) = self.write_current_state() {
-            self.state
-                .lock()
-                .map_err(|err| err.to_string())?
-                .preferences = previous;
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            state.preferences = previous.0;
+            state.last_preferences = previous.1;
             return Err(error);
         }
         Ok(true)
+    }
+
+    pub(crate) fn last_preferences(&self) -> Option<crate::preferences_window::PreferencesRequest> {
+        if !self.is_primary() {
+            return None;
+        }
+        self.state.lock().ok().and_then(|state| {
+            (!state.unsupported_future_envelope)
+                .then(|| state.last_preferences.clone())
+                .flatten()
+        })
     }
 
     pub(crate) fn set_active_window(&self, window_id: &str) -> Result<bool, String> {
@@ -890,7 +908,7 @@ impl ClientState {
         if require_claim && !self.renderer_access.is_claimed_for(window_id) {
             return;
         }
-        let Some(window) = app.get_webview_window(window_label) else {
+        let Some(webview) = app.get_webview(window_label) else {
             return;
         };
         let generation = {
@@ -903,7 +921,7 @@ impl ClientState {
             state.0 += 1;
             state.0
         };
-        if let Err(err) = window.emit(
+        if let Err(err) = webview.emit(
             "client-state:navigation-flush-requested",
             RendererFlushRequest { generation },
         ) {

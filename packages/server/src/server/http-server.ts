@@ -32,7 +32,7 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
-import { ServerMeta } from "../api-types"
+import { ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
@@ -422,6 +422,7 @@ export interface InstanceProxyWorkspaceManager {
   getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
+  getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
   ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): ReturnType<WorkspaceManager["ownsLocation"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
@@ -901,12 +902,14 @@ async function proxyWorkspaceRequest(args: {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
-    if (!sessionWorktree) {
-      reply.code(403).send({ error: "Session does not belong to workspace" })
-      return
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
+      if (!sessionWorktree) {
+        reply.code(403).send({ error: "Session does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(sessionWorktree)
     }
-    mutationIdentities.add(sessionWorktree)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
@@ -922,6 +925,29 @@ async function proxyWorkspaceRequest(args: {
 
   try {
     connection?.assertCurrent()
+    if (request.method === "POST" && /^\/api\/session\/[^/]+\/(?:prompt|command|shell)\/?$/.test(pathname)) {
+      const disconnected = new AbortController()
+      const onDisconnect = () => disconnected.abort()
+      reply.raw.once("close", onDisconnect)
+      try {
+        const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(15_000)])
+        if (reply.raw.destroyed || request.raw.aborted) disconnected.abort()
+        signal.throwIfAborted()
+        const variables = await workspaceManager.getSessionEnvironment(workspaceId, signal)
+        signal.throwIfAborted()
+        connection?.assertCurrent()
+        await (await clientForRequest()).session.environment({ sessionID: sessionId!, variables }, { signal })
+        signal.throwIfAborted()
+        connection?.assertCurrent()
+      } catch {
+        // Never log the SDK error: it can contain the complete environment body.
+        releaseMutation?.()
+        logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
+        return reply.code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
+      } finally {
+        reply.raw.off("close", onDisconnect)
+      }
+    }
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
       delete headers[LOCATION_CONTEXT_HEADER]

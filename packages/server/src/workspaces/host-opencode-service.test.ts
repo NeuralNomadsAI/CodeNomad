@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import { HostOpenCodeService, hostOpenCodeServiceIdentity } from "./host-opencode-service"
 import type { OpenCodeCliServiceDependencies, ServiceExecOptions } from "./opencode-cli-service"
 import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../api-types"
+import { runtimeIdentity } from "../opencode/compatibility/runtime"
 
 const url = "http://127.0.0.1:4321"
 
@@ -79,13 +80,70 @@ describe("HostOpenCodeService", () => {
           requests.push(String(input))
           assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:password").toString("base64")}`)
           if (requests.length === 1) return new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 404 })
-          return Response.json({ healthy: true, version: "2.0.3", pid: 123 })
+          return Response.json({ healthy: true, version: "2.0.0", pid: 123 })
         },
       })
       assert.equal((await service[operation]())?.url, url)
       assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
       assert.equal(cancelled, true)
     }
+  })
+
+  it("discovers server.info by route presence for any version on discovery and startup", async () => {
+    for (const operation of ["discover", "ensure"] as const) {
+      for (const version of ["2.0.7", "future-release"]) {
+        const requests: string[] = []
+        let cancelled = 0
+        const service = createService([], {}, {
+          execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }),
+          fetch: async (input, init) => {
+            requests.push(String(input))
+            assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:password").toString("base64")}`)
+            assert.equal(init?.redirect, "error")
+            return String(input).endsWith("/api/info")
+              ? Response.json({ version, pid: 123, urls: [url], paths: { tmp: "/tmp/opencode" } })
+              : new Response(new ReadableStream({ cancel() { cancelled++ } }), { status: 404 })
+          },
+        })
+        const endpoint = await service[operation]()
+        assert.equal(runtimeIdentity(endpoint!)?.discovery, "info")
+        assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+        assert.equal(cancelled, 2)
+      }
+    }
+  })
+
+  it("validates info responses and preserves the final probe deadline", async (context) => {
+    for (const response of [
+      () => new Response(null, { status: 401 }),
+      () => new Response(null, { status: 404 }),
+      () => new Response(null, { status: 503 }),
+      () => new Response("invalid JSON"),
+      () => Response.json({ version: "2.0.7", pid: 123 }),
+      () => Response.json({ version: "2.0.7", pid: -1, urls: [url] }),
+      () => new Response(" ".repeat(64 * 1024 + 1)),
+    ]) {
+      const requests: string[] = []
+      const service = createService([], {}, {
+        fetch: async (input) => {
+          requests.push(String(input))
+          return requests.length < 3 ? new Response(null, { status: 404 }) : response()
+        },
+      })
+      await assert.rejects(service.ensure())
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+    }
+    let now = 1000
+    context.mock.method(Date, "now", () => now)
+    const requests: string[] = []
+    const service = createService([], {}, {
+      fetch: async (input) => {
+        requests.push(String(input))
+        return new Response(new ReadableStream({ cancel() { if (requests.length === 2) now = 1500 } }), { status: 404 })
+      },
+    })
+    await assert.rejects(service.ensure(1500), /timed out/)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
   })
 
   it("does not downgrade on authentication, server, transport or malformed status failures", async () => {

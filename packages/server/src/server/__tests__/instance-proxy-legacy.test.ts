@@ -26,6 +26,7 @@ test("legacy authority precedes translation for Forms, session writes, cursors a
     getSharedServiceEndpoint: async () => { throw new Error("Pinned request must not reacquire endpoint") },
     getSharedServiceConnection: async () => connection,
     getSharedServiceClient: async () => { throw new Error("Pinned request must not reacquire client") },
+    getSessionEnvironment: async () => ({}),
     getInstanceAuthorizationHeader: () => undefined,
     getServiceDirectory: () => "/native",
     getServiceDirectoryForPath: async (_id, directory) => directories.has(directory) ? "/native" : undefined,
@@ -90,6 +91,7 @@ test("the first legacy-context proxy request after reconnect negotiates before a
     get: () => ({ path: "/repo" }) as never,
     getSharedServiceConnection: () => service.acquire(), getSharedServiceEndpoint: async () => endpoint,
     getSharedServiceClient: () => service.client(), getInstanceAuthorizationHeader: () => undefined,
+    getSessionEnvironment: async () => ({}),
     getWorktreeIdentityForPath: async () => "root", ownsDirectory: async () => true, ownsPath: async () => false,
     ownsLocation: async (_id, location) => {
       assert.deepEqual(calls, ["schema"], "contract must be selected before profile-dependent authorization")

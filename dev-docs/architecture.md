@@ -11,7 +11,7 @@ Desktop host -> CodeNomad server -> one shared OpenCode service
                     +------ UI clients through /workspaces/:id/instance/api/*
 ```
 
-There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow project-local Developer Mode adapter is documented in [DEVELOPER_MODE.md](DEVELOPER_MODE.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
+There is no `@opencode-ai/sdk` integration and no legacy `packages/opencode-plugin` package. The narrow bundled `codenomad.automation` plugin is documented in [DEVELOPER_MODE.md](DEVELOPER_MODE.md) and [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md); it does not own the OpenCode daemon or restore the V1 compatibility runtime.
 
 ## Shared Service And Locations
 
@@ -34,7 +34,7 @@ Electron and Tauri run one native singleton process and one CodeNomad backend pe
 
 OpenCode sessions and messages remain shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership, and garbage collection runs after publication while retaining every partition referenced by any window.
 
-Previews use unguessable capabilities for HTTP and WebSocket traffic. Native previews route a token-scoped `.preview.localhost` origin to the pinned target; web clients use the equivalent path route. SideCar/browser frames remain opaque-origin sandboxes without `allow-same-origin`; preview element comments use a source-checked message bridge instead of parent DOM access.
+Previews use unguessable capabilities for HTTP and WebSocket traffic. Electron and Windows Tauri local windows open HTTP(S) pages in hardened native child webviews with isolated storage; other clients use the existing capability-scoped iframe proxy. SideCar/browser iframes remain opaque-origin sandboxes without `allow-same-origin`; preview element comments use a source-checked message bridge instead of parent DOM access.
 
 ## API Boundaries
 
@@ -71,9 +71,10 @@ Current native events include session lifecycle/output events (`session.created`
 | Git status/diff/stage/unstage/commit | CodeNomad server |
 | Yolo state, persistence and auto-accept | CodeNomad server |
 | Browser SSE multiplexing | CodeNomad server |
-| Developer Mode and CDP feedback | Current CodeNomad desktop host and authenticated project-local adapter |
+| Desktop inspection and CDP feedback | Current CodeNomad desktop host and bundled automation plugin, available at normal startup |
+| Autonomous browser previews | CodeNomad desktop browser controllers and the same bundled automation plugin, independent of Developer Mode |
 
-Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; the project-local Developer Mode adapter is the only reviewed exception.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped native background Shells, refreshes on Shell events/reconnect, displays native metadata, and allows ownership-checked removal. Output requests preserve native cursor pagination. Interactive PTYs remain separate. `packages/opencode-plugin` and the server plugin/background-process paths remain deleted and must not be restored; the narrow bundled automation plugin and session-pruning RPC use native V2 discovery and backend presence.
 
 ## Persistence
 

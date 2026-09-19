@@ -23,6 +23,7 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
+import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
@@ -37,7 +38,9 @@ import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
-import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge, removeLegacyAutomationPlugin } from "./opencode/automation-plugin"
+import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
+import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
+import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
 
@@ -372,27 +375,35 @@ async function main() {
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
   const pruningLifecycle = new PruningLifecycle()
-  const prepareSessionPruning: PruningLifecycle["start"] = async (...args) => {
-    try { await pruningLifecycle.start(...args) }
-    catch (error) { logger.error({ err: error }, "Failed to load the bundled session-pruning plugin") }
+  const nativeParent = new NativeParent()
+  const automationLifecycle = new DesktopPluginLifecycle("automation")
+  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
+    let paths
+    try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
+    catch (error) {
+      logger.error({ err: error }, "Cannot provision bundled plugins without the connected daemon's discovery directory")
+      return false
+    }
+    try {
+      await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
+        pruning: pruningLifecycle,
+        automation: nativeParent.available ? automationLifecycle : undefined,
+      })
+      return true
+    } catch (error) {
+      logger.error({ err: error }, "Failed to provision bundled desktop plugins for the current connection")
+      return false
+    }
   }
-  await prepareSessionPruning()
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
     settings,
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    prepareSessionPruning,
+    prepareDesktopPlugins,
+    startServiceCommand: nativeServiceStarter(nativeParent),
   })
-  const nativeParent = new NativeParent()
-  if (nativeParent.available) {
-    try {
-      await removeLegacyAutomationPlugin()
-    } catch (error) {
-      logger.warn({ err: error }, "Failed to remove the legacy global Developer Mode plugin")
-    }
-  }
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
@@ -593,16 +604,16 @@ async function main() {
   serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
-  if (nativeParent.available && process.env.CODENOMAD_DEVELOPER_MODE === "1") {
+  if (nativeParent.available) {
     try {
-      if (!httpStart) throw new Error("Developer Mode HTTP listener did not start")
+      if (!httpStart) throw new Error("Native automation HTTP listener did not start")
       const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
       removeAutomationBridge = await publishAutomationBridge({
         ...automationBridge,
         url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
       })
     } catch (error) {
-      logger.warn({ err: error }, "Failed to publish the Developer Mode bridge")
+      logger.warn({ err: error }, "Failed to publish the native automation bridge")
     }
   }
 
@@ -650,6 +661,7 @@ async function main() {
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
+            await automationLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()

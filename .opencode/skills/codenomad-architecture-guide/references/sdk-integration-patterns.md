@@ -4,7 +4,7 @@
 
 `WorkspaceManager` owns one `OpenCodeSharedService`. Production runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, creates one Promise client, and invalidates failed connections. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations.
 
-OpenCode owns standard state/database. Allowed configured environment variables apply only to `service start` for a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
+OpenCode owns standard state/database. Allowed configured environment variables are passed to `service start` for a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored. The guarded proxy also applies a complete profile environment through `session.environment` before every session prompt/command/shell send. Reads do not mutate it. See `dev-docs/SESSION_ENVIRONMENT.md`.
 
 ## Locations And Directories
 

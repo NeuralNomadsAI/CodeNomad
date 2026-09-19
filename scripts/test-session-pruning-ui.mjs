@@ -30,6 +30,10 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
     getServiceDirectory: () => location.directory,
     getSharedServiceClient: async () => client,
+    getSessionEnvironment: async () => {
+      const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
+      return sessionEnvironment({})
+    },
     getSharedServiceFetch: async () => runtimeFetch,
     getWorktreeIdentityForPath: async (_id, directory) => owns(directory) ? "isolated-fixture" : undefined,
     ownsDirectory: async (_id, directory) => owns(directory),

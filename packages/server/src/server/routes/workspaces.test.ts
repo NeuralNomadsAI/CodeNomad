@@ -6,8 +6,39 @@ import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerWorkspaceRoutes } from "./workspaces"
+import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 
 describe("workspace routes", () => {
+  it("awaits file writes and reports bounded search admission as retryable", async () => {
+    const app = Fastify()
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    const workspaceManager = {
+      writeFile: async () => { started(); await gate; throw new Error("disk write failed") },
+      searchFiles: async () => { throw new WorkspaceSearchBusyError() },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+    let finished = false
+    const write = app.inject({ method: "PUT", url: "/api/workspaces/test/files/content?path=file", payload: { contents: "text" } })
+      .then((response) => { finished = true; return response })
+    try {
+      await entered
+      const search = await app.inject("/api/workspaces/test/files/search?q=needle")
+      assert.equal(search.statusCode, 503)
+      assert.equal(search.headers["retry-after"], "1")
+      assert.equal(finished, false)
+      release()
+      assert.notEqual((await write).statusCode, 204)
+      assert.match((await write).body, /disk write failed/)
+    } finally {
+      release()
+      await write
+      await app.close()
+    }
+  })
+
   it("forwards workspace creation options without per-workspace binary settings", async () => {
     const calls: unknown[][] = []
     const app = Fastify({ logger: false })

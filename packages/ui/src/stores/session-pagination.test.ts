@@ -24,9 +24,7 @@ describe("project session list loading", () => {
   it("passes native cursors through unchanged", () => {
     const cursor = `next-page-${"x".repeat(4096)}`
     assert.deepEqual(buildProjectSessionListOptions({ directory: "/tmp/project", cursor }), {
-      directory: "/tmp/project",
       cursor,
-      limit: PROJECT_SESSION_LIST_LIMIT,
     })
   })
 

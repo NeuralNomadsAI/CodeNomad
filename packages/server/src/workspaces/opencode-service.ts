@@ -24,6 +24,9 @@ export type OpenCodeSharedServiceOptions = {
   kind: "lifecycle"
   identity: string
   lifecycle: OpenCodeServiceLifecycle
+  // False leaves the service usable and retries optional provisioning on its
+  // next acquisition; the caller reports installation/discovery failures.
+  prepareDesktopPlugins?: (connection: ServiceConnection, deadlineAt?: number) => Promise<boolean>
 }
 
 export interface ServiceConnection {
@@ -52,6 +55,7 @@ export class OpenCodeSharedService {
   private connectionValidatedAt?: number
   private generation = 0
   private readonly negotiationControllers = new WeakMap<ServiceConnection, AbortController>()
+  private readonly pluginPreparations = new WeakMap<ServiceConnection, Promise<boolean>>()
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     headers: Service.headers,
@@ -143,6 +147,26 @@ export class OpenCodeSharedService {
   }
 
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
+    return this.connectService(options, deadlineAt).then(async connection => {
+      const prepare = this.serviceOptions?.prepareDesktopPlugins
+      if (!prepare) return connection
+      connection.assertCurrent()
+      let pending = this.pluginPreparations.get(connection)
+      if (!pending) {
+        pending = prepare(connection, deadlineAt).then(ready => {
+          if (!ready) this.pluginPreparations.delete(connection)
+          return ready
+        })
+        this.pluginPreparations.set(connection, pending)
+        void pending.catch(() => this.pluginPreparations.delete(connection))
+      }
+      await pending
+      connection.assertCurrent()
+      return connection
+    })
+  }
+
+  private connectService(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     try {
       this.pinServiceOptions(options)
     } catch (error) {
@@ -160,7 +184,7 @@ export class OpenCodeSharedService {
     }
     const generation = this.generation
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
-      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
+      if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
       if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
         this.connectionValidatedAt = this.now()
         return current
@@ -168,7 +192,7 @@ export class OpenCodeSharedService {
       this.invalidateConnection(current)
       return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
     }, () => {
-      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
+      if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
       this.invalidateConnection(current)
       return this.startConnection(deadlineAt)
     })
