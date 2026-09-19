@@ -248,10 +248,11 @@ test("cancelling a bounded pending scan does not launch queued locations", async
 
   const sync = syncPendingRequests(instanceId)
   await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.equal(calls, 8)
+  // The shared background-read budget admits two requests across both scans.
+  assert.equal(calls, 2)
   removeInstance(instanceId)
   await sync
   await new Promise<void>((resolve) => setImmediate(resolve))
 
-  assert.equal(calls, 8)
+  assert.equal(calls, 2)
 })
