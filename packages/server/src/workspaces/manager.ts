@@ -33,6 +33,7 @@ import { WslOpenCodeService } from "./wsl-opencode-service"
 import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
 import { WorktreeInventory } from "./worktree-inventory"
+import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
@@ -996,6 +997,13 @@ export class WorkspaceManager {
         startupEnvironment,
         timeoutMs,
       }, { startFile: this.options.startServiceCommand })
+  }
+
+  async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
+    const record = this.workspaces.get(id)
+    if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
+    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
   }
 
   private serviceStartupEnvironment(): NodeJS.ProcessEnv {

@@ -49,6 +49,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
     assert.equal(resolved.workspaceID, location.workspaceID)
   }
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
+  const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
   const { createInstanceFetch } = await tsImport("../packages/ui/src/lib/sdk-manager.ts", import.meta.url)
   const { EventBus } = await tsImport("../packages/server/src/events/bus.ts", import.meta.url)
   const { InstanceEventBridge } = await tsImport("../packages/server/src/workspaces/instance-events.ts", import.meta.url)
@@ -66,6 +67,7 @@ export async function testNativeLocationIdentity({ client, connection, root }) {
     getSharedServiceConnection: async () => connection,
     getSharedServiceEndpoint: async () => connection.endpoint,
     getSharedServiceClient: async () => client,
+    getSessionEnvironment: () => sessionEnvironment({}),
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from(`${connection.endpoint.auth.username}:${connection.endpoint.auth.password}`).toString("base64")}`,
     getServiceDirectory: () => rootLocation.directory,
     getServiceDirectoryForPath: async (_id, candidate) => ownsDirectory(candidate) ? candidate : undefined,

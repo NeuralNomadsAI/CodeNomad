@@ -302,6 +302,7 @@ jobs:
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
+          packages/ui/src/lib/sdk-manager.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
@@ -403,6 +404,8 @@ jobs:
           node --import tsx --test
           packages/server/src/workspaces/__tests__/spawn.test.ts
           packages/server/src/workspaces/__tests__/binary-probe.test.ts
+          packages/server/src/workspaces/session-environment.test.ts
+          packages/server/src/server/__tests__/session-environment.test.ts
           "packages/server/src/workspaces/*opencode*.test.ts"
           packages/server/src/server/routes/binary-validation.test.ts
           "packages/server/src/opencode-update/*.test.ts"

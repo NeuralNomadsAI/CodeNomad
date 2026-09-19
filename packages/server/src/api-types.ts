@@ -363,6 +363,7 @@ export interface BinaryUpdateRequest {
 }
 
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
+export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
 
 export interface BinaryValidationResult {
   valid: boolean

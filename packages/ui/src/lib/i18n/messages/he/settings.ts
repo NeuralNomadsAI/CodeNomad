@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "הסר משתנה",
   "envEditor.actions.add.title": "הוסף משתנה",
   "envEditor.empty": "לא הוגדרו משתני סביבה. הוסף משתנים למעלה להתאמת סביבת OpenCode.",
-  "envEditor.help": "משתנים אלו יהיו זמינים בסביבת OpenCode בעת הפעלת מופעים.",
+  "envEditor.help": "לפני כל הנחיה או פקודת שיחה, CodeNomad מחיל את משתני הפרופיל על סביבת המעטפת המקומית של השיחה. השינויים חלים בשליחה הבאה. המשתנים מועברים גם בהפעלת שירות OpenCode שהופסק; שירות פועל אינו מופעל מחדש.",
+  "envEditor.applyFailed": "לא ניתן להחיל את סביבת הפרופיל. דבר לא נשלח. יש לבדוק את המשתנים ואת גרסת OpenCode ולנסות שוב.",
 
   "contextUsagePanel.headings.tokens": "טוקנים",
   "contextUsagePanel.headings.context": "הקשר",

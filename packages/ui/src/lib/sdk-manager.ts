@@ -1,6 +1,7 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 import { backgroundReads } from "./background-read-queue"
+import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -45,10 +46,20 @@ export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
-    const read = () => globalThis.fetch(new URL(relativeUrl, baseUrl), {
-      ...init,
-      credentials: init?.credentials ?? "include",
-    })
+    const read = async () => {
+      const response = await globalThis.fetch(new URL(relativeUrl, baseUrl), {
+        ...init,
+        credentials: init?.credentials ?? "include",
+      })
+      if (response.status === 502) {
+        const body = await response.clone().json().catch(() => undefined)
+        if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {
+          const { tGlobal } = await import("./i18n")
+          throw new Error(tGlobal("envEditor.applyFailed"))
+        }
+      }
+      return response
+    }
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
     if (method === "GET" && /^\/api\/(?:project|session\/active)\/?$/.test(requestUrl.pathname)) {
       return backgroundReads.run(init?.signal ?? new AbortController().signal, read)

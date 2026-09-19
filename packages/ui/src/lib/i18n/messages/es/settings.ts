@@ -83,7 +83,8 @@ export const settingsMessages = {
   "envEditor.actions.remove.title": "Quitar variable",
   "envEditor.actions.add.title": "Agregar variable",
   "envEditor.empty": "No hay variables de entorno configuradas. Agrega variables arriba para personalizar el entorno de OpenCode.",
-  "envEditor.help": "Estas variables estarán disponibles en el entorno de OpenCode al iniciar instancias.",
+  "envEditor.help": "Antes de cada prompt o comando de sesión, CodeNomad aplica las variables de este perfil al entorno de shell local de la conversación. Los cambios se aplican en el siguiente envío. También se pasan al iniciar un servicio OpenCode detenido; no se reinicia un servicio existente.",
+  "envEditor.applyFailed": "No se pudo aplicar el entorno del perfil. No se envió nada. Revisa las variables y tu versión de OpenCode e inténtalo de nuevo.",
 
   "contextUsagePanel.headings.tokens": "Tokens",
   "contextUsagePanel.headings.context": "Contexto",

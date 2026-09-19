@@ -81,6 +81,7 @@ async function harness(
       ],
     },
     session: {
+      environment: async () => {},
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionGets.push(sessionID)
         const location = sessionLocations[sessionID] ?? sessionDirectory
@@ -142,6 +143,7 @@ async function harness(
       return pathMappings[candidate] ?? candidate
     },
     getSharedServiceClient: async () => client,
+    getSessionEnvironment: async () => ({}),
     ownsLocation: async (_id, location) => owned.has(location.directory)
       && location.workspaceID === undefined,
     ownsDirectory: async (_id, directory) => owned.has(directory),
