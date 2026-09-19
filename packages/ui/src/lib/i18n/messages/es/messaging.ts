@@ -116,7 +116,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "Revertir",
   "messageItem.actions.revertTitle": "Deshacer cambios hasta aqui (elimina mensajes)",
   "messageItem.actions.fork": "Bifurcar",
-  "messageItem.actions.forkTitle": "Bifurcar desde este mensaje",
+  "messageItem.actions.forkTitle": "Bifurcar después de este mensaje",
   "messageItem.actions.copy": "Copiar",
   "messageItem.actions.copyTitle": "Copiar mensaje",
   "messageItem.actions.copied": "¡Copiado!",

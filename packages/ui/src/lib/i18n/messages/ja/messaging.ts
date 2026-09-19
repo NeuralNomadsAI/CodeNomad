@@ -116,7 +116,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "戻す",
   "messageItem.actions.revertTitle": "ここまでの変更を元に戻す（メッセージを削除）",
   "messageItem.actions.fork": "フォーク",
-  "messageItem.actions.forkTitle": "このメッセージからフォーク",
+  "messageItem.actions.forkTitle": "このメッセージの後でフォーク",
   "messageItem.actions.copy": "コピー",
   "messageItem.actions.copyTitle": "メッセージをコピー",
   "messageItem.actions.copied": "コピーしました!",
