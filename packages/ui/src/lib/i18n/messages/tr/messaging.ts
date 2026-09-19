@@ -110,7 +110,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "Geri Al",
   "messageItem.actions.revertTitle": "Buraya kadarki değişiklikleri geri al (mesajları siler)",
   "messageItem.actions.fork": "Fork",
-  "messageItem.actions.forkTitle": "Bu mesajdan fork'la",
+  "messageItem.actions.forkTitle": "Bu mesajdan sonra fork'la",
   "messageItem.actions.copy": "Kopyala",
   "messageItem.actions.copyTitle": "Mesajı kopyala",
   "messageItem.actions.copied": "Kopyalandı!",

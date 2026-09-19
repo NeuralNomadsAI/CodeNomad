@@ -114,7 +114,7 @@ export const messagingMessages = {
   "messageItem.actions.revert": "בטל שינויים",
   "messageItem.actions.revertTitle": "בטל שינויים עד כאן (מוחק הודעות)",
   "messageItem.actions.fork": "פצל",
-  "messageItem.actions.forkTitle": "פצל מהודעה זו",
+  "messageItem.actions.forkTitle": "פצל אחרי הודעה זו",
   "messageItem.actions.copy": "העתק",
   "messageItem.actions.copyTitle": "העתק הודעה",
   "messageItem.actions.copied": "הועתק!",
