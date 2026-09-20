@@ -124,7 +124,8 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   if (!diffCapableTools.has(toolName)) return null
 
   const { metadata, input, output } = readToolStatePayload(state)
-  const candidates = [metadata.diff, output, metadata.output]
+  const fileDiff = readFirstFileDiff(metadata)
+  const candidates = [metadata.diff, fileDiff?.patch, output, metadata.output]
   let diffText: string | null = null
 
   for (const candidate of candidates) {
@@ -141,9 +142,23 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   const filePath =
     (typeof input.filePath === "string" ? input.filePath : undefined) ||
     (typeof metadata.filePath === "string" ? metadata.filePath : undefined) ||
-    (typeof input.path === "string" ? input.path : undefined)
+    (typeof input.path === "string" ? input.path : undefined) ||
+    fileDiff?.file
 
   return { diffText, filePath }
+}
+
+// OpenCode 2.x edit tool metadata: `metadata.files` is a list of FileDiff entries
+// `{ file, patch, additions, deletions, status }` rather than a `metadata.diff` string.
+function readFirstFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
+  const files = metadata.files
+  if (!Array.isArray(files) || files.length === 0) return null
+  const first = files[0]
+  if (!first || typeof first !== "object") return null
+  return {
+    file: typeof first.file === "string" ? first.file : undefined,
+    patch: typeof first.patch === "string" ? first.patch : undefined,
+  }
 }
 
 export function readToolStatePayload(state?: ToolState): {

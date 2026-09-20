@@ -1,5 +1,6 @@
 import type { ToolSearchTextContext } from "./types"
 import {
+  extractDiffPayload,
   formatUnknown,
   isToolStateCompleted,
   isToolStateError,
@@ -99,6 +100,7 @@ export function getDiffToolSearchText(context: ToolSearchTextContext): string[] 
   appendString(values, input.filePath)
   appendString(values, input.path)
   appendString(values, metadata.diff)
+  appendString(values, extractDiffPayload(context.toolName, context.toolState)?.diffText)
   appendFormatted(values, output)
   appendFormatted(values, metadata.output)
   appendToolErrorText(values, context)
