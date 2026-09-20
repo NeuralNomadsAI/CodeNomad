@@ -4,6 +4,8 @@ import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { getActiveCatalogLocation } from "../stores/sessions"
+import { PluginActivationControls } from "./plugin-activation-controls"
 
 const log = getLogger("session")
 
@@ -57,13 +59,11 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const metadataAccessor = metadataContext?.metadata ?? (() => instance().metadata)
   const metadata = createMemo(() => metadataAccessor())
   const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
-  const hasPluginsMetadata = () => metadata()?.plugins !== undefined
 
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
-  const plugins = createMemo(() => metadata()?.plugins ?? [])
 
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
-  const isPluginsLoading = () => isLoading() || !hasPluginsMetadata()
+  const pluginLocation = createMemo(() => getActiveCatalogLocation(instance().id) ?? { directory: instance().folder })
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
@@ -181,34 +181,16 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     </section>
   )
 
-  const renderPluginsSection = () => (
-    <section class="space-y-1.5">
-      <Show when={showHeadings()}>
-        <div class="text-xs font-medium text-muted uppercase tracking-wide">
-          {t("instanceServiceStatus.sections.plugins")}
-        </div>
-      </Show>
-      <Show
-        when={!isPluginsLoading() && plugins().length > 0}
-        fallback={renderEmptyState(isPluginsLoading() ? t("instanceServiceStatus.plugins.loading") : t("instanceServiceStatus.plugins.empty"))}
-      >
-        <div class="space-y-1.5">
-          <For each={plugins()}>
-            {(plugin) => (
-              <div class="px-2 py-1.5 border bg-surface-secondary border-base">
-                <div class="text-xs text-primary font-medium break-words whitespace-normal">{plugin}</div>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </section>
-  )
-
   return (
     <div class={props.class}>
       <Show when={includeMcp()}>{renderMcpSection()}</Show>
-      <Show when={includePlugins()}>{renderPluginsSection()}</Show>
+      <Show when={includePlugins()}>
+        <PluginActivationControls
+          instanceId={instance().id}
+          location={pluginLocation()}
+          showHeading={showHeadings()}
+        />
+      </Show>
     </div>
   )
 }

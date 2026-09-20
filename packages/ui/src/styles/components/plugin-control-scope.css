@@ -1,0 +1,59 @@
+.plugin-scope-fieldset {
+  @apply border p-2 space-y-2;
+  border-color: var(--border-base);
+  background-color: var(--surface-base);
+}
+
+.plugin-scope-fieldset legend {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+  color: var(--text-secondary);
+}
+
+.plugin-scope-options {
+  @apply grid grid-cols-2;
+}
+
+.plugin-scope-option {
+  @apply flex flex-col items-start gap-0.5 border px-2 py-1.5 text-left;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.plugin-scope-option + .plugin-scope-option {
+  border-inline-start: 0;
+}
+
+.plugin-scope-option:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+
+.plugin-scope-option:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.plugin-scope-option-selected {
+  border-color: var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 10%, var(--surface-secondary));
+  color: var(--text-primary);
+}
+
+.plugin-scope-option-title {
+  @apply text-xs font-medium;
+}
+
+.plugin-scope-option-detail,
+.plugin-target-path {
+  @apply text-[11px];
+  color: var(--text-muted);
+}
+
+.plugin-scope-required {
+  @apply text-[11px];
+  color: var(--status-warning);
+}
+
+.plugin-target-path {
+  @apply truncate font-mono;
+}
