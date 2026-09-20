@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
-import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { Loader2, Mic, Paperclip, Upload, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
@@ -13,7 +13,6 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { serverApi } from "../lib/api-client"
-import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
@@ -222,6 +221,7 @@ export default function PromptInput(props: PromptInputProps) {
   const {
     attachments,
     isDragging,
+    isReadingFiles,
     handlePaste,
     handleDragOver,
     handleDragLeave,
@@ -516,7 +516,7 @@ export default function PromptInput(props: PromptInputProps) {
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
-    if (props.disabled || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
+    if (props.disabled || isReadingFiles() || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
     const resolvedDelivery = delivery ?? promptDelivery()
     const restoredPayload = restoredQueuedPayload
 
@@ -673,13 +673,14 @@ export default function PromptInput(props: PromptInputProps) {
     textareaRef?.focus()
   }
 
-  async function handleAttachFiles() {
+  function handleAttachFiles() {
     if (props.disabled) return
-    if (isDesktopHost() && isLocalWindow()) {
-      fileInputRef?.click()
-      return
-    }
     setIsFileBrowserOpen(true)
+  }
+
+  function handleUploadFiles() {
+    if (props.disabled) return
+    fileInputRef?.click()
   }
 
   async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
@@ -715,7 +716,7 @@ export default function PromptInput(props: PromptInputProps) {
       input.value = ""
       return
     }
-    handleFileSelection(input.files)
+    handleFileSelection(input.files, { requireData: true })
     input.value = ""
   }
 
@@ -784,7 +785,7 @@ export default function PromptInput(props: PromptInputProps) {
   const canHistoryGoNext = () => historyIndex() >= 0
 
   const canSend = () => {
-    if (props.disabled) return false
+    if (props.disabled || isReadingFiles()) return false
     const hasText = prompt().trim().length > 0
     if (mode() === "shell") return hasText
     return hasText || attachments().length > 0
@@ -901,6 +902,13 @@ export default function PromptInput(props: PromptInputProps) {
       icon: <Paperclip class="h-4 w-4" aria-hidden="true" />,
       disabled: Boolean(props.disabled),
       onSelect: handleAttachFiles,
+    })
+    items.push({
+      key: "upload",
+      label: t("promptInput.attachFiles.upload"),
+      icon: <Upload class="h-4 w-4" aria-hidden="true" />,
+      disabled: Boolean(props.disabled),
+      onSelect: handleUploadFiles,
     })
     if (hasHistory()) {
       items.push({
@@ -1066,6 +1074,7 @@ export default function PromptInput(props: PromptInputProps) {
         <input
           ref={fileInputRef}
           type="file"
+          aria-label={t("promptInput.attachFiles.upload")}
           multiple
           class="sr-only"
           tabindex="-1"

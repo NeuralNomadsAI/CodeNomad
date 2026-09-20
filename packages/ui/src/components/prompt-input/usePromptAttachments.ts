@@ -1,4 +1,4 @@
-import { createEffect, createSignal, type Accessor } from "solid-js"
+import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
 import { createFileAttachment, createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
@@ -34,10 +34,11 @@ type PromptAttachments = {
 
   handlePaste: (e: ClipboardEvent) => Promise<void>
   isDragging: Accessor<boolean>
+  isReadingFiles: Accessor<boolean>
   handleDragOver: (e: DragEvent) => void
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
-  handleFileSelection: (files: FileList | File[] | null) => void
+  handleFileSelection: (files: FileList | File[] | null, selectionOptions?: { requireData?: boolean }) => void
   handleFilePathAttachment: (path: string, contents: string, options?: { encoding?: "utf-8" | "base64" }) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
@@ -47,9 +48,12 @@ type PromptAttachments = {
 export function usePromptAttachments(options: PromptAttachmentsOptions): PromptAttachments {
   const attachments = () => getAttachments(options.instanceId(), options.sessionId())
   const [isDragging, setIsDragging] = createSignal(false)
+  const [pendingFileReads, setPendingFileReads] = createSignal(0)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
   const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
+  let disposed = false
+  onCleanup(() => { disposed = true })
 
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
@@ -359,7 +363,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       yml: "application/yaml",
     }
 
-    return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? "application/octet-stream"
+    return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? (extension === "pdf" ? "application/pdf" : "application/octet-stream")
   }
 
   function showSkippedFilesWarning(count: number) {
@@ -416,53 +420,82 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     setIsDragging(false)
   }
 
-  function handleFileSelection(files: FileList | File[] | null) {
+  function handleFileSelection(files: FileList | File[] | null, selectionOptions?: { requireData?: boolean }) {
     if (options.disabled?.()) return
     if (!files || files.length === 0) return
 
+    const instanceId = options.instanceId()
+    const sessionId = options.sessionId()
+    const isCurrent = () => !disposed && options.instanceId() === instanceId && options.sessionId() === sessionId
     let skippedCount = 0
+    let tooLargeCount = 0
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const nativePath = getFilePath(file)
+      // Device uploads must carry bytes even when the desktop exposes a local path:
+      // that path may not exist on the selected server or in its WSL environment.
+      const nativePath = selectionOptions?.requireData ? null : getFilePath(file)
       const filename = file.name
-      const mime = file.type || "application/octet-stream"
+      const mime = file.type || inferMimeTypeFromPath(filename)
       const canReadFileData = file.size <= MAX_READABLE_PICKED_FILE_BYTES
 
       if (!nativePath && !canReadFileData) {
-        skippedCount += 1
+        tooLargeCount += 1
         continue
       }
 
       const path = nativePath || filename
 
       const createAndStoreAttachment = (previewUrl?: string, data?: Uint8Array) => {
+        if (!isCurrent()) return
         const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
         if (previewUrl) {
           attachment.url = previewUrl
         }
-        addAttachment(options.instanceId(), options.sessionId(), attachment)
+        addAttachment(instanceId, sessionId, attachment)
       }
 
       if (canReadFileData && typeof FileReader !== "undefined") {
         const reader = new FileReader()
+        setPendingFileReads(count => count + 1)
+        reader.onloadend = () => setPendingFileReads(count => count - 1)
         reader.onload = () => {
+          if (!isCurrent()) return
           const result = reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : undefined
+          if (!result && selectionOptions?.requireData) {
+            showSkippedFilesWarning(1)
+            return
+          }
           const previewUrl = result ? `data:${mime};base64,${encodeBytesAsBase64(result)}` : undefined
           createAndStoreAttachment(previewUrl, result)
         }
         reader.onerror = () => {
+          if (!isCurrent()) return
           if (nativePath) {
             createAndStoreAttachment()
+          } else {
+            showSkippedFilesWarning(1)
           }
         }
         reader.readAsArrayBuffer(file)
-      } else {
+      } else if (nativePath) {
         createAndStoreAttachment()
+      } else {
+        skippedCount += 1
       }
     }
 
     showSkippedFilesWarning(skippedCount)
+    if (tooLargeCount > 0) {
+      showToastNotification({
+        variant: "warning",
+        title: tGlobal("promptInput.attachFiles.skipped.title"),
+        message: tGlobal(
+          tooLargeCount === 1 ? "promptInput.attachFiles.tooLarge.one" : "promptInput.attachFiles.tooLarge.other",
+          { count: tooLargeCount },
+        ),
+      })
+    }
 
     options.getTextarea()?.focus()
   }
@@ -484,6 +517,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     syncAttachmentCounters,
     handlePaste,
     isDragging,
+    isReadingFiles: () => pendingFileReads() > 0,
     handleDragOver,
     handleDragLeave,
     handleDrop,
