@@ -212,7 +212,7 @@ describe("OpenCodeSharedService", () => {
     await new Promise((resolve) => setImmediate(resolve))
     await service.shutdown()
     resolveStart(endpoint)
-    assert.equal(await pending, endpoint)
+    await assert.rejects(pending, /connection changed/)
     assert.equal(await service.endpoint(lifecycleOptions("host:test", lifecycle)), endpoint)
     assert.equal(discoveries, 2)
   })

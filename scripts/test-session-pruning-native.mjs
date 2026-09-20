@@ -154,14 +154,11 @@ try {
   const client = await sharedService.client({ kind: "lifecycle", identity: "isolated-native", lifecycle })
   const connection = await sharedService.acquire()
   const runtimeFetch = connection.fetch
-  // Recognition follows the actual authenticated schema, not an exact version
-  // allowlist. Exercise this route against every real runtime in the matrix.
+  // Independently verify the authenticated schema even for the known minimum.
+  const { negotiateRuntime } = await tsImport("../packages/server/src/opencode/compatibility/negotiate.ts", import.meta.url)
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
-  const futureEndpoint = { ...connection.endpoint }
-  rememberRuntime(futureEndpoint, { version: "contract-probe", pid: 1, discovery: "status" })
-  const negotiatedClient = OpenCode.make({ baseUrl, fetch: createRuntimeFetch(futureEndpoint) })
-  assert.equal((await negotiatedClient.location.get({ location: { directory: root } })).directory, (await client.location.get({ location: { directory: root } })).directory)
+  assert.equal(await negotiateRuntime(connection.endpoint, fetch, AbortSignal.timeout(10_000)), "modern")
   const makeClient = () => OpenCode.make({ baseUrl, headers: {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   }, fetch: runtimeFetch })

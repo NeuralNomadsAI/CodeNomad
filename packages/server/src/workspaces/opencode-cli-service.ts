@@ -64,6 +64,13 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     return this.endpoint(url, deadlineAt)
   }
 
+  async restart(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint> {
+    // Explicit user action only. Delegate the subsequent starter outside native
+    // backend containment exactly as normal first startup does.
+    await this.run(["service", "stop"], false, deadlineAt)
+    return this.ensure(deadlineAt)
+  }
+
   private async endpoint(value: string, deadlineAt: number): Promise<Endpoint> {
     const url = this.assertServiceUrl(value)
     const password = this.singleLine(

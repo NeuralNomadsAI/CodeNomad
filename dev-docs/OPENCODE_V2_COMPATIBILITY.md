@@ -14,6 +14,16 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
+PR #696 implements a fixed minimum of **2.0.11** for this development release:
+stable `>=2.0.11 <3.0.0`, with separate authenticated contract recognition for
+unlisted releases. Missing/outdated runtimes share installation and recovery UI;
+the bundled Node/npm installer and explicit daemon restart are distinct actions.
+Legacy request/response/event translations have been retired. Historical
+identity, import/cursor, cancellation and connection-authority checks remain.
+The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse while
+preserving session IDs and complete history. See the
+[transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
+
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
 
@@ -22,7 +32,7 @@ qualification matrix to maintain.
 
 ## Decision summary
 
-Future retirement of the earlier-runtime adapter and the shared installation/required-update experience are tracked in the [OpenCode V2 stable-runtime transition plan](OPENCODE_V2_POST_BETA.md). That maintained plan preserves this register as the current support/evidence baseline and selects no new minimum runtime yet.
+The [OpenCode V2 stable-runtime transition register](OPENCODE_V2_POST_BETA.md) supersedes the earlier live-support set and records implementation and acceptance evidence. The sections below preserve the original #695 audit.
 
 At `bcfe4d24`, CodeNomad had a working modern-client path and backward-compatible service discovery, **not a complete backward-compatible V2 integration**. The follow-up change keeps that discovery fix and addresses the remaining issues through one connection-scoped integration module and one cross-runtime acceptance matrix.
 

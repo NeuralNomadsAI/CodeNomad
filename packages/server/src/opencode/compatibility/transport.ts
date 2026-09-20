@@ -1,21 +1,11 @@
 import { Service, type Endpoint } from "@opencode/client/service"
 import { contractProfile, runtimeIdentity } from "./runtime"
-import { legacyRequest } from "./requests"
+import { assertSupportedOpenCode } from "../runtime-support"
 import { negotiateRuntime } from "./negotiate"
 import { applyLocationContext, LOCATION_CONTEXT_HEADER } from "./location"
 
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
-
-function normalizeInbox(value: unknown): unknown {
-  if (!object(value)) throw new Error("Invalid native inbox item")
-  if (object(value.time) && typeof value.time.created === "number") return value
-  if (typeof value.timeCreated !== "number" || !Number.isFinite(value.timeCreated)) {
-    throw new Error("Invalid native inbox creation time")
-  }
-  const { timeCreated, ...rest } = value
-  return { ...rest, time: { created: timeCreated } }
 }
 
 // Both the server's generated client and the authorized browser proxy use this
@@ -31,8 +21,11 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
   const resolveProfile = async (signal?: AbortSignal) => {
     signal?.throwIfAborted()
     lifetime.throwIfAborted()
+    if (identity) assertSupportedOpenCode(identity.version)
+    if (profile === "legacy") throw new Error("Unsupported OpenCode runtime contract")
     if (profile !== "unknown") return profile
     negotiation ??= negotiateRuntime(endpoint, fetcher, lifetime).then(value => {
+      if (value !== "modern") throw new Error("Unsupported OpenCode runtime contract")
       profile = value
       return value
     }).catch(error => { negotiation = undefined; throw error })
@@ -52,17 +45,15 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     if (serverInfo) {
       // Discovery already selected one authenticated route. The current client
       // uses info; an older renderer may still request status. Never probe here.
-      const discovery = identity?.discovery ?? (profile === "legacy" ? "health" : "info")
+      const discovery = identity?.discovery ?? "info"
       url.pathname = `/api/${discovery}`
     }
-    if (profile === "legacy" || headers.has(LOCATION_CONTEXT_HEADER)) {
+    if (headers.has(LOCATION_CONTEXT_HEADER)) {
       const text = request.body ? await request.text() : undefined
       let body: unknown = text ? JSON.parse(text) : undefined
       body = applyLocationContext(url, request.method, body, headers, profile)
       if (body !== undefined && !object(body)) throw new Error("Invalid OpenCode request body")
-      const translated = profile === "legacy" ? legacyRequest(url, request.method, body) : { method: request.method, body }
-      options.method = translated.method
-      options.body = translated.body === undefined ? undefined : JSON.stringify(translated.body)
+      options.body = body === undefined ? undefined : JSON.stringify(body)
       headers.delete("content-length")
       if (options.body === undefined) headers.delete("content-type")
     } else if (request.body) {
@@ -76,21 +67,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
         status: response.status, profile, method: request.method, path: originalPath,
       }, { status: response.status })
     }
-    if (serverInfo && response.ok && url.pathname === "/api/health") {
-      const health = await response.json() as { version: string; pid: number }
-      // Older services do not expose paths.tmp. Do not invent a filesystem path;
-      // our service consumers use only the authenticated version/PID/endpoint.
-      return Response.json({ version: health.version, pid: health.pid, urls: [endpoint.url] })
-    }
-    if (profile !== "legacy" || !response.ok || !/^\/api\/session\/[^/]+\/(?:inbox|prompt|synthetic|compact)$/.test(originalPath)
-      || response.status === 204) return response
-    const value: unknown = await response.json()
-    if (!object(value)) throw new Error("Invalid native inbox response")
-    const normalized = { ...value, data: Array.isArray(value.data) ? value.data.map(normalizeInbox) : normalizeInbox(value.data) }
-    const responseHeaders = new Headers(response.headers)
-    responseHeaders.delete("content-length")
-    responseHeaders.delete("content-encoding")
-    return new Response(JSON.stringify(normalized), { status: response.status, headers: responseHeaders })
+    return response
   }
   return { fetch: adaptedFetch, profile: resolveProfile }
 }

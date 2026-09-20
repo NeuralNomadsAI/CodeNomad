@@ -194,6 +194,7 @@ export function probeBinaryVersion(
   version?: string
   reported?: string
   error?: string
+  missing?: boolean
 } {
   if (!binaryPath) {
     return { valid: false, error: "Missing binary path" }
@@ -210,7 +211,7 @@ export function probeBinaryVersion(
 
 function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
   if (result.error) {
-    return { valid: false, error: result.error.message }
+    return { valid: false, error: result.error.message, ...((result.error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) }
   }
 
   if (result.status !== 0) {
@@ -239,6 +240,11 @@ function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof pro
   const versionMatch = reported.match(VERSION_REGEX)
   const version = versionMatch?.[1]
   return { valid: true, version, reported }
+}
+
+export async function probeBinaryVersionAsync(binaryPath: string): Promise<ReturnType<typeof probeBinaryVersion>> {
+  try { return parseBinaryVersion(await executeAsyncBinaryProbe(buildSpawnSpec(binaryPath, ["--version"]), 5_000)) }
+  catch (error) { return { valid: false, error: error instanceof Error ? error.message : String(error) } }
 }
 
 export async function probeOpenCodeBinary(

@@ -53,7 +53,7 @@ test("global Forms and catalog requests preserve explicit identity without forwa
   assert.throws(() => applyLocationContext(url, "GET", undefined, new Headers(options.headers), "modern"), /Unsupported/)
 })
 
-test("real generated list, RPC, eviction and credential calls use their distinct legacy wire locations", async () => {
+test("retired runtimes cannot forward historical selectors through generated calls", async () => {
   const endpoint = { url: "http://localhost:1234" }
   rememberRuntime(endpoint, { version: "2.0.3", pid: 1, discovery: "health" })
   const location = { directory: "/repo", workspaceID: "wrk_one" }
@@ -74,17 +74,17 @@ test("real generated list, RPC, eviction and credential calls use their distinct
     return url.pathname.startsWith("/api/rpc/") ? Response.json({ output: true }) : new Response(null, { status: 204 })
   }) })
   const options = locationRequestOptions(location)
-  await client.session.list({ directory: location.directory }, options)
-  await client.rpc.call({ rpcID: "fixture", method: "check", input: {}, location: { directory: location.directory } }, options)
-  await client.debug.location.evict({ location: { directory: location.directory } }, options)
-  await client.credential.remove({ credentialID: "credential" }, options)
-  assert.equal(calls.length, 4)
+  await assert.rejects(client.session.list({ directory: location.directory }, options))
+  await assert.rejects(client.rpc.call({ rpcID: "fixture", method: "check", input: {}, location: { directory: location.directory } }, options))
+  await assert.rejects(client.debug.location.evict({ location: { directory: location.directory } }, options))
+  await assert.rejects(client.credential.remove({ credentialID: "credential" }, options))
+  assert.equal(calls.length, 0)
   await assert.rejects(client.session.list({ cursor: "native-cursor" }, options))
-  assert.equal(calls.length, 4, "conflicting cursor context never dispatches")
+  assert.equal(calls.length, 0, "conflicting cursor context never dispatches")
 })
 
-test("directory-only credential context is native-scoped on legacy and global on modern", async () => {
-  for (const version of ["2.0.3", "2.0.4"]) {
+test("directory-only credential context remains global on the supported runtime", async () => {
+  for (const version of ["2.0.11"]) {
     const endpoint = { url: "http://localhost:1234" }
     rememberRuntime(endpoint, { version, pid: 1, discovery: version === "2.0.3" ? "health" : "status" })
     const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
@@ -109,8 +109,8 @@ test("worktree refresh retains canonical project requests and adapts legacy dire
   assert.equal(modernUrl.search, "")
 })
 
-test("generated worktree methods retain their payload while adapting the legacy location scope", async () => {
-  for (const version of ["2.0.3", "2.0.4"]) {
+test("generated worktree methods retain canonical project payloads", async () => {
+  for (const version of ["2.0.11"]) {
     const endpoint = { url: "http://localhost:4321", auth: { type: "basic" as const, username: "fixture", password: "fixture" } }
     rememberRuntime(endpoint, { version, pid: 1, discovery: version === "2.0.3" ? "health" : "status" })
     const requests: Array<{ method: string; url: URL; body: any }> = []

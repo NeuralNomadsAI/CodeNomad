@@ -10,7 +10,13 @@ Server and UI pin the official `@opencode/client@2.0.11`; the bundled pruning pl
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
-The current cross-version issue register, published API-change timeline and connection-scoped compatibility architecture are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). The server integration module adapts earlier V2 requests/responses for both the guarded UI proxy and direct server callers; native regression runs cross the pinned client with beta-19271, 2.0.3, 2.0.4 and 2.0.5. Discovery success alone does not certify an older runtime's conversation, event or pruning contract.
+The current cross-version issue register and historical API-change audit are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). This release requires stable OpenCode **>=2.0.11 <3.0.0**, checked against authenticated daemon metadata before client use or plugin provisioning. Earlier wire adapters are retired; their regression results below are historical evidence rather than live support.
+
+### Installation and required updates (PR #696)
+
+Missing and outdated OpenCode use the same setup screen in startup/recovery and Preferences. Default host installation uses CodeNomad's bundled Node/npm, including when system Node is absent, into `~/.local/share/codenomad/opencode`. Custom/WSL binaries retain explicit execution-host instructions. Updating files does not update an already-running daemon: the screen offers a separate explicit shared-service restart, then revalidates authority. Pending folder opening can resume; prompts are never replayed.
+
+The isolated 2.0.3→2.0.11 migration fixture preserves session IDs, complete paginated message content, forks, compaction checkpoints, moved sessions and a pending inbox record. OpenCode itself collapses old workspace selectors to local directory scope. Historical ownership checks remain; CodeNomad does not rewrite the database. See the [transition register](dev-docs/OPENCODE_V2_POST_BETA.md) for validation commands and outstanding packaged/platform release gates.
 
 ## Native V2 Adoption
 

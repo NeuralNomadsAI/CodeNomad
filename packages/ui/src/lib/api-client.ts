@@ -446,6 +446,9 @@ export const serverApi = {
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
   },
+  startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
+  },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
   },

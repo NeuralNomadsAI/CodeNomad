@@ -26,6 +26,8 @@
 
 ## Coding Principles
 
+- OpenCode runtime admission is fixed per release in `opencode/runtime-support.ts` (currently stable `>=2.0.11 <3.0.0`). Validate authenticated daemon metadata before client use/plugin provisioning. Shared setup handles missing/outdated installations with bundled Node/npm and a versioned user prefix; a running daemon restart is a separate explicit action. Preserve historical identity/ownership checks even after retiring old wire adapters. See `dev-docs/OPENCODE_V2_POST_BETA.md` and its isolated installation/migration fixtures.
+
 - Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies. See `dev-docs/SESSION_ENVIRONMENT.md`.
 
 - One bundled `codenomad.automation` V2 plugin uses native discovery and backend presence. All browser/developer tools are available without a Developer Mode toggle; native instrumentation starts with the desktop host. Loading, tool availability and execution targeting are separate: retain the authenticated bridge and session/window fences. Tauri preview children receive no application capabilities; primary-renderer reload must dispose them and final-window checks must count native windows. See `dev-docs/BROWSER_AUTOMATION.md`.

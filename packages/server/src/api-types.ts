@@ -373,11 +373,19 @@ export interface BinaryValidationResult {
 }
 
 export interface OpenCodeUpdateStatus {
-  currentVersion: string
+  currentVersion: string | null
   latestVersion: string | null
   updateAvailable: boolean | null
   canUpgrade: boolean
   checkError?: "update_check_failed"
+  minimumVersion: string
+  state: "missing" | "update_required" | "ready" | "error"
+  binaryPath: string
+  daemonVersion?: string
+  serviceState?: "stopped" | "ready" | "restart_required" | "error"
+  serviceError?: string
+  target: "host" | "wsl"
+  canRestart: boolean
 }
 
 export interface OpenCodeUpdateResponse {

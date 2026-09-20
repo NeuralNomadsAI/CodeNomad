@@ -9,6 +9,24 @@ import { runtimeIdentity } from "../opencode/compatibility/runtime"
 const url = "http://127.0.0.1:4321"
 
 describe("HostOpenCodeService", () => {
+  it("explicit restart stops through CLI and starts through the native-parent bridge", async () => {
+    const calls: Array<{ file: string; args: string[]; options: ServiceExecOptions }> = []
+    let delegated = 0
+    const service = createService(calls, { FIXTURE: "startup" }, {
+      startFile: async (file, args, options) => {
+        delegated++
+        calls.push({ file, args, options })
+        assert.equal(options.env?.FIXTURE, "startup")
+        return { stdout: `${url}\n`, stderr: "" }
+      },
+      fetch: async () => Response.json({ version: "2.0.11", pid: 123, urls: [url] }),
+    })
+    assert.equal(runtimeIdentity(await service.restart())?.version, "2.0.11")
+    assert.equal(delegated, 1)
+    assert.deepEqual(calls.map(call => call.args), [["service", "stop"], ["service", "start"], ["service", "get", "password"]])
+    assert.equal(calls[0].options.env, undefined)
+  })
+
   it("uses status, start, and password through buildSpawnSpec without a shell", async () => {
     const calls: Array<{ file: string; args: string[]; options: ServiceExecOptions }> = []
     const service = createService(calls, { PROVIDER_TOKEN: "secret", NODE_EXTRA_CA_CERTS: "/ca.pem" })

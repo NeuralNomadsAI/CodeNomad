@@ -400,6 +400,28 @@ jobs:
           "packages/server/src/opencode-update/*.test.ts"
           packages/ui/src/lib/launch-errors.test.ts
 
+      - name: Test first installation without system Node
+        run: node scripts/test-opencode-install-native.mjs
+
+      - name: Certify native history migration at the minimum and latest stable
+        shell: pwsh
+        run: |
+          $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
+          $arch = node -p "process.arch"
+          $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
+          $seed = Join-Path $env:RUNNER_TEMP 'opencode-migration-seed'
+          npm install --prefix $seed '@opencode/cli@2.0.3' --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $oldCli = Join-Path $seed "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+          foreach ($version in @('2.0.11', 'latest')) {
+            $target = Join-Path $env:RUNNER_TEMP "opencode-migration-$version"
+            npm install --prefix $target "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $cli = Join-Path $target "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+            node scripts/test-opencode-history-migration.mjs $oldCli $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+
   # Exercise the window persistence regressions on the architecture reported in
   # #676, independently of the Linux server gate. Packaging alone cannot test them.
   tests-tauri-macos:

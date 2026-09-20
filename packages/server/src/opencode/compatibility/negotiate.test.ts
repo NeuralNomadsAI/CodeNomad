@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
-import { legacyContractFixture } from "./contract-fixture"
+import { modernContractFixture } from "./contract-fixture"
 
 test("unknown contracts perform authenticated bounded read negotiation before any mutation", async () => {
   for (const kind of ["unauthorized", "unrecognized", "oversized"] as const) {
@@ -30,7 +30,7 @@ test("unknown contracts perform authenticated bounded read negotiation before an
 
 test("shared negotiation has independent subscriber cancellation and never retries a mutation", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "next-contract", pid: 1, discovery: "health" })
+  rememberRuntime(endpoint, { version: "2.0.100", pid: 1, discovery: "info" })
   let complete!: (response: Response) => void
   let negotiationSignal: AbortSignal | null | undefined
   const calls: string[] = []
@@ -41,7 +41,7 @@ test("shared negotiation has independent subscriber cancellation and never retri
       negotiationSignal = init?.signal
       return new Promise<Response>(resolve => { complete = resolve })
     }
-    assert.equal(pathname, "/api/session/s/rename")
+    assert.equal(pathname, "/api/session/s")
     return new Response(null, { status: 204 })
   })
   const first = new AbortController(), third = new AbortController()
@@ -53,7 +53,7 @@ test("shared negotiation has independent subscriber cancellation and never retri
   await assert.rejects(a, { name: "AbortError" })
   await assert.rejects(c, { name: "AbortError" })
   assert.equal(negotiationSignal?.aborted, false)
-  complete(Response.json(legacyContractFixture))
+  complete(Response.json(modernContractFixture))
   assert.equal((await b).status, 204)
-  assert.deepEqual(calls, ["/openapi.json", "/api/session/s/rename"])
+  assert.deepEqual(calls, ["/openapi.json", "/api/session/s"])
 })

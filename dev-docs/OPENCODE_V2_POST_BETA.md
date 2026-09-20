@@ -1,171 +1,121 @@
-# OpenCode V2 stable-runtime transition and installation plan
+# OpenCode V2 stable-runtime transition
 
-**Status:** maintained implementation plan; this documentation increment is mergeable independently of the implementation gates. Runtime support is unchanged.
-**Starting point:** [PR #695](https://github.com/NeuralNomadsAI/CodeNomad/pull/695), merged into `dev` at `aa51cbb9` on 2026-09-16.
-**Related register:** [current compatibility contracts and evidence](OPENCODE_V2_COMPATIBILITY.md).
+**Implementation:** PR #696, based on #695 and the client/plugin 2.0.11 alignment
+in #728. This register describes code and local evidence; remote CI and packaged
+desktop acceptance are separate release gates.
 
-## Objective
+## Release contract
 
-Track the transition to published stable OpenCode V2 contracts, a shared installation/update experience, and deliberate retirement of earlier wire contracts. Land this plan, then maintain it through focused implementation PRs. Keep the eventual support-policy change and adapter deletion reviewable together.
+- This development release fixes `MINIMUM_OPENCODE_VERSION` at **2.0.11**.
+  npm `@opencode/cli@latest` resolved to 2.0.11 on 2026-09-20.
+- Supported versions are stable `>=2.0.11 <3.0.0`. Prereleases, malformed
+  versions, older releases and future majors are refused with
+  `opencode_update_required` / HTTP 426.
+- Client and plugin dependencies remain separately pinned at 2.0.11.
+- Authenticated daemon metadata, not the selected executable's version, controls
+  connection admission. Admission precedes functional clients and plugin
+  provisioning. Replacement daemons are checked again, even at the same URL.
+- Unlisted supported releases must also pass bounded authenticated OpenAPI
+  recognition. A retired or unrecognized contract never receives speculative
+  writes. The minimum is never fetched from npm at application startup.
 
-Three versions must remain distinct:
+## Setup and recovery
 
-| Version | Current baseline | Transition decision |
-| --- | --- | --- |
-| CodeNomad dependencies | Exact `@opencode/client@2.0.4` and `@opencode/plugin@2.0.4` | Select reviewed dependency versions and update their lockfile together. |
-| Connected OpenCode daemon | Native acceptance on beta-19271, 2.0.3, 2.0.4 and 2.0.5 | Choose an explicit minimum runtime and supported release range. |
-| CodeNomad release | Support established by #695 | Announce the release that adopts the new minimum. |
+The global setup dialog and Preferences share `OpenCodeUpdateCard` and the same
+store. Missing and below-minimum installations use one screen with state-specific
+actions, installed/running/minimum versions, retry and executable selection.
+Dismissal leaves a recovery entry; optional updates do not force the dialog.
+Connection changes, foreground entry and unsupported proxy responses refresh
+recovery state. Stale responses cannot overwrite a changed executable or a
+completed action. Only a pending folder open may resume; prompts are not replayed.
 
-OpenCode V2 is available on the stable `latest` channel; beta exit is no longer a pending gate. Upstream's [availability announcement commit](https://github.com/anomalyco/opencode/commit/7b7a67080e) and the published `@opencode/cli`, `@opencode/client` and `@opencode/plugin` 2.0.10 packages (checked on 2026-09-19) establish that publication status. They do not establish API immutability or certify every runtime behavior.
+Default host installations use bundled Node and the npm distributed in its pinned
+official archive. Both Electron and Tauri resources include npm's complete
+dependency/license closure. npm installs an exact policy-compatible release into
+a staging directory under `~/.local/share/codenomad/opencode`, verifies the real
+executable, then publishes a versioned installation and atomic `current` marker.
+No administrator rights, system Node, global npm install or application-resource
+writes are required. Execution is bounded to five minutes and 1 MiB output.
+Installation failures retain the previous marker. Concurrent requests coalesce;
+another backend's same-version installation is accepted only after verification.
 
-No minimum or retirement date is selected yet: choose these from reviewed contracts and historical-data acceptance. A newer CLI installed on disk also does not prove the already-running daemon was upgraded. [PR #715](https://github.com/NeuralNomadsAI/CodeNomad/pull/715) already moved the updater to the stable `@opencode/cli` package; first installation and the shared setup screen below remain implementation work.
+Explicit custom binaries remain selected. WSL and custom installations receive
+execution-host instructions rather than a Windows-side Linux installation.
+Remote setup runs on the CodeNomad server, not the browser machine.
 
-## Permanent interface
+Installation and service activation are separate. An old running daemon requires
+the explicit **Restart shared service** action, whose copy explains interruption
+of other clients' active work. Activation uses official `service stop` and the
+existing native-parent `service start` bridge, authenticates the daemon, validates
+its contract and replaces local authority. Ordinary backend shutdown never stops
+OpenCode. Unknown/newer daemons cannot be downgraded by this action.
 
-Keep `OpenCodeSharedService.acquire()` as the shared seam for the guarded browser proxy and direct server callers, including Yolo. It binds authenticated endpoint/daemon identity, client, transport, connection lifetime and invalidation. Retiring one adapter must not move contract decisions into UI stores or individual callers.
+## Historical migration
 
-The future single-contract implementation must preserve:
+`scripts/test-opencode-history-migration.mjs OLD_CLI TARGET_CLI` creates synthetic
+2.0.3 storage, closes it, copies its DB/WAL and lets the target runtime perform its
+own migration. It retains seed exports, untouched seed storage, CLI versions,
+executable SHA-256 hashes and logs in a fresh temporary fixture. It never connects
+to the shared service or rewrites native tables.
 
-- Authentication, loopback/origin checks, credential-safe redirects, bounded discovery and absolute deadlines.
-- Dispatch-generation checks after asynchronous body preparation; retired streams cannot publish or invalidate a replacement connection.
-- Independent caller cancellation and connection-scoped negotiation/validation.
-- Native error envelopes, especially streamed 401 responses; no mutation retry under another contract after failure.
-- Location/session/path ownership, the proxy allowlist and worktree mutation fences.
-- Exact project/destination directory identity, distinct from containing-worktree identity, with exact session rollback.
-- Native `cursor.next`, scoped Forms and validated encoded global Form headers.
-- Separate background `shell.*` and interactive `pty.*` behavior.
-- Authoritative cache reconciliation, historical message access, and intentional handling of native idle control records.
-- Pruning's fresh storage-identity challenge, synchronous SQLite execution-claim fence and explicit-request-only deletion.
-- A standalone pruning package with complete local imports, plus bundled-plugin presence/disposal and late discovery.
+Local Windows acceptance for **2.0.3 → 2.0.11** covers:
 
-The directory name `compatibility/` is not a deletion instruction. Some of its implementation provides these permanent guarantees.
+- Three source location identities, including two workspace identities at one
+  directory, with independently addressable session IDs and forks.
+- 215 messages per seeded conversation: synthetic history, reasoning, text,
+  completed tool output and a pre-compaction checkpoint. Export equality and
+  native message pagination preserve complete history.
+- Native session pagination, a moved worktree session and a pending inbox record.
+- **Native identity rule:** the target migrates historical `workspaceID` values
+  to the local directory scope while preserving session IDs and content. The
+  fixture reports this explicitly; CodeNomad does not manufacture aliases.
 
-## Retirement inventory
+The existing native pruning fixture independently verifies current Forms,
+Shell/PTY scope, permission/Yolo replies, model payload, fork independence,
+pre-compaction pruning, execution-claim races, plugin disposal and daemon restart.
+This is not a claim that every old pending Form or provider configuration has
+been tested across the storage migration.
 
-Paths below are relative to the repository root. This is a working deletion map, not authorization to remove code before its evidence is available.
+## Retirement disposition
 
-| Area / entry points | Retirement candidate | Evidence required / behavior retained |
-| --- | --- | --- |
-| `packages/server/src/opencode/compatibility/runtime.ts` | Audited legacy release list and legacy profile classification | Keep authenticated daemon metadata. Introduce a support decision separately from wire-contract recognition. |
-| `packages/server/src/opencode/compatibility/negotiate.ts` | Recognition of the retired contract family | Decide how future/unlisted releases are recognized. A version above the minimum is not blanket certification of future majors or snapshots. |
-| `packages/server/src/opencode/compatibility/requests.ts` | Legacy route, method and payload translations | Verify all consumed operations against the selected minimum and latest validated runtime before deletion. |
-| `packages/server/src/opencode/compatibility/transport.ts` | Legacy status-envelope and HTTP inbox timestamp conversions | Preserve authentication, lifetime/cancellation, origin checks, diagnostics and modern forwarding. Native SSE inbox timestamps remain a distinct schema. |
-| `packages/server/src/opencode/compatibility/events.ts` | Legacy permission-event renaming | Prove supported runtimes emit the canonical event; preserve durable metadata and reconnect reconciliation. |
-| `packages/server/src/workspaces/opencode-cli-service.ts` | Older discovery routes | Current discovery tries authenticated `/api/status`, `/api/health`, then `/api/info`, advancing only on 404. Retire a route only against the selected supported contracts; retain authentication, response bounds and shared deadlines. |
-| `packages/server/src/opencode/compatibility/location.ts` and `proxy-locations.ts` | Legacy wire selectors and private-header reconstruction | Prove historical location identity remains representable and authorized. Keep import/cursor validation and global Forms scope. |
-| `packages/ui/src/stores/request-locations.ts` and its callers | Legacy request options/private context | Review Forms, metadata/provider credentials, session creation/moves and Shell calls together. Do not collapse cache keys while distinct identities remain observable. |
-| `packages/ui/src/stores/instance-invalidation.ts` and `session-pruning-events.ts` | Legacy-only catalog/content event branches | Keep current authoritative refresh, pruning events and in-flight invalidation coverage. |
-| `packages/server/src/opencode/session-pruning/location.ts`, `service.ts`, `preview-store.ts` | No automatic deletion | Identity/storage validation concerns historical data, not only old HTTP clients. Preserve exact membership and package closure. |
-| `.github/workflows/pr-build.yml` and native fixtures | Positive runtime-support jobs for retired releases | Replace with minimum + latest validated runtime coverage; retain migration seeds and former authority/race regressions where meaningful. |
-
-Keep the original compatibility audit as historical evidence. Record which predicates/tests were removed, retained or replaced in the implementation PR rather than overwriting the old results.
-
-## Work packages
-
-### P0 — Establish and maintain the transition register (this increment)
-
-- [x] Base the draft on the merged compatibility implementation.
-- [x] Distinguish dependency versions, daemon support and the CodeNomad release decision.
-- [x] Map retirement candidates and permanent guarantees to current files.
-- [x] Define historical-data acceptance, support-policy decisions and release gates below.
-- [x] Record stable publication and specify one setup experience for missing and below-minimum OpenCode, including the bundled-Node installation proposal.
-
-This increment adds documentation only. All implementation and native-validation checkboxes below are deliberately open.
-
-### P1 — Make support policy an explicit connection decision
-
-- [ ] Separate "recognized contract" from "supported runtime" at the shared connection seam, preserving today's accepted releases during preparation.
-- [ ] Define the future minimum, supported release range and treatment of development/unlisted versions from publication evidence.
-- [ ] Evaluate the actual authenticated daemon identity before functional calls or mutations, for both proxy and direct callers; re-evaluate on connection replacement.
-- [ ] Surface a structured unsupported-runtime error with actual/required versions and an upgrade action explained in every UI locale. Authentication/transport errors retain their own classification.
-- [ ] Use the shared setup screen in P1a for missing binaries and below-minimum runtimes; gate affected connections using backend policy rather than a UI-only version comparison.
-- [ ] Verify below-minimum refusal, unknown-contract refusal, same-port replacement, independent cancellation and absence of speculative calls/retries.
-- [ ] Review plugin provisioning order so rejecting an unsupported runtime does not bypass the existing explicit-request-only pruning rule or daemon ownership policy.
-
-Do not add an inactive universal capability framework or a second client interface. The first implementation should keep the existing profile resolver and consumer seam, with the smallest support-policy decision needed by real callers. CodeNomad does not silently upgrade, restart or stop the shared daemon.
-
-### P1a — Shared installation and required-update experience
-
-**Proposed behavior, not yet implemented.** Use one setup screen with state-specific copy and actions, reachable from startup, connection recovery and Preferences. A persistent connection notice opens this same screen when a running application detects an unsupported replacement daemon; deduplicate it per execution target and connection generation. Block affected OpenCode operations, while keeping settings and unrelated supported connections accessible.
-
-| Detected state | Screen and action |
+| Area | Implementation |
 | --- | --- |
-| OpenCode command missing | Explain the selected host or WSL distribution; offer **Install and start OpenCode**, choose an existing executable, and retry detection. |
-| Installed CLI or authenticated daemon below CodeNomad's minimum | Show installed CLI version, running daemon version when available, minimum required version and proposed target; offer **Update OpenCode** using the same installer. |
-| Supported daemon, newer optional release available | Non-blocking update notice using the same screen; being behind `latest` is not itself unsupported. |
-| Installed CLI is current but the running daemon is too old | Explain that installation succeeded but the shared service still needs an explicit restart; do not report connection readiness yet. |
-| Authentication, transport or unrecognized-contract failure | Preserve that diagnosis and provide retry/details; do not mislabel it as a missing installation or assume upgrading fixes it. |
+| Audited beta/old-stable live-support list | Removed; fixed policy and current-contract admission replace it. |
+| Legacy routes, methods and payload translation | `compatibility/requests.ts` removed. |
+| Legacy HTTP inbox/status conversions | Removed from transport. |
+| Legacy permission/step event normalization | Removed; admitted runtimes emit native canonical events. |
+| Authentication, cancellation, origin and connection generations | Retained and regression-tested at the existing shared seam. |
+| Older discovery routes | Retained for authenticated diagnosis of an outdated running daemon, not functional live support. |
+| Historical location/context, import/cursor and pruning checks | Retained. Obsolete public selectors remain rejected; these are authority checks, not permission to run old daemons. |
+| Legacy schema recognition | Retained to diagnose and reject a retired contract; no legacy serializer remains. |
 
-- [ ] Reuse `packages/server/src/opencode-update/service.ts` for installation and upgrade. Its package-manager command already performs an install, but status/upgrade currently require a successful existing-binary probe. Add a genuine missing state, not a fabricated version or an install attempt after any probe error.
-- [ ] Resolve the stable channel to an exact policy-compatible target before installation; re-resolve the executable and verify its actual version afterward. Coordinate concurrent requests per installation target and bound execution time/output. Preserve explicitly selected custom executables and their update instructions.
-- [ ] For desktop hosts without a system Node/npm, use the bundled Node to execute a bundled, pinned npm CLI. `scripts/prepare-node-runtime.cjs` currently copies only the Node executable, so npm and its dependencies/licensing must be included and packaging verified. Install into a persistent user-writable prefix outside application resources; explicitly resolve the resulting executable and child-process PATH without requiring a terminal or administrator rights.
-- [ ] Keep host and WSL execution targets explicit. Windows' bundled Node cannot install a native Linux CLI inside WSL; use a verified Linux runtime/package manager in the selected distribution or show its installation instructions. Remote connections require installation on the execution host, not on the browser's computer.
-- [ ] After **Install and start**, use the existing official `service status` / `service start` lifecycle and native-parent launch bridge, then authenticate and validate the actual daemon contract before resuming the pending workspace open. Do not spawn a private `serve` process or assume installer exit means readiness.
-- [ ] Treat updating files and restarting an existing shared daemon as separate outcomes. Explain that restart affects other OpenCode clients and active work; perform it only through an explicit user action and the official service lifecycle. Reacquire connection authority afterward; never replay a prompt or mutation automatically.
-- [ ] Localize all copy, show progress and actionable failures, and retain retry/manual-path choices in the same screen. Preserve the user's pending project selection and drafts through recovery.
-- [ ] Verify absent CLI with/without system Node/npm, below-minimum CLI and daemon, stale daemon after upgrade, optional updates, registry/install failures, custom paths, repeated clicks, and host/WSL targeting. Use isolated installation prefixes and synthetic services; test the rendered screen and packaged Electron/Tauri launches without changing a user's global CLI or shared daemon.
+## Validation and release gates
 
-Deliver P1/P1a in focused implementation PRs and update this register with their evidence. The setup experience must be available before raising the runtime floor in P4.
+Implemented checks include server/UI typechecks, server regressions, real Solid
+browser setup tests and rendered captures, isolated bundled-Node installation,
+native migration, native locations/worktrees, automation heartbeat/provisioning
+and pruning acceptance. CI adds first installation and old-seed migration at
+the fixed minimum and resolved latest stable on Windows, Linux and macOS ARM64.
+The existing cross-platform native pruning gate remains in place.
 
-### P2 — Certify historical data on the replacement runtime
+Open release gates, not completed local claims:
 
-- [ ] Add reproducible synthetic-history seeds using the already-audited legacy runtimes; retain exact executable/package versions and integrity metadata.
-- [ ] Keep an untouched seed copy, then let the official target runtime migrate an isolated copy through its normal startup path. Do not manually rewrite OpenCode tables to manufacture compatibility.
-- [ ] Validate this matrix through the real shared connection, guarded proxy, generated client and reducer:
+- Green remote CI for the final diff and independent review.
+- Packaged Electron/Tauri startup, update/restart and reconnect interaction on
+  release artifacts. Native desktop automation was unavailable in this session.
+- Windows→WSL traversal and mounted/aliased configuration-root watcher coverage.
+- Broader old-runtime seeds and old pending Forms/provider-state migration.
 
-| Synthetic legacy history | Required result on target runtime |
-| --- | --- |
-| Root and worktree sessions, including two identities at the same directory | Every session remains distinguishable/accessible, or an explicit native migration rule is documented and tested; ambiguous identity collapse blocks retirement. |
-| More than 200 messages and multiple native session pages | Full history remains reachable through native pagination; obsolete cursor state is discarded and reread without rewriting history. |
-| Moved sessions and location-switched history | Current ownership and historical locations are preserved; exact evacuation/rollback and foreign import/cursor refusal still pass. |
-| Tool/reasoning content, forks and pre-compaction history | Content and fork independence survive migration/restart; pruning affects only explicit selections and preserves model-context semantics. |
-| Native pending inbox and control records | Reopened state converges from authoritative reads/events; idle outcomes do not become fabricated assistant text. |
-| Global/session Forms, Shell/PTY scope and provider metadata | Location-sensitive operations retain their documented authority and current native lifecycle behavior. |
+Do not remove the remaining historical authority checks based solely on this
+synthetic seed. Keep the compatibility audit in
+[OPENCODE_V2_COMPATIBILITY.md](OPENCODE_V2_COMPATIBILITY.md) as historical evidence.
 
-Old-runtime execution for generating migration fixtures is distinct from promising live support for those runtimes. Keep that purpose explicit when reducing the CI matrix.
+## Decision history
 
-### P3 — Simplify behind the existing interface
-
-- [ ] Remove legacy request/response/event translations once P1 and P2 establish the supported replacement contract and data behavior.
-- [ ] Remove the discovery fallback only with matching minimum-runtime evidence.
-- [ ] Simplify private location context and UI callers only where the migration matrix proves it unnecessary; retain historical identity validation where the target still exposes it.
-- [ ] Preserve and rerun the original authority, connection-generation, no-retry, import/cursor, rollback and pruning regressions against the supported contract.
-- [ ] Review imports from both the bundled and separately packed pruning plugin; no dependency may escape the standalone archive.
-
-### P4 — Publish the new support floor
-
-- [x] Record upstream stable availability (see Objective).
-- [ ] Select exact target contract/dependency versions from acceptance evidence.
-- [ ] Choose and announce the CodeNomad release/minimum OpenCode runtime, including the distinction between updating the CLI and the running daemon.
-- [ ] Run minimum + latest validated native acceptance, including packed/bundled pruning and rendered controls, on Windows, macOS and Linux.
-- [ ] Verify Electron and Tauri startup/reconnect/refusal behavior, plus host-to-WSL traversal for supported WSL configurations.
-- [ ] Resolve or explicitly scope the existing mounted-configuration late-discovery limitation and aliased config-root watcher behavior; canonical temporary fixtures alone do not certify those user environments.
-- [ ] Update release notes, `MIGRATION_V2.md`, architecture references and `AGENTS.md` together with the implementation.
-- [ ] Complete independent gatekeeper review, fix/retest findings, and obtain green CI for the final diff.
-
-## Working in parallel
-
-Merge this documentation increment as the maintained transition register. Track P1–P4 in focused implementation PRs, updating this document's progress and evidence links with each increment. Open implementation checkboxes are not blockers for the documentation PR; they remain gates for changing runtime support and retiring adapters.
-
-For each increment, record:
-
-1. Base commit and the work package advanced.
-2. Any change to the currently supported runtime set (normally none during preparation).
-3. Contract/publication evidence, exact native artifacts and isolated migration results.
-4. Which invariants/tests replace retired compatibility tests.
-5. Remaining decisions or failed checks, without converting local evidence into a remote-CI claim.
-
-The eventual retirement change is ready when the support-policy, historical-data and release gates are complete. Until then, the merged #695 compatibility behavior remains the product baseline.
-
-## Decision log
-
-| Date | Decision / open question | Disposition |
-| --- | --- | --- |
-| 2026-09-16 | Start from merged #695 rather than a parallel rewrite. | Adopted; preparation branch based on `aa51cbb9`. |
-| 2026-09-16 | Runtime 2.0.5 and client/plugin 2.0.4 are different version axes. | Preserve that distinction in the draft and release communication. |
-| 2026-09-16 | Remove legacy wire support separately from historical-data identity handling. | Adopted; P2 gates identity simplification. |
-| 2026-09-16 | Which upstream release marks beta exit, and which CodeNomad release raises the minimum? | Open; no version/date selected. |
-| 2026-09-16 | What supported range and future-version recognition replace two-profile negotiation? | Open; decide during P1 from the actual publication contract. |
-| 2026-09-20 | Stable V2 publication is established; stop waiting for beta exit. | Supersedes the beta-exit question above; the CodeNomad minimum/release decision remains open. |
-| 2026-09-20 | Land and maintain the plan independently of its implementation. | Documentation completion is distinct from P1–P4 acceptance. |
-| 2026-09-20 | Missing and too-old OpenCode share a setup screen and installer. | Specified in P1a, including required-update notices, bundled Node/npm, execution-host targeting and daemon revalidation; implementation pending. |
+- 2026-09-16: #695 established connection-scoped compatibility; #696 began as a
+  documentation-only retirement plan without selecting a floor.
+- 2026-09-20: stable V2 publication is established. The user requested the actual
+  implementation in #696. The plan-only status is superseded by the code above.
+- 2026-09-20: minimum/client/plugin baseline 2.0.11; setup precedes admission
+  recovery, updates never silently restart the externally owned daemon, and
+  native historical identity validation remains independent of live support.
