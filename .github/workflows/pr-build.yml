@@ -91,7 +91,7 @@ jobs:
           New-Item -ItemType Directory -Force $sandbox | Out-Null
           $package = npm pack ./packages/server/src/opencode/session-pruning --pack-destination $sandbox --json | ConvertFrom-Json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@2.0.4' --ignore-scripts --no-audit --no-fund
+          npm install --prefix $sandbox (Join-Path $sandbox $package.filename) '@opencode/cli@latest' --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "PRUNING_NATIVE_INSTALL=$sandbox" >> $env:GITHUB_ENV
       - name: Test the installed plugin with an isolated official runtime
@@ -101,6 +101,8 @@ jobs:
           $arch = node -p "process.arch"
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
           $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+          & $cli --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $plugin = Join-Path $env:PRUNING_NATIVE_INSTALL 'node_modules/@neuralnomads/codenomad-session-pruning'
           $fixtures = node -p "require('node:path').join(require('node:fs').realpathSync(require('node:os').tmpdir()), 'opencode')"
           "PRUNING_NATIVE_FIXTURES=$fixtures" >> $env:GITHUB_ENV
@@ -137,22 +139,6 @@ jobs:
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     runs-on: windows-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - version: 0.0.0-beta-19271
-            scope: '@opencode-ai'
-            binary: opencode2
-          - version: 2.0.3
-            scope: '@opencode'
-            binary: opencode
-          - version: 2.0.5
-            scope: '@opencode'
-            binary: opencode
-          - version: 2.0.7
-            scope: '@opencode'
-            binary: opencode
     steps:
       - uses: actions/checkout@v4
         with:
@@ -164,24 +150,23 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
-      - name: Cross the pinned client with an isolated runtime
+      - name: Qualify the pinned client against the latest stable runtime
         shell: pwsh
-        env:
-          RUNTIME_VERSION: ${{ matrix.version }}
-          RUNTIME_SCOPE: ${{ matrix.scope }}
-          RUNTIME_BINARY: ${{ matrix.binary }}
         run: |
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
-          npm install --prefix $sandbox "$env:RUNTIME_SCOPE/cli@$env:RUNTIME_VERSION" --ignore-scripts --no-audit --no-fund
+          npm install --prefix $sandbox '@opencode/cli@latest' --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $cli = Join-Path $sandbox "node_modules/$env:RUNTIME_SCOPE/cli-windows-x64/bin/$env:RUNTIME_BINARY.exe"
+          $cli = Join-Path $sandbox 'node_modules/@opencode/cli-windows-x64/bin/opencode.exe'
+          & $cli --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ($env:RUNTIME_VERSION -eq '0.0.0-beta-19271' -or $env:RUNTIME_VERSION -eq '2.0.3') {
-            node scripts/test-session-pruning-native.mjs $cli --legacy-pruning
-          }
+          node scripts/test-session-environment-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-fork-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   tests:
     needs: authorize
@@ -260,6 +245,7 @@ jobs:
           packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/provider-auth.test.ts
           packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/server-meta.test.ts
@@ -308,6 +294,7 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/opencode-data.test.ts
+          packages/ui/src/stores/opencode-data-settlement.test.ts
           packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
@@ -316,6 +303,7 @@ jobs:
           packages/ui/src/stores/session-pruning-projection.test.ts
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

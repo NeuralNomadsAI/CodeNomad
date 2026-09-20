@@ -96,6 +96,9 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
+  const eventRevisions = new Map<string, number>()
+  const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
+  let disposed = false
   return createRoot((dispose) => {
     const event = {
       listen(handler: (event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void) {
@@ -117,9 +120,24 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
             get(messageTarget, messageProperty, messageReceiver) {
               if (messageProperty !== "list") return Reflect.get(messageTarget, messageProperty, messageReceiver)
               return async (input: { sessionID: string }, options?: unknown) => {
-                const snapshot = messageSnapshots.get(input.sessionID)
-                if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
-                return (client.message.list as any)(input, options)
+                // Native terminal-tool reconciliation replaces its cache after
+                // awaiting this response, without fencing intervening events.
+                // Keep the live projection until one trailing read is current;
+                // never merge an obsolete page into newer streaming messages.
+                for (;;) {
+                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                    throw new Error("Stale read from disposed OpenCode projection")
+                  }
+                  const snapshot = messageSnapshots.get(input.sessionID)
+                  if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
+                  const revision = eventRevisions.get(input.sessionID) ?? 0
+                  const response = await (client.message.list as any)(input, options)
+                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                    throw new Error("Stale read from disposed OpenCode projection")
+                  }
+                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
+                  return response
+                }
               }
             },
           })
@@ -136,6 +154,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })
     const emit = (details: OpenCodeEvent) => {
+      // Isolated fresh-entry resyncs already fence their entire transaction.
+      // Only events applied to this reducer invalidate its own pending reads.
+      const sessionId = eventSessionId(details)
+      if (sessionId) eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -173,7 +195,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         data.session.setStatus(sessionId, sessionId in active ? "running" : "idle")
         return true
       },
-      dispose,
+      dispose() {
+        disposed = true
+        dispose()
+      },
     }
   })
 }
