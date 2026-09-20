@@ -353,6 +353,21 @@
   @apply opacity-50 cursor-not-allowed;
 }
 
+.selector-button-ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+
+.selector-button-ghost:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.selector-button-ghost:disabled {
+  @apply opacity-40 cursor-not-allowed;
+}
+
 .selector-empty-state {
   @apply p-4 text-center text-sm;
   color: var(--text-muted);

@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Home, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -288,6 +288,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
   const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
+  const canGoToWorkspaceRoot = createMemo(
+    () => Boolean(rootPath()) && currentAbsolutePath() !== rootPath() && !creatingFolder(),
+  )
 
   async function handlePathSubmit() {
     const target = pathInput().trim()
@@ -423,6 +426,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
                     class="selector-input directory-browser-current-path"
                   />
+                  <button
+                    type="button"
+                    class="selector-button selector-button-ghost directory-browser-go-root"
+                    disabled={!canGoToWorkspaceRoot()}
+                    onClick={() => void navigateTo(rootPath())}
+                    title={t("directoryBrowser.goToWorkspaceRoot")}
+                    aria-label={t("directoryBrowser.goToWorkspaceRoot")}
+                  >
+                    <Home class="w-4 h-4" />
+                  </button>
                   <Show when={props.mode !== "files"}>
                     <button
                       type="button"

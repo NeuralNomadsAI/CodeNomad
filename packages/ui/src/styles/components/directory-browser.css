@@ -52,10 +52,10 @@
 
 .directory-browser-current {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "label new-folder"
-    "path open";
+    "label go-root . new-folder"
+    "path path path open";
   gap: var(--space-md);
   align-items: center;
   width: 100%;
@@ -82,8 +82,13 @@
   width: auto;
 }
 
+.directory-browser-go-root {
+  grid-area: go-root;
+  width: auto;
+  flex-shrink: 0;
+}
+
 .directory-browser-open-path {
-  grid-area: open;
   width: auto;
   flex-shrink: 0;
   gap: var(--space-xs);
@@ -96,11 +101,13 @@
     grid-template-areas:
       "label label"
       "path path"
-      "new-folder open";
+      "go-root new-folder"
+      "open open";
     gap: var(--space-sm);
   }
 
   .directory-browser-new-folder,
+  .directory-browser-go-root,
   .directory-browser-open-path {
     width: 100%;
   }
@@ -116,13 +123,19 @@
     grid-template-areas:
       "label"
       "path"
+      "go-root"
       "new-folder"
       "open";
   }
 
   .directory-browser-new-folder,
+  .directory-browser-go-root,
   .directory-browser-open-path {
     width: 100%;
+  }
+
+  .directory-browser-open-path {
+    justify-content: center;
   }
 }
 
