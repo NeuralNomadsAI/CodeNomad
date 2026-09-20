@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, on, type Component, type Accessor } from "solid-js"
-import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
+import TimelineVirtualList, { type TimelineListHandle } from "./timeline-virtual-list"
 import { Dynamic, Portal } from "solid-js/web"
 import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -39,10 +39,10 @@ interface MessageTimelineProps {
   showToolSegments?: boolean
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
+  revealActiveToken?: number
 }
 
 const MAX_TOOLTIP_LENGTH = 220
-const TIMELINE_VIRTUALIZER_BUFFER_PX = 240
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -382,29 +382,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
-  const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle | undefined>()
-  let revealTimer: ReturnType<typeof setTimeout> | undefined
-  const cancelReveal = () => {
-    if (revealTimer !== undefined) clearTimeout(revealTimer)
-    revealTimer = undefined
-  }
+  const [virtualizerHandle, setVirtualizerHandle] = createSignal<TimelineListHandle | undefined>()
+  let browsingRail = false
+  const cancelReveal = () => { browsingRail = true }
 
   const handleScroll = () => {
-    cancelReveal()
     if (hoveredSegment()) clearHoverPreview()
   }
 
-  createEffect(on(() => props.activeSegmentId, (activeId) => {
-    if (!activeId) return
-    revealTimer = setTimeout(() => {
-      revealTimer = undefined
-      const index = segmentIndexById().get(activeId)
-      // The rail is globally virtualized: an animated reveal can keep moving
-      // under the pointer while the reader chooses another distant destination.
-      if (index !== undefined) virtualizerHandle()?.scrollToIndex(index, { align: "nearest" })
-    }, 120)
-    onCleanup(cancelReveal)
-  }))
+  createEffect(on(() => props.revealActiveToken, () => { browsingRail = false }))
+  createEffect(() => {
+    props.revealActiveToken
+    const activeId = props.activeSegmentId
+    const index = activeId ? segmentIndexById().get(activeId) : undefined
+    const handle = virtualizerHandle()
+    // Wait for the exact extent to reach layout, but never queue a reveal past
+    // a manual rail gesture or a newer active marker.
+    const frame = requestAnimationFrame(() => {
+      if (!browsingRail && index !== undefined) handle?.scrollToIndex(index)
+    })
+    onCleanup(() => cancelAnimationFrame(frame))
+  })
 
   createEffect(() => {
     const element = tooltipElement()
@@ -438,12 +436,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       if (pendingFrame !== null) return
       pendingFrame = requestAnimationFrame(() => {
         pendingFrame = null
-        const handle = virtualizerHandle()
-        const offset = getBottomAnchoredViewportOffset(handle?.scrollOffset ?? element.scrollTop, pendingHeightDelta)
+        const offset = getBottomAnchoredViewportOffset(element.scrollTop, pendingHeightDelta)
         pendingHeightDelta = 0
-        const maxOffset = Math.max((handle?.scrollSize ?? element.scrollHeight) - (handle?.viewportSize ?? element.clientHeight), 0)
-        if (handle) handle.scrollTo(Math.min(offset, maxOffset))
-        else element.scrollTop = Math.min(offset, maxOffset)
+        const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
+        element.scrollTop = Math.min(offset, maxOffset)
       })
     })
     observer.observe(element)
@@ -468,12 +464,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       if (s.type === "tool") set.add(s.messageId)
     }
     return set
-  })
-
-  const segmentIndexById = createMemo(() => {
-    const map = new Map<string, number>()
-    for (let i = 0; i < props.segments.length; i++) map.set(props.segments[i].id, i)
-    return map
   })
 
   const segmentStates = createMemo(() => {
@@ -517,9 +507,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }
   }
 
+  const visibleSegments = createMemo(() => props.segments.filter(segment => !segmentStateFor(segment.id).hidden))
+  const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
   const segmentSpacerHeights = createMemo(() => {
     const states = segmentStates()
-    const result = new Map<string, string>()
+    const result = new Map<string, number>()
     let previousVisible: TimelineSegment | null = null
 
     for (let index = 0; index < props.segments.length; index += 1) {
@@ -527,12 +519,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       const state = states.get(segment.id)
 
       if (state?.hidden) {
-        result.set(segment.id, "0")
+        result.set(segment.id, 0)
         continue
       }
 
       if (!previousVisible) {
-        result.set(segment.id, "0")
+        result.set(segment.id, 0)
         previousVisible = segment
         continue
       }
@@ -550,12 +542,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         && messagesWithTools().has(previousVisible.messageId)
 
       const gapUnits = 1 + (startsVisibleToolGroup || startsCollapsedToolGroup || followsVisibleGroupParent ? 1 : 0)
-      result.set(
-        segment.id,
-        gapUnits === 1
-          ? "var(--message-timeline-segment-gap)"
-          : "calc(var(--message-timeline-segment-gap) * 2)",
-      )
+      result.set(segment.id, gapUnits)
 
       previousVisible = segment
     }
@@ -572,13 +559,17 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         class="message-timeline"
         data-segment-count={props.segments.length}
         role="navigation"
+        tabIndex={0}
         aria-label={t("messageTimeline.ariaLabel")}
         onScroll={handleScroll}
         onWheel={cancelReveal}
+        onPointerEnter={cancelReveal}
         onPointerDown={cancelReveal}
+        onFocusIn={cancelReveal}
+        onTouchStart={cancelReveal}
         onKeyDown={cancelReveal}
       >
-        <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
+        <TimelineVirtualList register={setVirtualizerHandle} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
             const isActive = () => props.activeSegmentId === segment.id
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
@@ -610,7 +601,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
               return (
               <div class="message-timeline-item">
-                <div aria-hidden="true" class="message-timeline-item-spacer" style={{ height: segmentSpacerHeights().get(segment.id) ?? "0" }} />
                 <button
                     type="button"
                     data-variant={segment.variant}
@@ -619,7 +609,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   aria-label={segment.tooltip || segment.label}
                   data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
-                    onClick={() => props.onSegmentClick?.(segment)}
+                    onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}
                   onMouseEnter={(event) => handleMouseEnter(segment, event)}
                   onMouseLeave={handleMouseLeave}
                 >
@@ -629,7 +619,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               </div>
             )
           }}
-        </Virtualizer>
+        </TimelineVirtualList>
         <Show when={previewData()}>
           {(data) => {
             onCleanup(() => setTooltipElement(null))

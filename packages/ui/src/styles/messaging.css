@@ -11,3 +11,4 @@
 @import "./messaging/session-timeline-rail.css";
 @import "./messaging/tool-call.css";
 @import "./messaging/log-view.css";
+@import './messaging/timeline-virtual-list.css';

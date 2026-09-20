@@ -51,11 +51,25 @@ hidden views cancel work. A refresh retains the last successful snapshot and
 errors provide an explicit retry. The initial outline scan is proportional to the
 session size; a subsequent jump loads only its bounded destination window.
 
-The timeline reserves a narrow gutter in `timeline-scrollbar.css`. Hover/focus
-changes contrast only. Marker rectangles give up width to the gutter; fixed-size
-icons and vertical geometry never scale with available width. Browser checks load
-the complete stylesheet and cover overflow, hover, keyboard focus, RTL and 125%
-zoom.
+The timeline uses the same standard native scrollbar as the transcript, with one
+ordinary gutter. Marker rectangles give up width to it; fixed-size icons and
+vertical geometry never scale with available width. `timeline-virtual-list.tsx`
+measures the marker height and gap primitives, computes exact offsets (including
+group spacing), and mounts only the visible range. Hidden tools are excluded from
+the layout. Browsing offscreen rows cannot change the scrollbar extent.
+
+Manual rail browsing suppresses active-marker reveals until an explicit transcript
+gesture. Reveals wait one layout frame and are cancelled by a newer selection or
+manual rail interaction. Intermediate transcript positions during window loading
+cannot move the rail. Native transcript scrollbar drags escape following at press,
+retain ownership beyond the ordinary wheel/key deadline, and postpone boundary
+paging until release. A wheel gesture at an already-clamped boundary can request
+the adjacent window even when no DOM scroll event is emitted. First/latest controls
+also account for off-window messages, not just the local scroll offset.
+
+Browser checks load the complete stylesheet and cover overflow, hover, keyboard
+focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
+and viewport anchor stability during streaming and distant jumps.
 
 ## Validation
 

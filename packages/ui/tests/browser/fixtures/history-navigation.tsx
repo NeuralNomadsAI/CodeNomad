@@ -12,10 +12,11 @@ import { sessions, setSessions, setActiveSession, setProviders } from "../../../
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/session-api"
-import { navigationMessage, navigationMessageId } from "./history-navigation-data"
+import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
 import "../../../src/index.css"
 
 const instanceId = "navigation", sessionId = "s", count = 1500
+const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage : navigationMessage
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false
@@ -32,11 +33,17 @@ const client: any = {
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
   },
   model: { default: async () => ({ data: model }) },
-  message: { list: async ({ cursor, limit = 200 }: any = {}) => {
+  message: { list: async ({ cursor, limit = 200, order }: any = {}) => {
     nativeLists++
+    if (order === 'asc' || cursor?.startsWith('asc:')) {
+      const start = cursor ? Number(cursor.slice(4)) : 0
+      const end = Math.min(count, start + limit)
+      return { data: Array.from({ length: end - start }, (_, index) => makeMessage(start + index)),
+        cursor: end < count ? { next: `asc:${end}` } : {} }
+    }
     const end = cursor ? Number(cursor) : count
     const start = Math.max(0, end - limit + (streaming && !cursor ? 1 : 0))
-    const data: any[] = Array.from({ length: end - start }, (_, index) => navigationMessage(start + index))
+    const data: any[] = Array.from({ length: end - start }, (_, index) => makeMessage(start + index))
     if (streaming && !cursor) data.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: 10000 }, content: [{ type: "text", text: live }] })
     return { data: data.reverse(), cursor: start ? { next: String(start) } : {} }
   } },
@@ -57,6 +64,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   id: navigationMessageId,
+  tools: (showTimelineTools: boolean) => updatePreferences({ showTimelineTools }),
   openSearch: () => { updatePreferences({ locale: "en" }); setSessionSearchOpen(instanceId, sessionId, true) },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   latest: () => loadLatestMessageWindow(instanceId, sessionId),

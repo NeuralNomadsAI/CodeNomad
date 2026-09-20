@@ -285,7 +285,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
-  const [includeTechnical, setIncludeTechnical] = createSignal(true)
+  const [includeTechnical, setIncludeTechnical] = createSignal(false)
   const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
   const [nextSearchCursor, setNextSearchCursor] = createSignal<string | null>(null)
   const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
@@ -383,11 +383,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const [activeSegmentId, setActiveSegmentId] = createSignal<string | null>(null)
+  const [revealActiveToken, setRevealActiveToken] = createSignal(0)
 
   const isActive = createMemo(() => props.isActive !== false)
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
-  const scrollButtonsCount = createMemo(() => listState()?.scrollButtonsCount() ?? 0)
+  const showFirstButton = () => Boolean(props.hasMoreMessages || listState()?.showScrollTopButton())
+  const showLatestButton = () => !isLatestWindow(store().getMessageWindow(props.sessionId)) || Boolean(listState()?.showScrollBottomButton())
+  const scrollButtonsCount = createMemo(() => Number(showFirstButton()) + Number(showLatestButton()))
 
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
@@ -931,6 +934,10 @@ export default function MessageSection(props: MessageSectionProps) {
       pagingWindowController = null
       pagingWindow = false
       setNavigationPending(false)
+      const activeMessageId = api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey()
+      const segment = timelineSegments().find(segment => segment.messageId === activeMessageId)
+      if (segment) setActiveSegmentId(segment.id)
+      if (direction === "latest" || direction === "oldest") setRevealActiveToken(value => value + 1)
       persistMessageScrollSnapshot({ snapshot: api.captureScrollSnapshot() })
     } catch (error) {
       if (isCurrent()) {
@@ -1189,13 +1196,16 @@ export default function MessageSection(props: MessageSectionProps) {
             persistMessageScrollSnapshot({ snapshot })
           }}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
-          onScrollIntent={() => { if (navigationPending()) cancelWindowNavigation() }}
+          onScrollIntent={() => {
+            setRevealActiveToken(value => value + 1)
+            if (navigationPending()) cancelWindowNavigation()
+          }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
           onActiveKeyChange={(messageId) => {
-            if (!messageId) return
+            if (!messageId || pagingWindow) return
             const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
             if (firstSeg) {
               setActiveSegmentId((current) => (current === firstSeg.id ? current : firstSeg.id))
@@ -1213,9 +1223,9 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={registerListApi}
           registerState={(state) => setListState(state)}
-          renderControls={(state) => (
+          renderControls={() => (
             <div class="message-scroll-controls">
-              <Show when={state.showScrollTopButton()}>
+              <Show when={showFirstButton()}>
                 <button
                   type="button"
                   class="message-scroll-button"
@@ -1226,7 +1236,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <ArrowUp class="message-scroll-icon w-4 h-4" aria-hidden="true" />
                 </button>
               </Show>
-              <Show when={state.showScrollBottomButton()}>
+              <Show when={showLatestButton()}>
                 <button
                   type="button"
                   class="message-scroll-button"
@@ -1511,6 +1521,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onSegmentClick={handleTimelineSegmentClick}
               expandedMessageIds={expandedMessageIds}
               activeSegmentId={activeSegmentId()}
+              revealActiveToken={revealActiveToken()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
