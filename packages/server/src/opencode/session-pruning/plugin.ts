@@ -6,14 +6,24 @@ import { readPruningPreview } from "./preview-store"
 import { pruneBoundMessage } from "./service"
 import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
+import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "./history-contract"
+import { queryBoundHistory, pruneBoundBatch } from "./history-service"
 
-export const SessionPruningRpc = Rpc.define(pruningRpcDefinition)
+export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: {
+  ...pruningRpcDefinition.methods,
+  history: { input: historyQuerySchema, output: historyNativeResultSchema },
+  pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
+} })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
 export default Plugin.define({
   id: "codenomad-session-pruning",
   async setup(ctx) {
     const registration = await ctx.rpc.register(SessionPruningRpc, {
+      history: (input, call) => queryBoundHistory(ctx, input, call.signal),
+      pruneBatch: (input, call) => pruneBoundBatch(ctx, input, call.signal, async (sessionID, result) => {
+        await registration.events.emit("pruned", { sessionID, messageID: result.messageID, revision: result.revision })
+      }),
       preview: async (input) => {
         const target = messageTargetSchema.parse(input)
         const session = await ctx.session.get({ sessionID: target.sessionID })

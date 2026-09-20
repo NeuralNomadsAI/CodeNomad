@@ -275,6 +275,8 @@ try {
   const messages = (await client.message.list({ sessionID: session.id, limit: 100, order: "asc" })).data
   const target = messages.find(message => message.type === "assistant" && message.content.some(part => part.type === "tool"))
   assert(target)
+  const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
+  await testSessionHistoryNative({ client, location, locationOptions, template: target })
   if (ui) {
     const { testPruningUI } = await import("./test-session-pruning-ui.mjs")
     await testPruningUI({ client, connection, baseUrl, root, location, busy: async (sessionID) => {
@@ -314,6 +316,9 @@ try {
   await until(() => requests.slice(beforeBusy).some(item => item.kind === "primary"))
   assert.notEqual(claim(), null)
   assert.deepEqual((await prune()).output, { status: "blocked", reason: "maintenance_required" })
+  const busyBatch = (await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "pruneBatch", location,
+    input: { sessionID: session.id, candidates: [{ messageID: target.id, revision: preview.revision, toolCount: 1, reasoningCount: 1 }] } }, locationOptions)).output
+  assert.deepEqual(busyBatch.results[0].result, { status: "blocked", reason: "maintenance_required" })
   releaseProvider(); held = undefined
   await wait()
   assert.equal(claim(), null)
@@ -344,6 +349,9 @@ try {
   const contextBefore = await client.session.context({ sessionID: fork.id })
   assert(contextBefore.some(message => message.type === "compaction" && message.status === "completed"))
   assert(!contextBefore.some(message => message.id === forkTarget.id))
+  const historicalPage = (await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "history", location,
+    input: { sessionID: fork.id, purpose: "prune", query: "", includeTechnical: true } }, locationOptions)).output
+  assert(historicalPage.candidates.some(candidate => candidate.messageID === forkTarget.id), "whole-session plan includes pre-compaction content")
   const historical = { sessionID: fork.id, messageID: forkTarget.id, revision: revision(forkTarget.content), indexes: [0, 1] }
   assert.equal((await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "prune", location, input: historical }, locationOptions)).output.status, "pruned")
   assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])

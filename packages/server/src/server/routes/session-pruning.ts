@@ -1,15 +1,10 @@
 import type { FastifyInstance } from "fastify"
 import { messageTargetSchema, PRUNING_RPC_ID, prunePreviewSchema, pruneRequestSchema, pruneResultSchema } from "../../opencode/session-pruning/contract"
-import type { WorkspaceManager } from "../../workspaces/manager"
-import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
+import { registerSessionHistoryRoutes, type HistoryRouteDeps } from "./session-history"
 
-interface RouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath">
-  worktreeDeletionFence: WorktreeDeletionFence
-}
-
-export function registerSessionPruningRoutes(app: FastifyInstance, deps: RouteDeps): void {
+export function registerSessionPruningRoutes(app: FastifyInstance, deps: HistoryRouteDeps): void {
+  registerSessionHistoryRoutes(app, deps)
   for (const method of ["preview", "prune"] as const) {
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-pruning/${method}`, { bodyLimit: 1024 * 1024 }, async (request, reply) => {
       const input = (method === "prune" ? pruneRequestSchema : messageTargetSchema).safeParse(request.body)

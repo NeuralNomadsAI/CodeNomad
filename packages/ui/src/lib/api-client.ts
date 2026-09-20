@@ -1,3 +1,4 @@
+import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
 import type {
   PruneRequest,
   PruneResult,
@@ -176,6 +177,16 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
   pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
       method: "POST", body: JSON.stringify(input),
