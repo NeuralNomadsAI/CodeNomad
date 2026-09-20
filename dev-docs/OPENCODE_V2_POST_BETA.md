@@ -273,5 +273,14 @@ synthetic seed. Keep the compatibility audit in
   dismissal. The recovery entry now mounts through a body portal. The real-style
   browser regression uses normal pointer clicks with the folder overlay present;
   all seven setup scenarios and UI typecheck passed after correction.
-- Rebuilt-host acceptance and final remote CI are recorded in the PR after
-  completion; earlier green tests are not substituted for those results.
+- Final packaged acceptance passed on Electron and Tauri at `781c3a42`:
+  installing 2.0.11 retained the compatible 2.0.10 daemon with identical PID and
+  version, optional restart wording, and a ready resumed workspace. The retired
+  2.0.3 scenario passed with explicit restart. Both hosts passed recovery reentry
+  over the pending-folder overlay and absence of retired generated modules.
+  Final captures were inspected; all fixture windows/services were cleaned up.
+  Evidence: `pr696-native-207-210/DESKTOP-FINAL.md`,
+  `codenomad-setup-desktop-Z6gPDT` (compatible) and
+  `codenomad-setup-desktop-kr69SG` (retired).
+- Corrected local/native/packaged acceptance is complete. Final-head remote CI
+  remains a separate, unconfirmed result; it was not continuously polled.
