@@ -33,6 +33,7 @@ import { serializeDraftAttachments } from "../../stores/client-state-attachments
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
@@ -86,6 +87,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
         getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
       ),
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
+      outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
         ...expanded.filter((sessionId) => !expansionAuthority.has(sessionId)),
@@ -283,6 +285,7 @@ export function useAppSessionCapture() {
     if (!enabled()) return
     const tabs = appTabs()
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
+    outlineCacheRevision()
     for (const tab of tabs) if (tab.kind === "instance") {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)

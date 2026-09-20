@@ -11,6 +11,7 @@ export default function DismissibleWindow(props: {
   description?: string
   class: string
   inline?: boolean
+  initialFocus?: () => HTMLElement | undefined
   onKeyDown?: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent>
   children: JSX.Element
 }) {
@@ -27,6 +28,12 @@ export default function DismissibleWindow(props: {
         props.onClose()
       }}
       onInteractOutside={event => event.preventDefault()}
+      onOpenAutoFocus={event => {
+        const target = props.initialFocus?.()
+        if (!target) return
+        event.preventDefault()
+        target.focus({ preventScroll: true })
+      }}
       onCloseAutoFocus={(event) => {
         event.preventDefault()
         // Keep an outside click's chosen target; restore the toggle only when

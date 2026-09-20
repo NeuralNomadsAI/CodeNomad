@@ -284,3 +284,25 @@ synthetic seed. Keep the compatibility audit in
   `codenomad-setup-desktop-kr69SG` (retired).
 - Corrected local/native/packaged acceptance is complete. Final-head remote CI
   remains a separate, unconfirmed result; it was not continuously polled.
+
+## Pre-merge refresh (2026-09-21)
+
+- Integrated `origin/dev` at `306c2ba4`: full-history search/global navigation
+  (#723) and README updates (#732/#734). The merge was conflict-free. The new
+  history/navigation RPC methods and routes coexist with setup/restart/reload;
+  current ownership and transactional pruning checks remain intact.
+- The incoming plugin manifest omitted `navigation-scope.ts`, `outline-index.ts`
+  and `outline-preview.ts`. Full server tests and independent review both found
+  the broken standalone package. Added all three to its distribution allowlist;
+  the pack-outside-checkout entrypoint regression now passes.
+- Refreshed server suite: **643 passed, 2 skipped**. Server/UI typechecks and
+  **29 browser tests** for setup, full-history search and global navigation pass.
+- **154 UI store/reducer tests** pass, including history, outline persistence,
+  session request authority, pruning pagination and restored client state.
+- The merged bundled plugin passes the native 2.0.7 suite with rendered UI:
+  241-message search/counts/batch cleanup and 1,501-message structural indexes,
+  distant windows, exact native payloads and restoration all pass. Existing
+  pruning, compaction, concurrency, discovery and lease checks pass as well.
+  Evidence: `696-merge-native207.log` and `codenomad-pruning-native-VD53eb`.
+- The new history features use existing runtime/plugin APIs and storage columns;
+  source review found no reason to raise the technical minimum above 2.0.7.

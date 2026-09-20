@@ -29,6 +29,8 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     ...(connection ? { getSharedServiceConnection: async () => connection } : {}),
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
     getServiceDirectory: () => location.directory,
+    getServiceLocation: () => location,
+    getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => client,
     getSessionEnvironment: async () => {
       const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
@@ -71,6 +73,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: {
       "/workspaces/pruning-ui/instance": { target: `http://127.0.0.1:${broker.server.address().port}` },
       "/api/workspaces/pruning-ui/session-pruning": { target: `http://127.0.0.1:${broker.server.address().port}` },
+      "/api/workspaces/pruning-ui/session-history": { target: `http://127.0.0.1:${broker.server.address().port}` },
       "/fixture-events": { target: `http://127.0.0.1:${broker.server.address().port}` },
     } },
   })

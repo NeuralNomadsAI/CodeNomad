@@ -183,7 +183,15 @@ See full workaround in the original README.
 
 ## Community
 
-[![Star History](https://star-history.dera.page/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.dera.page/#NeuralNomadsAI/CodeNomad&Date)
+[![GitHub stars](https://img.shields.io/github/stars/NeuralNomadsAI/CodeNomad?style=flat-square&label=GitHub%20stars)](https://github.com/NeuralNomadsAI/CodeNomad/stargazers)
+
+<a href="https://www.star-history.com/?repos=NeuralNomadsAI%2FCodeNomad&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=NeuralNomadsAI/CodeNomad&amp;type=date&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=NeuralNomadsAI/CodeNomad&amp;type=date" />
+    <img alt="CodeNomad star history" src="https://api.star-history.com/chart?repos=NeuralNomadsAI/CodeNomad&amp;type=date" />
+  </picture>
+</a>
 
 ---
 
