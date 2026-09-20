@@ -33,7 +33,7 @@
 | Session/message/Shell/instructions | OpenCode native API; session Shell remains separate from background Shell and PTY management |
 | Background Shell list/metadata/output/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on Shell events/reconnect |
 | Interactive PTYs | Separate native `pty.*` API |
-| Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; daemon stop remains external |
+| Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; only the explicit setup restart may stop/start the shared daemon |
 | Workspace and directory authorization | CodeNomad |
 | Git status/diff and mutations | CodeNomad |
 | Yolo policy/persistence/auto-reply | CodeNomad |
