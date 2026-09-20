@@ -75,6 +75,11 @@ Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
 and viewport anchor stability during streaming and distant jumps.
 
+Hover and keyboard-focus previews use the same bounded plain-text excerpt for
+resident and historical markers. They never mount a message card or load message
+payloads. The opaque preview surface wraps text and stays inside the viewport;
+Escape, rail scrolling, and viewport resizing dismiss it.
+
 Outline scans retain accepted pages and their sequence-horizon cursor when a view
 is hidden or unmounted. Four recent metadata snapshots are retained in the renderer,
 keyed by instance/session, connection generation, content-mutation revision and undo

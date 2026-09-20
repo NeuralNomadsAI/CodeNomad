@@ -203,6 +203,42 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
   } finally { await f.close() }
 })
 
+test("timeline previews are bounded plain text for historical and resident messages", async () => {
+  const f = await fixture(true)
+  try {
+    const before = await snapshot(f.page)
+    const rail = f.page.locator('.message-timeline')
+    for (const index of [250, 1450]) {
+      await rail.hover()
+      await rail.evaluate((element, index) => { element.scrollTop = element.scrollHeight * index / 1500 }, index)
+      const marker = rail.locator(`[data-message-id="${navigationMessageId(index)}"]`).first()
+      await marker.hover()
+      const preview = f.page.getByRole('tooltip')
+      await preview.waitFor()
+      const geometry = await preview.evaluate(element => {
+        const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
+        return { width: rect.width, height: rect.height, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+          background: style.backgroundColor, border: style.borderTopWidth, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+          text: element.textContent, richCards: element.querySelectorAll('.message-preview,.message-item-base,pre,button').length }
+      })
+      assert(geometry.width <= 361 && geometry.width >= 300, JSON.stringify(geometry))
+      assert(geometry.left >= 15 && geometry.top >= 15 && geometry.right <= 1185 && geometry.bottom <= 785, JSON.stringify(geometry))
+      assert(geometry.height < 240, 'short excerpts do not reserve a full message-card height')
+      assert.notEqual(geometry.background, 'rgba(0, 0, 0, 0)')
+      assert.equal(geometry.border, '1px')
+      assert.equal(geometry.scrollWidth, geometry.clientWidth)
+      assert.equal(geometry.richCards, 0)
+      assert(geometry.text?.includes(`Passage ${index}`))
+      await marker.focus()
+      await marker.press('Escape')
+      await preview.waitFor({ state: 'detached' })
+    }
+    assert.equal(f.windows.length, 0, 'hover never requests a transcript window')
+    assert.equal((await snapshot(f.page)).nativeLists, before.nativeLists, 'hover never fetches a native message')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("mixed timeline keeps an exact scrollbar extent throughout manual browsing and hidden tools", async () => {
   const f = await fixture(true)
   try {

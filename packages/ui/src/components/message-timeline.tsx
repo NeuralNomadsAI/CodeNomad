@@ -1,7 +1,6 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, on, type Component, type Accessor } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, on, type Component, type Accessor } from "solid-js"
 import TimelineVirtualList, { type TimelineListHandle } from "./timeline-virtual-list"
 import { Dynamic, Portal } from "solid-js/web"
-import MessagePreview from "./message-preview"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart } from "../types/message"
@@ -304,11 +303,12 @@ export function buildTimelineSegments(
 
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const { t } = useI18n()
+  const previewId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
   const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
-  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 420 })
+  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 120 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
@@ -345,12 +345,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }, 160)
   }
 
-  const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
+  const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent | FocusEvent) => {
     if (typeof window === "undefined") return
     clearHoverTimer()
     clearCloseTimer()
     const target = event.currentTarget as HTMLButtonElement
     hoverTimer = window.setTimeout(() => {
+      hoverTimer = null
+      if (!target.isConnected) return
       const rect = target.getBoundingClientRect()
       setHoverAnchorRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
       setHoveredSegment(segment)
@@ -371,9 +373,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const horizontalGap = 16
     const preferredTop = anchor.top + anchor.height / 2 - height / 2
     const maxTop = window.innerHeight - height - verticalGap
-    const clampedTop = Math.min(maxTop, Math.max(verticalGap, preferredTop))
-    const preferredLeft = anchor.left - width - horizontalGap
-    const clampedLeft = Math.max(horizontalGap, preferredLeft)
+    const clampedTop = Math.max(verticalGap, Math.min(maxTop, preferredTop))
+    const preferredLeft = anchor.left >= width + horizontalGap
+      ? anchor.left - width - horizontalGap : anchor.left + anchor.width + horizontalGap
+    const clampedLeft = Math.max(horizontalGap, Math.min(window.innerWidth - width - horizontalGap, preferredLeft))
     setTooltipCoords({ top: clampedTop, left: clampedLeft })
   })
 
@@ -387,7 +390,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const cancelReveal = () => { browsingRail = true }
 
   const handleScroll = () => {
-    if (hoveredSegment()) clearHoverPreview()
+    clearHoverPreview()
   }
 
   createEffect(on(() => props.revealActiveToken, () => { browsingRail = false }))
@@ -415,7 +418,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(() => updateSize())
     observer.observe(element)
-    onCleanup(() => observer.disconnect())
+    window.addEventListener("resize", clearHoverPreview)
+    onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", clearHoverPreview) })
   })
 
   createEffect(() => {
@@ -447,13 +451,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       observer.disconnect()
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
     })
-  })
-
-  const previewData = createMemo(() => {
-    const segment = hoveredSegment()
-    if (!segment) return null
-    const record = store().getMessage(segment.messageId)
-    return { messageId: segment.messageId, resident: Boolean(record), summary: segment.tooltip }
   })
 
   // Pre-computed set of messageIds that have at least one tool segment.
@@ -567,7 +564,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         onPointerDown={cancelReveal}
         onFocusIn={cancelReveal}
         onTouchStart={cancelReveal}
-        onKeyDown={cancelReveal}
+        onKeyDown={(event) => { cancelReveal(); if (event.key === "Escape") clearHoverPreview() }}
       >
         <TimelineVirtualList register={setVirtualizerHandle} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
@@ -607,11 +604,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
                   aria-current={isActive() ? "true" : undefined}
                   aria-label={segment.tooltip || segment.label}
+                  aria-describedby={hoveredSegment()?.id === segment.id ? previewId : undefined}
                   data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
                     onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}
                   onMouseEnter={(event) => handleMouseEnter(segment, event)}
                   onMouseLeave={handleMouseLeave}
+                  onFocus={(event) => handleMouseEnter(segment, event)}
+                  onBlur={handleMouseLeave}
                 >
                   <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
                   <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
@@ -620,7 +620,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             )
           }}
         </TimelineVirtualList>
-        <Show when={previewData()}>
+        <Show when={hoveredSegment()}>
           {(data) => {
             onCleanup(() => setTooltipElement(null))
             return (
@@ -628,16 +628,13 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 <div
                   ref={(element) => setTooltipElement(element)}
                   class="message-timeline-tooltip"
+                  id={previewId}
+                  role="tooltip"
                   style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
                   onMouseEnter={() => clearCloseTimer()}
                   onMouseLeave={() => scheduleClose()}
                 >
-                   <Show when={data().resident} fallback={<p>{data().summary}</p>}><MessagePreview
-                    messageId={data().messageId}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    store={store}
-                   /></Show>
+                  <p>{truncateText(data().tooltip)}</p>
                 </div>
               </Portal>
             )

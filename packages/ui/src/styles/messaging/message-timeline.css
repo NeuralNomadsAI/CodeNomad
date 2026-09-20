@@ -186,13 +186,6 @@
   height: 12px;
 }
 
-.message-timeline-tooltip {
-  position: fixed;
-  z-index: 1000;
-  /* Allow interacting with the preview (copy/delete/etc). */
-  pointer-events: auto;
-}
-
 .message-preview {
   width: 360px;
   max-height: 420px;

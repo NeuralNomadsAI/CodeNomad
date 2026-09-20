@@ -12,3 +12,4 @@
 @import "./messaging/tool-call.css";
 @import "./messaging/log-view.css";
 @import './messaging/timeline-virtual-list.css';
+@import './messaging/timeline-preview.css';
