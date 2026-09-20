@@ -89,3 +89,23 @@ load, message sizes, cached views, expanded tools and ongoing generation.
 
 Test outcomes and installed artifact status are reported separately in the PR;
 baseline measurements above must not be relabeled as post-fix measurements.
+
+## Post-deployment check — incomplete
+
+The `0636301f` UI/server resources were deployed with the existing `5cb6f0eb`
+native executable after the packaged-resource smoke check passed. A second desktop
+capture observed message-list requests being cancelled when their session was left
+(roughly five seconds for the slower switches and 400 ms for the rapid switches).
+The two comparison sessions still had zero rendered rows/markers at the five-second
+samples; the streaming conversation showed only its small live resident tail.
+No completed response in this capture established successful historical restoration.
+
+The active instance changed before the settling sample, and the script's instance
+fence stopped the run. Its local diagnostics are
+`pr723-switch-profile-postfix.json` and `pr723-switch-postfix.log`. This is an
+incomplete qualification run, not a comparable performance improvement: lower
+memory or traffic while content has not loaded is not success. It confirms observed
+cancellation on navigation but leaves cold-load latency and real missing-anchor
+recovery to be verified in an uninterrupted desktop run. A subsequent read-only DOM
+inspection found the review conversation rendered in the newly active instance;
+that does not establish restoration in the originally measured instance.
