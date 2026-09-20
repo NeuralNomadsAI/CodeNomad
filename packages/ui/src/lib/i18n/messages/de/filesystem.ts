@@ -6,6 +6,8 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Ordnerpfad eingeben oder einfügen",
   "directoryBrowser.openCurrent": "Öffnen",
   "directoryBrowser.goToWorkspaceRoot": "Workspace-Stammverzeichnis",
+  "directoryBrowser.goToHome": "Home",
+  "directoryBrowser.goToInitial": "Startpfad",
   "directoryBrowser.selectCurrent": "Aktuellen auswählen",
   "directoryBrowser.newFolder": "Neuer Ordner",
   "directoryBrowser.creating": "Wird erstellt...",

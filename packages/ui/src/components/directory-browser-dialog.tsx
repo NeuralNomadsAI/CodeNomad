@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Home, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, FolderRoot, Home, Loader2, RotateCcw, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -288,9 +288,49 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
   const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
-  const canGoToWorkspaceRoot = createMemo(
-    () => Boolean(rootPath()) && currentAbsolutePath() !== rootPath() && !creatingFolder(),
-  )
+
+  type ShortcutIcon = "workspace" | "home" | "initial"
+  type ShortcutLabelKey =
+    | "directoryBrowser.goToWorkspaceRoot"
+    | "directoryBrowser.goToHome"
+    | "directoryBrowser.goToInitial"
+  interface DirectoryShortcut {
+    id: ShortcutIcon
+    target: string
+    labelKey: ShortcutLabelKey
+  }
+
+  // Build the conditional navigation shortcuts (workspace root / user home / initial path)
+  // and dedupe by their canonical absolute target so identical destinations are not shown twice.
+  const shortcutButtons = createMemo<DirectoryShortcut[]>(() => {
+    const meta = currentMetadata()
+    if (!meta) {
+      return []
+    }
+    const shortcuts: DirectoryShortcut[] = []
+    if (meta.scope === "restricted" && meta.rootPath) {
+      shortcuts.push({ id: "workspace", target: meta.rootPath, labelKey: "directoryBrowser.goToWorkspaceRoot" })
+    }
+    if (meta.scope === "unrestricted" && meta.homePath) {
+      shortcuts.push({ id: "home", target: meta.homePath, labelKey: "directoryBrowser.goToHome" })
+    }
+    const initial = props.initialPath?.trim()
+    if (initial) {
+      const target = isAbsolutePathLike(initial) ? initial : resolveAbsolutePath(meta.rootPath, initial)
+      shortcuts.push({ id: "initial", target, labelKey: "directoryBrowser.goToInitial" })
+    }
+    const seen = new Set<string>()
+    const result: DirectoryShortcut[] = []
+    for (const shortcut of shortcuts) {
+      const key = normalizePathKey(shortcut.target)
+      if (!key || seen.has(key)) {
+        continue
+      }
+      seen.add(key)
+      result.push(shortcut)
+    }
+    return result
+  })
 
   async function handlePathSubmit() {
     const target = pathInput().trim()
@@ -426,16 +466,40 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                     aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
                     class="selector-input directory-browser-current-path"
                   />
-                  <button
-                    type="button"
-                    class="selector-button selector-button-ghost directory-browser-go-root"
-                    disabled={!canGoToWorkspaceRoot()}
-                    onClick={() => void navigateTo(rootPath())}
-                    title={t("directoryBrowser.goToWorkspaceRoot")}
-                    aria-label={t("directoryBrowser.goToWorkspaceRoot")}
-                  >
-                    <Home class="w-4 h-4" />
-                  </button>
+                  <Show when={shortcutButtons().length > 0}>
+                    <div class="directory-browser-shortcuts">
+                      <For each={shortcutButtons()}>
+                        {(shortcut) => {
+                          const atTarget = createMemo(() => {
+                            const current = currentAbsolutePath()
+                            return Boolean(current) && normalizePathKey(current) === normalizePathKey(shortcut.target)
+                          })
+                          const disabled = createMemo(() => atTarget() || creatingFolder())
+                          return (
+                            <button
+                              type="button"
+                              class="selector-button selector-button-ghost directory-browser-shortcut"
+                              disabled={disabled()}
+                              onClick={() => {
+                                setPathInputDirty(false)
+                                void navigateTo(shortcut.target)
+                              }}
+                              title={t(shortcut.labelKey)}
+                              aria-label={t(shortcut.labelKey)}
+                            >
+                              {shortcut.id === "workspace" ? (
+                                <FolderRoot class="w-4 h-4" />
+                              ) : shortcut.id === "home" ? (
+                                <Home class="w-4 h-4" />
+                              ) : (
+                                <RotateCcw class="w-4 h-4" />
+                              )}
+                            </button>
+                          )
+                        }}
+                      </For>
+                    </div>
+                  </Show>
                   <Show when={props.mode !== "files"}>
                     <button
                       type="button"

@@ -6,6 +6,8 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputPlaceholder": "Klasör yolunu yazın veya yapıştırın",
   "directoryBrowser.openCurrent": "Aç",
   "directoryBrowser.goToWorkspaceRoot": "Çalışma Alanı Kökü",
+  "directoryBrowser.goToHome": "Ana Dizin",
+  "directoryBrowser.goToInitial": "Başlangıç Yolu",
   "directoryBrowser.selectCurrent": "Geçerli Olanı Seç",
   "directoryBrowser.newFolder": "Yeni Klasör",
   "directoryBrowser.creating": "Oluşturuluyor…",

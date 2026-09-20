@@ -54,7 +54,7 @@
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "label go-root . new-folder"
+    "label shortcuts . new-folder"
     "path path path open";
   gap: var(--space-md);
   align-items: center;
@@ -82,13 +82,22 @@
   width: auto;
 }
 
-.directory-browser-go-root {
-  grid-area: go-root;
+.directory-browser-shortcuts {
+  grid-area: shortcuts;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.directory-browser-shortcut {
   width: auto;
   flex-shrink: 0;
 }
 
 .directory-browser-open-path {
+  grid-area: open;
   width: auto;
   flex-shrink: 0;
   gap: var(--space-xs);
@@ -101,15 +110,19 @@
     grid-template-areas:
       "label label"
       "path path"
-      "go-root new-folder"
+      "shortcuts new-folder"
       "open open";
     gap: var(--space-sm);
   }
 
   .directory-browser-new-folder,
-  .directory-browser-go-root,
+  .directory-browser-shortcuts,
   .directory-browser-open-path {
     width: 100%;
+  }
+
+  .directory-browser-shortcuts {
+    justify-content: flex-start;
   }
 
   .directory-browser-open-path {
@@ -123,13 +136,13 @@
     grid-template-areas:
       "label"
       "path"
-      "go-root"
+      "shortcuts"
       "new-folder"
       "open";
   }
 
   .directory-browser-new-folder,
-  .directory-browser-go-root,
+  .directory-browser-shortcuts,
   .directory-browser-open-path {
     width: 100%;
   }
