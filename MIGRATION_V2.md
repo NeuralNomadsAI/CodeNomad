@@ -10,16 +10,21 @@ Server and UI pin the official `@opencode/client@2.0.11`; the bundled pruning pl
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
-The current cross-version issue register, published API-change timeline and connection-scoped compatibility architecture are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). The server integration module adapts earlier V2 requests/responses for both the guarded UI proxy and direct server callers; native regression runs cross the pinned client with beta-19271, 2.0.3, 2.0.4 and 2.0.5. Discovery success alone does not certify an older runtime's conversation, event or pruning contract.
+The current cross-version issue register and historical API-change audit are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). The technical minimum is **2.0.7**, which supplies the native `session.step.started.data.started` timestamp required by the current reducer after removing the fallback. **2.0.11** is recommended and release-tested. Unlisted/custom/prerelease/future versions require authenticated API recognition; an unfamiliar label alone is not incompatibility. Earlier wire adapters are retired; their regression results below are historical evidence rather than live support.
+
+### Installation and required updates (PR #696)
+
+Setup and Preferences reuse a card with distinct missing/incompatible/optional-update actions and separate minimum/recommended version information. Default host installation uses CodeNomad's bundled Node/npm, including when system Node is absent, into `~/.local/share/codenomad/opencode`. Node's archive already included npm; packaging now retains it. Custom/WSL binaries retain explicit execution-host instructions. Updating files does not update an already-running daemon: restart is separate and explicit, and remains optional for a usable daemon. Pending folder opening can resume; prompts are never replayed.
+
+The isolated 2.0.3→2.0.11 migration fixture preserves session IDs, complete paginated message content, forks, compaction checkpoints, moved sessions and a pending inbox record. OpenCode itself collapses old workspace selectors to local directory scope. Historical ownership checks remain; CodeNomad does not rewrite the database. See the [transition register](dev-docs/OPENCODE_V2_POST_BETA.md) for validation commands and outstanding packaged/platform release gates.
 
 ## Native V2 Adoption
 
 Qualification targets the latest published stable runtime. Maintain the
 [shared compatibility reference](dev-docs/OPENCODE_V2_COMPATIBILITY.md) in place;
 keep detailed acceptance results in PRs and CI logs.
-Each CodeNomad release sets its minimum supported OpenCode version to the latest
-stable available when that CodeNomad release is published. Record that minimum
-in the release notes and keep it fixed for that release.
+Record the technical dependency establishing the minimum in release notes.
+Do not raise it merely because a newer stable version is published or tested.
 
 ### Stable 2.0.4 contract (PR #695)
 
@@ -49,7 +54,7 @@ shared daemon is never stopped by this lifecycle.
 
 - Use native locations and `SessionInfo.location` as the authority for workspace, session, file, event, Shell, PTY, and Git worktree ownership.
 - Use native APIs for projects, sessions, messages, prompts, commands, models, agents, providers, MCP, permissions, Forms, files, VCS, instructions, Shells, and PTYs.
-- Use native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.step.streamed`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`. Stable V2's event union no longer includes `session.message.content.updated`; pruning uses its reviewed RPC invalidation and authoritative native rereads.
+- Use native session lifecycle and output events, including `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.step.streamed`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`. The current durable event union still includes `session.message.content.updated`; retain its authoritative reread path even though the old public mutation API was removed. Pruning uses its reviewed RPC invalidation and authoritative native rereads.
 - Use `@opencode/client/solid` `createData` for live message, tool, permission, and Form projection while preserving REST-loaded history and optimistic local sends.
 - Replace the legacy Question request lifecycle with native Forms. Question tool output rendering remains independent of pending interruption state.
 - Replace shell-mode prompts with native `session.shell`.

@@ -7,8 +7,8 @@
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
 - Proxy authorization and forwarding share one acquired connection. A stale generation must be rejected at actual HTTP dispatch, including after asynchronous body preparation; late streams cannot invalidate a replacement connection.
-- Adapt legacy HTTP inbox timestamps before the native Solid reducer. Native `session.inbox.enqueued` is a different shape: its timestamp belongs to the event metadata and must not be treated as an HTTP inbox record.
-- Compatibility never retries a write using another contract after a 400/404/transport failure. Unknown version numbers are recognized through authenticated OpenAPI structure rather than an exact runtime-version gate.
+- The technical minimum is 2.0.7: native `session.step.started.data.started` is consumed directly after removing its older fallback. Recommendation/qualification 2.0.11 is independent. Unknown version labels, prereleases and future majors require bounded authenticated API recognition, including session environment support; they are not rejected solely by label. Legacy HTTP inbox and event conversions are retired. Native `session.inbox.enqueued` still has a distinct shape: its timestamp belongs to event metadata, not an HTTP inbox record.
+- Never retry a write using another contract after a 400/404/transport failure. Keep the setup/recovery path distinct from functional transport and never replay prompts.
 
 ## Location Is Authority
 
@@ -33,7 +33,7 @@
 | Session/message/Shell/instructions | OpenCode native API; session Shell remains separate from background Shell and PTY management |
 | Background Shell list/metadata/output/remove | Location-scoped OpenCode native API through CodeNomad ownership checks; Status UI refreshes on Shell events/reconnect |
 | Interactive PTYs | Separate native `pty.*` API |
-| Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; daemon stop remains external |
+| Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; only the explicit setup restart may stop/start the shared daemon |
 | Workspace and directory authorization | CodeNomad |
 | Git status/diff and mutations | CodeNomad |
 | Yolo policy/persistence/auto-reply | CodeNomad |

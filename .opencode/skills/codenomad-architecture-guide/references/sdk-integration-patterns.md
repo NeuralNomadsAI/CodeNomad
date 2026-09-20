@@ -10,7 +10,7 @@ OpenCode owns standard state/database. Allowed configured environment variables 
 
 Workspace creation calls `client.location.get({ location: { directory } })` and records the returned directory. Its `project` field supplies project metadata. Public locations have no workspace selector. Explicit Stop Workspace calls `client.debug.location.evict` before removing the logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
 
-The paragraph above describes the canonical modern wire contract. Preserve any native legacy `workspaceID` internally and authorize it through the connection-scoped adapter; directory-only serialization must not erase identity from cache keys, pending Forms, imported history or move rollback. See `opencode/compatibility/location.ts` for the explicit context channel that survives generated serialization.
+The technical minimum is 2.0.7 for the native step-start timestamp, with 2.0.11 independently recommended/tested; old request/response/event and live location translations are retired. Preserve historical `workspaceID` validation internally: obsolete public selectors must be rejected rather than erased from imports, cursors, pending Forms or move rollback. Native 2.0.3→2.0.7/2.0.11 migration collapses workspace selectors to local directory scope while preserving session IDs. See `dev-docs/OPENCODE_V2_POST_BETA.md`.
 
 The instance proxy is method/path allowlisted, rejects unowned paths, `directory`, `location.directory`, and `location[directory]` values, and verifies session location before forwarding. Keep this check at the server trust boundary; new upstream routes require explicit review.
 

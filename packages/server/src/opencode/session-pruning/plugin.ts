@@ -46,7 +46,7 @@ export default Plugin.define({
         if (!sameLocation(location, readLocationRef(ctx.location)) || session.projectID !== ctx.location.project.id) {
           return { status: "blocked", reason: "not_deletable" } as const
         }
-        // Plugin Context does not expose session.message in beta-19398. Read
+        // The pinned plugin SessionDomain does not expose session.message. Read
         // the explicit DB in query-only mode, including pre-compaction history.
         const data = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, location, session.projectID)
         const preview = data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const

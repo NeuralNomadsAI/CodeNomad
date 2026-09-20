@@ -8,6 +8,7 @@ import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
+import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -83,6 +84,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return result.created ? result.workspace : { ...result.workspace, reused: true as const }
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
+      if (error instanceof UnsupportedOpenCodeError) return reply.code(error.statusCode).send({
+        error: error.code, message: error.message, actualVersion: error.actualVersion, minimumVersion: error.minimumVersion, reason: error.reason,
+      })
       const message = error instanceof Error ? error.message : "Failed to create workspace"
       reply.code(400).type("text/plain").send(message)
     }

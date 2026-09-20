@@ -26,6 +26,8 @@ import { loadedRestorableSession } from "./stores/client-state"
 import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import OpenCodeSetup from "./components/opencode-setup"
+import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
@@ -516,6 +518,10 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        return false
+      }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
       return false
@@ -737,6 +743,7 @@ const App: Component = () => {
 
   return (
     <>
+      <OpenCodeSetup />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}

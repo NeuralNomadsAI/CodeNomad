@@ -1,4 +1,5 @@
 import type { SettingsService } from "./service"
+import { readManagedExecutable } from "../opencode-update/managed-installation"
 
 export interface OpenCodeBinaryEntry {
   path: string
@@ -42,7 +43,8 @@ export class BinaryResolver {
   resolveDefault(): ResolvedBinary {
     const binaries = this.list()
     const configuredDefault = readDefaultBinaryPath(this.settings)
-    const path = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
+    const selected = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
+    const path = selected === "opencode2" ? readManagedExecutable() ?? selected : selected
 
     const entry = binaries.find((b) => b.path === path)
     return {
