@@ -109,9 +109,15 @@ function summarizeStatusLabel(status?: ToolState["status"]) {
   return status
 }
 
+function readSubagentName(input: Record<string, any>): string | undefined {
+  if (typeof input.subagent_type === "string") return input.subagent_type
+  if (typeof input.agent === "string") return input.agent
+  return undefined
+}
+
 function describeTaskTitle(input: Record<string, any>) {
   const description = typeof input.description === "string" ? input.description : undefined
-  const subagent = typeof input.subagent_type === "string" ? input.subagent_type : undefined
+  const subagent = readSubagentName(input)
   const base = getToolName("task")
   if (description && subagent) {
     return `${base}[${subagent}] ${description}`
@@ -335,7 +341,7 @@ export const taskRenderer: ToolRenderer = {
       const state = toolState()
       if (!state) return null
       const { input } = readToolStatePayload(state)
-      return typeof input.subagent_type === "string" ? input.subagent_type : null
+      return readSubagentName(input) ?? null
     })
 
     const modelLabel = createMemo(() => {
