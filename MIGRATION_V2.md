@@ -14,14 +14,12 @@ The current cross-version issue register, published API-change timeline and conn
 
 ## Native V2 Adoption
 
-### Stable 2.0.11 alignment
-
-The [qualification report](dev-docs/OPENCODE_2_0_11_QUALIFICATION.md) records native
-acceptance on current and older runtimes. The update retains connection-scoped
-compatibility and legacy storage acceptance. It adopts the current reducer,
-preserves older step-event timestamps, reconciles unsettled visible tools on
-terminal execution, and handles hidden Forms fields without dropping protocol
-values. Runtime minimum/support retirement remains a separate policy decision.
+Qualification targets the latest published stable runtime. Maintain the
+[shared compatibility reference](dev-docs/OPENCODE_V2_COMPATIBILITY.md) in place;
+keep detailed acceptance results in PRs and CI logs.
+Each CodeNomad release sets its minimum supported OpenCode version to the latest
+stable available when that CodeNomad release is published. Record that minimum
+in the release notes and keep it fixed for that release.
 
 ### Stable 2.0.4 contract (PR #695)
 

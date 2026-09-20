@@ -1,9 +1,21 @@
 # OpenCode V2 compatibility: audit and implementation roadmap
 
-**Current alignment (2026-09-20):** server/UI client and bundled plugin now pin
-2.0.11. See [the 2.0.11 qualification report](OPENCODE_2_0_11_QUALIFICATION.md)
-for current acceptance evidence and retained legacy guarantees. The original
-audit and implementation record below remains historical evidence.
+## Current qualification policy
+
+Qualify against the latest published stable OpenCode runtime (`@opencode/cli@latest`).
+For each CodeNomad release, the minimum supported OpenCode version is the latest
+stable OpenCode version available at the time of that CodeNomad release. Record
+the resolved version in the release notes; that minimum stays fixed for that
+CodeNomad release and is reassessed at the next release.
+
+CI records the resolved runtime version. Pin client/plugin dependencies together
+to the release target and qualify them before publishing CodeNomad. Retained
+compatibility code and historical-data handling do not imply support for older
+runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
+reports. Update this reference in place.
+
+The audit and implementation record below is historical context, not a runtime
+qualification matrix to maintain.
 
 **Audit date:** 2026-09-16. **CodeNomad baseline:** PR #695 at `bcfe4d24`.
 **Status:** connection-scoped compatibility is implemented. Autonomous gatekeeper loops approved transport, identity, scripts/CI and rendered-fixture scopes with no remaining actionable findings. The original audit findings below remain as the change rationale; the implementation results section records their current disposition.
