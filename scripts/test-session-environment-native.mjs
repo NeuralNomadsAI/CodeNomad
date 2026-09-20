@@ -98,7 +98,7 @@ try {
   }
   variables = {}
   assert.equal((await probe(proxy, a, "removed-overrides")).tmpdir, path.join(root, "base"))
-  assert.equal((await native.server.status()).pid, info.pid)
+  assert.equal((await native.server.info()).pid, info.pid)
   console.log(`PASS OpenCode ${info.version}: real manager + proxy + native shells; next-send updates, both conversations, removal, no writes on read, unchanged daemon PID`)
 } finally {
   await app?.close()

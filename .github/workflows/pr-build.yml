@@ -153,6 +153,9 @@ jobs:
           - version: 2.0.7
             scope: '@opencode'
             binary: opencode
+          - version: 2.0.11
+            scope: '@opencode'
+            binary: opencode
     steps:
       - uses: actions/checkout@v4
         with:
@@ -179,6 +182,12 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($env:RUNTIME_VERSION -eq '2.0.11') {
+            node scripts/test-session-environment-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            node scripts/test-session-fork-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           if ($env:RUNTIME_VERSION -eq '0.0.0-beta-19271' -or $env:RUNTIME_VERSION -eq '2.0.3') {
             node scripts/test-session-pruning-native.mjs $cli --legacy-pruning
           }
@@ -260,6 +269,7 @@ jobs:
           packages/ui/src/lib/clipboard.test.ts
           packages/ui/src/lib/message-selection-position.test.ts
           packages/ui/src/lib/model-visibility.test.ts
+          packages/ui/src/lib/provider-auth.test.ts
           packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/server-meta.test.ts
@@ -316,6 +326,7 @@ jobs:
           packages/ui/src/stores/session-pruning-projection.test.ts
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

@@ -20,7 +20,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const endpoint = connection?.endpoint ?? { url: baseUrl, auth: { type: "basic", username: "opencode", password: "isolated-pruning-fixture" } }
-  if (!connection) rememberRuntime(endpoint, { ...await client.server.status(), discovery: "status" })
+  if (!connection) rememberRuntime(endpoint, { ...await client.server.info(), discovery: "info" })
   const runtimeFetch = connection?.fetch ?? createRuntimeFetch(endpoint)
   const owns = candidate => path.resolve(candidate) === path.resolve(location.directory)
   const workspaceManager = {

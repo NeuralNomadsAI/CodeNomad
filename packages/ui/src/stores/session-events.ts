@@ -188,9 +188,23 @@ async function reconcileTerminalNativeSessionStatus(
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
-  if (options.refreshMessages) {
+  refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+}
+
+function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
+  // The native reducer can reconcile its own cache after a missing tool terminal
+  // event, but our bounded visible message store needs an authoritative load too.
+  const store = messageStoreBus.getInstance(instanceId)
+  const unsettledTools = store?.getSessionMessageIds(sessionId).some(id => {
+    const message = store.getMessage(id)
+    return message?.partIds.some(partId => {
+      const part = message.parts[partId]?.data
+      return part?.type === "tool" && (part.state?.status === "pending" || part.state?.status === "running")
+    })
+  })
+  if (force || unsettledTools) {
     void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
-      log.warn("Failed to refresh interrupted session messages", { instanceId, sessionId, error })
+      log.warn("Failed to refresh settled session messages", { instanceId, sessionId, error })
     })
   }
 }
@@ -539,6 +553,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
+  refreshSettledSessionMessages(instanceId, sessionId)
   speakCompletedAssistantText(instanceId, sessionId)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
@@ -552,6 +567,7 @@ function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): v
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
   ensureSessionStatus(instanceId, sessionId, status, event.location?.directory, retry)
+  if (status === "idle") refreshSettledSessionMessages(instanceId, sessionId)
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =

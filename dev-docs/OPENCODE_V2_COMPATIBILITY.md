@@ -1,5 +1,10 @@
 # OpenCode V2 compatibility: audit and implementation roadmap
 
+**Current alignment (2026-09-20):** server/UI client and bundled plugin now pin
+2.0.11. See [the 2.0.11 qualification report](OPENCODE_2_0_11_QUALIFICATION.md)
+for current acceptance evidence and retained legacy guarantees. The original
+audit and implementation record below remains historical evidence.
+
 **Audit date:** 2026-09-16. **CodeNomad baseline:** PR #695 at `bcfe4d24`.
 **Status:** connection-scoped compatibility is implemented. Autonomous gatekeeper loops approved transport, identity, scripts/CI and rendered-fixture scopes with no remaining actionable findings. The original audit findings below remain as the change rationale; the implementation results section records their current disposition.
 
