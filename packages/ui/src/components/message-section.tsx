@@ -26,7 +26,7 @@ import HistoryStatistics from "./history-statistics"
 import HistoryMessagePreview from "./history-message-preview"
 import { createSessionOutline } from "../stores/session-outline"
 import { sessions } from "../stores/session-state"
-import { projectSessionOutline } from "./session-outline-projection"
+import { createSessionOutlineProjection } from "./session-outline-projection"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
@@ -347,6 +347,7 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
     active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+  const projectSessionOutline = createSessionOutlineProjection()
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
     const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()

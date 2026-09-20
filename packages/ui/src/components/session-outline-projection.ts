@@ -1,7 +1,7 @@
 import type { OutlineEntry } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type { TimelineSegment } from "./message-timeline"
 
-export function projectSessionOutline(entries: readonly OutlineEntry[], resident: readonly TimelineSegment[], t: (key: string, params?: Record<string, unknown>) => string): TimelineSegment[] {
+function projectSessionOutline(entries: readonly OutlineEntry[], resident: readonly TimelineSegment[], t: (key: string, params?: Record<string, unknown>) => string): TimelineSegment[] {
   const byMessage = new Map<string, TimelineSegment[]>()
   for (const segment of resident) {
     const list = byMessage.get(segment.messageId) ?? []
@@ -25,4 +25,23 @@ export function projectSessionOutline(entries: readonly OutlineEntry[], resident
       toolPartIds: local.flatMap(segment => segment.toolPartIds ?? []) })
     return result
   })
+}
+
+// Virtua keys rows by item identity. Keep unchanged historical markers mounted
+// when resident streaming content changes; otherwise a hovered/focused target
+// disappears on every token, even thousands of messages away from that token.
+export function createSessionOutlineProjection() {
+  let previous = new Map<string, TimelineSegment>()
+  return (...args: Parameters<typeof projectSessionOutline>): TimelineSegment[] => {
+    const segments = projectSessionOutline(...args).map(segment => {
+      const cached = previous.get(segment.id)
+      return cached && cached.type === segment.type && cached.label === segment.label
+        && cached.tooltip === segment.tooltip && cached.totalChars === segment.totalChars
+        && cached.toolPartIds?.length === segment.toolPartIds?.length
+        && (segment.toolPartIds ?? []).every((id, index) => id === cached.toolPartIds?.[index])
+        ? cached : segment
+    })
+    previous = new Map(segments.map(segment => [segment.id, segment]))
+    return segments
+  }
 }

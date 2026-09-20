@@ -109,8 +109,11 @@ test("global timeline jumps over 1200 messages in one bounded window and restore
     const restored = await snapshot(f.page)
     assert.deepEqual(restored.ids, jumped.ids)
     assert.equal(f.windows.length, 2)
+    const marker = await f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]').elementHandle()
+    assert(marker)
     await f.page.evaluate(() => (window as any).fixture.stream("Live response while reading the old passage"))
     assert.deepEqual((await snapshot(f.page)).ids, jumped.ids, "native streaming does not replace the historical window")
+    assert(await marker.evaluate(element => element.isConnected), "streaming retains the historical marker's DOM identity")
     await f.page.evaluate(() => (window as any).fixture.switchAway())
     await f.page.evaluate(() => (window as any).fixture.return())
     await f.page.locator(".message-stream").waitFor()
@@ -134,6 +137,22 @@ test("latest timeline intent supersedes a slow far jump, including a resident de
     const state = await snapshot(f.page)
     assert(state.ids.includes(navigationMessageId(1450)))
     assert(!state.ids.includes(navigationMessageId(250)))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("resident streaming keeps a distant timeline marker mounted", async () => {
+  const f = await fixture()
+  try {
+    await f.page.locator(".message-timeline").evaluate(element => { element.scrollTop = element.scrollHeight * 250 / 1500 })
+    const marker = f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]')
+    await marker.waitFor()
+    const retained = await marker.evaluate(element => {
+      ;(window as any).fixture.stream("A new resident response while browsing old timeline markers")
+      return element.isConnected
+    })
+    assert(retained, "a resident content update must not remount an unchanged distant click target")
+    assert((await snapshot(f.page)).ids.includes("msg_streaming"), "the resident transcript did receive the streamed message")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
