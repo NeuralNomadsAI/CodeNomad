@@ -44,7 +44,7 @@ export const OpenCodeUpdateCard: Component = () => {
         </Show>
       </>}
     </Show>
-    <Show when={openCodeSetupError()}><p class="settings-error-message" role="alert">{t("settings.opencode.update.failed")}</p></Show>
+    <Show when={openCodeSetupError()}><p class="settings-error-message" role="alert">{t("settings.opencode.setup.actionFailed")}</p></Show>
     <div class="settings-info-actions">
       <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void refreshOpenCodeSetup()}>{t("settings.opencode.update.retry")}</button>
       <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => { setOpenCodeSetupOpen(false); void openSettings("opencode") }}>{t("settings.opencode.setup.chooseBinary")}</button>

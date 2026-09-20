@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "OpenCode कार्य पूरा गर्न सकिएन। माथिको हालको स्थिति जाँचेर फेरि प्रयास गर्नुहोस्।",
   "settings.opencode.setup.reload": "OpenCode कन्फिगरेसन पुनः लोड गर्नुहोस्",
   "settings.opencode.setup.reloadDescription": "स्थापित प्लगइनहरू अझै उपलब्ध छैनन् भने कन्फिगरेसन पुनः लोड गर्नुहोस्। यसले सबै जडित क्लाइन्टका लोड गरिएका सबै स्थानहरू पुनर्निर्माण गर्छ, विचाराधीन अनुमति अनुरोध तथा फारमहरू रद्द गर्छ र टर्मिनल तथा पृष्ठभूमि आदेशहरू बन्द गर्छ। सक्रिय काम अवरुद्ध हुन सक्छ।",
   "settings.opencode.setup.description": "तपाईंका परियोजनाहरू चलाउने सर्भरमा OpenCode स्थापना, अद्यावधिक र जडान गर्नुहोस्।",

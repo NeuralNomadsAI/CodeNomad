@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "无法完成 OpenCode 操作。请检查上方的当前状态，然后重试。",
   "settings.opencode.setup.reload": "重新加载 OpenCode 配置",
   "settings.opencode.setup.reloadDescription": "如果已安装的插件仍不可用，请重新加载配置。这会为所有已连接的客户端重建所有已加载的位置，取消待处理的权限请求和表单，并关闭终端和后台命令。正在进行的工作可能会中断。",
   "settings.opencode.setup.description": "在运行项目的服务器上安装、更新并连接 OpenCode。",

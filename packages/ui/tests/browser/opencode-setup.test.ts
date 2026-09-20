@@ -192,3 +192,34 @@ test("configuration reload is an informed explicit action and never runs on setu
     assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { await page.close() }
 })
+
+test("activation failure after installation retains the installed version and retries connection", async () => {
+  const page = await browser.newPage()
+  let installed = false, connected = false, installations = 0, attempts = 0
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      installed = true; installations++
+      return route.fulfill({ json: { success: true, version: "2.0.11" } })
+    }
+    if (request.url().endsWith("/api/opencode/service")) {
+      attempts++
+      if (attempts === 1) return route.fulfill({ status: 502, json: { error: "service_activation_failed" } })
+      connected = true
+    }
+    return route.fulfill({ json: { state: installed ? "ready" : "missing", currentVersion: installed ? "2.0.11" : null,
+      latestVersion: "2.0.11", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host",
+      canUpgrade: !installed, canRestart: false, serviceState: connected ? "ready" : "stopped" } })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByRole("button", { name: "Install and start OpenCode" }).click()
+    await page.getByText("The OpenCode action could not be completed. Check the current status above and retry.").waitFor()
+    assert.equal(await page.getByRole("button", { name: "Install and start OpenCode" }).count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
+    await page.getByRole("button", { name: "Connect and continue" }).click()
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))
+    assert.equal(installations, 1)
+    assert.equal(attempts, 2)
+  } finally { await page.close() }
+})

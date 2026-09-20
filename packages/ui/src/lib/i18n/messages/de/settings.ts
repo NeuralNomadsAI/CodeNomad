@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "Die OpenCode-Aktion konnte nicht abgeschlossen werden. Prüfen Sie den aktuellen Status oben und versuchen Sie es erneut.",
   "settings.opencode.setup.reload": "OpenCode-Konfiguration neu laden",
   "settings.opencode.setup.reloadDescription": "Wenn installierte Plugins nicht verfügbar sind, laden Sie die Konfiguration neu. Dabei werden alle geladenen Arbeitsorte für alle verbundenen Clients neu aufgebaut, ausstehende Berechtigungsanfragen und Formulare abgebrochen sowie Terminals und Hintergrundbefehle geschlossen. Aktive Arbeit kann unterbrochen werden.",
   "settings.opencode.setup.description": "OpenCode auf dem Server Ihrer Projekte installieren, aktualisieren und verbinden.",

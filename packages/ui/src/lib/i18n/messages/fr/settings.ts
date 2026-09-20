@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "L’action OpenCode n’a pas pu être terminée. Vérifiez l’état actuel ci-dessus et réessayez.",
   "settings.opencode.setup.reload": "Recharger la configuration OpenCode",
   "settings.opencode.setup.reloadDescription": "Si les plugins installés restent indisponibles, rechargez la configuration. Cette action reconstruit tous les emplacements chargés pour tous les clients connectés, annule les demandes d’autorisation et formulaires en attente, et ferme les terminaux et commandes d’arrière-plan. Le travail actif peut être interrompu.",
   "settings.opencode.setup.description": "Installez, mettez à jour et connectez OpenCode sur le serveur qui exécute vos projets.",

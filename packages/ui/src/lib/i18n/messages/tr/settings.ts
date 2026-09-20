@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "OpenCode işlemi tamamlanamadı. Yukarıdaki mevcut durumu kontrol edip yeniden deneyin.",
   "settings.opencode.setup.reload": "OpenCode yapılandırmasını yeniden yükle",
   "settings.opencode.setup.reloadDescription": "Yüklü eklentiler hâlâ kullanılamıyorsa yapılandırmayı yeniden yükleyin. Bu işlem tüm bağlı istemciler için yüklenmiş tüm konumları yeniden oluşturur, bekleyen izin istekleriyle formları iptal eder ve terminallerle arka plan komutlarını kapatır. Etkin çalışma kesintiye uğrayabilir.",
   "settings.opencode.setup.description": "Projelerinizi çalıştıran sunucuda OpenCode'u kurun, güncelleyin ve bağlanın.",

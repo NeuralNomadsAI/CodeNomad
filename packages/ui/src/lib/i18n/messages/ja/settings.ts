@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.setup.actionFailed": "OpenCode の操作を完了できませんでした。上の現在の状態を確認して、もう一度お試しください。",
   "settings.opencode.setup.reload": "OpenCode の設定を再読み込み",
   "settings.opencode.setup.reloadDescription": "インストール済みプラグインが利用できない場合は設定を再読み込みしてください。接続中のすべてのクライアントで読み込み済みの全ロケーションが再構築され、保留中の権限要求とフォームが取り消され、ターミナルとバックグラウンドコマンドが終了します。進行中の作業が中断される場合があります。",
   "settings.opencode.setup.description": "プロジェクトを実行するサーバーで OpenCode をインストール、更新、接続します。",
