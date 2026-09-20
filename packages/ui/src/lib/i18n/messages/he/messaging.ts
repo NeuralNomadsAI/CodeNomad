@@ -17,6 +17,8 @@ export const messagingMessages = {
   "history.planning": "בדיקת היסטוריה: {count} הודעות",
   "history.pruning": "ניקוי: {count} / {total} הודעות",
   "transcriptFilters.title": "תוכן ההודעות",
+  "transcriptFilters.systemMessages": "הודעות מערכת",
+  "messageBlock.system.label": "מערכת",
   "transcriptFilters.description": "הצגה או הסתרה של תוכן ובחירה אם הוא מורחב בתחילה. ההגדרות חלות על כל השיחות.",
   "transcriptFilters.show": "הצגת {name}",
   "transcriptFilters.hide": "הסתרת {name}",

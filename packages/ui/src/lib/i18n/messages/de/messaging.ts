@@ -17,6 +17,8 @@ export const messagingMessages = {
   "history.planning": "Verlauf prüfen: {count} Nachrichten",
   "history.pruning": "Bereinigung: {count} / {total} Nachrichten",
   "transcriptFilters.title": "Nachrichteninhalt",
+  "transcriptFilters.systemMessages": "Systemnachrichten",
+  "messageBlock.system.label": "System",
   "transcriptFilters.description": "Inhalte ein- oder ausblenden und ihre anfängliche Darstellung festlegen. Diese Einstellungen gelten für alle Unterhaltungen.",
   "transcriptFilters.show": "{name} anzeigen",
   "transcriptFilters.hide": "{name} ausblenden",

@@ -105,6 +105,10 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
+      if (resolvedStore.getMessageInfo(messageId)?.nativeType === "system") {
+        return preferences().systemMessagesVisibility !== "hidden"
+      }
+
       if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
         return true
       }
@@ -251,7 +255,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
-    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
@@ -1085,7 +1089,7 @@ export default function MessageSection(props: MessageSectionProps) {
         searchLocatorAuthority.reset(locatorAuthority)
       }
     }
-    void locate().catch((error) => {
+    void untrack(locate).catch((error) => {
       if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
     })
   })
@@ -1342,6 +1346,7 @@ export default function MessageSection(props: MessageSectionProps) {
               store={store}
               messageIndex={index()}
               showThinking={() => preferences().showThinkingBlocks}
+              systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}

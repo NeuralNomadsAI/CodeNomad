@@ -114,6 +114,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
   const assistant = source.type === "assistant" ? source : undefined
   const role: MessageInfo["role"] = source.type === "user" ? "user" : "assistant"
   const info: MessageInfo = {
+    nativeType: source.type,
     id: source.id,
     sessionID: sessionId,
     role,
@@ -182,6 +183,10 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         messageID: source.id,
       } as ClientPart)),
     ]
+  } else if (source.type === "system") {
+    // Keep context updates distinct from assistant prose and synthetic tools.
+    parts = [{ id: source.id, type: "system", text: source.text, description: source.description,
+      sessionID: sessionId, messageID: source.id }]
   } else if (source.type === "idle") {
     // Native execution control record, not assistant-authored transcript text.
     // Keep its ID/time for cursor/anchor authority without rendering "idle".
@@ -204,7 +209,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       id: source.id,
       type: "text",
       text,
-      synthetic: source.type !== "system",
+      synthetic: true,
       sessionID: sessionId,
       messageID: source.id,
     }) as ClientPart]

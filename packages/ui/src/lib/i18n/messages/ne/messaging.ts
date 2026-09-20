@@ -17,6 +17,8 @@ export const messagingMessages = {
   "history.planning": "इतिहास जाँच्दै: {count} सन्देश",
   "history.pruning": "सफा गर्दै: {count} / {total} सन्देश",
   "transcriptFilters.title": "सन्देशको सामग्री",
+  "transcriptFilters.systemMessages": "प्रणाली सन्देशहरू",
+  "messageBlock.system.label": "प्रणाली",
   "transcriptFilters.description": "सामग्री देखाउने वा लुकाउने र सुरुमा विस्तार गर्ने वा नगर्ने रोज्नुहोस्। यी सेटिङहरू सबै कुराकानीमा लागू हुन्छन्।",
   "transcriptFilters.show": "{name} देखाउनुहोस्",
   "transcriptFilters.hide": "{name} लुकाउनुहोस्",
