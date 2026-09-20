@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal } from "solid-js"
+import { Show, createEffect, createSignal, untrack } from "solid-js"
 import { ChevronRight, Info } from "lucide-solid"
 import type { ClientPart } from "../types/message"
 import type { VisibilityPreference } from "../stores/preferences"
@@ -8,11 +8,16 @@ export default function SystemMessage(props: {
   part: Extract<ClientPart, { type: "system" }>
   visibility: VisibilityPreference
   activeSearchMatch?: boolean
+  onDisclosureChange?: () => void
 }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(false)
   createEffect(() => setExpanded(props.visibility === "expanded"))
   createEffect(() => { if (props.activeSearchMatch) setExpanded(true) })
+  createEffect(() => {
+    expanded()
+    untrack(() => props.onDisclosureChange?.())
+  })
   return (
     <Show when={props.visibility !== "hidden"}>
       <section class="border border-base bg-surface-secondary text-secondary" data-message-kind="system" aria-label={t("messageBlock.system.label")}>

@@ -605,6 +605,7 @@ export default function MessageBlock(props: MessageBlockProps) {
   const messageInfo = createMemo(() => props.store().getMessageInfo(props.messageId))
   const sessionCache = getSessionRenderCache(props.instanceId, props.sessionId)
   const [blockRef, setBlockRef] = createSignal<HTMLDivElement>()
+  const [systemDisclosureRevision, setSystemDisclosureRevision] = createSignal(0)
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
   const activeSearchMatch = () => props.activeSearchMatch?.() ?? null
   const isActiveSearchResult = () => activeSearchMatch()?.messageId === props.messageId
@@ -620,6 +621,7 @@ export default function MessageBlock(props: MessageBlockProps) {
 
   createEffect(() => {
     const query = props.searchQuery?.() ?? ""
+    systemDisclosureRevision()
     const active = activeSearchMatch()
     const relevantActiveMatch = active?.messageId === props.messageId ? active : null
     const shouldScrollActive = Boolean(relevantActiveMatch && relevantActiveMatch.id !== lastInlineScrolledSearchMatchId)
@@ -1017,7 +1019,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                 </Match>
                 <Match when={item().type === "system"}>
                   <SystemMessage part={(item() as SystemDisplayItem).part} visibility={props.systemMessagesVisibility?.() ?? "hidden"}
-                    activeSearchMatch={isActiveSearchResult()} />
+                    activeSearchMatch={isActiveSearchResult()}
+                    onDisclosureChange={() => setSystemDisclosureRevision(value => value + 1)} />
                 </Match>
                 <Match when={item().type === "compaction"}>
                   <CompactionCard

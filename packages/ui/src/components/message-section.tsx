@@ -930,14 +930,16 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    void loadCompleteMessageHistory({
+    // Paging reads and writes window state synchronously before its first await.
+    // Those reads must not become dependencies that restart this traversal.
+    void untrack(() => loadCompleteMessageHistory({
       getPageKey: messageWindowPageKey,
       isCurrent: isCurrentSearch,
       isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
       loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
       loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
       visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking, includeSystem }),
-    }).then((matches) => {
+    })).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
         return
@@ -1033,7 +1035,7 @@ export default function MessageSection(props: MessageSectionProps) {
         searchLocatorAuthority.reset(locatorAuthority)
       }
     }
-    void locate().catch((error) => {
+    void untrack(locate).catch((error) => {
       if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
     })
   })

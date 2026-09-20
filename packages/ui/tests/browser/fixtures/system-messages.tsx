@@ -25,11 +25,15 @@ const nativeMessages: any[] = [
 ]
 const info = { id: sessionId, title: "System fixture", agent: "build", model, projectID: "fixture", location: { directory: "/fixture" },
   cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 4 } }
+let messageReads = 0
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     list: async () => ({ data: [info], cursor: {} }), get: async () => info },
   model: { default: async () => model },
-  message: { list: async () => ({ data: [...nativeMessages].reverse(), cursor: {} }) },
+  message: { list: async ({ order }: { order?: string }) => {
+    messageReads++
+    return { data: order === "asc" ? [...nativeMessages] : [...nativeMessages].reverse(), cursor: {} }
+  } },
 }
 let config = JSON.parse(sessionStorage.getItem("system-settings") ?? '{"settings":{"locale":"en"}}')
 serverApi.fetchConfigOwner = async () => config
@@ -61,7 +65,7 @@ await updatePreferences({ locale: "en" })
     durable: { aggregateID: sessionId, seq: 1, version: 2 }, location: { directory: "/fixture" },
     data: { sessionID: sessionId, delta: { "AGENTS.md": "updated" }, text: "Live system context" },
   }),
-  snapshot: () => ({ visibility: preferences().systemMessagesVisibility, nativeText: nativeMessages[1].text,
+  snapshot: () => ({ visibility: preferences().systemMessagesVisibility, nativeText: nativeMessages[1].text, messageReads,
     ids: messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), config }),
   matches: () => buildSessionSearchMatches({ store: messageStoreBus.getOrCreate(instanceId), sessionId, query: "Today's date",
     includeThinking: false, includeSystem: preferences().systemMessagesVisibility !== "hidden" }),
