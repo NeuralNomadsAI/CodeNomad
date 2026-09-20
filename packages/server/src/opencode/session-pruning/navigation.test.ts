@@ -41,13 +41,16 @@ test("direct distant windows retain native sequence order, bound content and ove
     assert.equal(db.isTransaction, false)
   } finally { db.close() }
 })
-test("outline covers the complete session without message payloads and excludes newly appended rows", async () => {
+test("outline pages remain bounded and full despite scheduler delays, and exclude newly appended rows", async (t) => {
   const db = fixture()
+  let clock = 0
+  t.mock.method(performance, "now", () => clock += 100)
   try {
     const first = await readSessionOutline(db, scope, undefined, signal())
     assert.equal(first.status, "outline")
     if (first.status !== "outline") return
     assert.equal(first.total, 1500)
+    assert.equal(first.entries.length, 256, "event-loop delays must not fragment metadata into tiny RPC pages")
     assert(first.cursor)
     db.prepare("INSERT INTO session_message VALUES (?,'s','user',?,?)").run(id(1500), 1500 * 7, JSON.stringify({ text: "Later", time: { created: 2000 } }))
     const ids = first.entries.map(entry => entry.id)
@@ -92,5 +95,24 @@ test("oversized windows fail explicitly and cancelled reads release their transa
     const cancelled = new AbortController(); cancelled.abort()
     await assert.rejects(readNavigationWindow(db, scope, { kind: "latest" }, cancelled.signal), /abort/i)
     assert.equal(db.isTransaction, false)
+  } finally { db.close() }
+})
+
+test("navigation yields for cancellation and outline byte budgets retain the next unread message", async () => {
+  const db = fixture(300)
+  try {
+    const controller = new AbortController()
+    setImmediate(() => controller.abort())
+    await assert.rejects(readNavigationWindow(db, scope, { kind: "latest" }, controller.signal), /abort/i)
+    assert.equal(db.isTransaction, false)
+    const data = JSON.stringify({ text: "large".repeat(2 * 1024 * 1024), time: { created: 1 } })
+    for (let n = 0; n < 3; n++) db.prepare("UPDATE session_message SET data=? WHERE id=?").run(data, id(n))
+    const first = await readSessionOutline(db, scope, undefined, signal())
+    assert.equal(first.status, "outline")
+    if (first.status !== "outline") return
+    assert.deepEqual(first.entries.map(entry => entry.id), [id(0), id(1)])
+    const next = await readSessionOutline(db, scope, first.cursor!, signal())
+    if (next.status !== "outline") assert.fail('Expected next outline page')
+    assert.equal(next.entries[0].id, id(2))
   } finally { db.close() }
 })

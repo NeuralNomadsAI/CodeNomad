@@ -7,6 +7,7 @@ import { navigationWindowResultSchema, type NavigationTarget, type NavigationWin
 const PAGE_SIZE = 200
 const MESSAGE_BYTES = 16 * 1024 * 1024
 const WINDOW_BYTES = 24 * 1024 * 1024
+const YIELD_EVERY = 16
 
 function ownedSession(db: DatabaseSync, scope: HistoryScope) {
   const session = db.prepare("SELECT revert FROM session_v2 WHERE id=? AND directory=? AND project_id=? AND workspace_id IS ?")
@@ -51,7 +52,7 @@ export async function readNavigationWindow(db: DatabaseSync, scope: HistoryScope
       const stored = read.get(scope.sessionID!, row.id)
       if (typeof stored?.data !== "string") return { status: "blocked", reason: "conflict" }
       messages.push({ ...JSON.parse(stored.data), id: row.id, type: row.type })
-      await yieldTurn(undefined, { signal })
+      if (messages.length % YIELD_EVERY === 0) await yieldTurn(undefined, { signal })
     }
     const first = rows[0], last = rows.at(-1)
     const older = first && db.prepare(`SELECT 1 FROM session_message WHERE ${where} AND seq < ? LIMIT 1`).get(...params, first.seq)
@@ -76,9 +77,12 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope, 
     FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 256`)
   const entries: OutlineEntry[] = []
   let after = cursor?.after ?? -1
-  const started = performance.now()
+  let bytes = 0
   for (const row of rows.iterate(MESSAGE_BYTES, ...params, after, through)) {
     signal.throwIfAborted()
+    const size = typeof row.data === "string" ? Buffer.byteLength(row.data) : 0
+    if (entries.length && bytes + size > WINDOW_BYTES) break
+    bytes += size
     after = Number(row.seq)
     const data = typeof row.data === "string" ? JSON.parse(row.data) : {}
     const parts = Array.isArray(data.content) ? data.content : []
@@ -86,8 +90,10 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope, 
     const text = typeof data.text === "string" ? data.text : typeof data.summary === "string" ? data.summary : typeof data.command === "string" ? data.command : texts.join("\n")
     entries.push({ id: String(row.id), seq: after, type: row.type as OutlineEntry["type"], preview: text.slice(0, 220), chars: text.length,
       tools: parts.filter((part: any) => part.type === "tool").length, reasoning: parts.filter((part: any) => part.type === "reasoning").length })
-    await yieldTurn(undefined, { signal })
-    if (performance.now() - started > 40) break
+    // Bound work by rows and bytes, not wall time across scheduler yields.
+    // A busy Windows host could otherwise spend the 40ms budget in the event
+    // loop and return just a handful of IDs per authenticated RPC round trip.
+    if (entries.length % YIELD_EVERY === 0) await yieldTurn(undefined, { signal })
   }
   return { status: "outline", entries, total, cursor: entries.length && after < through ? { after, through } : null }
 }

@@ -11,6 +11,10 @@ challenge as history queries. They do not expose generic RPC or SQL access.
   sequence order, a short preview and technical-part counts. Its sequence horizon
   excludes new appended messages until the next refresh. The UI publishes a
   complete metadata snapshot; message payloads do not enter the transcript store.
+  Page work is bounded by rows and 24 MiB of parsed source payloads, with a
+  cooperative cancellation yield every 16 rows. Scheduler wait time must never
+  truncate pages: it previously fragmented a busy Windows conversation into
+  four-entry responses and multiplied authenticated RPC round trips.
 - A window targets `around`, `before`, `after`, `oldest` or `latest`. It reads at
   most 200 messages ordered by native `seq`, without traversing intervening pages.
   Neighbor windows overlap by 16 messages so the reading anchor can survive a

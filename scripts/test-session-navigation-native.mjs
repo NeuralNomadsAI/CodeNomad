@@ -28,7 +28,7 @@ export async function testSessionNavigationNative({ client, location, locationOp
     do {
       const outline = await rpc("outline", cursor ? { cursor } : {})
       assert.equal(outline.status, "outline")
-      assert(outline.entries.length <= 256)
+      assert.equal(outline.entries.length, Math.min(256, native.messages.length - count), "small metadata rows fill a bounded page regardless of scheduler latency")
       count += outline.entries.length
       cursor = outline.cursor
     } while (cursor)
