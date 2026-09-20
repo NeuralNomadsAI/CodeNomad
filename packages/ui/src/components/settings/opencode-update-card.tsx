@@ -22,7 +22,7 @@ export const OpenCodeUpdateCard: Component = () => {
         </div>
         <p class="settings-toggle-caption break-all">{data().binaryPath}</p>
         <Show when={data().target === "wsl"}><p>{t("settings.opencode.setup.wsl")}</p></Show>
-         <Show when={data().serviceState === "restart_required" || data().serviceState === "restart_available"}><p role="status">{t("settings.opencode.setup.restartRequired")}</p></Show>
+        <Show when={data().serviceState === "restart_required" || data().serviceState === "restart_available"}><p role="status">{t("settings.opencode.setup.restartRequired")}</p></Show>
         <Show when={data().serviceState === "error"}><p role="alert">{t("settings.opencode.setup.serviceError")}</p></Show>
         <Show when={data().checkError}><p role="status">{t("settings.opencode.update.checkFailed")}</p></Show>
         <Show when={!data().canUpgrade && (data().state === "missing" || data().state === "update_required")}>
@@ -33,7 +33,7 @@ export const OpenCodeUpdateCard: Component = () => {
             {busy() ? t("settings.opencode.update.updating") : data().state === "missing" ? t("settings.opencode.setup.install")
               : t("settings.opencode.update.action", { version: data().latestVersion ?? "" })}
           </button></Show>
-           <Show when={data().state === "ready" && data().serviceState !== "restart_required"}>
+          <Show when={data().state === "ready" && data().serviceState !== "restart_required"}>
             <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("start")}>{t("settings.opencode.setup.connect")}</button>
           </Show>
           <Show when={data().canRestart}><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>

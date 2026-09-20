@@ -8,6 +8,11 @@ import path from "node:path"
 import os from "node:os"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
+import { OpenCode } from "@opencode/client"
+import { Service } from "@opencode/client/service"
+import { fixturePaginationGuard, stopFixtureChild } from "./native-fixture-guards.mjs"
+const deadlineAt = Date.now() + 180_000
+const signal = AbortSignal.timeout(180_000)
 const [oldCli, newCli] = process.argv.slice(2)
 if (![oldCli, newCli].every(value => value && path.isAbsolute(value))) throw new Error("Pass absolute old and target CLI paths")
 const parent = path.join(os.tmpdir(), "opencode")
@@ -15,7 +20,7 @@ await mkdir(parent, { recursive: true })
 const root = await mkdtemp(path.join(parent, "codenomad-history-migration-"))
 const repo = path.join(root, "repo"), worktree = path.join(root, "worktree")
 await mkdir(repo)
-const git = (...args) => execFileSync("git", args, { cwd: repo, stdio: "pipe" })
+const git = (...args) => execFileSync("git", args, { cwd: repo, stdio: "pipe", timeout: 15_000 })
 git("init"); git("config", "user.name", "Synthetic fixture"); git("config", "user.email", "fixture@example.invalid")
 await writeFile(path.join(repo, "fixture.txt"), "synthetic")
 git("add", "."); git("commit", "-m", "fixture"); git("worktree", "add", "-b", "fixture-worktree", worktree)
@@ -31,28 +36,36 @@ const providerConfig = JSON.stringify({ providers: { openai: { settings: { apiKe
 const configFile = path.join(env.OPENCODE_CONFIG_DIR, "opencode.json")
 await writeFile(configFile, providerConfig)
 const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-const versions = [oldCli, newCli].map(cli => execFileSync(cli, ["--version"], { encoding: "utf8" }).trim())
+const versions = [oldCli, newCli].map(cli => execFileSync(cli, ["--version"], { encoding: "utf8", timeout: 15_000 }).trim())
 const hashes = await Promise.all([oldCli, newCli].map(async cli => createHash("sha256").update(await readFile(cli)).digest("hex")))
 await writeFile(path.join(root, "artifacts.json"), JSON.stringify({ versions, hashes }, null, 2))
 
 async function start(cli, database, name) {
+  signal.throwIfAborted()
   let output = ""
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {
     cwd: root, env: { ...env, OPENCODE_DB: database }, windowsHide: true,
   })
   const stopped = new Promise(resolve => child.once("close", resolve))
+  let spawnError
+  child.once("error", error => { spawnError = error })
   child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
-  const close = async () => { child.kill(); await stopped; await writeFile(path.join(root, `${name}.log`), output) }
+  const close = async () => {
+    try { await stopFixtureChild(child, stopped) }
+    finally { await writeFile(path.join(root, `${name}.log`), output) }
+  }
   try {
     const deadline = Date.now() + 30_000
     while (!/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
+      signal.throwIfAborted()
+      if (spawnError) throw spawnError
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(`Fixture startup failed: ${output}`)
       await delay(20)
     }
     const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
     const raw = async (route, body, method = body === undefined ? "GET" : "POST", headers = {}) => {
       const response = await fetch(`${baseUrl}${route}`, { method, headers: { authorization, "content-type": "application/json", ...headers },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) })
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) })
       const text = await response.text()
       assert.ok(response.ok, `${method} ${route}: ${response.status} ${text}`)
       return text ? JSON.parse(text) : undefined
@@ -142,13 +155,18 @@ try {
 } finally { await control.close() }
 await writeFile(path.join(root, "forms-restart-control.json"), JSON.stringify(forms))
 const target = await start(newCli, migratedDb, "target")
+let shared
 try {
   const { OpenCodeCliService } = await tsImport("../packages/server/src/workspaces/opencode-cli-service.ts", import.meta.url)
   const { OpenCodeSharedService } = await tsImport("../packages/server/src/workspaces/opencode-service.ts", import.meta.url)
   const lifecycle = new OpenCodeCliService({ label: "Migration fixture", timeoutMs: 30_000, command: args => ({ command: newCli, args, options: {} }) },
     { execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? password : target.baseUrl, stderr: "" }) })
-  const shared = new OpenCodeSharedService()
-  const client = await shared.client({ kind: "lifecycle", identity: "migration-fixture", lifecycle })
+  shared = new OpenCodeSharedService({ headers: Service.headers, makeClient: options => OpenCode.make({ ...options,
+    fetch: (input, init) => options.fetch(input, { ...init,
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000), ...(init?.signal ? [init.signal] : [])]),
+    }),
+  }) })
+  const client = await shared.client({ kind: "lifecycle", identity: "migration-fixture", lifecycle }, { deadlineAt })
   const inbox = await client.session.inbox.list({ sessionID: pendingSession })
   assert.equal(inbox.length, 1)
   assert.equal(inbox[0].payload.text, "pending migration fixture")
@@ -183,21 +201,30 @@ try {
     const messages = []
     let page = await client.message.list({ sessionID: original.info.id, limit: 200 })
     messages.push(...page.data)
-    while (page.cursor.next) { page = await client.message.list({ sessionID: original.info.id, cursor: page.cursor.next }); messages.push(...page.data) }
+    const acceptCursor = fixturePaginationGuard()
+    while (page.cursor.next) {
+      acceptCursor(page.cursor.next)
+      page = await client.message.list({ sessionID: original.info.id, cursor: page.cursor.next })
+      messages.push(...page.data)
+    }
     assert.equal(messages.length, original.messages.length)
     console.log(`PASS migrated ${original.info.id}: ${messages.length} messages, old identity ${original.info.location.workspaceID ?? "local"}, current identity ${restored.info.location.workspaceID ?? "local"}`)
   }
   const listed = new Set()
   let page = await client.session.list({ directory: repo, limit: 2 })
   for (const item of page.data) listed.add(item.id)
+  const acceptCursor = fixturePaginationGuard()
   while (page.cursor.next) {
+    acceptCursor(page.cursor.next)
     page = await client.session.list({ cursor: page.cursor.next })
     for (const item of page.data) listed.add(item.id)
   }
   for (const original of snapshots.filter(snapshot => snapshot.info.title?.startsWith("history-"))) {
     assert.ok(listed.has(original.info.id), `native pagination retains migrated session ${original.info.id}`)
   }
-  await shared.shutdown()
-} finally { await target.close() }
+} finally {
+  try { await shared?.shutdown() }
+  finally { await target.close() }
+}
 assert.equal(createHash("sha256").update(await readFile(seedDb)).digest("hex"), untouchedHash)
 console.log(`PASS: native synthetic history migration ${versions.join(" -> ")}; evidence ${root}`)

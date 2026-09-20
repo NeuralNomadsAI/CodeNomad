@@ -401,9 +401,14 @@ jobs:
           packages/ui/src/lib/launch-errors.test.ts
 
       - name: Test first installation without system Node
+        timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
 
+      - name: Test migration failure guards
+        run: node --test scripts/native-fixture-guards.test.mjs
+
       - name: Certify native history migration at the minimum and latest stable
+        timeout-minutes: 20
         shell: pwsh
         run: |
           $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
