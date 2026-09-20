@@ -23,6 +23,7 @@ import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
 import { executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
+import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
 
 const log = getLogger("actions")
 
@@ -354,9 +355,12 @@ export function useCommands(options: UseCommandsOptions) {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "info") return
+        const progress = beginSessionCleanup(instance.id, sessionId)
+        if (!progress) return
         try {
-          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId)
-          if (plan.messageIds.length === 0) {
+          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId, { signal: progress.signal, progress: progress.planning })
+          if (plan.candidates.length === 0) {
+            if (plan.skipped) throw new Error(tGlobal("history.skipped", { count: plan.skipped }))
             showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
               title: tGlobal("commands.removeSessionTechnicalParts.empty.title"),
               variant: "info",
@@ -366,25 +370,30 @@ export function useCommands(options: UseCommandsOptions) {
           const confirmed = await showConfirmDialog(tGlobal("commands.removeSessionTechnicalParts.confirm.message", {
             toolCount: plan.toolCount,
             reasoningCount: plan.reasoningCount,
-          }), {
+          }) + (plan.skipped ? `\n${tGlobal("history.skipped", { count: plan.skipped })}` : ""), {
             title: tGlobal("commands.removeSessionTechnicalParts.confirm.title"),
             confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
             variant: "warning",
           })
           if (!confirmed) return
-          const failed = await executeSessionTechnicalPartDeletion(plan)
-          if (failed.length > 0) {
-            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length }), {
+          progress.signal.throwIfAborted()
+          progress.pruning(0, plan.candidates.length)
+          const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
+          if (failed.length > 0 || plan.skipped) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length + plan.skipped }), {
               title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
-              detail: Array.from(new Set(failed)).join("\n"),
+              detail: [...new Set(failed), ...(plan.skipped ? [tGlobal("history.skipped", { count: plan.skipped })] : [])].join("\n"),
               variant: "error",
             })
           }
         } catch (error) {
+          if (progress.signal.aborted) return
           showAlertDialog(error instanceof Error ? error.message : String(error), {
             title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
             variant: "error",
           })
+        } finally {
+          progress.finish()
         }
       },
     })

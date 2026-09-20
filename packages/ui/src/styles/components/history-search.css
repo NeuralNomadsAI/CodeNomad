@@ -1,0 +1,62 @@
+.history-search-toolbar,
+.history-statistics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+.history-search-results {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.history-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.5rem;
+  text-align: start;
+  overflow-wrap: anywhere;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.history-search-result:hover,
+.history-search-result-active {
+  background: var(--surface-hover-overlay);
+}
+
+.history-statistics {
+  font-size: 0.75rem;
+}
+
+.history-message-preview {
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.5rem;
+}
+
+.history-message-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+
+.history-navigation-status {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0.5rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: calc(100% - 1rem);
+  padding: 0.25rem 0.5rem;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  font-size: 0.75rem;
+}

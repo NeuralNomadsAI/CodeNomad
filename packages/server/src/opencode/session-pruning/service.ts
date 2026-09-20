@@ -4,16 +4,16 @@ import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { storageKey, validateClaimFence } from "./claim-fence"
 import { pruneTransaction } from "./transaction"
-import { pruneRequestSchema, type PruneResult } from "./contract"
+import { pruneAllRequestSchema, pruneRequestSchema, type PruneResult } from "./contract"
 import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
 
 // Only an explicit pruning RPC calls this service; loading the plugin never prunes.
 // No database access is exposed through CodeNomad's HTTP broker.
 export async function pruneBoundMessage(
-  ctx: Plugin.Context, input: unknown, signal: AbortSignal,
+  ctx: Plugin.Context, input: unknown, signal: AbortSignal, allTechnical = false,
 ): Promise<PruneResult> {
-  const request = pruneRequestSchema.parse(input)
+  const request = allTechnical ? pruneAllRequestSchema.parse(input) : pruneRequestSchema.parse(input)
   const configured = pruningDatabasePath(ctx.options.databasePath, ctx.app.channel)
   if (typeof configured !== "string" || !path.isAbsolute(configured)
     || (process.platform === "win32" && configured.replaceAll("/", "\\").startsWith("\\\\"))) {
@@ -41,7 +41,7 @@ export async function pruneBoundMessage(
         return pruneTransaction(db, request, () => validateClaimFence(db, request.sessionID, {
           key: storageKey(key), nonce,
           directory: location.directory, workspaceID: location.workspaceID, projectID: session.projectID,
-        }), storageKey("pruning/receipt/"))
+        }), storageKey("pruning/receipt/"), allTechnical)
       } catch (error) {
         const code = (error as { errcode?: number; code?: string }).errcode
         return { status: "blocked", reason: code === 5 || code === 6 || (error as { code?: string }).code === "SQLITE_BUSY"

@@ -11,6 +11,8 @@
   "files": [
     "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "location.ts", "planner.ts", "plugin.ts",
     "preview-store.ts", "revision.ts", "service.ts", "storage-path.ts",
+    "history-contract.ts", "history-store.ts", "history-service.ts",
+    "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
     "transaction.ts", "tui.ts", "tui-reload.ts"
   ],
   "dependencies": {
