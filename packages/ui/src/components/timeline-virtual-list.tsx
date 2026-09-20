@@ -12,6 +12,7 @@ export default function TimelineVirtualList<T>(props: {
   gap: (item: T) => number
   scrollElement?: HTMLDivElement
   register: (handle: TimelineListHandle) => void
+  onVisibleItems?: (items: T[]) => void
   children: (item: T) => JSX.Element
 }) {
   const [size, setSize] = createSignal({ marker: 20, gap: 5.6 })
@@ -42,6 +43,7 @@ export default function TimelineVirtualList<T>(props: {
     return rows.slice(start, low).map(row => row.item)
   })
   const byItem = createMemo(() => new Map(layout().rows.map(row => [row.item, row])))
+  createEffect(() => props.onVisibleItems?.(visible()))
   createEffect(() => {
     const element = props.scrollElement
     if (!element) return

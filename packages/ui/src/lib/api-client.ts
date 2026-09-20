@@ -1,5 +1,5 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
-import type { NavigationTarget, NavigationWindowResult, OutlineResult } from "../../../server/src/opencode/session-pruning/navigation-contract"
+import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
   PruneResult,
@@ -183,9 +183,14 @@ export const serverApi = {
       method: "POST", body: JSON.stringify({ sessionID, target }), signal,
     })
   },
-  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal): Promise<OutlineResult> {
+  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number): Promise<OutlineResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
-      method: "POST", body: JSON.stringify({ sessionID, cursor }), signal,
+      method: "POST", body: JSON.stringify({ sessionID, cursor, after }), signal,
+    })
+  },
+  fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+      method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
     })
   },
   querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {

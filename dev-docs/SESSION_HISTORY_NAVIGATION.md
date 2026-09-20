@@ -1,20 +1,24 @@
 # Global timeline and bounded navigation
 
-The history-query plugin also exposes two read-only operations through dedicated
-CodeNomad routes: `session-history/outline` and `session-history/window`. They use
+The history-query plugin exposes three read-only navigation operations through dedicated
+CodeNomad routes: `session-history/outline`, `session-history/outlinePreview` and `session-history/window`. They use
 the same authenticated native RPC registration and daemon-storage identity
 challenge as history queries. They do not expose generic RPC or SQL access.
 
 ## Read contract
 
-- An outline page returns at most 256 lightweight message entries, with native
-  sequence order, a short preview and technical-part counts. Its sequence horizon
-  excludes new appended messages until the next refresh. The UI publishes a
-  complete metadata snapshot; message payloads do not enter the transcript store.
-  Page work is bounded by rows and 24 MiB of parsed source payloads, with a
-  cooperative cancellation yield every 16 rows. Scheduler wait time must never
-  truncate pages: it previously fragmented a busy Windows conversation into
-  four-entry responses and multiplied authenticated RPC round trips.
+- An outline page returns at most 16,384 structural entries: native ID, sequence,
+  type and technical-part counts, with no excerpt or body. SQL projects counts
+  directly; large content never enters JS/RPC/renderer just to draw the rail.
+  Its sequence horizon excludes newly appended messages until the next refresh;
+  `after` permits re-reading the small mutable tail and new arrivals. Cancellation
+  yields every 128 entries. Cold assistant/tool indexes still inspect native JSON
+  in SQLite, so first-load cost is not constant or free. Larger histories retain
+  bounded pagination; the exact structural snapshot publishes once it is complete.
+- `outlinePreview` reads at most 12 requested IDs, in priority order. Each reply
+  contains up to 4,096 characters of Markdown and 4,096 of tool excerpt per message;
+  source bodies over 16 MiB return empty excerpts. Preview data does not enter the
+  transcript store or affect rail geometry. Cancellation yields between messages.
 - A window targets `around`, `before`, `after`, `oldest` or `latest`. It reads at
   most 200 messages ordered by native `seq`, without traversing intervening pages.
   Neighbor windows overlap by 16 messages so the reading anchor can survive a
@@ -26,7 +30,7 @@ challenge as history queries. They do not expose generic RPC or SQL access.
   oversized windows fail explicitly instead of silently omitting content.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
-  return a conflict; the broker rechecks location, project, revert and workspace
+  return `anchor_missing`; the broker rechecks location, project, revert and workspace
   ownership before publishing either result.
 
 ## UI navigation
@@ -75,26 +79,35 @@ Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
 and viewport anchor stability during streaming and distant jumps.
 
-Hover and keyboard-focus previews use the same bounded plain-text excerpt for
-resident and historical markers. They never mount a message card or load message
-payloads. The opaque preview surface wraps text and stays inside the viewport;
+Hover and keyboard-focus previews render bounded Markdown (formatting, lists,
+links and code) with escaped raw HTML and no syntax-highlighting work. They never
+mount a message/tool card or load a transcript window. Visible-nearby excerpts load
+in small batches, prioritizing hover; moving elsewhere cancels obsolete work.
+An unloaded/empty excerpt shows no popup. Resident selected content can supply the
+preview directly. A separate 512-excerpt cache retains results across view switches;
+entries older than 30 seconds revalidate on demand, without timers/polling. The
+opaque preview surface wraps text and stays inside the viewport;
 Escape, rail scrolling, and viewport resizing dismiss it.
 
 An absent/hidden native anchor returns `anchor_missing`, separately from ownership
 or revert conflicts. Automatic restoration recovers once through the latest visible
 page and replaces its saved anchor/cursor only on success. Explicit navigation still
-reports the missing destination. Active-view initial reads cancel on hiding, and
-outline work pauses while transcript hydration is loading. See
+reports the missing destination. Active-view initial reads cancel on hiding;
+the lightweight structural index loads independently of transcript hydration. See
 `SESSION_HISTORY_STRESS_REVIEW.md` for measured desktop switching costs and the
 remaining streaming/memory work.
 
 Outline scans retain accepted pages and their sequence-horizon cursor when a view
-is hidden or unmounted. Four recent metadata snapshots are retained in the renderer,
+is hidden or unmounted. Up to 16 structural snapshots (200,000 entries across the
+retained LRU, except a single larger active index) are retained in the renderer,
 keyed by instance/session, connection generation, content-mutation revision and undo
-boundary. Returning reuses the completed rail immediately; message/status changes
-refresh it while preserving its last completed snapshot. A status transition during
-an incomplete scan cannot discard its progress. Initial loading exposes accepted and
-total message counts rather than silently presenting the resident rail as complete.
+boundary. Returning reuses the completed rail immediately. An unchanged return
+performs no index read. Message changes observed on activation/status transitions
+refresh the last 32 indexed rows and new arrivals, preserving the prefix and last
+completed display. Destructive edits/reconnect/undo invalidate the full index.
+A status transition during an incomplete scan cannot discard its progress.
+There is no excerpt-loading countdown: structural geometry and preview availability
+are independent. Cache retention is in renderer memory, not persisted across restart.
 
 ## Validation
 

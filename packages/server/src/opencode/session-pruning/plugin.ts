@@ -8,7 +8,8 @@ import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "./history-contract"
 import { queryBoundHistory, pruneBoundBatch } from "./history-service"
-import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema } from "./navigation-contract"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "./navigation-contract"
+import { readOutlinePreviews } from "./outline-preview"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
 
@@ -18,6 +19,7 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
   window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
   outline: { input: outlineInputSchema, output: outlineResultSchema },
+  outlinePreview: { input: outlinePreviewInputSchema, output: outlinePreviewResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
@@ -28,7 +30,9 @@ export default Plugin.define({
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
-        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal)),
+        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after)),
+      outlinePreview: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readOutlinePreviews(db, scope, input.messageIDs, call.signal)),
       history: (input, call) => queryBoundHistory(ctx, input, call.signal),
       pruneBatch: (input, call) => pruneBoundBatch(ctx, input, call.signal, async (sessionID, result) => {
         await registration.events.emit("pruned", { sessionID, messageID: result.messageID, revision: result.revision })

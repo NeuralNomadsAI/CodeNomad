@@ -16,12 +16,12 @@ function projectSessionOutline(entries: readonly OutlineEntry[], resident: reado
     if (!["user", "assistant", "compaction", "shell"].includes(nativeType)) return []
     const type = nativeType === "user" ? "user" : nativeType === "compaction" ? "compaction" : "assistant"
     const label = t(`messageTimeline.segment.${type}.label`)
-    const text = local.filter(segment => segment.type !== "tool").map(segment => segment.tooltip).join("\n") || entry?.preview || label
-    const chars = local.length ? local.reduce((n, segment) => n + segment.totalChars, 0) : entry?.chars ?? 0
-    const tools = entry?.tools ?? local.filter(segment => segment.type === "tool").length
+    const text = local.filter(segment => segment.type !== "tool").map(segment => segment.tooltip).join("\n")
+    const chars = local.length ? local.reduce((n, segment) => n + segment.totalChars, 0) : 0
+    const tools = local.length ? local.filter(segment => segment.type === "tool").length : entry?.tools ?? 0
     const result: TimelineSegment[] = [{ id: `${id}:outline`, messageId: id, type, label, tooltip: text.slice(0, 220), totalChars: chars }]
     if (tools) result.unshift({ id: `${id}:outline-tools`, messageId: id, type: "tool", label: t("messageTimeline.tool.fallbackLabel"),
-      tooltip: t("history.counts", { messages: 1, tools, reasoning: entry?.reasoning ?? 0 }), totalChars: tools * 100,
+      tooltip: local.filter(segment => segment.type === "tool").map(segment => segment.tooltip).join("\n").slice(0, 220), totalChars: tools * 100,
       toolPartIds: local.flatMap(segment => segment.toolPartIds ?? []) })
     return result
   })

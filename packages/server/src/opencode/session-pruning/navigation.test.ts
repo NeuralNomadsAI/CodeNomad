@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
+import { readOutlinePreviews } from "./outline-preview"
 
 const scope = { directory: "/repo", projectID: "p", sessionID: "s" }
 const id = (n: number) => `message-${String(n).padStart(5, "0")}`
@@ -41,31 +42,34 @@ test("direct distant windows retain native sequence order, bound content and ove
     assert.equal(db.isTransaction, false)
   } finally { db.close() }
 })
-test("outline pages remain bounded and full despite scheduler delays, and exclude newly appended rows", async (t) => {
-  const db = fixture()
+test("structural index pages stay bounded without excerpts and exclude newly appended rows", async (t) => {
+  const db = fixture(18000)
   let clock = 0
   t.mock.method(performance, "now", () => clock += 100)
   try {
     const first = await readSessionOutline(db, scope, undefined, signal())
     assert.equal(first.status, "outline")
     if (first.status !== "outline") return
-    assert.equal(first.total, 1500)
-    assert.equal(first.entries.length, 256, "event-loop delays must not fragment metadata into tiny RPC pages")
+    assert.equal(first.total, 18000)
+    assert.equal(first.entries.length, 16384, "structural metadata must not require hundreds of excerpt-sized pages")
     assert(first.cursor)
-    db.prepare("INSERT INTO session_message VALUES (?,'s','user',?,?)").run(id(1500), 1500 * 7, JSON.stringify({ text: "Later", time: { created: 2000 } }))
+    db.prepare("INSERT INTO session_message VALUES (?,'s','user',?,?)").run(id(18000), 18000 * 7, JSON.stringify({ text: "Later", time: { created: 20000 } }))
     const ids = first.entries.map(entry => entry.id)
     let cursor: { after: number; through: number } | null = first.cursor
     while (cursor) {
       const page = await readSessionOutline(db, scope, cursor, signal())
       assert.equal(page.status, "outline")
       if (page.status !== "outline") break
-      assert(page.entries.length <= 256)
-      assert(page.entries.every(entry => entry.preview.length <= 220 && !("content" in entry)))
+      assert(page.entries.length <= 16384)
+      assert(page.entries.every(entry => !("preview" in entry) && !("content" in entry)))
       ids.push(...page.entries.map(entry => entry.id)); cursor = page.cursor
     }
-    assert.equal(ids.length, 1500)
+    assert.equal(ids.length, 18000)
     assert.equal(new Set(ids).size, ids.length)
-    assert.equal(ids.at(-1), id(1499))
+    assert.equal(ids.at(-1), id(17999))
+    const delta = await readSessionOutline(db, scope, undefined, signal(), 17998 * 7)
+    if (delta.status !== "outline") assert.fail("Expected delta")
+    assert.deepEqual(delta.entries.map(entry => entry.id), [id(17999), id(18000)])
   } finally { db.close() }
 })
 test("navigation enforces ownership, message membership and staged undo visibility", async () => {
@@ -98,7 +102,7 @@ test("oversized windows fail explicitly and cancelled reads release their transa
   } finally { db.close() }
 })
 
-test("navigation yields for cancellation and outline byte budgets retain the next unread message", async () => {
+test("navigation yields for cancellation and large bodies do not delay index pagination", async () => {
   const db = fixture(300)
   try {
     const controller = new AbortController()
@@ -110,9 +114,30 @@ test("navigation yields for cancellation and outline byte budgets retain the nex
     const first = await readSessionOutline(db, scope, undefined, signal())
     assert.equal(first.status, "outline")
     if (first.status !== "outline") return
-    assert.deepEqual(first.entries.map(entry => entry.id), [id(0), id(1)])
-    const next = await readSessionOutline(db, scope, first.cursor!, signal())
-    if (next.status !== "outline") assert.fail('Expected next outline page')
-    assert.equal(next.entries[0].id, id(2))
+    assert.equal(first.entries.length, 300)
+    assert.equal(first.cursor, null)
+    assert(!JSON.stringify(first).includes("large"))
+  } finally { db.close() }
+})
+
+test("demand excerpts preserve Markdown, bound tool output and enforce ownership/undo", async () => {
+  const db = fixture(3)
+  try {
+    db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
+      { type: "text", text: "**Rich** [link](https://example.org)\n\n" + "text ".repeat(2000) },
+      { type: "tool", name: "shell", state: { content: [{ type: "text", text: "output".repeat(2000) }] } },
+    ] }), id(1))
+    const index = await readSessionOutline(db, scope, undefined, signal())
+    if (index.status !== "outline") assert.fail("Expected index")
+    assert.equal(index.entries[1].tools, 1)
+    const previews = await readOutlinePreviews(db, scope, [id(1), "foreign"], signal())
+    if (previews.status !== "previews") assert.fail("Expected previews")
+    assert.equal(previews.entries.length, 1)
+    assert(previews.entries[0].text.startsWith("**Rich** [link]"))
+    assert.equal(previews.entries[0].text.length, 4096)
+    assert.equal(previews.entries[0].tools.length, 4096)
+    await assert.rejects(readOutlinePreviews(db, { ...scope, directory: "/foreign" }, [id(1)], signal()))
+    db.prepare("UPDATE session_v2 SET revert=?").run(JSON.stringify({ messageID: id(1) }))
+    assert.deepEqual(await readOutlinePreviews(db, scope, [id(1)], signal()), { status: "previews", entries: [] })
   } finally { db.close() }
 })

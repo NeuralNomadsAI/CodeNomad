@@ -11,10 +11,11 @@
   box-shadow: var(--panel-shadow-strong);
   font-size: var(--font-size-sm);
   line-height: 1.5;
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 
-.message-timeline-tooltip p {
-  margin: 0;
+.message-timeline-tooltip .markdown-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

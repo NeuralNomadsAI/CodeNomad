@@ -9,7 +9,7 @@ const MESSAGE_BYTES = 16 * 1024 * 1024
 const WINDOW_BYTES = 24 * 1024 * 1024
 const YIELD_EVERY = 16
 
-function ownedSession(db: DatabaseSync, scope: HistoryScope) {
+export function ownedSession(db: DatabaseSync, scope: HistoryScope) {
   const session = db.prepare("SELECT revert FROM session_v2 WHERE id=? AND directory=? AND project_id=? AND workspace_id IS ?")
     .get(scope.sessionID!, storageDirectory(scope.directory), scope.projectID!, scope.workspaceID ?? null)
   if (!session) throw new Error("Session location changed")
@@ -66,34 +66,26 @@ export async function readNavigationWindow(db: DatabaseSync, scope: HistoryScope
   } finally { db.exec("ROLLBACK") }
 }
 
-export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope, cursor: { after: number; through: number } | undefined, signal: AbortSignal): Promise<OutlineResult> {
+export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope, cursor: { after: number; through: number } | undefined, signal: AbortSignal, startAfter = -1): Promise<OutlineResult> {
   signal.throwIfAborted()
   const boundary = ownedSession(db, scope)
   const where = "session_id=?" + (boundary ? " AND id < ?" : "")
   const params: SQLInputValue[] = [scope.sessionID!, ...(boundary ? [boundary] : [])]
   const through = cursor?.through ?? Number(db.prepare(`SELECT coalesce(max(seq),0) AS value FROM session_message WHERE ${where}`).get(...params)?.value)
   const total = Number(db.prepare(`SELECT count(*) AS value FROM session_message WHERE ${where} AND seq<=?`).get(...params, through)?.value)
-  const rows = db.prepare(`SELECT id,type,seq,CASE WHEN length(CAST(data AS BLOB))<=? THEN data ELSE NULL END AS data
-    FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 256`)
+  // SQLite projects structure only. Large tool output/text never crosses into
+  // JS, the RPC or the renderer merely to determine scrollbar geometry.
+  const rows = db.prepare(`SELECT id,type,seq,
+    CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool') ELSE 0 END AS tools,
+    CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning
+    FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 16384`)
   const entries: OutlineEntry[] = []
-  let after = cursor?.after ?? -1
-  let bytes = 0
-  for (const row of rows.iterate(MESSAGE_BYTES, ...params, after, through)) {
+  let after = cursor?.after ?? startAfter
+  for (const row of rows.iterate(...params, after, through)) {
     signal.throwIfAborted()
-    const size = typeof row.data === "string" ? Buffer.byteLength(row.data) : 0
-    if (entries.length && bytes + size > WINDOW_BYTES) break
-    bytes += size
     after = Number(row.seq)
-    const data = typeof row.data === "string" ? JSON.parse(row.data) : {}
-    const parts = Array.isArray(data.content) ? data.content : []
-    const texts = parts.filter((part: any) => part.type === "text").map((part: any) => typeof part.text === "string" ? part.text : "")
-    const text = typeof data.text === "string" ? data.text : typeof data.summary === "string" ? data.summary : typeof data.command === "string" ? data.command : texts.join("\n")
-    entries.push({ id: String(row.id), seq: after, type: row.type as OutlineEntry["type"], preview: text.slice(0, 220), chars: text.length,
-      tools: parts.filter((part: any) => part.type === "tool").length, reasoning: parts.filter((part: any) => part.type === "reasoning").length })
-    // Bound work by rows and bytes, not wall time across scheduler yields.
-    // A busy Windows host could otherwise spend the 40ms budget in the event
-    // loop and return just a handful of IDs per authenticated RPC round trip.
-    if (entries.length % YIELD_EVERY === 0) await yieldTurn(undefined, { signal })
+    entries.push({ id: String(row.id), seq: after, type: row.type as OutlineEntry["type"], tools: Number(row.tools), reasoning: Number(row.reasoning) })
+    if (entries.length % 128 === 0) await yieldTurn(undefined, { signal })
   }
   return { status: "outline", entries, total, cursor: entries.length && after < through ? { after, through } : null }
 }

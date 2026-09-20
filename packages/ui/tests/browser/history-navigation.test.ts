@@ -9,6 +9,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { readNavigationWindow, readSessionOutline } from "../../../server/src/opencode/session-pruning/navigation-store"
+import { readOutlinePreviews } from "../../../server/src/opencode/session-pruning/outline-preview"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./fixtures/history-navigation-data"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -27,7 +28,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function fixture(mixed = false, pauseOutline = false) {
+async function fixture(mixed = false, pausePreviews = false, holdMessages = false) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const db = new DatabaseSync(":memory:")
   db.exec(`CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
@@ -39,8 +40,13 @@ async function fixture(mixed = false, pauseOutline = false) {
     const { id, type, ...data } = (mixed ? mixedNavigationMessage : navigationMessage)(index)
     insert.run(id, type, index, JSON.stringify(data))
   }
+  for (let index = 0; index < 6; index++) {
+    db.prepare("INSERT INTO session_v2 VALUES (?,'/fixture','p',NULL,NULL)").run(`cached-${index}`)
+    db.prepare("INSERT INTO session_message VALUES (?,?,'user',0,?)").run(`cached-message-${index}`, `cached-${index}`, JSON.stringify({ text: "Cached index" }))
+  }
   const errors: string[] = [], windows: any[] = []
   const outlines: Array<number | undefined> = []
+  const previewRequests: string[][] = []
   let resumeOutline!: () => void
   const outlineGate = new Promise<void>(resolve => { resumeOutline = resolve })
   const reads = new Set<Promise<unknown>>()
@@ -48,18 +54,22 @@ async function fixture(mixed = false, pauseOutline = false) {
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
     const request = route.request(), method = request.url().split("/").at(-1)
-    if (!request.url().includes("/session-history/") || !["outline", "window"].includes(method!)) {
+    if (!request.url().includes("/session-history/") || !["outline", "outlinePreview", "window"].includes(method!)) {
       return route.fulfill({ contentType: "application/json", body: "{}" })
     }
     const input = request.postDataJSON()
     if (method === 'outline') {
-      outlines.push(input.cursor?.after)
-      if (pauseOutline && input.cursor) await outlineGate
+      outlines.push(input.cursor?.after ?? input.after)
     }
-    const scope = { directory: "/fixture", projectID: "p", sessionID: "s" }
+    if (method === 'outlinePreview') {
+      previewRequests.push(input.messageIDs)
+      if (pausePreviews) await outlineGate
+    }
+    const scope = { directory: "/fixture", projectID: "p", sessionID: input.sessionID }
     const read = method === "window"
       ? readNavigationWindow(db, scope, input.target, new AbortController().signal)
-      : readSessionOutline(db, scope, input.cursor, new AbortController().signal)
+      : method === "outlinePreview" ? readOutlinePreviews(db, scope, input.messageIDs, new AbortController().signal)
+        : readSessionOutline(db, scope, input.cursor, new AbortController().signal, input.after)
     reads.add(read)
     const response = await read.finally(() => reads.delete(read))
     if (method === "window") {
@@ -68,10 +78,11 @@ async function fixture(mixed = false, pauseOutline = false) {
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
-  await page.goto(url + (mixed ? "?mixed" : ""))
+  await page.goto(url + `?${mixed ? "mixed&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
-  if (!pauseOutline) await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
-  return { page, windows, errors, outlines, resumeOutline,
+  await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+  if (!holdMessages) await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
+  return { page, windows, errors, outlines, previewRequests, resumeOutline,
     hold: (index: number) => {
       let release!: () => void
       const promise = new Promise<void>(done => { release = done })
@@ -140,18 +151,28 @@ test("restoration ownership conflicts retain the saved passage instead of fallin
   } finally { await f.close() }
 })
 
-test("returning during an incomplete outline resumes accepted pages and retains the completed rail", async () => {
-  const f = await fixture(false, true)
+test("index and exact scrollbar precede transcript and previews, and survive session returns", async () => {
+  const f = await fixture(false, true, true)
   try {
-    await f.page.waitForFunction(() => document.querySelector('.history-navigation-status[role="status"]')?.textContent?.includes('256'))
-    await f.page.evaluate(() => (window as any).fixture.status('working'))
-    await f.page.waitForTimeout(200)
-    await f.page.evaluate(() => (window as any).fixture.status('idle'))
+    const rail = f.page.locator('.message-timeline')
+    const height = await rail.evaluate(element => element.scrollHeight)
+    assert.equal((await snapshot(f.page)).ids.length, 0, 'index must not wait for transcript hydration')
+    assert.equal(await f.page.locator('.history-navigation-status').count(), 0, 'no outline countdown')
+    await rail.hover()
+    await rail.evaluate(element => { element.scrollTop = element.scrollHeight / 6 })
+    await rail.locator('[data-message-id="msg_00250"]').hover()
+    await f.page.waitForTimeout(350)
+    assert.equal(await f.page.getByRole('tooltip').count(), 0, 'unloaded preview has no empty popup')
+    f.resumeOutline()
+    await f.page.getByRole('tooltip').waitFor()
+    assert.equal(await rail.evaluate(element => element.scrollHeight), height, 'preview arrival cannot resize the scrollbar')
+    await f.page.evaluate(() => (window as any).fixture.releaseMessages())
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
+    const hydratedScans = f.outlines.length
     await f.page.evaluate(() => (window as any).fixture.switchAway())
     await f.page.evaluate(() => (window as any).fixture.return())
-    f.resumeOutline()
     await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
-    assert.equal(f.outlines.filter(cursor => cursor === undefined).length, 1, 'return must not discard accepted outline pages')
+    assert.equal(f.outlines.length, hydratedScans, `return reuses the structural index: ${JSON.stringify(f.outlines)}`)
     const count = f.outlines.length
     await f.page.evaluate(() => (window as any).fixture.switchAway())
     await f.page.evaluate(() => (window as any).fixture.return())
@@ -173,6 +194,27 @@ async function assertPassageAtTop(page: Page, index: number) {
     row.getBoundingClientRect().top - document.querySelector('.message-stream')!.getBoundingClientRect().top)
   assert(Math.abs(offset) < 2, `selected passage ${index} moved by ${offset}px`)
 }
+
+test("indexes survive more than four session visits and live refresh reads only the tail", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.visitIndexes())
+    const count = f.outlines.length
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    await f.page.waitForTimeout(250)
+    assert.equal(f.outlines.length, count, 'six other indexes must not evict the original')
+    await f.page.evaluate(() => {
+      ;(window as any).fixture.stream('A new message')
+      ;(window as any).fixture.status('working')
+    })
+    await f.page.waitForFunction(() => document.querySelector('.message-timeline')?.getAttribute('data-segment-count') === '1501')
+    await f.page.waitForTimeout(200)
+    assert.equal(f.outlines.at(-1), 1467, 'refresh preserves the first 1468 rows and re-reads the mutable tail')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
 
 test("global timeline jumps over 1200 messages in one bounded window and restores the selected passage", async () => {
   const f = await fixture()
@@ -231,6 +273,7 @@ test("latest timeline intent supersedes a slow far jump, including a resident de
 test("resident streaming keeps a distant timeline marker mounted", async () => {
   const f = await fixture()
   try {
+    await f.page.locator(".message-timeline").hover()
     await f.page.locator(".message-timeline").evaluate(element => { element.scrollTop = element.scrollHeight * 250 / 1500 })
     const marker = f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]')
     await marker.waitFor()
@@ -244,12 +287,12 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
   } finally { await f.close() }
 })
 
-test("timeline previews are bounded plain text for historical and resident messages", async () => {
+test("timeline previews render bounded Markdown for historical and resident messages", async () => {
   const f = await fixture(true)
   try {
     const before = await snapshot(f.page)
     const rail = f.page.locator('.message-timeline')
-    for (const index of [250, 1450]) {
+    for (const index of [252, 1452]) {
       await rail.hover()
       await rail.evaluate((element, index) => { element.scrollTop = element.scrollHeight * index / 1500 }, index)
       const marker = rail.locator(`[data-message-id="${navigationMessageId(index)}"]`).first()
@@ -260,15 +303,17 @@ test("timeline previews are bounded plain text for historical and resident messa
         const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
         return { width: rect.width, height: rect.height, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
           background: style.backgroundColor, border: style.borderTopWidth, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
-          text: element.textContent, richCards: element.querySelectorAll('.message-preview,.message-item-base,pre,button').length }
+          text: element.textContent, richCards: element.querySelectorAll('.message-preview,.message-item-base').length,
+          bold: element.querySelector('strong')?.textContent }
       })
       assert(geometry.width <= 361 && geometry.width >= 300, JSON.stringify(geometry))
       assert(geometry.left >= 15 && geometry.top >= 15 && geometry.right <= 1185 && geometry.bottom <= 785, JSON.stringify(geometry))
-      assert(geometry.height < 240, 'short excerpts do not reserve a full message-card height')
+      assert(geometry.height <= 420, 'rich excerpts remain viewport bounded')
       assert.notEqual(geometry.background, 'rgba(0, 0, 0, 0)')
       assert.equal(geometry.border, '1px')
       assert.equal(geometry.scrollWidth, geometry.clientWidth)
       assert.equal(geometry.richCards, 0)
+      assert.equal(geometry.bold, 'formatting')
       assert(geometry.text?.includes(`Passage ${index}`))
       await marker.focus()
       await marker.press('Escape')
@@ -276,6 +321,8 @@ test("timeline previews are bounded plain text for historical and resident messa
     }
     assert.equal(f.windows.length, 0, 'hover never requests a transcript window')
     assert.equal((await snapshot(f.page)).nativeLists, before.nativeLists, 'hover never fetches a native message')
+    assert(f.previewRequests.every(ids => ids.length <= 12), 'excerpt fetches are bounded batches')
+    assert(new Set(f.previewRequests.flat()).size < 400, 'preview requests follow the viewed area, not the full history')
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

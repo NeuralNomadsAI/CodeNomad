@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify"
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
-import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema } from "../../opencode/session-pruning/navigation-contract"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "../../opencode/session-pruning/navigation-contract"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import type { HistoryRouteDeps } from "./session-history"
 
 export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick<HistoryRouteDeps, "workspaceManager">) {
-  for (const method of ["window", "outline"] as const) {
+  const inputs = { window: navigationWindowInputSchema, outline: outlineInputSchema, outlinePreview: outlinePreviewInputSchema }
+  const outputs = { window: navigationWindowResultSchema, outline: outlineResultSchema, outlinePreview: outlinePreviewResultSchema }
+  for (const method of ["window", "outline", "outlinePreview"] as const) {
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-history/${method}`, { bodyLimit: 8192 }, async (request, reply) => {
-      const parsed = (method === "window" ? navigationWindowInputSchema : outlineInputSchema).safeParse(request.body)
+      const parsed = inputs[method].safeParse(request.body)
       if (!parsed.success) return reply.code(400).send({ error: "Invalid history navigation request" })
       const client = await deps.workspaceManager.getSharedServiceClient()
       const session = await client.session.get({ sessionID: parsed.data.sessionID })
@@ -20,7 +22,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
         const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method,
           input: JSON.parse(JSON.stringify(parsed.data)), location: { directory: location.directory } },
         { ...locationRequestOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) })
-        const output = (method === "window" ? navigationWindowResultSchema : outlineResultSchema).parse(response.output)
+        const output = outputs[method].parse(response.output)
         const current = await client.session.get({ sessionID: parsed.data.sessionID })
         if (!sameLocation(location, readLocationRef(current.location)) || current.projectID !== session.projectID
           || JSON.stringify(current.revert) !== JSON.stringify(session.revert)

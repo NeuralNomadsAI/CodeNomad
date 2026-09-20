@@ -30,11 +30,15 @@ export async function testSessionNavigationNative({ client, location, locationOp
     do {
       const outline = await rpc("outline", cursor ? { cursor } : {})
       assert.equal(outline.status, "outline")
-      assert.equal(outline.entries.length, Math.min(256, native.messages.length - count), "small metadata rows fill a bounded page regardless of scheduler latency")
+      assert.equal(outline.entries.length, Math.min(16384, native.messages.length - count), "structural index does not wait for excerpt pagination")
+      assert(outline.entries.every(entry => !("preview" in entry)))
       count += outline.entries.length
       cursor = outline.cursor
     } while (cursor)
     assert.equal(count, native.messages.length)
+    const previews = await rpc("outlinePreview", { messageIDs: [id(1200)] })
+    assert.equal(previews.status, "previews", JSON.stringify(previews))
+    assert.equal(previews.entries[0].text, "Navigation passage 1200")
     console.log("PASS: native 1501-message outline, direct distant windows, overlap and exact native payload/restore parity")
   } finally { await client.session.remove({ sessionID: session.id }) }
 }

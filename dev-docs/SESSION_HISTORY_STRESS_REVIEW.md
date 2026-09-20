@@ -109,3 +109,45 @@ cancellation on navigation but leaves cold-load latency and real missing-anchor
 recovery to be verified in an uninterrupted desktop run. A subsequent read-only DOM
 inspection found the review conversation rendered in the newly active instance;
 that does not establish restoration in the originally measured instance.
+
+## Structural index / demand previews follow-up
+
+The next iteration separates rail geometry from content. `outline` now returns
+only IDs, sequence, native type and tool/reasoning counts, up to 16,384 entries per
+bounded response. `outlinePreview` returns bounded Markdown for requested IDs in
+batches of 12, prioritizing hover and the visible area. The rail no longer waits for
+transcript hydration or excerpt scans, and the loading countdown is removed.
+Renderer index retention is now up to 16 sessions / 200k entries (one larger active
+index is allowed); changed sessions refresh the last 32 entries plus new arrivals.
+Ownership, destructive mutation, revert and connection-generation fences remain.
+
+Validation of this iteration:
+
+- All 19 Chromium navigation cases pass in one run. The cold-load case deliberately
+  blocks both transcript and excerpt replies: complete index geometry is available,
+  hovering shows no empty popup, and the eventual excerpt cannot resize the rail.
+- Six other session-index visits do not evict the original; an unchanged return
+  makes no structural request. A live update refreshes the tail rather than the prefix.
+- Historical and resident hover/focus use bounded Markdown with real bold/link
+  rendering, while native windows/lists stay untouched. The strengthened demand-area
+  assertions also pass in a targeted rerun.
+- Six SQL tests, three route-admission/race tests, both package typechecks, packaged
+  resource smoke and the full isolated native OpenCode 2.0.5 UI fixture pass.
+
+The resources were deployed on the existing native executable. A short real-desktop
+capture (`pr723-switch-profile-index.json`) measured a complete 11,210-message index
+in **one 2,050.9 ms response / 1,066,823 response bytes**, and the 4,857-message review
+index in **one 581.7 ms response / 454,561 bytes**. The former displayed 14,265 markers
+at the five-second sample, without a reload control. Excerpts arrived independently
+in batches of at most 12. A later index request started from sequence 138527 rather
+than the beginning, and was cancelled on leaving the session.
+
+The user changed selection during the review-session visit, so the script stopped
+instead of completing the warm/rapid-switch rounds. These timings are network
+request durations, not precise first-paint measurements. They establish completed
+structural reads in the installed app; they do not establish a desktop warm-return
+latency or a completed restoration soak. A two-second cold read on the largest
+conversation is still not instantaneous. SQLite must inspect nested assistant JSON
+for tool grouping, although bodies are no longer copied into JS or transported for
+index construction. The earlier whole-transcript allocation/streaming findings
+remain relevant; lower excerpt traffic alone does not resolve them.

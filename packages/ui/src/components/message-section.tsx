@@ -347,7 +347,7 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   })
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
-    active: () => props.isActive !== false && !props.loading && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
   const projectSessionOutline = createSessionOutlineProjection()
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
@@ -1170,11 +1170,6 @@ export default function MessageSection(props: MessageSectionProps) {
           <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
         </div>
       </Show>
-      <Show when={outline.pending() && !outline.entries().length && !navigationPending() && showMessageTimelinePreference()}>
-        <div class="history-navigation-status window-toolbar" role="status">
-          <span>{t("history.navigation.outlineLoading", outline.progress())}</span>
-        </div>
-      </Show>
       <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
         <div class="history-navigation-status window-toolbar" role="status">
           <span title={outline.error()}>{t("history.navigation.outlineUnavailable")}</span>
@@ -1532,6 +1527,7 @@ export default function MessageSection(props: MessageSectionProps) {
           <TimelinePlacement mount={props.timelineMount}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
+              isActive={isActive()}
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
               expandedMessageIds={expandedMessageIds}

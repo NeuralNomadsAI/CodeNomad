@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js"
+import { createEffect, createRoot, createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
@@ -13,6 +13,7 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/session-api"
 import { historyWindowCursor } from "../../../src/stores/history-window"
+import { createSessionOutline } from "../../../src/stores/session-outline"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
 import "../../../src/index.css"
 
@@ -21,6 +22,9 @@ const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage :
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false
+let releaseMessages!: () => void
+const messagesGate = new Promise<void>(resolve => { releaseMessages = resolve })
+if (!location.search.includes("holdMessages")) releaseMessages()
 let config = { settings: { locale: "en", showMessageTimeline: true } }
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
@@ -36,6 +40,7 @@ const client: any = {
   model: { default: async () => ({ data: model }) },
   message: { list: async ({ cursor, limit = 200, order }: any = {}) => {
     nativeLists++
+    await messagesGate
     if (order === 'asc' || cursor?.startsWith('asc:')) {
       const start = cursor ? Number(cursor.slice(4)) : 0
       const end = Math.min(count, start + limit)
@@ -65,6 +70,15 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   id: navigationMessageId,
+  releaseMessages,
+  visitIndexes: async () => {
+    for (let index = 0; index < 6; index++) await new Promise<void>(resolve => {
+      createRoot(dispose => {
+        const outline = createSessionOutline({ instanceId: () => instanceId, sessionId: () => `cached-${index}`, active: () => true })
+        createEffect(() => { if (outline.entries().length) queueMicrotask(() => { dispose(); resolve() }) })
+      })
+    })
+  },
   tools: (showTimelineTools: boolean) => updatePreferences({ showTimelineTools }),
   status: (status: 'idle' | 'working') => setSessions(previous => {
     const next = new Map(previous), group = new Map(next.get(instanceId)!)

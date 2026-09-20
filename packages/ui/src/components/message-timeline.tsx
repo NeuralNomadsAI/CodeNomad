@@ -11,6 +11,8 @@ import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 import { getMessageContentIcon } from "./message-content-icons"
+import { Markdown } from "./markdown"
+import { createTimelinePreviews } from "../stores/timeline-previews"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -35,6 +37,7 @@ interface MessageTimelineProps {
   activeSegmentId?: string | null
   instanceId: string
   sessionId: string
+  isActive?: boolean
   showToolSegments?: boolean
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
@@ -306,6 +309,28 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const previewId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
+  const [visiblePreviewSegments, setVisiblePreviewSegments] = createSignal<TimelineSegment[]>([])
+  const previews = createTimelinePreviews({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
+    active: () => props.isActive !== false,
+    requested: () => {
+      const visible = visiblePreviewSegments(), center = Math.floor(visible.length / 2)
+      const nearby = [...visible].sort((a, b) => Math.abs(visible.indexOf(a) - center) - Math.abs(visible.indexOf(b) - center))
+      return [hoveredSegment()?.messageId, ...nearby.map(segment => segment.messageId)].filter((id): id is string => Boolean(id))
+    } })
+  const previewText = createMemo(() => {
+    const segment = hoveredSegment()
+    if (!segment || props.isActive === false) return ""
+    const record = store().getMessage(segment.messageId)
+    if (record) {
+      const parts = buildRecordDisplayData(props.instanceId, record).orderedParts
+      const text = parts.filter(part => segment.type === "tool" ? part.type === "tool" : part.type !== "tool")
+        .map(part => part.type === "tool" ? `${getToolTitle(part as ToolCallPart, t)}\n${part.state && "output" in part.state && typeof part.state.output === "string" ? part.state.output.slice(0, 4096) : ""}`
+          : collectTextFromPart(part, t).slice(0, 4096)).join("\n\n").slice(0, 4096)
+      if (text) return text
+    }
+    const preview = previews(segment.messageId)
+    return (segment.type === "tool" ? preview?.tools : preview?.text) || segment.tooltip || ""
+  })
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
   const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
   const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 120 })
@@ -392,6 +417,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const handleScroll = () => {
     clearHoverPreview()
   }
+  createEffect(() => { if (props.isActive === false) clearHoverPreview() })
 
   createEffect(on(() => props.revealActiveToken, () => { browsingRail = false }))
   createEffect(() => {
@@ -566,7 +592,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         onTouchStart={cancelReveal}
         onKeyDown={(event) => { cancelReveal(); if (event.key === "Escape") clearHoverPreview() }}
       >
-        <TimelineVirtualList register={setVirtualizerHandle} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
+        <TimelineVirtualList register={setVirtualizerHandle} onVisibleItems={setVisiblePreviewSegments} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
             const isActive = () => props.activeSegmentId === segment.id
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
@@ -604,7 +630,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
                   aria-current={isActive() ? "true" : undefined}
                   aria-label={segment.tooltip || segment.label}
-                  aria-describedby={hoveredSegment()?.id === segment.id ? previewId : undefined}
+                   aria-describedby={hoveredSegment()?.id === segment.id && previewText() ? previewId : undefined}
                   data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
                     onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}
@@ -620,7 +646,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             )
           }}
         </TimelineVirtualList>
-        <Show when={hoveredSegment()}>
+        <Show when={hoveredSegment() && previewText()}>
           {(data) => {
             onCleanup(() => setTooltipElement(null))
             return (
@@ -634,7 +660,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   onMouseEnter={() => clearCloseTimer()}
                   onMouseLeave={() => scheduleClose()}
                 >
-                  <p>{truncateText(data().tooltip)}</p>
+                   <Markdown part={{ type: "text", text: data() }} instanceId={props.instanceId} sessionId={props.sessionId}
+                     size="sm" disableHighlight escapeRawHtml />
                 </div>
               </Portal>
             )

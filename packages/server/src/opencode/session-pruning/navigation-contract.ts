@@ -14,19 +14,24 @@ export const navigationWindowInputSchema = z.object({ sessionID: id, target: nav
 const outlineCursorSchema = z.object({ after: z.number().int().nonnegative(), through: z.number().int().nonnegative() }).strict()
 export const outlineInputSchema = z.object({ sessionID: id,
   cursor: outlineCursorSchema.optional(),
+  after: z.number().int().min(-1).optional(),
 }).strict()
 const messageType = z.enum(["user", "assistant", "system", "synthetic", "skill", "shell", "compaction", "idle", "agent-switched", "model-switched", "location-switched"])
 export const outlineEntrySchema = z.object({
   id, seq: z.number().int().nonnegative(), type: messageType,
-  preview: z.string().max(220), chars: z.number().int().nonnegative(),
   tools: z.number().int().nonnegative(), reasoning: z.number().int().nonnegative(),
 }).strict()
 export type OutlineEntry = z.infer<typeof outlineEntrySchema>
 export const outlineResultSchema = z.union([pruningBlockedSchema, z.object({
-  status: z.literal("outline"), entries: z.array(outlineEntrySchema).max(256),
+  status: z.literal("outline"), entries: z.array(outlineEntrySchema).max(16384),
   total: z.number().int().nonnegative(), cursor: outlineCursorSchema.nullable(),
 }).strict()])
 export type OutlineResult = z.infer<typeof outlineResultSchema>
+export const outlinePreviewInputSchema = z.object({ sessionID: id, messageIDs: z.array(id).min(1).max(12) }).strict()
+export const outlinePreviewResultSchema = z.union([pruningBlockedSchema, z.object({
+  status: z.literal("previews"), entries: z.array(z.object({ id, text: z.string().max(4096), tools: z.string().max(4096) }).strict()).max(12),
+}).strict()])
+export type OutlinePreviewResult = z.infer<typeof outlinePreviewResultSchema>
 export const navigationWindowResultSchema = z.union([pruningBlockedSchema,
   z.object({ status: z.literal("blocked"), reason: z.literal("anchor_missing") }).strict(), z.object({
   status: z.literal("window"),
