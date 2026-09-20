@@ -23,7 +23,7 @@ describe("HostOpenCodeService", () => {
     })
     assert.equal(runtimeIdentity(await service.restart())?.version, "2.0.11")
     assert.equal(delegated, 1)
-    assert.deepEqual(calls.map(call => call.args), [["service", "stop"], ["service", "start"], ["service", "get", "password"]])
+    assert.deepEqual(calls.map(call => call.args), [["service", "stop"], ...stoppedDiscovery, ["service", "start"], ["service", "get", "password"]])
     assert.equal(calls[0].options.env, undefined)
   })
 
@@ -38,15 +38,16 @@ describe("HostOpenCodeService", () => {
     })
 
     assert.deepEqual(calls.map(({ args }) => args), [
-      ["service", "status"],
+      ...stoppedDiscovery,
+      ...stoppedDiscovery,
       ["service", "start"],
       ["service", "get", "password"],
     ])
     assert.equal(calls.every(({ options }) => options.shell === false), true)
     assert.equal(calls[0]?.options.env, undefined)
-    assert.equal(calls[2]?.options.env, undefined)
-    assert.equal(calls[1]?.options.env?.PROVIDER_TOKEN, "secret")
-    assert.equal(calls[1]?.options.env?.NODE_EXTRA_CA_CERTS, "/ca.pem")
+    assert.equal(calls.at(-1)?.options.env, undefined)
+    assert.equal(calls.at(-2)?.options.env?.PROVIDER_TOKEN, "secret")
+    assert.equal(calls.at(-2)?.options.env?.NODE_EXTRA_CA_CERTS, "/ca.pem")
   })
 
   it("authenticates strict bounded status and rejects malformed output", async () => {
@@ -201,6 +202,7 @@ describe("HostOpenCodeService", () => {
     const service = createService([], { TOKEN: secret }, {
       execFile: async (_file, args) => {
         if (args[args.length - 1] === "status") return { stdout: "stopped\n", stderr: "" }
+        if (args[args.length - 1] !== "start") return { stdout: "password\n", stderr: "" }
         throw Object.assign(new Error(secret), { code: 7, stdout: secret, stderr: secret })
       },
     })
@@ -265,6 +267,9 @@ function createService(
       return { stdout: "password\n", stderr: "" }
     },
     fetch: async () => Response.json({ version: "2.0.4", pid: 123, urls: [url] }),
+    readRegistration: async () => undefined,
     ...overrides,
   })
 }
+
+const stoppedDiscovery = [["service", "status"], ["service", "get", "password"], ["debug", "paths", "state"], ["debug", "paths", "config"]]
