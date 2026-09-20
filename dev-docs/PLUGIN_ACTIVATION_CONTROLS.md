@@ -76,15 +76,17 @@ through CodeNomad's connection-scoped compatibility transport.
 
 The server, UI, and bundled plugin currently pin `2.0.11` together. Its
 declarations provide the location-scoped reads, ordered `ConfigEntry.plugins`,
-and plugin source/state metadata used here. CI also qualifies that pinned client
-against the latest stable runtime through the shared native compatibility
-fixture. The activation write remains a local JSONC rule; no runtime-specific
-mutation endpoint is used.
+and plugin source/state metadata used here. CodeNomad's demonstrated technical
+minimum is `2.0.7`, while `2.0.11` is the separately recommended and tested
+target. These activation controls add no higher version requirement. The
+activation write remains a local JSONC rule; no runtime-specific mutation
+endpoint is used.
 
 Historical beta and stable contract-family results remain recorded in
 `OPENCODE_V2_COMPATIBILITY.md` as compatibility-adapter evidence, not as a
-separate support promise for this feature. Release support follows that
-document's current qualification policy. There is no release-number-only gate:
+separate support promise for this feature. Runtime admission follows
+`opencode/runtime-support.ts` and the evidence policy in that document. There is
+no release-number-only gate:
 unknown runtimes must first pass the existing authenticated OpenAPI contract
 recognition. Read or discovery failures leave controls unavailable and never
 fall back to guessed paths.
