@@ -279,7 +279,7 @@ export function buildTimelineSegments(
       continue
     }
 
-    if (part.type === "step-start" || part.type === "step-finish") {
+    if (part.type === "step-start" || part.type === "step-finish" || part.type === "system") {
       continue
     }
 

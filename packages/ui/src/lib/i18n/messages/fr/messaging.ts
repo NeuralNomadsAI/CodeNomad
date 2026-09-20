@@ -1,5 +1,7 @@
 export const messagingMessages = {
   "transcriptFilters.title": "Contenu des messages",
+  "transcriptFilters.systemMessages": "Messages système",
+  "messageBlock.system.label": "Système",
   "transcriptFilters.description": "Affichez ou masquez les contenus, puis choisissez leur dépliage initial. Ces réglages s’appliquent à toutes les conversations.",
   "transcriptFilters.show": "Afficher {name}",
   "transcriptFilters.hide": "Masquer {name}",

@@ -97,6 +97,10 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
+      if (resolvedStore.getMessageInfo(messageId)?.nativeType === "system") {
+        return preferences().systemMessagesVisibility !== "hidden"
+      }
+
       if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
         return true
       }
@@ -243,7 +247,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
-    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
@@ -901,6 +905,7 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     const query = debouncedSearchQuery()
     const includeThinking = Boolean(preferences().showThinkingBlocks)
+    const includeSystem = preferences().systemMessagesVisibility !== "hidden"
     const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
     searchRetryGeneration()
@@ -925,14 +930,16 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    void loadCompleteMessageHistory({
+    // Paging reads and writes window state synchronously before its first await.
+    // Those reads must not become dependencies that restart this traversal.
+    void untrack(() => loadCompleteMessageHistory({
       getPageKey: messageWindowPageKey,
       isCurrent: isCurrentSearch,
       isLatest: () => isLatestWindow(store().getMessageWindow(sessionId)),
       loadOldest: props.onLoadOldestMessages ?? (() => Promise.resolve()),
       loadNewer: props.onLoadNewerMessages ?? (() => Promise.resolve()),
-      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking }),
-    }).then((matches) => {
+      visit: () => buildSessionSearchMatches({ store: store(), sessionId, query, includeThinking, includeSystem }),
+    })).then((matches) => {
       if (!matches) {
         if (isCurrentSearch()) setIsSearchPending(false)
         return
@@ -965,8 +972,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const query = searchedQuery()
     if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
     const includeThinking = Boolean(preferences().showThinkingBlocks)
+    const includeSystem = preferences().systemMessagesVisibility !== "hidden"
     const currentResidentIds = messageIds()
-    const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking })
+    const currentMatches = buildSessionSearchMatches({ store: store(), sessionId: props.sessionId, query, includeThinking, includeSystem })
     const frame = requestAnimationFrame(() => {
       if (isSearchPending() || !hasMessageSearchAuthority(searchQuery(), query)) return
       const activeId = activeSearchMatch()?.id
@@ -1027,7 +1035,7 @@ export default function MessageSection(props: MessageSectionProps) {
         searchLocatorAuthority.reset(locatorAuthority)
       }
     }
-    void locate().catch((error) => {
+    void untrack(locate).catch((error) => {
       if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
     })
   })
@@ -1267,6 +1275,7 @@ export default function MessageSection(props: MessageSectionProps) {
               store={store}
               messageIndex={index()}
               showThinking={() => preferences().showThinkingBlocks}
+              systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
