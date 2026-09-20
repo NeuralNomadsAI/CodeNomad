@@ -970,12 +970,16 @@ export class WorkspaceManager {
     }
   }
 
-  async reconnectAfterSetup(binary: string): Promise<void> {
+  assertSetupExecutionHost(binary: string): void {
     const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
     for (const record of this.workspaces.values()) {
       const distro = launch.kind === "wsl" ? launch.distro.toLowerCase() : undefined
       if (record.wslDistro?.toLowerCase() !== distro) throw new Error("Close workspaces before changing the OpenCode execution host")
     }
+  }
+
+  async reconnectAfterSetup(binary: string): Promise<void> {
+    this.assertSetupExecutionHost(binary)
     const options = await this.setupServiceOptions(binary)
     // This disposes client authority only; it never stops the shared daemon.
     await this.sharedService.shutdown()

@@ -131,3 +131,39 @@ test("unsupported proxy calls open recovery once without replaying mutations", a
     assert.equal(prompts, 2, "each intentional call occurs once; recovery never retries a prompt")
   } finally { await page.close() }
 })
+
+test("optional install reconnects without restarting and leaves explicit activation available", async () => {
+  const page = await browser.newPage()
+  let installed = false, restarts = 0, connects = 0
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      installed = true
+      return route.fulfill({ json: { success: true, version: "2.0.12" } })
+    }
+    if (request.url().endsWith("/api/opencode/service")) {
+      if (request.postDataJSON().restart) restarts++
+      else connects++
+    }
+    return route.fulfill({ json: { state: "ready", currentVersion: installed ? "2.0.12" : "2.0.11",
+      latestVersion: "2.0.12", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host",
+      canUpgrade: !installed, updateAvailable: !installed, daemonVersion: restarts ? "2.0.12" : "2.0.11",
+      serviceState: installed && !restarts ? "restart_available" : "ready", canRestart: installed && !restarts } })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("button", { name: "Update to OpenCode 2.0.12" }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(connects, 1, "rebind backend authority while retaining the supported daemon")
+    assert.equal(restarts, 0)
+    await page.getByRole("button", { name: "Restart shared service" }).waitFor()
+    await page.getByRole("button", { name: "Close", exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "OpenCode setup required" }).count(), 0)
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("button", { name: "Restart shared service" }).click()
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))
+    assert.equal(restarts, 1)
+  } finally { await page.close() }
+})

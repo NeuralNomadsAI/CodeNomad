@@ -409,17 +409,25 @@ jobs:
           $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
           $arch = node -p "process.arch"
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
-          $seed = Join-Path $env:RUNNER_TEMP 'opencode-migration-seed'
-          npm install --prefix $seed '@opencode/cli@2.0.3' --ignore-scripts --no-audit --no-fund
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $oldCli = Join-Path $seed "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+          $seeds = @(
+            @{ scope = '@opencode'; version = '2.0.3'; command = 'opencode' },
+            @{ scope = '@opencode-ai'; version = '0.0.0-beta-19271'; command = 'opencode2' }
+          )
+          $oldClis = foreach ($entry in $seeds) {
+            $seed = Join-Path $env:RUNNER_TEMP "opencode-migration-seed-$($entry.version)"
+            npm install --prefix $seed "$($entry.scope)/cli@$($entry.version)" --ignore-scripts --no-audit --no-fund | Out-Host
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Join-Path $seed "node_modules/$($entry.scope)/cli-$platform-$arch/bin/$($entry.command)$extension"
+          }
           foreach ($version in @('2.0.11', 'latest')) {
             $target = Join-Path $env:RUNNER_TEMP "opencode-migration-$version"
             npm install --prefix $target "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             $cli = Join-Path $target "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
-            node scripts/test-opencode-history-migration.mjs $oldCli $cli
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            foreach ($oldCli in $oldClis) {
+              node scripts/test-opencode-history-migration.mjs $oldCli $cli
+              if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            }
           }
 
   # Exercise the window persistence regressions on the architecture reported in

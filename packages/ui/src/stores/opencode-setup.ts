@@ -67,10 +67,10 @@ export async function runOpenCodeSetup(action: "install" | "start" | "restart") 
     const status = await serverApi.startOpenCode(action === "restart")
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
-    if (status.state === "ready" && status.serviceState === "ready") {
+    if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
       const retry = resume
       resume = undefined
-      setOpenCodeSetupOpen(false)
+      if (status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
     }
   } catch {

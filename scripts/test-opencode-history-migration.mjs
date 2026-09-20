@@ -26,6 +26,10 @@ Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_CONFIG_PROJECT_DISABLE: "1",
   OPENCODE_SERVER_PASSWORD: password, OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1", OPENCODE_CONFIG_CONTENT: "{}" })
 await mkdir(env.OPENCODE_CONFIG_DIR)
+const providerConfig = JSON.stringify({ providers: { openai: { settings: { apiKey: "synthetic-migration-fixture" },
+  models: { "migration-fixture": { name: "Historical fixture model" } } } } })
+const configFile = path.join(env.OPENCODE_CONFIG_DIR, "opencode.json")
+await writeFile(configFile, providerConfig)
 const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
 const versions = [oldCli, newCli].map(cli => execFileSync(cli, ["--version"], { encoding: "utf8" }).trim())
 const hashes = await Promise.all([oldCli, newCli].map(async cli => createHash("sha256").update(await readFile(cli)).digest("hex")))
@@ -46,8 +50,8 @@ async function start(cli, database, name) {
       await delay(20)
     }
     const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
-    const raw = async (route, body, method = body === undefined ? "GET" : "POST") => {
-      const response = await fetch(`${baseUrl}${route}`, { method, headers: { authorization, "content-type": "application/json" },
+    const raw = async (route, body, method = body === undefined ? "GET" : "POST", headers = {}) => {
+      const response = await fetch(`${baseUrl}${route}`, { method, headers: { authorization, "content-type": "application/json", ...headers },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) })
       const text = await response.text()
       assert.ok(response.ok, `${method} ${route}: ${response.status} ${text}`)
@@ -60,6 +64,8 @@ async function start(cli, database, name) {
 const seedDb = path.join(root, "seed.db"), migratedDb = path.join(root, "migrated.db")
 const seed = await start(oldCli, seedDb, "seed")
 const snapshots = []
+const forms = []
+let providerConnections
 let pendingSession
 try {
   for (const workspaceID of [undefined, "wrk_fixture_one", "wrk_fixture_two"]) {
@@ -95,11 +101,46 @@ try {
   pendingSession = (await seed.raw("/api/session", { location: { directory: repo } })).data.id
   await seed.raw(`/api/session/${pendingSession}/synthetic`, { text: "pending migration fixture", resume: false })
   assert.equal((await seed.raw(`/api/session/${pendingSession}/inbox`)).data.length, 1)
+  for (const owner of [pendingSession, "global"]) {
+    const headers = owner === "global" ? { "x-opencode-directory": encodeURIComponent(repo) } : {}
+    for (const action of ["reply", "cancel"]) {
+      const form = (await seed.raw(`/api/session/${owner}/form`, {
+        title: `Historical ${owner === "global" ? "global" : "session"} ${action}`,
+        fields: [{ key: "answer", type: "string" }],
+      }, "POST", headers)).data
+      forms.push({ form, owner, action })
+    }
+  }
+  const models = await seed.raw(`/api/model?location[directory]=${encodeURIComponent(repo)}`)
+  assert.ok(JSON.stringify(models).includes("Historical fixture model"))
+  await seed.raw(`/api/integration/openai/connect/key?location[directory]=${encodeURIComponent(repo)}`, {
+    key: "synthetic-not-a-provider-key", label: "Historical fixture credential",
+  })
+  providerConnections = (await seed.raw(`/api/integration/openai?location[directory]=${encodeURIComponent(repo)}`)).data.connections
+  assert.ok(JSON.stringify(providerConnections).includes("Historical fixture credential"))
+  await writeFile(path.join(root, "seed-provider-connections.json"), JSON.stringify(providerConnections))
   await writeFile(path.join(root, "seed-exports.json"), JSON.stringify(snapshots))
 } finally { await seed.close() }
 await copyFile(seedDb, migratedDb)
 await copyFile(`${seedDb}-wal`, `${migratedDb}-wal`).catch(error => { if (error.code !== "ENOENT") throw error })
 const untouchedHash = createHash("sha256").update(await readFile(seedDb)).digest("hex")
+const controlDb = path.join(root, "restart-control.db")
+await copyFile(seedDb, controlDb)
+await copyFile(`${seedDb}-wal`, `${controlDb}-wal`).catch(error => { if (error.code !== "ENOENT") throw error })
+const control = await start(oldCli, controlDb, "same-version-restart-control")
+try {
+  for (const entry of forms) {
+    const headers = entry.owner === "global" ? { "x-opencode-directory": encodeURIComponent(repo) } : {}
+    try {
+      await control.raw(`/api/session/${entry.owner}/form/${entry.form.id}`, undefined, "GET", headers)
+      entry.durable = true
+    } catch (error) {
+      assert.match(String(error), /404.*FormNotFoundError/)
+      entry.durable = false
+    }
+  }
+} finally { await control.close() }
+await writeFile(path.join(root, "forms-restart-control.json"), JSON.stringify(forms))
 const target = await start(newCli, migratedDb, "target")
 try {
   const { OpenCodeCliService } = await tsImport("../packages/server/src/workspaces/opencode-cli-service.ts", import.meta.url)
@@ -112,10 +153,32 @@ try {
   assert.equal(inbox.length, 1)
   assert.equal(inbox[0].payload.text, "pending migration fixture")
   assert.equal(typeof inbox[0].time.created, "number")
+  for (const { form, owner, action, durable } of forms) {
+    const headers = owner === "global" ? { headers: { "x-opencode-directory": encodeURIComponent(repo) } } : undefined
+    if (!durable) {
+      await assert.rejects(client.session.form.get({ sessionID: owner, formID: form.id }, headers), error => error?._tag === "FormNotFoundError")
+      assert.ok(!(await client.form.list({ location: { directory: repo } })).data.some(item => item.id === form.id))
+    }
+    const restored = durable ? await client.session.form.get({ sessionID: owner, formID: form.id }, headers)
+      : await client.session.form.create({ sessionID: owner, title: form.title, fields: form.fields }, headers)
+    assert.equal(restored.title, form.title)
+    assert.deepEqual(restored.fields, form.fields)
+    assert.equal((await client.session.form.get({ sessionID: owner, formID: restored.id }, headers)).state.status, "pending")
+    if (action === "reply") await client.session.form.reply({ sessionID: owner, formID: restored.id, answer: { answer: "migrated" } }, headers)
+    else await client.session.form.cancel({ sessionID: owner, formID: restored.id }, headers)
+    const settled = await client.session.form.get({ sessionID: owner, formID: restored.id }, headers)
+    assert.equal(settled.state.status, action === "reply" ? "answered" : "cancelled")
+  }
+  assert.ok(JSON.stringify(await client.model.list({ location: { directory: repo } })).includes("Historical fixture model"))
+  assert.deepEqual((await client.integration.get({ integrationID: "openai", location: { directory: repo } })).data.connections, providerConnections)
+  assert.equal(await readFile(configFile, "utf8"), providerConfig)
+  console.log("PASS global/session Forms match same-version native restart durability; fresh Forms settle and historical provider/model configuration remains intact")
   for (const original of snapshots) {
     const restored = await client.session.export({ sessionID: original.info.id })
     assert.equal(restored.info.id, original.info.id)
     assert.equal(restored.info.location.directory, original.info.location.directory)
+    assert.equal(restored.info.parentID, original.info.parentID)
+    assert.deepEqual(restored.info.fork, original.info.fork)
     assert.deepEqual(restored.messages, original.messages, `history survives native migration: ${original.info.id}`)
     const messages = []
     let page = await client.message.list({ sessionID: original.info.id, limit: 200 })

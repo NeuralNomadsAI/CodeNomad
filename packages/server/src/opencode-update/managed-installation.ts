@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
-import { mkdir, rename, rm, writeFile } from "node:fs/promises"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { mkdir, rename, rm, open } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { randomUUID } from "node:crypto"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { probeBinaryVersion } from "../workspaces/spawn"
+import { compareVersionStrings } from "../releases/release-monitor"
 
 // Never place changing installations in OpenCode's recursively watched config.
 export function managedInstallRoot(): string {
@@ -17,12 +18,15 @@ export function managedExecutable(root: string, version: string): string {
 }
 
 export function readManagedExecutable(root = managedInstallRoot()): string | undefined {
-  try {
-    const version = readFileSync(path.join(root, "current"), "utf8").trim()
-    if (!/^\d+\.\d+\.\d+$/.test(version)) return undefined
-    const binary = managedExecutable(root, version)
-    return existsSync(binary) ? binary : undefined
-  } catch { return undefined }
+  // Immutable receipts make selection monotonic across backends/processes.
+  // A slower older install can publish its receipt but cannot replace a newer
+  // selection. Unfinished staging/version directories never count as receipts.
+  let versions: string[] = []
+  try { versions = readdirSync(path.join(root, "selected")) } catch { /* First installation. */ }
+  try { versions.push(readFileSync(path.join(root, "current"), "utf8").trim()) } catch { /* Previous marker format is optional. */ }
+  return versions.filter(version => /^\d+\.\d+\.\d+$/.test(version))
+    .sort((a, b) => compareVersionStrings(b, a))
+    .map(version => managedExecutable(root, version)).find(binary => existsSync(binary))
 }
 
 /** npm from the official Node archive, beside the backend runtime on both hosts. */
@@ -78,11 +82,14 @@ export async function installManagedOpenCode(version: string, options: {
         if (!installed.valid || installed.version !== version) throw error
       })
     }
-    const marker = path.join(root, `.current-${randomUUID()}`)
-    await writeFile(marker, version, "utf8")
-    try { await rename(marker, path.join(root, "current")) }
-    finally { await rm(marker, { force: true }) }
-    return managedExecutable(root, version)
+    const selections = path.join(root, "selected")
+    await mkdir(selections, { recursive: true })
+    // The filename is the entire receipt. Exclusive creation publishes it in
+    // one operation and never replaces an existing same-version receipt.
+    await open(path.join(selections, version), "wx").then(file => file.close()).catch(error => {
+      if (error.code !== "EEXIST") throw error
+    })
+    return readManagedExecutable(root)!
   } finally {
     await rm(staging, { recursive: true, force: true })
   }

@@ -29,6 +29,7 @@ export interface OpenCodeUpdateServiceDeps {
   upgradeBinary: (binary: ResolvedBinary, target: string) => Promise<UpgradeResult>
   lifecycle?: (binary: ResolvedBinary) => Promise<OpenCodeServiceLifecycle>
   reconnect?: (binary: ResolvedBinary) => Promise<void>
+  admitActivation?: (binary: ResolvedBinary) => void
 }
 
 export class OpenCodeUpdateError extends Error {
@@ -75,10 +76,13 @@ export class OpenCodeUpdateService {
         const endpoint = await lifecycle.discover()
         const identity = endpoint && runtimeIdentity(endpoint)
         status.daemonVersion = identity?.version
-        status.serviceState = !endpoint ? "stopped" : identity && supportsOpenCodeVersion(identity.version) ? "ready"
-          : identity && currentVersion && /^(?:0|1|2)\./.test(identity.version)
-            && compareOpenCodeVersionStrings(currentVersion, identity.version) > 0 ? "restart_required" : "error"
-        status.canRestart = Boolean(lifecycle.restart) && state === "ready" && status.serviceState === "restart_required"
+        const olderDaemon = identity && currentVersion && /^(?:0|1|2)\./.test(identity.version)
+          && compareOpenCodeVersionStrings(currentVersion, identity.version) > 0
+        status.serviceState = !endpoint ? "stopped" : olderDaemon
+          ? supportsOpenCodeVersion(identity!.version) ? "restart_available" : "restart_required"
+          : identity && supportsOpenCodeVersion(identity.version) ? "ready" : "error"
+        status.canRestart = Boolean(lifecycle.restart) && state === "ready"
+          && (status.serviceState === "restart_required" || status.serviceState === "restart_available")
       } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
     }
     return status
@@ -108,6 +112,8 @@ export class OpenCodeUpdateService {
         throw new Error("The shared daemon is not an older runtime eligible for this update")
       }
     }
+    if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
+    this.deps.admitActivation?.(binary)
     const endpoint = restart && previous ? await lifecycle.restart?.() : previous ?? await lifecycle.ensure()
     const identity = endpoint && runtimeIdentity(endpoint)
     if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
@@ -152,7 +158,7 @@ export class OpenCodeUpdateService {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = await this.readCurrentVersion(this.deps.resolveBinary().path)
-      if (installedVersion !== latestVersion) {
+      if (!supportsOpenCodeVersion(installedVersion) || compareOpenCodeVersionStrings(installedVersion, latestVersion) < 0) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
           `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
@@ -319,5 +325,6 @@ export function createOpenCodeUpdateService(
     },
     lifecycle: binary => workspaceManager.setupServiceOptions(binary.path).then(options => options.lifecycle),
     reconnect: binary => workspaceManager.reconnectAfterSetup(binary.path),
+    admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
   })
 }

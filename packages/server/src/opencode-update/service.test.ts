@@ -147,7 +147,7 @@ test("activation coalesces repeated clicks and refuses a changed selection befor
   selected = "replacement"
   release()
   await assert.rejects(first, /selection changed/)
-  assert.equal(restarts, 1)
+  assert.equal(restarts, 0, "a stale selection must be refused before stopping its daemon")
   assert.equal(reconnects, 0)
 })
 
@@ -164,6 +164,29 @@ test("an unsupported latest or newer daemon cannot trigger a downgrade or restar
   assert.equal((await service.getStatus()).canRestart, false)
   await assert.rejects(service.upgrade(), /opencode_update_required/)
   await assert.rejects(service.start(true), /not an older runtime/)
+})
+
+test("optional upgrades retain explicit activation for an admitted but older daemon", async () => {
+  let installed = "2.0.11", daemon = "2.0.11", restarts = 0
+  const endpoint = () => {
+    const value: Endpoint = { url: "http://127.0.0.1:9876" }
+    rememberRuntime(value, { version: daemon, pid: 123, discovery: "info" })
+    return value
+  }
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version: installed }), resolveLatestVersion: async () => "2.0.12",
+    upgradeBinary: async () => { installed = "2.0.12"; return { success: true, version: installed } },
+    lifecycle: async () => ({ discover: async () => endpoint(), ensure: async () => endpoint(),
+      restart: async () => { restarts++; daemon = installed; return endpoint() } }),
+  }))
+  await service.upgrade()
+  const available = await service.start()
+  assert.equal(available.state, "ready")
+  assert.equal(available.serviceState, "restart_available")
+  assert.equal(available.canRestart, true)
+  assert.equal(restarts, 0)
+  assert.equal((await service.start(true)).serviceState, "ready")
+  assert.equal(restarts, 1)
 })
 
 test("legacy package-manager helpers retain V2 commands and beta comparison", () => {
