@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "Folder path",
   "directoryBrowser.currentFolder.inputPlaceholder": "Type or paste a folder path",
   "directoryBrowser.openCurrent": "Open",
-  "directoryBrowser.goToWorkspaceRoot": "Workspace Root",
+  "directoryBrowser.goToRoot": "Default Start Directory",
   "directoryBrowser.goToHome": "Home",
   "directoryBrowser.goToInitial": "Initial Path",
   "directoryBrowser.selectCurrent": "Select Current",

@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "Ordnerpfad",
   "directoryBrowser.currentFolder.inputPlaceholder": "Ordnerpfad eingeben oder einfügen",
   "directoryBrowser.openCurrent": "Öffnen",
-  "directoryBrowser.goToWorkspaceRoot": "Workspace-Stammverzeichnis",
+  "directoryBrowser.goToRoot": "Standard-Startverzeichnis",
   "directoryBrowser.goToHome": "Home",
   "directoryBrowser.goToInitial": "Startpfad",
   "directoryBrowser.selectCurrent": "Aktuellen auswählen",

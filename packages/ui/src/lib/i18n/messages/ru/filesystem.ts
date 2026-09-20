@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "Путь к папке",
   "directoryBrowser.currentFolder.inputPlaceholder": "Введите или вставьте путь к папке",
   "directoryBrowser.openCurrent": "Открыть",
-  "directoryBrowser.goToWorkspaceRoot": "Корень рабочей области",
+  "directoryBrowser.goToRoot": "Каталог запуска по умолчанию",
   "directoryBrowser.goToHome": "Домашняя папка",
   "directoryBrowser.goToInitial": "Исходный путь",
   "directoryBrowser.selectCurrent": "Выбрать текущую",

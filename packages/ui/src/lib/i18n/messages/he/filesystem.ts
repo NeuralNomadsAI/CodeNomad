@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "נתיב התיקייה",
   "directoryBrowser.currentFolder.inputPlaceholder": "הקלד או הדבק נתיב תיקייה",
   "directoryBrowser.openCurrent": "פתח",
-  "directoryBrowser.goToWorkspaceRoot": "שורש מרחב העבודה",
+  "directoryBrowser.goToRoot": "תיקיית התחלה ברירת מחדל",
   "directoryBrowser.goToHome": "בית",
   "directoryBrowser.goToInitial": "נתיב התחלתי",
   "directoryBrowser.selectCurrent": "בחר נוכחית",

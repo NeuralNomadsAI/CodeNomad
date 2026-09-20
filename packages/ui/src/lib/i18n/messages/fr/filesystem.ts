@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "Chemin du dossier",
   "directoryBrowser.currentFolder.inputPlaceholder": "Saisissez ou collez un chemin de dossier",
   "directoryBrowser.openCurrent": "Ouvrir",
-  "directoryBrowser.goToWorkspaceRoot": "Racine de l'espace de travail",
+  "directoryBrowser.goToRoot": "Répertoire de démarrage par défaut",
   "directoryBrowser.goToHome": "Accueil",
   "directoryBrowser.goToInitial": "Chemin initial",
   "directoryBrowser.selectCurrent": "Sélectionner le dossier actuel",

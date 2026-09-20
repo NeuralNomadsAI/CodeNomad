@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "フォルダのパス",
   "directoryBrowser.currentFolder.inputPlaceholder": "フォルダパスを入力または貼り付け",
   "directoryBrowser.openCurrent": "開く",
-  "directoryBrowser.goToWorkspaceRoot": "ワークスペースのルート",
+  "directoryBrowser.goToRoot": "既定の開始ディレクトリ",
   "directoryBrowser.goToHome": "ホーム",
   "directoryBrowser.goToInitial": "初期パス",
   "directoryBrowser.selectCurrent": "現在のフォルダを選択",

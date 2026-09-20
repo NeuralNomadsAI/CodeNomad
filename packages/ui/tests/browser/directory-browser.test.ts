@@ -107,15 +107,15 @@ test("restricted scope shows only the workspace-root shortcut and dedupes the in
   }
 })
 
-test("unrestricted scope shows the user-home shortcut and a separate initial-path shortcut", async () => {
+test("unrestricted scope shows start-directory, user-home and initial-path shortcuts", async () => {
   const page = await browser.newPage()
   try {
     const scenario: Scenario = { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" }
     await openFixture(page, scenario, "initialPath=/projects/start&mode=directories")
-    // Home (unrestricted) + initial path, but no workspace-root shortcut in unrestricted mode.
-    assert.equal(await shortcutCount(page), 2)
-    // First shortcut is the home button; clicking it returns to /home.
-    await page.locator(".directory-browser-shortcut").first().click()
+    // Start directory (rootPath) + home (unrestricted) + initial path, all distinct.
+    assert.equal(await shortcutCount(page), 3)
+    // Second shortcut is the home button; clicking it returns to /home.
+    await page.locator(".directory-browser-shortcut").nth(1).click()
     await page.waitForFunction(
       () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/home",
     )
@@ -163,7 +163,7 @@ test("shortcuts and open button remain laid out at narrow widths", async () => {
     await page.setViewportSize({ width: 360, height: 800 })
     const scenario: Scenario = { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" }
     await openFixture(page, scenario, "initialPath=/projects/start&mode=directories")
-    assert.equal(await shortcutCount(page), 2)
+    assert.equal(await shortcutCount(page), 3)
     assert.equal(await page.locator(".directory-browser-open-path").count(), 1)
     // Open button should span the full row at this width, not half.
     const box = await page.locator(".directory-browser-open-path").boundingBox()

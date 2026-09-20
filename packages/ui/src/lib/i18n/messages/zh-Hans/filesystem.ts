@@ -5,7 +5,7 @@ export const filesystemMessages = {
   "directoryBrowser.currentFolder.inputAriaLabel": "文件夹路径",
   "directoryBrowser.currentFolder.inputPlaceholder": "输入或粘贴文件夹路径",
   "directoryBrowser.openCurrent": "打开",
-  "directoryBrowser.goToWorkspaceRoot": "工作区根目录",
+  "directoryBrowser.goToRoot": "預設起始目錄",
   "directoryBrowser.goToHome": "家目录",
   "directoryBrowser.goToInitial": "初始路径",
   "directoryBrowser.selectCurrent": "选择当前",

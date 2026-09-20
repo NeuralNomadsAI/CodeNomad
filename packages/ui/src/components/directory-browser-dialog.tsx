@@ -289,9 +289,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
   const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
 
-  type ShortcutIcon = "workspace" | "home" | "initial"
+  type ShortcutIcon = "root" | "home" | "initial"
   type ShortcutLabelKey =
-    | "directoryBrowser.goToWorkspaceRoot"
+    | "directoryBrowser.goToRoot"
     | "directoryBrowser.goToHome"
     | "directoryBrowser.goToInitial"
   interface DirectoryShortcut {
@@ -308,10 +308,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       return []
     }
     const shortcuts: DirectoryShortcut[] = []
-    if (meta.scope === "restricted" && meta.rootPath) {
-      shortcuts.push({ id: "workspace", target: meta.rootPath, labelKey: "directoryBrowser.goToWorkspaceRoot" })
+    // The resolved root (CLI_WORKSPACE_ROOT -> --root -> cwd) is valid in both modes,
+    // so the start-directory shortcut is shown whenever rootPath is present.
+    if (meta.rootPath) {
+      shortcuts.push({ id: "root", target: meta.rootPath, labelKey: "directoryBrowser.goToRoot" })
     }
-    if (meta.scope === "unrestricted" && meta.homePath) {
+    if (
+      meta.scope === "unrestricted" &&
+      meta.homePath &&
+      normalizePathKey(meta.homePath) !== normalizePathKey(meta.rootPath)
+    ) {
       shortcuts.push({ id: "home", target: meta.homePath, labelKey: "directoryBrowser.goToHome" })
     }
     const initial = props.initialPath?.trim()
@@ -487,7 +493,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                               title={t(shortcut.labelKey)}
                               aria-label={t(shortcut.labelKey)}
                             >
-                              {shortcut.id === "workspace" ? (
+                              {shortcut.id === "root" ? (
                                 <FolderRoot class="w-4 h-4" />
                               ) : shortcut.id === "home" ? (
                                 <Home class="w-4 h-4" />
