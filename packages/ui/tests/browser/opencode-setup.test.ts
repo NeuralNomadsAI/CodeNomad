@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-test("missing and required-update flows share a screen; stale daemon restart is explicit", async () => {
+test("missing installation and incompatible daemon expose different actions; restart is explicit", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -38,8 +38,8 @@ test("missing and required-update flows share a screen; stale daemon restart is 
       restarts++; running = true
     }
     return route.fulfill({ json: { state: installed ? "ready" : "missing", currentVersion: installed ? "2.0.11" : null,
-      latestVersion: "2.0.11", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host",
-      canUpgrade: !installed, updateAvailable: !installed, daemonVersion: running ? "2.0.11" : "2.0.10",
+      latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host",
+      canUpgrade: !installed, updateAvailable: !installed, daemonVersion: running ? "2.0.11" : "2.0.6",
       serviceState: installed ? running ? "ready" : "restart_required" : undefined, canRestart: installed && !running } })
   })
   try {
@@ -64,8 +64,8 @@ test("missing and required-update flows share a screen; stale daemon restart is 
 
 test("closing required-update screen leaves a persistent recovery entry", async () => {
   const page = await browser.newPage()
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.10",
-    latestVersion: "2.0.11", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.6",
+    latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -73,7 +73,8 @@ test("closing required-update screen leaves a persistent recovery entry", async 
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
     await page.getByRole("dialog").waitFor()
-    assert.equal(await page.getByText("2.0.10", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("2.0.6", { exact: true }).count(), 1)
+    await page.getByText(/introduced the native step-start timestamp/).waitFor()
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
 })
@@ -88,21 +89,23 @@ test("optional updates stay non-blocking and a failed install remains recoverabl
       return route.fulfill({ status: 500, json: { error: "upgrade_failed" } })
     }
     if (request.url().endsWith("/api/opencode/service")) starts++
-    return route.fulfill({ json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.12",
-      minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false,
-      serviceState: "ready", daemonVersion: "2.0.11" } })
+    return route.fulfill({ json: { state: "ready", currentVersion: "2.0.10", latestVersion: "2.0.11",
+      minimumVersion: "2.0.7", recommendedVersion: "2.0.11", versionAssessment: "untested", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false,
+      serviceState: "ready", daemonVersion: "2.0.10" } })
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     assert.equal(await page.getByRole("dialog").count(), 0)
     await page.evaluate(() => (window as any).fixture.open())
-    await page.getByRole("button", { name: "Update to OpenCode 2.0.12" }).click()
+    await page.getByText(/OpenCode 2.0.10 has not been fully validated/).waitFor()
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-setup-optional.png") })
+    await page.getByRole("button", { name: "Update to OpenCode 2.0.11" }).click()
     await page.locator(".settings-error-message").waitFor()
     assert.equal(starts, 0)
     assert.equal(attempts, 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
-    await page.getByRole("button", { name: "Update to OpenCode 2.0.12" }).click()
+    await page.getByRole("button", { name: "Update to OpenCode 2.0.11" }).click()
     await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'))
     assert.equal(attempts, 2)
   } finally { await page.close() }
@@ -117,8 +120,8 @@ test("unsupported proxy calls open recovery once without replaying mutations", a
       return route.fulfill({ status: 426, json: { code: "opencode_update_required" } })
     }
     return route.fulfill({ json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11",
-      minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: false,
-      serviceState: blocked ? "restart_required" : "ready", canRestart: blocked, daemonVersion: blocked ? "2.0.10" : "2.0.11" } })
+      minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: false,
+      serviceState: blocked ? "restart_required" : "ready", canRestart: blocked, daemonVersion: blocked ? "2.0.6" : "2.0.11" } })
   })
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
@@ -146,7 +149,7 @@ test("optional install reconnects without restarting and leaves explicit activat
       else connects++
     }
     return route.fulfill({ json: { state: "ready", currentVersion: installed ? "2.0.12" : "2.0.11",
-      latestVersion: "2.0.12", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host",
+      latestVersion: "2.0.12", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host",
       canUpgrade: !installed, updateAvailable: !installed, daemonVersion: restarts ? "2.0.12" : "2.0.11",
       serviceState: installed && !restarts ? "restart_available" : "ready", canRestart: installed && !restarts } })
   })
@@ -159,6 +162,8 @@ test("optional install reconnects without restarting and leaves explicit activat
     assert.equal(connects, 1, "rebind backend authority while retaining the supported daemon")
     assert.equal(restarts, 0)
     await page.getByRole("button", { name: "Restart shared service" }).waitFor()
+    await page.getByText(/You can keep using the running service and restart later/).waitFor()
+    assert.equal(await page.getByText(/The running service needs updating/).count(), 0)
     await page.getByRole("button", { name: "Close", exact: true }).click()
     assert.equal(await page.getByRole("button", { name: "OpenCode setup required" }).count(), 0)
     await page.evaluate(() => (window as any).fixture.open())
@@ -177,7 +182,7 @@ test("configuration reload is an informed explicit action and never runs on setu
       reloads++
     }
     return route.fulfill({ json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11",
-      minimumVersion: "2.0.11", binaryPath: "opencode2", target: "wsl", canUpgrade: false,
+      minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "wsl", canUpgrade: false,
       serviceState: "ready", canRestart: false, canReload: true, daemonVersion: "2.0.11" } })
   })
   try {
@@ -208,7 +213,7 @@ test("activation failure after installation retains the installed version and re
       connected = true
     }
     return route.fulfill({ json: { state: installed ? "ready" : "missing", currentVersion: installed ? "2.0.11" : null,
-      latestVersion: "2.0.11", minimumVersion: "2.0.11", binaryPath: "opencode2", target: "host",
+      latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host",
       canUpgrade: !installed, canRestart: false, serviceState: connected ? "ready" : "stopped" } })
   })
   try {

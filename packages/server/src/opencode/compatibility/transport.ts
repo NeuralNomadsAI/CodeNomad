@@ -1,6 +1,6 @@
 import { Service, type Endpoint } from "@opencode/client/service"
 import { contractProfile, runtimeIdentity } from "./runtime"
-import { assertSupportedOpenCode } from "../runtime-support"
+import { assertSupportedOpenCode, UnsupportedOpenCodeError } from "../runtime-support"
 import { negotiateRuntime } from "./negotiate"
 import { applyLocationContext, LOCATION_CONTEXT_HEADER } from "./location"
 
@@ -22,10 +22,10 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     signal?.throwIfAborted()
     lifetime.throwIfAborted()
     if (identity) assertSupportedOpenCode(identity.version)
-    if (profile === "legacy") throw new Error("Unsupported OpenCode runtime contract")
+    if (profile === "legacy") throw new UnsupportedOpenCodeError(identity?.version ?? "unknown", "canonical_api")
     if (profile !== "unknown") return profile
     negotiation ??= negotiateRuntime(endpoint, fetcher, lifetime).then(value => {
-      if (value !== "modern") throw new Error("Unsupported OpenCode runtime contract")
+      if (value !== "modern") throw new UnsupportedOpenCodeError(identity?.version ?? "unknown", "canonical_api")
       profile = value
       return value
     }).catch(error => { negotiation = undefined; throw error })
@@ -51,7 +51,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     if (headers.has(LOCATION_CONTEXT_HEADER)) {
       const text = request.body ? await request.text() : undefined
       let body: unknown = text ? JSON.parse(text) : undefined
-      body = applyLocationContext(url, request.method, body, headers, profile)
+      body = applyLocationContext(url, request.method, body, headers)
       if (body !== undefined && !object(body)) throw new Error("Invalid OpenCode request body")
       options.body = body === undefined ? undefined : JSON.stringify(body)
       headers.delete("content-length")

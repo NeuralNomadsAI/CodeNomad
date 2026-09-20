@@ -53,6 +53,8 @@ export async function installManagedOpenCode(version: string, options: {
   probe?: typeof probeBinaryVersion
   env?: NodeJS.ProcessEnv
 } = {}): Promise<string> {
+  // An exact stable npm spec is an installation constraint, not runtime policy.
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Installation requires an exact stable OpenCode version")
   assertSupportedOpenCode(version)
   const root = options.root ?? managedInstallRoot()
   const node = options.node ?? process.execPath

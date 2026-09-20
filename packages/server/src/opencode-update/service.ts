@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process"
 import { fetch } from "undici"
 import type { OpenCodeUpdateResponse, OpenCodeUpdateStatus } from "../api-types"
 import type { SettingsService } from "../settings/service"
@@ -6,14 +5,14 @@ import { BinaryResolver, type ResolvedBinary } from "../settings/binaries"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { probeBinaryVersion, probeBinaryVersionAsync } from "../workspaces/spawn"
 import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
-import { legacyOpenCodeRemoval } from "./legacy-package"
-import { assertSupportedOpenCode, MINIMUM_OPENCODE_VERSION, supportsOpenCodeVersion } from "../opencode/runtime-support"
-import { runtimeIdentity } from "../opencode/compatibility/runtime"
-import { installManagedOpenCode } from "./managed-installation"
+import { assertSupportedOpenCode, isBelowOpenCodeMinimum, MINIMUM_OPENCODE_VERSION, RECOMMENDED_OPENCODE_VERSION, UnsupportedOpenCodeError } from "../opencode/runtime-support"
+import { contractProfile, runtimeIdentity } from "../opencode/compatibility/runtime"
+import { createRuntimeTransport } from "../opencode/compatibility/transport"
+import type { Endpoint } from "@opencode/client/service"
+import { bundledNpm, installManagedOpenCode } from "./managed-installation"
 import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
 import { parseWslUncPath } from "../workspaces/spawn"
 
-const OPENCODE_PACKAGE_NAME = "@opencode/cli"
 const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode%2Fcli/dist-tags"
 export const TARGET_OPENCODE_CHANNEL = "latest"
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
@@ -31,6 +30,7 @@ export interface OpenCodeUpdateServiceDeps {
   reconnect?: (binary: ResolvedBinary) => Promise<void>
   admitActivation?: (binary: ResolvedBinary) => void
   reload?: (binary: ResolvedBinary, assertCurrent: () => void) => Promise<void>
+  inspectRuntime?: (endpoint: Endpoint) => Promise<{ reload: boolean }>
 }
 
 export class OpenCodeUpdateError extends Error {
@@ -64,12 +64,14 @@ export class OpenCodeUpdateService {
     let latestVersion: string | null = null
     try { latestVersion = await this.readLatestVersion() } catch { /* Local admission remains available offline. */ }
     const state = invalid ? "error" : missing ? "missing"
-      : currentVersion && supportsOpenCodeVersion(currentVersion) ? "ready" : "update_required"
-    const updateAvailable = latestVersion ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
+      : currentVersion && !isBelowOpenCodeMinimum(currentVersion) ? "ready" : "update_required"
+    const updateAvailable = latestVersion && (!currentVersion || comparableVersion(currentVersion))
+      ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
     const status: OpenCodeUpdateStatus = {
       currentVersion, latestVersion, updateAvailable,
-      canUpgrade: !invalid && Boolean(updateAvailable) && Boolean(latestVersion && supportsOpenCodeVersion(latestVersion)) && this.deps.canUpgradeBinary(binary),
-      minimumVersion: MINIMUM_OPENCODE_VERSION, state, binaryPath: binary.path,
+      canUpgrade: !invalid && Boolean(updateAvailable) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
+      minimumVersion: MINIMUM_OPENCODE_VERSION, recommendedVersion: RECOMMENDED_OPENCODE_VERSION,
+      versionAssessment: "untested", state, binaryPath: binary.path,
       target: parseWslUncPath(binary.path) ? "wsl" : "host", canRestart: false,
       ...(!latestVersion ? { checkError: "update_check_failed" as const } : {}),
     }
@@ -79,17 +81,40 @@ export class OpenCodeUpdateService {
         const endpoint = await lifecycle.discover()
         const identity = endpoint && runtimeIdentity(endpoint)
         status.daemonVersion = identity?.version
-        const olderDaemon = identity && currentVersion && /^(?:0|1|2)\./.test(identity.version)
+        const olderDaemon = identity && currentVersion && comparableVersion(identity.version) && comparableVersion(currentVersion)
           && compareOpenCodeVersionStrings(currentVersion, identity.version) > 0
-        status.serviceState = !endpoint ? "stopped" : olderDaemon
-          ? supportsOpenCodeVersion(identity!.version) ? "restart_available" : "restart_required"
-          : identity && supportsOpenCodeVersion(identity.version) ? "ready" : "error"
+        status.serviceState = "stopped"
+        if (endpoint) {
+          try {
+            const capabilities = await this.inspectRuntime(endpoint)
+            status.serviceState = olderDaemon ? "restart_available" : "ready"
+            // The running daemon, not an older discovery CLI, serves requests.
+            status.state = "ready"
+            status.canReload = Boolean(this.deps.reload) && capabilities.reload
+          } catch (error) {
+            if (!(error instanceof UnsupportedOpenCodeError)) throw error
+            status.incompatibilityReason = error.reason
+            status.serviceState = olderDaemon ? "restart_required" : "incompatible"
+          }
+        }
         status.canRestart = Boolean(lifecycle.restart) && state === "ready"
           && (status.serviceState === "restart_required" || status.serviceState === "restart_available")
-        status.canReload = Boolean(this.deps.reload) && state === "ready" && Boolean(identity && supportsOpenCodeVersion(identity.version))
       } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
     }
+    const effectiveVersion = status.daemonVersion ?? currentVersion
+    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "step_timestamp"
+    status.versionAssessment = status.incompatibilityReason ? "incompatible"
+      : effectiveVersion === RECOMMENDED_OPENCODE_VERSION ? "tested" : "untested"
     return status
+  }
+
+  private async inspectRuntime(endpoint: Endpoint): Promise<{ reload: boolean }> {
+    const identity = runtimeIdentity(endpoint)
+    if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
+    assertSupportedOpenCode(identity.version)
+    if (this.deps.inspectRuntime) return this.deps.inspectRuntime(endpoint)
+    await createRuntimeTransport(endpoint).profile()
+    return { reload: identity.contract?.reload ?? contractProfile(identity) === "modern" }
   }
 
   start(restart = false): Promise<OpenCodeUpdateStatus> {
@@ -117,13 +142,13 @@ export class OpenCodeUpdateService {
   private async activate(binary: ResolvedBinary, action: ServiceAction): Promise<OpenCodeUpdateStatus> {
     const restart = action === "restart"
     const installedVersion = await this.readCurrentVersion(binary.path)
-    assertSupportedOpenCode(installedVersion)
     const lifecycle = await this.deps.lifecycle?.(binary)
     if (!lifecycle) throw new Error("OpenCode service lifecycle unavailable")
     const previous = await lifecycle.discover()
+    if (!previous || restart) assertSupportedOpenCode(installedVersion)
     if (restart && previous) {
       const identity = runtimeIdentity(previous)
-      if (!identity || !/^(?:0|1|2)\./.test(identity.version)
+      if (!identity || !comparableVersion(identity.version) || !comparableVersion(installedVersion)
         || compareOpenCodeVersionStrings(installedVersion, identity.version) <= 0) {
         throw new Error("The shared daemon is not an older runtime eligible for this update")
       }
@@ -136,7 +161,9 @@ export class OpenCodeUpdateService {
     if (action === "reload") {
       const identity = previous && runtimeIdentity(previous)
       if (!identity || !this.deps.reload) throw new Error("OpenCode configuration reload unavailable")
-      assertSupportedOpenCode(identity.version)
+      const capabilities = await this.inspectRuntime(previous!)
+      if (!capabilities.reload) throw new Error("OpenCode does not expose configuration reload")
+      assertCurrent()
       // Explicit daemon-wide mutation: never use this as an automatic watcher
       // fallback, because native reload cancels pending Forms and permissions.
       await this.deps.reload(binary, assertCurrent)
@@ -146,7 +173,7 @@ export class OpenCodeUpdateService {
     const endpoint = restart && previous ? await lifecycle.restart?.() : previous ?? await lifecycle.ensure()
     const identity = endpoint && runtimeIdentity(endpoint)
     if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
-    assertSupportedOpenCode(identity.version)
+    await this.inspectRuntime(endpoint!)
     if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
     await this.deps.reconnect?.(binary)
     return this.getStatus()
@@ -170,6 +197,10 @@ export class OpenCodeUpdateService {
     const latestVersion = await this.readLatestVersion()
     assertSupportedOpenCode(latestVersion)
 
+    if (currentVersion && !comparableVersion(currentVersion)) {
+      throw new OpenCodeUpdateError("unsupported_binary", "Cannot order this custom OpenCode version for an automatic update")
+    }
+
     if (currentVersion && compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0) {
       return { success: true, version: currentVersion }
     }
@@ -187,7 +218,7 @@ export class OpenCodeUpdateService {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = await this.readCurrentVersion(this.deps.resolveBinary().path)
-      if (!supportsOpenCodeVersion(installedVersion) || compareOpenCodeVersionStrings(installedVersion, latestVersion) < 0) {
+      if (isBelowOpenCodeMinimum(installedVersion) || !/^\d+\.\d+\.\d+$/.test(installedVersion) || compareOpenCodeVersionStrings(installedVersion, latestVersion) < 0) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
           `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
@@ -208,11 +239,12 @@ export class OpenCodeUpdateService {
       throw new OpenCodeUpdateError("binary_unavailable", "The configured OpenCode binary path is invalid")
     }
     const result = probe ?? await this.deps.probeBinary(binaryPath)
-    const version = stripTagPrefix(result.version)
-    if (!result.valid || !version) {
+    if (!result.valid) {
       throw new OpenCodeUpdateError("binary_unavailable", result.error ?? "Unable to read OpenCode version")
     }
-    return version
+    // Successful unknown/empty labels are diagnostic information. Admission is
+    // established against the authenticated daemon, not inferred from this label.
+    return result.version?.trim() || "unknown"
   }
 
   private async readLatestVersion(): Promise<string> {
@@ -229,87 +261,11 @@ export class OpenCodeUpdateService {
   }
 }
 
-export type OpenCodePackageManager = "npm" | "pnpm" | "bun" | "yarn"
-
 export function compareOpenCodeVersionStrings(left: string, right: string): number {
   const leftBeta = stripTagPrefix(left)?.match(/^0\.0\.0-beta-(\d+)$/)
   const rightBeta = stripTagPrefix(right)?.match(/^0\.0\.0-beta-(\d+)$/)
   if (leftBeta && rightBeta) return Number(leftBeta[1]) - Number(rightBeta[1])
   return compareVersionStrings(left, right)
-}
-
-export function detectOpenCodePackageManager(
-  binaryPath: string,
-  env: NodeJS.ProcessEnv = process.env,
-): OpenCodePackageManager {
-  const pathSource = binaryPath.toLowerCase()
-  const launchSource = `${env.npm_config_user_agent ?? ""}\n${env.npm_execpath ?? ""}`.toLowerCase()
-  if (pathSource.includes("pnpm")) return "pnpm"
-  if (/[\\/]\.bun[\\/]/.test(pathSource)) return "bun"
-  if (pathSource.includes("yarn")) return "yarn"
-  if (/[\\/]npm[\\/]/.test(pathSource)) return "npm"
-  if (launchSource.includes("pnpm")) return "pnpm"
-  if (/(^|[\s/])bun(?:$|[\s/])/.test(launchSource)) return "bun"
-  if (launchSource.includes("yarn")) return "yarn"
-  return "npm"
-}
-
-export function buildOpenCodeUpgradeCommand(
-  version: string,
-  packageManager: OpenCodePackageManager,
-): { command: string; args: string[] } {
-  const packageSpec = `${OPENCODE_PACKAGE_NAME}@${version}`
-  if (packageManager === "pnpm") {
-    return { command: "pnpm", args: ["add", "-g", `--allow-build=${OPENCODE_PACKAGE_NAME}`, packageSpec] }
-  }
-  if (packageManager === "bun") {
-    return { command: "bun", args: ["install", "-g", "--trust", packageSpec] }
-  }
-  if (packageManager === "yarn") {
-    return { command: "yarn", args: ["global", "add", packageSpec] }
-  }
-  return { command: "npm", args: ["install", "-g", packageSpec] }
-}
-
-export async function installOpenCodeCli(
-  binary: ResolvedBinary,
-  version: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<UpgradeResult> {
-  const manager = detectOpenCodePackageManager(binary.path, env)
-  const removal = legacyOpenCodeRemoval(binary.path, manager)
-  if (removal) {
-    const result = await runPackageManager(removal, version, env)
-    if (!result.success) return result
-  }
-  return runPackageManager(buildOpenCodeUpgradeCommand(version, manager), version, env)
-}
-
-function runPackageManager(
-  upgrade: { command: string; args: string[] },
-  version: string,
-  env: NodeJS.ProcessEnv,
-): Promise<UpgradeResult> {
-  return new Promise((resolve) => {
-    const child = spawn(upgrade.command, upgrade.args, {
-      env,
-      shell: process.platform === "win32",
-      stdio: "ignore",
-      windowsHide: true,
-    })
-    child.once("error", (error) => resolve({ success: false, error: error.message }))
-    child.once("exit", (code, signal) => {
-      if (signal) {
-        resolve({ success: false, error: `OpenCode update stopped by signal ${signal}` })
-        return
-      }
-      if (code !== 0) {
-        resolve({ success: false, error: `OpenCode update exited with code ${code ?? "unknown"}` })
-        return
-      }
-      resolve({ success: true, version })
-    })
-  })
 }
 
 type RegistryFetch = (
@@ -346,7 +302,7 @@ export function createOpenCodeUpdateService(
     resolveLatestVersion: resolveLatestOpenCodeVersion,
     canUpgradeBinary: () => {
       const configured = settings.getOwner("config", "server").opencodeBinary
-      return !configured || configured === "opencode" || configured === "opencode2"
+      return (!configured || configured === "opencode" || configured === "opencode2") && Boolean(bundledNpm())
     },
     upgradeBinary: async (_binary, version) => {
       await installManagedOpenCode(version)
@@ -357,4 +313,8 @@ export function createOpenCodeUpdateService(
     admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
     reload: (binary, assertCurrent) => workspaceManager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
   })
+}
+
+function comparableVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version) || /^0\.0\.0-beta-\d+$/.test(version)
 }

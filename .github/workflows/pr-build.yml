@@ -138,6 +138,10 @@ jobs:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [minimum, latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -150,11 +154,16 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
-      - name: Qualify the pinned client against the latest stable runtime
+      - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
-          npm install --prefix $sandbox '@opencode/cli@latest' --ignore-scripts --no-audit --no-fund
+          $version = '${{ matrix.runtime }}'
+          if ($version -eq 'minimum') {
+            $version = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          npm install --prefix $sandbox "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $cli = Join-Path $sandbox 'node_modules/@opencode/cli-windows-x64/bin/opencode.exe'
           & $cli --version
@@ -424,7 +433,9 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
             Join-Path $seed "node_modules/$($entry.scope)/cli-$platform-$arch/bin/$($entry.command)$extension"
           }
-          foreach ($version in @('2.0.11', 'latest')) {
+          $minimum = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($version in @($minimum, 'latest')) {
             $target = Join-Path $env:RUNNER_TEMP "opencode-migration-$version"
             npm install --prefix $target "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
             if ($LASTEXITCODE) { exit $LASTEXITCODE }

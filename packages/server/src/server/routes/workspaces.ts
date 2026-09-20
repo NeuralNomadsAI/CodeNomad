@@ -85,7 +85,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
       if (error instanceof UnsupportedOpenCodeError) return reply.code(error.statusCode).send({
-        error: error.code, message: error.message, actualVersion: error.actualVersion, minimumVersion: error.minimumVersion,
+        error: error.code, message: error.message, actualVersion: error.actualVersion, minimumVersion: error.minimumVersion, reason: error.reason,
       })
       const message = error instanceof Error ? error.message : "Failed to create workspace"
       reply.code(400).type("text/plain").send(message)

@@ -12,7 +12,7 @@ let pending: Promise<void> | undefined
 let resume: (() => Promise<unknown>) | undefined
 
 export function needsOpenCodeSetup(status = openCodeSetupStatus()): boolean {
-  return status?.state === "missing" || status?.state === "update_required" || status?.serviceState === "restart_required"
+  return status?.state === "missing" || status?.state === "update_required" || status?.serviceState === "restart_required" || status?.serviceState === "incompatible"
 }
 
 export function openOpenCodeSetup(retry?: () => Promise<unknown>) {
@@ -63,7 +63,7 @@ export async function runOpenCodeSetup(action: "install" | "start" | "restart" |
     // restart remains a separate explicit action, never an implicit interruption.
     await refreshOpenCodeSetup(true)
     if (epoch !== generation) return
-    if (action !== "restart" && openCodeSetupStatus()?.serviceState === "restart_required") return
+    if (action !== "restart" && (openCodeSetupStatus()?.serviceState === "restart_required" || openCodeSetupStatus()?.serviceState === "incompatible")) return
     const status = action === "reload" ? await serverApi.reloadOpenCodeConfiguration() : await serverApi.startOpenCode(action === "restart")
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)

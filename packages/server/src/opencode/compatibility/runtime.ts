@@ -5,7 +5,7 @@ export interface RuntimeIdentity {
   pid: number
   discovery: "status" | "health" | "info"
   /** Filled only by a successful, authenticated schema negotiation. */
-  contract?: { profile?: Exclude<ContractProfile, "unknown"> }
+  contract?: { profile?: Exclude<ContractProfile, "unknown">; reload?: boolean }
 }
 
 // Keep authenticated daemon metadata out of public endpoints and credentials.
@@ -22,6 +22,8 @@ export function contractProfile(identity: RuntimeIdentity | undefined): Contract
   // Custom embedded/test lifecycles that don't negotiate use the pinned contract.
   if (!identity) return "modern"
   if (identity.contract?.profile) return identity.contract.profile
-  if (identity.version === "2.0.11") return "modern"
+  // Publication contracts reviewed from the native timestamp boundary through
+  // the qualification target. Unlisted versions still negotiate their schema.
+  if (/^2\.0\.(?:7|8|9|10|11)$/.test(identity.version)) return "modern"
   return "unknown"
 }

@@ -7,7 +7,7 @@
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
 - Proxy authorization and forwarding share one acquired connection. A stale generation must be rejected at actual HTTP dispatch, including after asynchronous body preparation; late streams cannot invalidate a replacement connection.
-- Require stable `>=2.0.11 <3.0.0` from authenticated daemon metadata before clients or plugin provisioning; unlisted supported versions additionally require bounded OpenAPI recognition. Legacy HTTP inbox and event conversions are retired. Native `session.inbox.enqueued` still has a distinct shape: its timestamp belongs to event metadata, not an HTTP inbox record.
+- The technical minimum is 2.0.7: native `session.step.started.data.started` is consumed directly after removing its older fallback. Recommendation/qualification 2.0.11 is independent. Unknown version labels, prereleases and future majors require bounded authenticated API recognition, including session environment support; they are not rejected solely by label. Legacy HTTP inbox and event conversions are retired. Native `session.inbox.enqueued` still has a distinct shape: its timestamp belongs to event metadata, not an HTTP inbox record.
 - Never retry a write using another contract after a 400/404/transport failure. Keep the setup/recovery path distinct from functional transport and never replay prompts.
 
 ## Location Is Authority

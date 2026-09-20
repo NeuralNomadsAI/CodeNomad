@@ -26,7 +26,10 @@ test("failed install never changes the selected version; verified install publis
     correct = true
     const binary = await installManagedOpenCode("2.0.11", options)
     assert.equal(readManagedExecutable(root), binary)
-    await assert.rejects(installManagedOpenCode("2.0.10", options), /opencode_update_required/)
+    await assert.rejects(installManagedOpenCode("2.0.6", options), /opencode_update_required/)
+    for (const version of ["../outside", "3.0.0-dev.1", "custom-build"]) {
+      await assert.rejects(installManagedOpenCode(version, options), /exact stable/)
+    }
     assert.equal(readManagedExecutable(root), binary)
   } finally { await rm(root, { recursive: true, force: true }) }
 })

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { OpenCodeUpdateService, OpenCodeUpdateError, buildOpenCodeUpgradeCommand,
-  resolveLatestOpenCodeVersion, detectOpenCodePackageManager, compareOpenCodeVersionStrings,
+import { OpenCodeUpdateService, OpenCodeUpdateError,
+  resolveLatestOpenCodeVersion, compareOpenCodeVersionStrings,
   type OpenCodeUpdateServiceDeps } from "./service"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 import { rememberRuntime } from "../opencode/compatibility/runtime"
 import type { Endpoint } from "@opencode/client/service"
+import { probeBinaryVersion } from "../workspaces/spawn"
 
 function deps(overrides: Partial<OpenCodeUpdateServiceDeps> = {}): OpenCodeUpdateServiceDeps {
   let version = "0.0.0-beta-19271"
@@ -15,12 +16,13 @@ function deps(overrides: Partial<OpenCodeUpdateServiceDeps> = {}): OpenCodeUpdat
     resolveLatestVersion: async () => minimum,
     canUpgradeBinary: () => true,
     upgradeBinary: async (_binary, target) => { version = target; return { success: true, version: target } },
+    inspectRuntime: async () => ({ reload: true }),
     ...overrides,
   }
 }
 
 test("missing installs and old releases use one updater; probe failures are not absence", async () => {
-  for (const initial of [undefined, "0.0.0-beta-19271", "2.0.10"]) {
+  for (const initial of [undefined, "0.0.0-beta-19271", "2.0.6"]) {
     let version = initial
     const service = new OpenCodeUpdateService(deps({
       probeBinary: () => version ? { valid: true, version } : { valid: false, missing: true },
@@ -68,7 +70,7 @@ test("installation re-resolves the executable and rejects false success", async 
   }))
   assert.equal((await service.upgrade()).version, minimum)
   const wrong = new OpenCodeUpdateService(deps({
-    probeBinary: () => ({ valid: true, version: "2.0.10" }),
+    probeBinary: () => ({ valid: true, version: "2.0.6" }),
     upgradeBinary: async (_binary, target) => ({ success: true, version: target }),
   }))
   await assert.rejects(wrong.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "upgrade_verification_failed")
@@ -76,7 +78,7 @@ test("installation re-resolves the executable and rejects false success", async 
 
 test("coalesces overlapping installations and never downgrades a newer version", async () => {
   let upgrades = 0
-  let version = "2.0.10"
+  let version = "2.0.6"
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   const service = new OpenCodeUpdateService(deps({
@@ -94,7 +96,7 @@ test("coalesces overlapping installations and never downgrades a newer version",
 })
 
 test("stale daemon needs explicit restart; status and installation never restart it", async () => {
-  let daemonVersion = "2.0.10", restarts = 0, reconnects = 0
+  let daemonVersion = "2.0.6", restarts = 0, reconnects = 0
   const endpoint = () => {
     const value: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(value, { version: daemonVersion, pid: 123, discovery: "info" })
@@ -138,7 +140,7 @@ test("activation coalesces repeated clicks and refuses a changed selection befor
   const service = new OpenCodeUpdateService(deps({
     resolveBinary: () => ({ path: selected, label: selected }),
     probeBinary: () => ({ valid: true, version: minimum }),
-    lifecycle: async () => ({ discover: async () => endpoint("2.0.10"), ensure: async () => endpoint(minimum),
+    lifecycle: async () => ({ discover: async () => endpoint("2.0.6"), ensure: async () => endpoint(minimum),
       restart: async () => { restarts++; await gate; return endpoint(minimum) } }),
     reconnect: async () => { reconnects++ },
   }))
@@ -151,18 +153,19 @@ test("activation coalesces repeated clicks and refuses a changed selection befor
   assert.equal(reconnects, 0)
 })
 
-test("an unsupported latest or newer daemon cannot trigger a downgrade or restart", async () => {
+test("an unverified newer major is not blocked but cannot be downgraded by restart", async () => {
   const value: Endpoint = { url: "http://127.0.0.1:9876" }
   rememberRuntime(value, { version: "3.0.0", pid: 123, discovery: "info" })
   const service = new OpenCodeUpdateService(deps({
     probeBinary: () => ({ valid: true, version: minimum }),
-    resolveLatestVersion: async () => "3.0.0",
+    resolveLatestVersion: async () => minimum,
     lifecycle: async () => ({ discover: async () => value, ensure: async () => value,
       restart: async () => { assert.fail("must not restart a newer runtime") } }),
   }))
   assert.equal((await service.getStatus()).canUpgrade, false)
   assert.equal((await service.getStatus()).canRestart, false)
-  await assert.rejects(service.upgrade(), /opencode_update_required/)
+  assert.equal((await service.start()).serviceState, "ready")
+  assert.equal((await service.getStatus()).versionAssessment, "untested")
   await assert.rejects(service.start(true), /not an older runtime/)
 })
 
@@ -217,7 +220,7 @@ test("explicit configuration reload is admitted, fenced and serialized with serv
   release()
   await assert.rejects(first, /selection changed/)
   assert.equal(reloads, 0)
-  version = "2.0.10"
+  version = "2.0.6"
   await assert.rejects(service.reload(), /opencode_update_required/)
   assert.equal(reloads, 0)
 })
@@ -248,10 +251,78 @@ test("an in-flight native reload holds shared-service authority across binary ch
   await service.reload()
 })
 
-test("legacy package-manager helpers retain V2 commands and beta comparison", () => {
-  assert.deepEqual(buildOpenCodeUpgradeCommand(minimum, "npm"), { command: "npm", args: ["install", "-g", `@opencode/cli@${minimum}`] })
-  assert.deepEqual(buildOpenCodeUpgradeCommand(minimum, "pnpm"), { command: "pnpm", args: ["add", "-g", "--allow-build=@opencode/cli", `@opencode/cli@${minimum}`] })
-  assert.equal(detectOpenCodePackageManager("/home/me/.local/share/pnpm/opencode2", {}), "pnpm")
-  assert.equal(detectOpenCodePackageManager("C:\\Users\\me\\.bun\\bin\\opencode2.exe", {}), "bun")
+test("beta version comparison remains numeric", () => {
   assert.equal(compareOpenCodeVersionStrings("0.0.0-beta-10000", "0.0.0-beta-9999") > 0, true)
+})
+
+test("2.0.7 through 2.0.10 remain usable; recommendation only offers an optional update", async () => {
+  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10"]) {
+    const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+    rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
+    const service = new OpenCodeUpdateService(deps({
+      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.0.11",
+      lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
+    }))
+    const status = await service.start()
+    assert.equal(status.minimumVersion, "2.0.7")
+    assert.equal(status.recommendedVersion, "2.0.11")
+    assert.equal(status.state, "ready")
+    assert.equal(status.serviceState, "ready")
+    assert.equal(status.versionAssessment, "untested", "native smoke coverage is not full release qualification")
+    assert.equal(status.incompatibilityReason, undefined)
+    assert.equal(status.canUpgrade, true)
+    assert.equal(status.canRestart, false)
+  }
+})
+
+test("a current daemon remains usable through an older selected discovery CLI", async () => {
+  const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+  rememberRuntime(endpoint, { version: "2.0.11", pid: 123, discovery: "info" })
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version: "2.0.3" }),
+    lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
+  }))
+  assert.equal((await service.start()).state, "ready")
+  assert.equal((await service.getStatus()).versionAssessment, "tested")
+})
+
+test("custom labels are unverified, not an update demand; optional reload follows capabilities", async () => {
+  const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+  rememberRuntime(endpoint, { version: "custom-build", pid: 123, discovery: "info" })
+  const service = new OpenCodeUpdateService(deps({
+    probeBinary: () => ({ valid: true, version: "custom-build" }),
+    inspectRuntime: async () => ({ reload: false }),
+    lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
+    reload: async () => { throw new Error("unavailable operation must not be called") },
+  }))
+  const status = await service.start()
+  assert.equal(status.state, "ready")
+  assert.equal(status.serviceState, "ready")
+  assert.equal(status.versionAssessment, "untested")
+  assert.equal(status.canReload, false)
+  assert.equal(status.canUpgrade, false)
+  await assert.rejects(service.upgrade(), /custom OpenCode version/)
+  await assert.rejects(service.reload(), /does not expose configuration reload/)
+})
+
+test("production stdout parsing preserves custom labels through discovery and activation", async () => {
+  for (const [stdout, label] of [["custom-build\n", "custom-build"], ["opencode v2.0.7+custom-build\n", "2.0.7+custom-build"],
+    ["opencode2 vendor-build\n", "vendor-build"], ["", "unknown"]]) {
+    const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+    rememberRuntime(endpoint, { version: label!, pid: 123, discovery: "info" })
+    let discoveries = 0, inspected = 0
+    const service = new OpenCodeUpdateService(deps({
+      probeBinary: () => probeBinaryVersion(process.execPath, () => ({ status: 0, stdout })),
+      lifecycle: async () => ({ discover: async () => { discoveries++; return endpoint }, ensure: async () => { throw new Error("must retain daemon") } }),
+      inspectRuntime: async () => { inspected++; return { reload: false } },
+    }))
+    const status = await service.start()
+    assert.equal(status.currentVersion, label)
+    assert.equal(status.state, "ready")
+    assert.equal(status.versionAssessment, "untested")
+    assert.equal(status.canUpgrade, false)
+    assert.equal(status.canRestart, false)
+    assert.ok(discoveries > 0 && inspected > 0, "successful custom labels reach authenticated contract inspection")
+    await assert.rejects(service.upgrade(), /custom OpenCode version/)
+  }
 })

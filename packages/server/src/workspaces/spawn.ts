@@ -8,7 +8,6 @@ import { isOpenCodeServiceCommandUnavailable, isOpenCodeServiceHelp } from "./op
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
-const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 
@@ -237,8 +236,9 @@ function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof pro
     return { valid: true }
   }
 
-  const versionMatch = reported.match(VERSION_REGEX)
-  const version = versionMatch?.[1]
+  // Strip only presentation prefixes. Preserve custom labels and +build metadata:
+  // truncating them into a stable version would enable unintended auto-upgrades.
+  const version = reported.replace(/^opencode(?:2)?\s+/i, "").replace(/^v(?=\d+\.)/i, "")
   return { valid: true, version, reported }
 }
 

@@ -21,6 +21,8 @@ const requested = process.argv[2] ?? "both"
 const bootstrapCli = process.argv[3]
 assert.ok(bootstrapCli && path.isAbsolute(bootstrapCli), "Pass host (both/electron/tauri) and absolute fixture CLI used only to configure an isolated service port")
 const oldDaemon = process.argv.includes("--old-daemon")
+const compatibleDaemon = process.argv.includes("--compatible-daemon")
+assert.ok(!(oldDaemon && compatibleDaemon), "Choose one daemon scenario")
 const resumeFolder = process.argv.includes("--resume-folder")
 const artifacts = {
   electron: path.join(workspace, "packages/electron-app/release/win-unpacked/CodeNomad.exe"),
@@ -65,16 +67,28 @@ for (const [host, executable] of Object.entries(artifacts)) {
   await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve))
   const servicePort = reservation.address().port
   await new Promise(resolve => reservation.close(resolve))
-  const record = { host, executable, profile, servicePort, oldDaemon, sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), checks: [] }
+  const record = { host, executable, profile, servicePort, oldDaemon, compatibleDaemon, sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), checks: [] }
   const resources = path.join(path.dirname(executable), "resources")
   record.packagedFiles = {}
   for (const relative of ["server/dist/opencode-update/service.js", "server/dist/workspaces/opencode-cli-service.js", "server/dist/workspaces/native-service-registration.js", "server/public/index.html", "node/win32-x64/node.exe", "node/win32-x64/node_modules/npm/package.json"]) {
     record.packagedFiles[relative] = createHash("sha256").update(await readFile(path.join(resources, relative))).digest("hex")
   }
+  for (const retired of ["opencode-update/legacy-package.js", "opencode/compatibility/requests.js", "opencode/compatibility/events.js"]) {
+    await assert.rejects(readFile(path.join(resources, "server/dist", retired)), { code: "ENOENT" }, "retired modules must not survive in desktop resources")
+  }
   record.sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace, encoding: "utf8", timeout: 10_000 }).trim()
   results.push(record)
   let output = "", browser, page, cli, child, stopped, childError
   const runCli = (binary, args, timeout = 30_000) => execFileSync(binary, args, { env, cwd: profile, encoding: "utf8", timeout, maxBuffer: 1024 * 1024 }).trim()
+  const daemonInfo = async () => {
+    const password = runCli(bootstrapCli, ["service", "get", "password"])
+    const response = await fetch(`http://127.0.0.1:${servicePort}/api/info`, {
+      headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` },
+      signal: AbortSignal.timeout(10_000), redirect: "error",
+    })
+    assert.equal(response.status, 200)
+    return response.json()
+  }
   const statuses = []
   const observerErrors = [], observerTasks = new Set()
   const observe = observedPage => observedPage.on("response", response => {
@@ -86,11 +100,12 @@ for (const [host, executable] of Object.entries(artifacts)) {
   })
   try {
     runCli(bootstrapCli, ["service", "set", "port", String(servicePort)])
-    if (oldDaemon) {
+    if (oldDaemon || compatibleDaemon) {
       runCli(bootstrapCli, ["service", "start"], 60_000)
       record.oldVersion = runCli(bootstrapCli, ["--version"])
       record.oldService = runCli(bootstrapCli, ["service", "status"])
       assert.equal(record.oldService, `http://127.0.0.1:${servicePort}`)
+      if (compatibleDaemon) record.before = await daemonInfo()
     }
     child = spawn(executable, resumeFolder ? ["--folder", project] : [], { cwd: profile, env, stdio: ["ignore", "pipe", "pipe"] })
     // Native-parent-started services may inherit a pipe after the desktop exits.
@@ -112,7 +127,8 @@ for (const [host, executable] of Object.entries(artifacts)) {
     await page.getByRole("dialog").waitFor()
     await page.getByText(/^(OpenCode is not installed\.|OpenCode n’est pas installé\.)$/).waitFor()
     await page.screenshot({ path: path.join(profile, "01-missing.png") })
-    record.checks.push("real missing setup screen, minimum 2.0.11")
+    await page.getByText(/introduced the native step-start timestamp|horodatage natif de début d’étape/).waitFor()
+    record.checks.push("real missing setup screen with separate technical minimum and recommendation")
     await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
     await page.locator('[role="status"] button').click()
     await page.getByRole("dialog").waitFor()
@@ -133,6 +149,18 @@ for (const [host, executable] of Object.entries(artifacts)) {
       assert.ok(!statuses.some(item => item.url.endsWith("/api/opencode/service") && item.method === "POST"), "install must not restart the old daemon")
       record.checks.push("old running daemon detected after install, restart deferred for explicit action")
       await restart.click()
+    }
+    if (compatibleDaemon) {
+      await until(() => statuses.some(item => item.url.endsWith("/api/opencode/service") && item.status === 200
+        && item.body.serviceState === "restart_available"), "Compatible daemon did not reconnect without restart")
+      assert.ok(!statuses.some(item => item.request?.restart === true), "compatible daemon must not be restarted automatically")
+      await page.getByText(/You can keep using the running service and restart later|Vous pouvez continuer avec le service en cours/).waitFor()
+      record.after = await daemonInfo()
+      assert.equal(record.after.pid, record.before.pid)
+      assert.equal(record.after.version, record.before.version)
+      await page.screenshot({ path: path.join(profile, "02-optional-restart.png") })
+      await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
+      record.checks.push("usable older daemon retained with identical PID/version; restart optional after installation")
     }
     await page.getByRole("dialog").waitFor({ state: "hidden", timeout: 120_000 })
     await page.screenshot({ path: path.join(profile, "02-installed-connected.png") })

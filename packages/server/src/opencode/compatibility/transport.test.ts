@@ -6,7 +6,8 @@ import { createRuntimeFetch } from "./transport"
 import { modernContractFixture } from "./contract-fixture"
 
 test("current and future supported releases preserve info, authentication and bounded negotiation", async () => {
-  for (const version of ["2.0.11", "2.0.100"]) {
+  const reviewed = ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11"]
+  for (const version of [...reviewed, "2.0.100", "3.0.0", "2.1.0-dev.1", "custom-build"]) {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "fixture" } }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const seen: string[] = []
@@ -19,12 +20,12 @@ test("current and future supported releases preserve info, authentication and bo
     })
     const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
     assert.equal((await client.server.info()).paths.tmp, "/native/tmp")
-    assert.deepEqual(seen, version === "2.0.11" ? ["/api/info"] : ["/openapi.json", "/api/info"])
+    assert.deepEqual(seen, reviewed.includes(version) ? ["/api/info"] : ["/openapi.json", "/api/info"])
   }
 })
 
 test("retired runtime contracts never dispatch even through the direct transport", async () => {
-  for (const version of ["2.0.0", "2.0.3", "2.0.4", "2.0.10", "0.0.0-beta-19271", "3.0.0"]) {
+  for (const version of ["2.0.0", "2.0.3", "2.0.4", "2.0.6", "0.0.0-beta-19271"]) {
     const endpoint = { url: "http://127.0.0.1:4321" }
     rememberRuntime(endpoint, { version, pid: 1, discovery: "health" })
     const fetch = createRuntimeFetch(endpoint, async () => { assert.fail("unsupported runtime must not receive calls") })

@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
-import { modernContractFixture } from "./contract-fixture"
+import { legacyContractFixture, modernContractFixture } from "./contract-fixture"
+import { UnsupportedOpenCodeError } from "../runtime-support"
 
 test("unknown contracts perform authenticated bounded read negotiation before any mutation", async () => {
   for (const kind of ["unauthorized", "unrecognized", "oversized"] as const) {
@@ -25,6 +26,24 @@ test("unknown contracts perform authenticated bounded read negotiation before an
     await assert.rejects(transport(`${endpoint.url}/api/session/s`, { method: "PATCH", body: '{"title":"fixture"}' }), /contract|HTTP 401/)
     assert.equal(calls, 1, "negotiation failure must never dispatch a mutation")
     if (kind === "oversized") assert.equal(cancelled, true)
+  }
+})
+
+test("unknown labels with an obsolete contract or missing environment fail for a concrete API reason", async () => {
+  const missingEnvironment = structuredClone(modernContractFixture)
+  delete (missingEnvironment.paths as Record<string, unknown>)["/api/session/{sessionID}/environment"]
+  for (const [schema, reason] of [[legacyContractFixture, "canonical_api"], [missingEnvironment, "session_environment"]] as const) {
+    const endpoint = { url: "http://127.0.0.1:4321" }
+    rememberRuntime(endpoint, { version: "custom-build", pid: 1, discovery: "info" })
+    let calls = 0
+    const transport = createRuntimeFetch(endpoint, async input => {
+      calls++
+      assert.equal(new URL(String(input)).pathname, "/openapi.json")
+      return Response.json(schema)
+    })
+    await assert.rejects(transport(`${endpoint.url}/api/session/s/prompt`, { method: "POST", body: '{"text":"fixture"}' }),
+      (error: unknown) => error instanceof UnsupportedOpenCodeError && error.reason === reason)
+    assert.equal(calls, 1, "no speculative prompt or environment mutation")
   }
 })
 

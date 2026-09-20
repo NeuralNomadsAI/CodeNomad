@@ -63,9 +63,16 @@ test("modern proxy preserves Forms scope and rejects obsolete selectors in curso
       { method: "DELETE" as const, url: `${prefix}/api/session/global/form/f`, headers: { ...context("two"), "x-opencode-directory": encodeURIComponent("/host") } },
       { method: "PATCH" as const, url: `${prefix}/api/session/foreign`, payload: { title: "forbidden" } },
       { method: "GET" as const, url: `${prefix}/api/session?cursor=${cursor("two")}` },
+      ...["workspace", "location[workspace]", "workspaceID", "location[workspaceID]"].map(key => ({
+        method: "GET" as const, url: `${prefix}/api/session?cursor=${cursor()}&${key}=one`,
+      })),
       { method: "POST" as const, url: `${prefix}/api/experimental/session/import`, payload: {
         location: { directory: "/host", workspaceID: "one" }, info: { location: { directory: "/host", workspaceID: "one" } },
         messages: [{ type: "location-switched", location: { directory: "/host", workspaceID: "two" } }],
+      } },
+      { method: "POST" as const, url: `${prefix}/api/experimental/session/import`, payload: {
+        location: { directory: "/host" }, info: { location: { directory: "/host" } },
+        messages: [{ type: "location-switched", location: { directory: "/host" }, previous: { location: { directory: "/foreign" } } }],
       } },
     ]) assert.ok([400, 403].includes((await app.inject(request)).statusCode))
     assert.equal(forwarded, before, "foreign identity is refused before forwarding any mutation")
@@ -76,17 +83,16 @@ test("future releases advertising retired schemas are refused before functional 
   const upstream = Fastify()
   const calls: string[] = []
   upstream.get("/openapi.json", async () => { calls.push("schema"); return legacyContractFixture })
-  upstream.get("/api/form/request", async request => {
+  upstream.all("/api/*", async () => {
     calls.push("forms")
-    assert.equal((request.query as Record<string, string>)["location[workspace]"], "one")
-    return { data: [], location: { directory: "/repo", workspaceID: "one" } }
+    assert.fail("a retired contract must not receive functional calls")
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
   rememberRuntime(endpoint, { version: "2.0.100", pid: 1, discovery: "info" })
   const service = new OpenCodeSharedService()
   try {
-    await assert.rejects(service.client({ kind: "lifecycle", identity: "isolated-test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } }), /Unsupported OpenCode runtime contract/)
+    await assert.rejects(service.client({ kind: "lifecycle", identity: "isolated-test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } }), { code: "opencode_update_required" })
     assert.deepEqual(calls, ["schema"])
   } finally { await service.shutdown(); await upstream.close() }
 })

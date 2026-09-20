@@ -24,7 +24,7 @@ test("same URL and credentials cannot keep the previous daemon's adapter or inva
   old.invalidate()
   current.assertCurrent()
   assert.equal(await service.acquire(), current)
-  endpoint = makeEndpoint("2.0.10", 3)
+  endpoint = makeEndpoint("2.0.6", 3)
   now = 60_000
   await assert.rejects(service.acquire(), /opencode_update_required/)
   assert.throws(current.assertCurrent, /connection changed/)
@@ -51,7 +51,7 @@ test("a late old stream cannot publish events or invalidate the replacement conn
   const service = new OpenCodeSharedService({ headers: () => undefined, makeClient: () => ({
     event: { subscribe: () => (async function* () {
       yield { type: "server.connected", data: {} } as OpenCodeEvent
-      yield { type: "catalog.updated", data: {} } as unknown as OpenCodeEvent
+      yield { type: "model.updated", data: {} } as OpenCodeEvent
     })() },
   }) as unknown as OpenCodeClient })
   await service.endpoint({ kind: "lifecycle", identity: "test", lifecycle: { discover: async () => endpoint, ensure: async () => endpoint } })

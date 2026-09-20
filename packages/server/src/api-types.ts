@@ -379,10 +379,13 @@ export interface OpenCodeUpdateStatus {
   canUpgrade: boolean
   checkError?: "update_check_failed"
   minimumVersion: string
+  recommendedVersion: string
+  versionAssessment: "tested" | "untested" | "incompatible"
+  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
   daemonVersion?: string
-  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "error"
+  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
   canReload?: boolean
   serviceError?: string
   target: "host" | "wsl"

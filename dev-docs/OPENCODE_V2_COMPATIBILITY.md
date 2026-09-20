@@ -2,11 +2,11 @@
 
 ## Current qualification policy
 
-Qualify against the latest published stable OpenCode runtime (`@opencode/cli@latest`).
-For each CodeNomad release, the minimum supported OpenCode version is the latest
-stable OpenCode version available at the time of that CodeNomad release. Record
-the resolved version in the release notes; that minimum stays fixed for that
-CodeNomad release and is reassessed at the next release.
+Qualify against the technical minimum and the latest published stable OpenCode
+runtime (`@opencode/cli@latest`). A blocking minimum must follow a demonstrated
+API/behavior dependency; the latest publication and client/plugin pin are not
+sufficient reasons. Keep minimum requirements, recommended/tested versions and
+unverified versions distinct.
 
 CI records the resolved runtime version. Pin client/plugin dependencies together
 to the release target and qualify them before publishing CodeNomad. Retained
@@ -14,12 +14,16 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-PR #696 implements a fixed minimum of **2.0.11** for this development release:
-stable `>=2.0.11 <3.0.0`, with separate authenticated contract recognition for
-unlisted releases. Missing/outdated runtimes share installation and recovery UI;
-the bundled Node/npm installer and explicit daemon restart are distinct actions.
-Legacy request/response/event translations have been retired. Historical
-identity, import/cursor, cancellation and connection-authority checks remain.
+PR #696's corrected technical minimum is **2.0.7**, when native step-start events
+gain the `data.started` field consumed by the current Solid reducer. **2.0.11**
+is the recommended release-tested target, not the minimum. Unlisted versions,
+including prereleases/custom labels/future majors, undergo authenticated contract
+recognition rather than being refused solely for their label. Missing canonical
+APIs or session environment support produce a concrete incompatibility reason.
+The bundled Node/npm installer and explicit daemon restart are distinct actions.
+Pre-2.0.4 wire adapters and the pre-2.0.7 timestamp fallback are retired, including
+remaining legacy live location serializers. Historical internal identity,
+current import/cursor authorization, cancellation and connection checks remain.
 The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse while
 preserving session IDs and complete history. See the
 [transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
