@@ -74,10 +74,18 @@ async function fixture() {
   }
 }
 
-async function clickTimeline(page: Page, index: number) {
+async function clickTimeline(page: Page, index: number, checkReaderPosition = false) {
   await page.locator(".message-timeline").evaluate((element, index) => {
     element.scrollTop = element.scrollHeight * index / 1500
   }, index)
+  if (checkReaderPosition) {
+    // Let the prior selection's 120ms reveal expire while the reader is
+    // browsing elsewhere. It must not reclaim the rail or animate the target.
+    await page.waitForTimeout(250)
+    const target = await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).boundingBox()
+    const rail = await page.locator(".message-timeline").boundingBox()
+    assert(target && rail && target.y >= rail.y && target.y < rail.y + rail.height, "reader's destination remains visible before clicking")
+  }
   await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).click()
 }
 const snapshot = (page: Page) => page.evaluate(() => (window as any).fixture.snapshot())
@@ -119,7 +127,7 @@ test("latest timeline intent supersedes a slow far jump, including a resident de
     const release = f.hold(250)
     await clickTimeline(f.page, 250)
     await f.page.locator(".history-navigation-status").waitFor()
-    await clickTimeline(f.page, 1450)
+    await clickTimeline(f.page, 1450, true)
     await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
     release()
     await f.page.waitForTimeout(150)

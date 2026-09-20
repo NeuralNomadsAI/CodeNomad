@@ -383,22 +383,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle | undefined>()
+  let revealTimer: ReturnType<typeof setTimeout> | undefined
+  const cancelReveal = () => {
+    if (revealTimer !== undefined) clearTimeout(revealTimer)
+    revealTimer = undefined
+  }
 
   const handleScroll = () => {
+    cancelReveal()
     if (hoveredSegment()) clearHoverPreview()
   }
 
   createEffect(on(() => props.activeSegmentId, (activeId) => {
     if (!activeId) return
-    const timer = typeof window !== "undefined" ? window.setTimeout(() => {
+    revealTimer = setTimeout(() => {
+      revealTimer = undefined
       const index = segmentIndexById().get(activeId)
-      if (index !== undefined) virtualizerHandle()?.scrollToIndex(index, { align: "nearest", smooth: true })
-    }, 120) : null
-    onCleanup(() => {
-      if (timer !== null && typeof window !== "undefined") {
-        window.clearTimeout(timer)
-      }
-    })
+      // The rail is globally virtualized: an animated reveal can keep moving
+      // under the pointer while the reader chooses another distant destination.
+      if (index !== undefined) virtualizerHandle()?.scrollToIndex(index, { align: "nearest" })
+    }, 120)
+    onCleanup(cancelReveal)
   }))
 
   createEffect(() => {
@@ -569,6 +574,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         role="navigation"
         aria-label={t("messageTimeline.ariaLabel")}
         onScroll={handleScroll}
+        onWheel={cancelReveal}
+        onPointerDown={cancelReveal}
+        onKeyDown={cancelReveal}
       >
         <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
           {(segment) => {
