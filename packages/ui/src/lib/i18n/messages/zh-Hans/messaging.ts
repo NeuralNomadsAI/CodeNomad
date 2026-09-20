@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "正在加载完整时间线… {loaded} / {total}",
   "history.navigation.loading": "正在加载所选段落…",
   "history.navigation.outlineUnavailable": "完整时间线暂不可用",
   "history.scope": "搜索范围",

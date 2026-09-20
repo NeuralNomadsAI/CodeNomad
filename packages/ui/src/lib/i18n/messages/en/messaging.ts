@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "Loading full timeline… {loaded} / {total}",
   "history.navigation.loading": "Loading passage…",
   "history.navigation.outlineUnavailable": "Full timeline unavailable",
   "history.scope": "Search scope",

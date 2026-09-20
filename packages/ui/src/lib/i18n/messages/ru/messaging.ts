@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "Загрузка полной шкалы времени… {loaded} / {total}",
   "history.navigation.loading": "Загрузка фрагмента…",
   "history.navigation.outlineUnavailable": "Полная шкала времени недоступна",
   "history.scope": "Область поиска",

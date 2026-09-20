@@ -65,6 +65,12 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 ;(window as any).fixture = {
   id: navigationMessageId,
   tools: (showTimelineTools: boolean) => updatePreferences({ showTimelineTools }),
+  status: (status: 'idle' | 'working') => setSessions(previous => {
+    const next = new Map(previous), group = new Map(next.get(instanceId)!)
+    group.set(sessionId, { ...group.get(sessionId)!, status })
+    next.set(instanceId, group)
+    return next
+  }),
   openSearch: () => { updatePreferences({ locale: "en" }); setSessionSearchOpen(instanceId, sessionId, true) },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   latest: () => loadLatestMessageWindow(instanceId, sessionId),

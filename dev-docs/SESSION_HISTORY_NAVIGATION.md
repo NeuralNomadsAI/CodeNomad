@@ -75,6 +75,14 @@ Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
 and viewport anchor stability during streaming and distant jumps.
 
+Outline scans retain accepted pages and their sequence-horizon cursor when a view
+is hidden or unmounted. Four recent metadata snapshots are retained in the renderer,
+keyed by instance/session, connection generation, content-mutation revision and undo
+boundary. Returning reuses the completed rail immediately; message/status changes
+refresh it while preserving its last completed snapshot. A status transition during
+an incomplete scan cannot discard its progress. Initial loading exposes accepted and
+total message counts rather than silently presenting the resident rail as complete.
+
 ## Validation
 
 - Server SQL and route tests cover distant windows, sequence gaps, overlap,

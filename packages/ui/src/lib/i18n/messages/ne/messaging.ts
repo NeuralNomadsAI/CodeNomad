@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "पूरा समयरेखा लोड हुँदैछ… {loaded} / {total}",
   "history.navigation.loading": "अंश लोड हुँदैछ…",
   "history.navigation.outlineUnavailable": "पूरा टाइमलाइन उपलब्ध छैन",
   "history.scope": "खोजको दायरा",

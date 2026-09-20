@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "Vollständige Zeitleiste wird geladen… {loaded} / {total}",
   "history.navigation.loading": "Abschnitt wird geladen…",
   "history.navigation.outlineUnavailable": "Vollständige Zeitleiste nicht verfügbar",
   "history.scope": "Suchbereich",

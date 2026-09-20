@@ -1160,6 +1160,11 @@ export default function MessageSection(props: MessageSectionProps) {
           <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
         </div>
       </Show>
+      <Show when={outline.pending() && !outline.entries().length && !navigationPending() && showMessageTimelinePreference()}>
+        <div class="history-navigation-status window-toolbar" role="status">
+          <span>{t("history.navigation.outlineLoading", outline.progress())}</span>
+        </div>
+      </Show>
       <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
         <div class="history-navigation-status window-toolbar" role="status">
           <span title={outline.error()}>{t("history.navigation.outlineUnavailable")}</span>

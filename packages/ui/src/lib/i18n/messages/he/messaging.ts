@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "טוען את ציר הזמן המלא… {loaded} / {total}",
   "history.navigation.loading": "טוען קטע…",
   "history.navigation.outlineUnavailable": "ציר הזמן המלא אינו זמין",
   "history.scope": "היקף החיפוש",

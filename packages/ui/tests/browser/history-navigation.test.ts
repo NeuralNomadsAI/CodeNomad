@@ -27,7 +27,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function fixture(mixed = false) {
+async function fixture(mixed = false, pauseOutline = false) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const db = new DatabaseSync(":memory:")
   db.exec(`CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
@@ -40,6 +40,9 @@ async function fixture(mixed = false) {
     insert.run(id, type, index, JSON.stringify(data))
   }
   const errors: string[] = [], windows: any[] = []
+  const outlines: Array<number | undefined> = []
+  let resumeOutline!: () => void
+  const outlineGate = new Promise<void>(resolve => { resumeOutline = resolve })
   const reads = new Set<Promise<unknown>>()
   let hold: { messageID: string; release: () => void; promise: Promise<void> } | undefined
   page.on("pageerror", error => errors.push(error.message))
@@ -49,6 +52,10 @@ async function fixture(mixed = false) {
       return route.fulfill({ contentType: "application/json", body: "{}" })
     }
     const input = request.postDataJSON()
+    if (method === 'outline') {
+      outlines.push(input.cursor?.after)
+      if (pauseOutline && input.cursor) await outlineGate
+    }
     const scope = { directory: "/fixture", projectID: "p", sessionID: "s" }
     const read = method === "window"
       ? readNavigationWindow(db, scope, input.target, new AbortController().signal)
@@ -63,15 +70,15 @@ async function fixture(mixed = false) {
   })
   await page.goto(url + (mixed ? "?mixed" : ""))
   await page.waitForFunction(() => Boolean((window as any).fixture))
-  await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
-  return { page, windows, errors,
+  if (!pauseOutline) await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+  return { page, windows, errors, outlines, resumeOutline,
     hold: (index: number) => {
       let release!: () => void
       const promise = new Promise<void>(done => { release = done })
       hold = { messageID: navigationMessageId(index), release, promise }
       return release
     },
-    close: async () => { hold?.release(); await page.close(); await Promise.allSettled(reads); db.close() },
+    close: async () => { hold?.release(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close() },
   }
 }
 
@@ -91,6 +98,28 @@ async function clickTimeline(page: Page, index: number, checkReaderPosition = fa
   await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).click()
 }
 const snapshot = (page: Page) => page.evaluate(() => (window as any).fixture.snapshot())
+
+test("returning during an incomplete outline resumes accepted pages and retains the completed rail", async () => {
+  const f = await fixture(false, true)
+  try {
+    await f.page.waitForFunction(() => document.querySelector('.history-navigation-status[role="status"]')?.textContent?.includes('256'))
+    await f.page.evaluate(() => (window as any).fixture.status('working'))
+    await f.page.waitForTimeout(200)
+    await f.page.evaluate(() => (window as any).fixture.status('idle'))
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    f.resumeOutline()
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    assert.equal(f.outlines.filter(cursor => cursor === undefined).length, 1, 'return must not discard accepted outline pages')
+    const count = f.outlines.length
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    await f.page.waitForTimeout(400)
+    assert.equal(f.outlines.length, count, 'completed unchanged outline is immediately reusable on return')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
 
 async function assertPassageAtTop(page: Page, index: number) {
   await page.waitForFunction(id => {

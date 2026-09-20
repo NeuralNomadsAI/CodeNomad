@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "Cargando la cronología completa… {loaded} / {total}",
   "history.navigation.loading": "Cargando el pasaje…",
   "history.navigation.outlineUnavailable": "Cronología completa no disponible",
   "history.scope": "Ámbito de búsqueda",
