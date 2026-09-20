@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "Загрузка фрагмента…",
+  "history.navigation.outlineUnavailable": "Полная шкала времени недоступна",
   "history.scope": "Область поиска",
   "history.session": "Вся сессия",
   "history.workspace": "Всё рабочее пространство",

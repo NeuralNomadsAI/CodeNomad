@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "Bölüm yükleniyor…",
+  "history.navigation.outlineUnavailable": "Tam zaman çizelgesi kullanılamıyor",
   "history.scope": "Arama kapsamı",
   "history.session": "Tüm oturum",
   "history.workspace": "Tüm çalışma alanı",

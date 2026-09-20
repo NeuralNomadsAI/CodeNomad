@@ -1,0 +1,40 @@
+/* Reserve the same space before overflow and during hover/focus. Symmetric
+   gutters keep the segment axis centered; only thumb contrast changes. */
+:root body .message-timeline {
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent !important;
+}
+
+:root body .message-timeline:hover,
+:root body .message-timeline:focus-within {
+  scrollbar-color: var(--scrollbar-thumb-hover) transparent !important;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  :root body .message-timeline,
+  :root body .message-timeline:hover,
+  :root body .message-timeline:focus-within {
+    scrollbar-width: auto;
+    scrollbar-color: auto !important;
+  }
+
+  :root body .message-timeline::-webkit-scrollbar {
+    width: calc(var(--scrollbar-size) / 2);
+  }
+
+  :root body .message-timeline::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :root body .message-timeline::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border: 0;
+    border-radius: 0;
+  }
+
+  :root body .message-timeline:hover::-webkit-scrollbar-thumb,
+  :root body .message-timeline:focus-within::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}

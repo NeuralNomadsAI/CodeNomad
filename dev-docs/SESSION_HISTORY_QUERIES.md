@@ -53,9 +53,10 @@ names/arguments/text output/errors and readable native user/system/synthetic/
 skill/shell/compaction text. Attachments and opaque continuation state are not
 searched. The technical-content switch excludes tool and reasoning parts.
 The UI advances empty pages but retains only one result page. Closing the window,
-changing query/scope or leaving the session cancels obsolete UI work. A result
-click fetches only that native message into a separate preview, never the
-transcript store. Resident matches can still scroll to their existing row.
+changing query/scope or leaving the session cancels obsolete UI work. Current-session
+results navigate to a bounded transcript window around the selected message.
+Other-session results fetch only that native message into a separate preview.
+Resident matches scroll to their existing row without a network read.
 
 ## Cleanup semantics
 
@@ -92,3 +93,9 @@ replays against a real daemon. The parent fixture also checks active-generation
 refusal and pre-compaction discovery. Never point this fixture at a user's DB or
 shared daemon. Native Windows, browser rendering and other platforms are separate
 validation claims; none implies the others.
+
+## Navigation extension
+
+The global timeline and current-session search now use direct bounded anchor
+windows. See [SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md) for
+the read contract, navigation/restore fences and scrollbar geometry.

@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "該当箇所を読み込み中…",
+  "history.navigation.outlineUnavailable": "全体のタイムラインを取得できません",
   "history.scope": "検索範囲",
   "history.session": "セッション全体",
   "history.workspace": "ワークスペース全体",

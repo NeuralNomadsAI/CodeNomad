@@ -85,6 +85,7 @@ function bumpMutationRevision(key: string): void {
 }
 
 export function getOpenCodeInstanceGeneration(instanceId: string): number {
+  instanceDataRevision(instanceId)[0]()
   let generation = instanceGenerations.get(instanceId)
   if (generation === undefined) {
     generation = ++nextInstanceGeneration

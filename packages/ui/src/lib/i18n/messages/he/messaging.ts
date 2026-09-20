@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "טוען קטע…",
+  "history.navigation.outlineUnavailable": "ציר הזמן המלא אינו זמין",
   "history.scope": "היקף החיפוש",
   "history.session": "כל השיחה",
   "history.workspace": "כל סביבת העבודה",

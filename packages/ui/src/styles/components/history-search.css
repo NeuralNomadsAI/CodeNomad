@@ -45,3 +45,18 @@
   overflow-wrap: anywhere;
   font-size: 0.75rem;
 }
+
+.history-navigation-status {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0.5rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: calc(100% - 1rem);
+  padding: 0.25rem 0.5rem;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-base);
+  font-size: 0.75rem;
+}

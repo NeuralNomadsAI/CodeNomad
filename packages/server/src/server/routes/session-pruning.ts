@@ -2,9 +2,11 @@ import type { FastifyInstance } from "fastify"
 import { messageTargetSchema, PRUNING_RPC_ID, prunePreviewSchema, pruneRequestSchema, pruneResultSchema } from "../../opencode/session-pruning/contract"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { registerSessionHistoryRoutes, type HistoryRouteDeps } from "./session-history"
+import { registerSessionNavigationRoutes } from "./session-navigation"
 
 export function registerSessionPruningRoutes(app: FastifyInstance, deps: HistoryRouteDeps): void {
   registerSessionHistoryRoutes(app, deps)
+  registerSessionNavigationRoutes(app, deps)
   for (const method of ["preview", "prune"] as const) {
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-pruning/${method}`, { bodyLimit: 1024 * 1024 }, async (request, reply) => {
       const input = (method === "prune" ? pruneRequestSchema : messageTargetSchema).safeParse(request.body)

@@ -8,11 +8,16 @@ import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "./history-contract"
 import { queryBoundHistory, pruneBoundBatch } from "./history-service"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema } from "./navigation-contract"
+import { readNavigationWindow, readSessionOutline } from "./navigation-store"
+import { withHistoryDatabase } from "./history-database"
 
 export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: {
   ...pruningRpcDefinition.methods,
   history: { input: historyQuerySchema, output: historyNativeResultSchema },
   pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
+  window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
+  outline: { input: outlineInputSchema, output: outlineResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
@@ -20,6 +25,10 @@ export default Plugin.define({
   id: "codenomad-session-pruning",
   async setup(ctx) {
     const registration = await ctx.rpc.register(SessionPruningRpc, {
+      window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
+      outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal)),
       history: (input, call) => queryBoundHistory(ctx, input, call.signal),
       pruneBatch: (input, call) => pruneBoundBatch(ctx, input, call.signal, async (sessionID, result) => {
         await registration.events.emit("pruned", { sessionID, messageID: result.messageID, revision: result.revision })

@@ -452,8 +452,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const segment = hoveredSegment()
     if (!segment) return null
     const record = store().getMessage(segment.messageId)
-    if (!record) return null
-    return { messageId: segment.messageId }
+    return { messageId: segment.messageId, resident: Boolean(record), summary: segment.tooltip }
   })
 
   // Pre-computed set of messageIds that have at least one tool segment.
@@ -566,6 +565,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           setScrollElement(element)
         }}
         class="message-timeline"
+        data-segment-count={props.segments.length}
         role="navigation"
         aria-label={t("messageTimeline.ariaLabel")}
         onScroll={handleScroll}
@@ -608,6 +608,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                     data-variant={segment.variant}
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
                   aria-current={isActive() ? "true" : undefined}
+                  aria-label={segment.tooltip || segment.label}
+                  data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
                     onClick={() => props.onSegmentClick?.(segment)}
                   onMouseEnter={(event) => handleMouseEnter(segment, event)}
@@ -632,12 +634,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   onMouseEnter={() => clearCloseTimer()}
                   onMouseLeave={() => scheduleClose()}
                 >
-                  <MessagePreview
+                   <Show when={data().resident} fallback={<p>{data().summary}</p>}><MessagePreview
                     messageId={data().messageId}
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     store={store}
-                  />
+                   /></Show>
                 </div>
               </Portal>
             )

@@ -24,6 +24,9 @@ import { getMessageSelectionActionPosition } from "../lib/message-selection-posi
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryStatistics from "./history-statistics"
 import HistoryMessagePreview from "./history-message-preview"
+import { createSessionOutline } from "../stores/session-outline"
+import { sessions } from "../stores/session-state"
+import { projectSessionOutline } from "./session-outline-projection"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
@@ -71,6 +74,7 @@ export interface MessageSectionProps {
   onLoadNewerMessages?: (signal?: AbortSignal) => Promise<void>
   onLoadLatestMessages?: (signal?: AbortSignal) => Promise<void>
   onLoadOldestMessages?: (signal?: AbortSignal) => Promise<void>
+  onLoadMessageAnchor?: (messageId: string, signal?: AbortSignal) => Promise<void>
   getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
@@ -262,7 +266,12 @@ export default function MessageSection(props: MessageSectionProps) {
     }
 
     setActiveSegmentId(segment.id)
-    scrollToMessage()
+    if (messageIds().includes(segment.messageId)) {
+      cancelWindowNavigation()
+      listApi()?.setAutoScroll(false)
+      scrollToMessage()
+    }
+    else void pageWindow("around", () => scrollToMessage(), segment.messageId)
   }
 
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
@@ -306,7 +315,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
   const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
-  const timelineSegments = createMemo(() => {
+  const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
@@ -335,6 +344,13 @@ export default function MessageSection(props: MessageSectionProps) {
       }
       return segments
     })
+  })
+  const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
+    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+  const timelineSegments = createMemo(() => {
+    const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
+    const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()
+    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), t) : residentTimelineSegments()
   })
   const hasTimelineSegments = () => timelineSegments().length > 0
 
@@ -389,13 +405,27 @@ export default function MessageSection(props: MessageSectionProps) {
   let scrollRestoreGeneration = 0
   let pagingWindow = false
   let pagingWindowController: AbortController | null = null
+  let anchorRestoreController: AbortController | null = null
+  const [navigationPending, setNavigationPending] = createSignal(false)
+  function cancelWindowNavigation() {
+    if (anchorRestoreController) {
+      anchorRestoreController.abort()
+      anchorRestoreController = null
+      scrollRestoreGeneration += 1
+      restoringScrollSnapshot = false
+      setDidRestoreScroll(true)
+    }
+    pagingWindowController?.abort()
+    pagingWindowController = null
+    pagingWindow = false
+    setNavigationPending(false)
+  }
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
 
   function registerListApi(api: VirtualFollowListApi) {
     if (listApi() !== api) {
-      pagingWindowController?.abort()
-      pagingWindowController = null
+      cancelWindowNavigation()
       scrollRestoreGeneration += 1
       restoringScrollSnapshot = false
       setDidRestoreScroll(false)
@@ -417,8 +447,7 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
-        pagingWindowController?.abort()
-        pagingWindowController = null
+        cancelWindowNavigation()
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
         restoredWithoutSnapshot = false
@@ -443,8 +472,7 @@ export default function MessageSection(props: MessageSectionProps) {
           return
         }
         const wasRestoringScrollSnapshot = restoringScrollSnapshot
-        pagingWindowController?.abort()
-        pagingWindowController = null
+        cancelWindowNavigation()
         scrollRestoreGeneration += 1
         retryAnchorRestore = null
         if (!wasRestoringScrollSnapshot) persistMessageScrollSnapshot({ requireActive: false })
@@ -454,7 +482,7 @@ export default function MessageSection(props: MessageSectionProps) {
     ),
   )
 
-  onCleanup(() => pagingWindowController?.abort())
+  onCleanup(cancelWindowNavigation)
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
@@ -611,13 +639,18 @@ export default function MessageSection(props: MessageSectionProps) {
     restoringScrollSnapshot = true
     const restore = async () => {
       setOlderMessageLoadFailed(false)
-      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && props.onLoadMoreMessages) {
+      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)) {
         try {
-          await loadPagesUntilAnchor({
+          if (props.onLoadMessageAnchor) {
+            const controller = new AbortController()
+            anchorRestoreController = controller
+            try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+            finally { if (anchorRestoreController === controller) anchorRestoreController = null }
+          } else await loadPagesUntilAnchor({
             hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
             hasMore: () => Boolean(props.hasMoreMessages),
             isCurrent: isCurrentRestore,
-            loadMore: props.onLoadMoreMessages,
+            loadMore: props.onLoadMoreMessages!,
             getCursor: () => props.getMessageHistoryCursor?.(),
           })
         } catch (error) {
@@ -709,6 +742,20 @@ export default function MessageSection(props: MessageSectionProps) {
     const count = currentSearchMatches().length
     if (count === 0) return
     setActiveSearchIndex((index) => (index + direction + count) % count)
+    const match = activeSearchMatch()
+    if (match) navigateSearchMatch(match)
+  }
+
+  function navigateSearchMatch(match: { sessionId: string; messageId: string }) {
+    if (match.sessionId !== props.sessionId || !props.onLoadMessageAnchor) {
+      setPreviewSearchMatch(match)
+      return
+    }
+    if (messageIds().includes(match.messageId)) {
+      cancelWindowNavigation()
+      listApi()?.setAutoScroll(false)
+      listApi()?.scrollToKey(match.messageId, { block: "start" })
+    } else void pageWindow("around", api => api.scrollToKey(match.messageId, { block: "start" }), match.messageId)
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -815,12 +862,17 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   async function pageWindow(
-    direction: "older" | "newer" | "latest" | "oldest",
+    direction: "older" | "newer" | "latest" | "oldest" | "around",
     after: (api: VirtualFollowListApi) => void,
+    anchorMessageId?: string,
   ) {
     const api = listApi()
-    if (!api || !isActive() || pagingWindow) return
-    const load = direction === "older"
+    if (!api || !isActive()) return
+    if (pagingWindow && direction !== "around" && direction !== "latest") return
+    cancelWindowNavigation()
+    const load = direction === "around"
+      ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
+      : direction === "older"
       ? props.onLoadMoreMessages
       : direction === "newer"
         ? props.onLoadNewerMessages
@@ -847,9 +899,14 @@ export default function MessageSection(props: MessageSectionProps) {
       && !controller.signal.aborted
       && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
     pagingWindow = true
+    setNavigationPending(direction === "around")
+    if (direction !== "latest") api.setAutoScroll(false)
+    setOlderMessageLoadFailed(false)
+    retryAnchorRestore = null
     try {
       if (!isCurrent()) return
       const previousPage = messageWindowPageKey()
+      const previousPosition = direction === "older" || direction === "newer" ? api.captureScrollSnapshot() : undefined
       await load(controller.signal)
       if (!isCurrent()) return
       // An empty boundary probe retires the older cursor without changing the
@@ -859,8 +916,10 @@ export default function MessageSection(props: MessageSectionProps) {
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
-      after(api)
-      const bottomSettlement = direction === "older" || direction === "latest"
+      const retainedAnchor = previousPosition?.anchorKey && visibleMessageIds().includes(previousPosition.anchorKey)
+      if (retainedAnchor) api.restoreScrollSnapshot({ ...previousPosition, atBottom: false, followModeType: "escaped" })
+      else after(api)
+      const bottomSettlement = !retainedAnchor && (direction === "older" || direction === "latest")
         ? await api.settleAtBottom()
         : "settled"
       if (!isCurrent()) return
@@ -870,9 +929,11 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!isCurrent()) return
       pagingWindowController = null
       pagingWindow = false
+      setNavigationPending(false)
       persistMessageScrollSnapshot({ snapshot: api.captureScrollSnapshot() })
     } catch (error) {
       if (isCurrent()) {
+        retryAnchorRestore = () => { void pageWindow(direction, after, anchorMessageId) }
         setOlderMessageLoadFailed(true)
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
@@ -880,6 +941,7 @@ export default function MessageSection(props: MessageSectionProps) {
       if (pagingWindowController === controller) {
         pagingWindowController = null
         pagingWindow = false
+        setNavigationPending(false)
       }
     }
   }
@@ -1084,6 +1146,18 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <SessionCleanupProgress instanceId={props.instanceId} sessionId={props.sessionId} />
+      <Show when={navigationPending()}>
+        <div class="history-navigation-status window-toolbar" role="status">
+          <span>{t("history.navigation.loading")}</span>
+          <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
+        </div>
+      </Show>
+      <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
+        <div class="history-navigation-status window-toolbar" role="status">
+          <span title={outline.error()}>{t("history.navigation.outlineUnavailable")}</span>
+          <button type="button" class="button-tertiary" onClick={outline.refresh}>{t("messageSection.search.retry")}</button>
+        </div>
+      </Show>
       <div
         class={`message-layout${showTimeline() && !props.timelineMount ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
@@ -1114,6 +1188,7 @@ export default function MessageSection(props: MessageSectionProps) {
             persistMessageScrollSnapshot({ snapshot })
           }}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
+          onScrollIntent={() => { if (navigationPending()) cancelWindowNavigation() }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
@@ -1233,7 +1308,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   title={t("messageSection.loadError.title")}
                   error={props.loadError!}
                   retryLabel={t("messageSection.loadError.reload")}
-                  onRetry={() => props.onReloadMessages?.()}
+                  onRetry={() => retryAnchorRestore ? retryAnchorRestore() : props.onReloadMessages?.()}
                 />
               </Show>
             </>
@@ -1384,7 +1459,10 @@ export default function MessageSection(props: MessageSectionProps) {
                   <div class="history-search-results">
                     <For each={currentSearchMatches()}>{(match, index) => (
                       <button type="button" class="history-search-result" classList={{ "history-search-result-active": activeSearchIndex() === index() }}
-                        onClick={() => { setActiveSearchIndex(index()); setPreviewSearchMatch(match) }}>
+                        onClick={() => {
+                          setActiveSearchIndex(index())
+                          navigateSearchMatch(match)
+                        }}>
                         <span class="text-xs text-muted">{match.sessionId} · {match.messageId} · {t(`history.${match.partType}`)}</span>
                         <span>{match.preview}</span>
                       </button>

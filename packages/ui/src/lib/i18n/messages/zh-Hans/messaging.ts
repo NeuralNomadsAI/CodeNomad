@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "正在加载所选段落…",
+  "history.navigation.outlineUnavailable": "完整时间线暂不可用",
   "history.scope": "搜索范围",
   "history.session": "整个会话",
   "history.workspace": "整个工作区",

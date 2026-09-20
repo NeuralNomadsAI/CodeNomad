@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "Chargement du passage…",
+  "history.navigation.outlineUnavailable": "Timeline complète indisponible",
   "history.scope": "Périmètre de recherche",
   "history.session": "Session entière",
   "history.workspace": "Workspace entier",

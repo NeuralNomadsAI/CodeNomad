@@ -1,4 +1,5 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { NavigationTarget, NavigationWindowResult, OutlineResult } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
   PruneResult,
@@ -177,6 +178,16 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+      method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+    })
+  },
+  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal): Promise<OutlineResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+      method: "POST", body: JSON.stringify({ sessionID, cursor }), signal,
+    })
+  },
   querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
       method: "POST", body: JSON.stringify(input), signal,

@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "history.navigation.loading": "Abschnitt wird geladen…",
+  "history.navigation.outlineUnavailable": "Vollständige Zeitleiste nicht verfügbar",
   "history.scope": "Suchbereich",
   "history.session": "Gesamte Sitzung",
   "history.workspace": "Gesamter Arbeitsbereich",

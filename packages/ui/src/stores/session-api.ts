@@ -6,6 +6,7 @@ import {
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
+import { historyWindowCursor, historyWindowTarget, readHistoryWindow } from "./history-window"
 import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
@@ -113,7 +114,7 @@ const MESSAGE_STREAM_SCOPE = "message-stream"
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
 const MESSAGE_CURSOR_SEEK_LIMIT = 1000
-type MessageWindowIntent = "open" | "older" | "newer" | "latest" | "oldest"
+type MessageWindowIntent = "open" | "older" | "newer" | "latest" | "oldest" | "around"
 let nextSessionListRequestId = 0
 let nextAgentRequestId = 0
 let nextProviderRequestId = 0
@@ -1403,6 +1404,7 @@ function commitMessageWindow(
   sessionId: string,
   window: MessageWindowState,
   intent: MessageWindowIntent,
+  anchorMessageId?: string,
 ) {
   const store = messageStoreBus.getOrCreate(instanceId)
   store.setMessageWindow(sessionId, window)
@@ -1414,8 +1416,8 @@ function commitMessageWindow(
     atBottom: preservePosition ? existing?.atBottom ?? window.kind === "latest" : atBottom,
     scrollRatio: preservePosition ? existing?.scrollRatio : undefined,
     maxScrollTop: preservePosition ? existing?.maxScrollTop : undefined,
-    anchorKey: preservePosition ? existing?.anchorKey : undefined,
-    anchorOffset: preservePosition ? existing?.anchorOffset : undefined,
+    anchorKey: anchorMessageId ?? (preservePosition ? existing?.anchorKey : undefined),
+    anchorOffset: anchorMessageId ? 0 : preservePosition ? existing?.anchorOffset : undefined,
     followModeType: preservePosition ? existing?.followModeType : intent === "latest" ? "following" : "escaped",
     ...toWindowSnapshot(window),
   })
@@ -1437,6 +1439,7 @@ type MessageLoadOptions = {
   registerInvalidation?: (invalidate: () => void) => void
   signal?: AbortSignal
   revisionRetry?: number
+  anchorMessageId?: string
 }
 
 async function loadMessages(
@@ -1451,7 +1454,9 @@ async function loadMessages(
   const storedWindow = store.getMessageWindow(sessionId)
   const scrollSnapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
   const currentWindow = storedWindow ?? windowFromSnapshot(scrollSnapshot)
-  const planned = planMessageWindowLoad(currentWindow, intent)
+  const planned: ReturnType<typeof planMessageWindowLoad> = options?.anchorMessageId
+    ? { cursor: historyWindowCursor({ kind: "around", messageID: options.anchorMessageId }), next: currentWindow }
+    : planMessageWindowLoad(currentWindow, intent)
   if (!planned) return
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
@@ -1506,9 +1511,18 @@ async function loadMessages(
   try {
     log.info(`[HTTP] GET /session.${"messages"} for instance ${instanceId}`, { sessionId })
     let response: SessionMessagesResponse
+    let directWindow: MessageWindowState | undefined
     let resolvedNext = planned.next
     let responseAscending = planned.order === "asc" || planned.forward
-    if (planned.seekNewer) {
+    const lastResident = planned.seekNewer ? store.getSessionMessageIds(sessionId).at(-1) : undefined
+    const directTarget = historyWindowTarget(planned.cursor)
+      ?? (lastResident ? { kind: "after" as const, messageID: lastResident } : undefined)
+    if (directTarget) {
+      const direct = await readHistoryWindow(instanceId, sessionId, directTarget, options?.signal)
+      response = direct.response
+      directWindow = direct.window
+      responseAscending = true
+    } else if (planned.seekNewer) {
       const seen = new Set<string>()
       let cursor: string | undefined
       for (let page = 0; ; page += 1) {
@@ -1542,7 +1556,7 @@ async function loadMessages(
     // On opening/latest, seek the latest *visible* page rather than treating
     // a page consisting entirely of that hidden tail as an empty session.
     if (!isCurrent()) return
-    if ((intent === "open" || intent === "latest") && !planned.cursor && session.revert?.messageID) {
+    if (!directWindow && (intent === "open" || intent === "latest") && !planned.cursor && session.revert?.messageID) {
       const boundary = session.revert.messageID
       const seen = new Set<string>()
       while (response.data.length > 0 && response.data.every((message) => message.id >= boundary)) {
@@ -1566,11 +1580,11 @@ async function loadMessages(
     if (!isCurrent()) return
 
     const forwardPage = intent === "oldest" || planned.forward
-    const nextWindow = forwardPage
+    const nextWindow = directWindow ?? (forwardPage
       ? newerCursor
         ? { ...resolvedNext, olderCursor: undefined, newerCursors: [newerCursor] }
         : emptyLatestWindow()
-      : withOlderCursor(resolvedNext, olderCursor)
+      : withOlderCursor(resolvedNext, olderCursor))
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
@@ -1591,7 +1605,7 @@ async function loadMessages(
         // page. It still carries session metadata authority: late projections
         // must retain the boundary, and a cleared boundary must not linger.
         store.setSessionRevert(sessionId, sessions().get(instanceId)?.get(sessionId)?.revert ?? null)
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
+        commitMessageWindow(instanceId, sessionId, nextWindow, intent, options?.anchorMessageId)
         markSessionMessagesLoaded(instanceId, sessionId)
       }
     } else {
@@ -1630,7 +1644,7 @@ async function loadMessages(
         modelID = defaultModel.modelId
       }
 
-      setSessions((prev) => {
+      if (nextWindow.kind === "latest") setSessions((prev) => {
         if (!isCurrent()) return prev
         const next = new Map(prev)
         const nextInstanceSessions = next.get(instanceId)
@@ -1654,7 +1668,7 @@ async function loadMessages(
       if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent)
+        commitMessageWindow(instanceId, sessionId, nextWindow, intent, options?.anchorMessageId)
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
       }
@@ -1693,6 +1707,7 @@ async function loadMessages(
       registerInvalidation: options?.registerInvalidation,
       signal: options?.signal,
       revisionRetry: revisionRetry + 1,
+      anchorMessageId: options?.anchorMessageId,
     })
   }
 
@@ -1782,6 +1797,10 @@ function loadOldestMessageWindow(instanceId: string, sessionId: string, signal?:
   return enqueueMessageWindowLoad(instanceId, sessionId, "oldest", signal)
 }
 
+function loadMessageAnchor(instanceId: string, sessionId: string, messageId: string, signal?: AbortSignal): Promise<void> {
+  return loadMessages(instanceId, sessionId, { force: true, intent: "around", anchorMessageId: messageId, signal })
+}
+
 function hasMoreMessages(instanceId: string, sessionId: string): boolean {
   return Boolean(currentMessageWindow(instanceId, sessionId).olderCursor)
 }
@@ -1816,6 +1835,7 @@ export {
   loadNewerMessageWindow,
   loadLatestMessageWindow,
   loadOldestMessageWindow,
+  loadMessageAnchor,
   hasMoreMessages,
   getMessageNextCursor,
   isLatestMessageWindow,

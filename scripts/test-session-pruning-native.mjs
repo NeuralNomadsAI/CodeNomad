@@ -277,6 +277,8 @@ try {
   assert(target)
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
   await testSessionHistoryNative({ client, location, locationOptions, template: target })
+  const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
+  await testSessionNavigationNative({ client, location, locationOptions, template: target })
   if (ui) {
     const { testPruningUI } = await import("./test-session-pruning-ui.mjs")
     await testPruningUI({ client, connection, baseUrl, root, location, busy: async (sessionID) => {
