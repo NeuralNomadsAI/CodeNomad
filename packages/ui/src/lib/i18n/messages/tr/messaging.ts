@@ -1,5 +1,7 @@
 export const messagingMessages = {
   "transcriptFilters.title": "Mesaj içeriği",
+  "transcriptFilters.systemMessages": "Sistem mesajları",
+  "messageBlock.system.label": "Sistem",
   "transcriptFilters.description": "İçeriği gösterin veya gizleyin ve başlangıçta genişletilip genişletilmeyeceğini seçin. Bu ayarlar tüm konuşmalara uygulanır.",
   "transcriptFilters.show": "{name} göster",
   "transcriptFilters.hide": "{name} gizle",

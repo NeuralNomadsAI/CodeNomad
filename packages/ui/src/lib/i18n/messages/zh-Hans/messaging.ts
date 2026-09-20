@@ -1,5 +1,7 @@
 export const messagingMessages = {
   "transcriptFilters.title": "消息内容",
+  "transcriptFilters.systemMessages": "系统消息",
+  "messageBlock.system.label": "系统",
   "transcriptFilters.description": "显示或隐藏内容，并选择初始展开状态。这些设置适用于所有对话。",
   "transcriptFilters.show": "显示{name}",
   "transcriptFilters.hide": "隐藏{name}",

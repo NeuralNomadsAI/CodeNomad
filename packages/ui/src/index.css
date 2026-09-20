@@ -14,9 +14,13 @@
   padding: 0;
 }
 
+/* A default, not an override of component scrollbar visibility. */
+:where(:root body *) {
+  scrollbar-width: thin;
+}
+
 :root body * {
   scrollbar-color: var(--scrollbar-thumb) transparent !important;
-  scrollbar-width: thin;
 }
 
 :root body *::-webkit-scrollbar {

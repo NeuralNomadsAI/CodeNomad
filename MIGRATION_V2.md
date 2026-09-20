@@ -6,13 +6,20 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI pin the official `@opencode/client@2.0.4`; the bundled pruning plugin pins `@opencode/plugin@2.0.4`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates authenticated `/api/status` (`version`, `pid`, `urls`), falling back only on HTTP 404 to the earlier V2 `/api/health` contract (`healthy: true`, `version`, positive `pid`). Both probes share the endpoint, credentials, response-size bound and absolute deadline. There is no exact version gate. Discovery compatibility alone does not establish compatibility for the remaining client APIs. The older beta reviews below are historical.
+Server and UI pin the official `@opencode/client@2.0.11`; the bundled pruning plugin pins `@opencode/plugin@2.0.11`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates authenticated `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404. All probes share the endpoint, credentials, response-size bound and absolute deadline. Canonical `server.info()` follows the discovered route. There is no exact version gate. Discovery compatibility alone does not establish compatibility for the remaining client APIs. The older beta reviews below are historical.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
 The current cross-version issue register, published API-change timeline and connection-scoped compatibility architecture are maintained in [`dev-docs/OPENCODE_V2_COMPATIBILITY.md`](dev-docs/OPENCODE_V2_COMPATIBILITY.md). The server integration module adapts earlier V2 requests/responses for both the guarded UI proxy and direct server callers; native regression runs cross the pinned client with beta-19271, 2.0.3, 2.0.4 and 2.0.5. Discovery success alone does not certify an older runtime's conversation, event or pruning contract.
 
 ## Native V2 Adoption
+
+Qualification targets the latest published stable runtime. Maintain the
+[shared compatibility reference](dev-docs/OPENCODE_V2_COMPATIBILITY.md) in place;
+keep detailed acceptance results in PRs and CI logs.
+Each CodeNomad release sets its minimum supported OpenCode version to the latest
+stable available when that CodeNomad release is published. Record that minimum
+in the release notes and keep it fixed for that release.
 
 ### Stable 2.0.4 contract (PR #695)
 
