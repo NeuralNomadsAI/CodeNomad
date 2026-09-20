@@ -51,6 +51,10 @@ export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
         ...init,
         credentials: init?.credentials ?? "include",
       })
+      if (response.status === 426) {
+        const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
+        reportOpenCodeSetupRequired()
+      }
       if (response.status === 502) {
         const body = await response.clone().json().catch(() => undefined)
         if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {

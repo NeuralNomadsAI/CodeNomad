@@ -1,3 +1,5 @@
+import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
   PruneResult,
@@ -180,6 +182,31 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+      method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+    })
+  },
+  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+      method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
+    })
+  },
+  fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+      method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
+    })
+  },
+  querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
   pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
       method: "POST", body: JSON.stringify(input),
@@ -460,6 +487,12 @@ export const serverApi = {
   },
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
+  },
+  startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
+  },
+  reloadOpenCodeConfiguration(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ reload: true }) })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")

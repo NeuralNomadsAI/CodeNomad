@@ -25,6 +25,7 @@ import { sessions, setProviders, setSessions } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -33,6 +34,8 @@ const storageMethods = {
   fetchStateOwner: serverApi.fetchStateOwner,
   patchStateOwner: serverApi.patchStateOwner,
   pruneSessionMessage: serverApi.pruneSessionMessage,
+  querySessionHistory: serverApi.querySessionHistory,
+  pruneSessionHistory: serverApi.pruneSessionHistory,
 }
 let testUiState: Record<string, any> = {}
 
@@ -314,7 +317,9 @@ describe("plugin RPC message pruning", () => {
     for (const reason of Object.keys(reasons) as Array<keyof typeof reasons>) {
       serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
       await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), reasons[reason])
-      const failures = await executeSessionTechnicalPartDeletion({ instanceId, sessionId, messageIds: [messageId], toolCount: 1, reasoningCount: 0 })
+      serverApi.pruneSessionHistory = async () => ({ results: [{ messageID: messageId, result: { status: "blocked", reason } }] })
+      const failures = await executeSessionTechnicalPartDeletion({ instanceId, sessionId, generation: getOpenCodeInstanceGeneration(instanceId),
+        candidates: [{ messageID: messageId, revision: "a".repeat(64), toolCount: 1, reasoningCount: 0 }], skipped: 0, toolCount: 1, reasoningCount: 0 })
       assert.equal(failures.length, 1)
       assert.match(failures[0], reasons[reason])
       assert.ok(store.getMessage(messageId)?.parts["tool-1"])
@@ -590,7 +595,7 @@ describe("plugin RPC message pruning", () => {
     ])
   })
 
-  it("plans every completed response and re-reads it before session cleanup", async () => {
+  it("plans compact metadata and refuses changed content without downloading history", async () => {
     const text = (value: string) => ({ type: "text", text: value })
     const reasoning = { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } }
     const tool = {
@@ -623,25 +628,32 @@ describe("plugin RPC message pruning", () => {
       },
     })
 
+    serverApi.querySessionHistory = async (_owner, input) => {
+      assert.equal(input.purpose, "prune")
+      const message = messages.get(input.cursor ? "assistant-2" : "assistant-1")
+      return { status: "page", scanned: 1, tools: 0, reasoning: 0, skipped: 0, hits: [],
+        candidates: [{ messageID: message.id, revision: await contentRevision(message.content),
+          toolCount: input.cursor ? 1 : 0, reasoningCount: input.cursor ? 0 : 1 }], cursor: input.cursor ? null : "page-2" }
+    }
+    serverApi.pruneSessionHistory = async (_owner, input) => ({ results: await Promise.all(input.candidates.map(async candidate => ({
+      messageID: candidate.messageID,
+      result: candidate.revision !== await contentRevision(messages.get(candidate.messageID).content)
+        ? { status: "blocked" as const, reason: "conflict" as const }
+        : { status: "pruned" as const, messageID: candidate.messageID, revision: "a".repeat(64), removedCount: 1 },
+    }))) })
     const plan = await planSessionTechnicalPartDeletion(instanceId, sessionId)
     messages.get("assistant-1").content = [reasoning, text("updated")]
     const failed = await executeSessionTechnicalPartDeletion(plan)
 
-    assert.deepEqual(plan, {
-      instanceId,
-      sessionId,
-      toolCount: 1,
-      reasoningCount: 1,
-      messageIds: ["assistant-1", "assistant-2"],
-    })
-    assert.deepEqual(failed, [])
-    assert.deepEqual(updates, [
-      { sessionID: sessionId, messageID: "assistant-1", content: [text("updated")] },
-      { sessionID: sessionId, messageID: "assistant-2", content: [text("second")] },
-    ])
+    assert.equal(plan.toolCount, 1)
+    assert.equal(plan.reasoningCount, 1)
+    assert.deepEqual(plan.candidates.map(candidate => candidate.messageID), ["assistant-1", "assistant-2"])
+    assert.equal(failed.length, 1, "changed content after confirmation is refused")
+    assert.equal(page, 0, "no native message pages were downloaded")
+    assert.deepEqual(updates, [])
     const store = messageStoreBus.getOrCreate(instanceId)
-    assert.deepEqual(store.getMessage("assistant-1")?.partIds, ["assistant-1-text-0"])
-    assert.deepEqual(store.getMessage("assistant-2")?.partIds, ["assistant-2-text-0"])
+    assert.equal(store.getMessage("assistant-1"), undefined)
+    assert.equal(store.getMessage("assistant-2"), undefined)
   })
 })
 

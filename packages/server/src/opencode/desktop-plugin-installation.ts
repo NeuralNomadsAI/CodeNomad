@@ -4,18 +4,20 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { PRESENCE_INTERVAL_MS } from "./desktop-plugin-presence"
 import { isLegacyAutomationPlugin } from "./automation-plugin"
+import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 
 export interface DesktopPluginPaths {
   config: string
   data: string
-  // WSL uses Linux paths in the entry, UNC paths only for host filesystem I/O.
+  // WSL entries use Linux paths; filesystem I/O uses translated drive/UNC paths.
   nativeData?: string
+  resolveNativePath?: (directory: string, assertCurrent: () => void) => Promise<DesktopPluginNativePath>
 }
 export type DesktopPluginFeature = "session-pruning" | "automation"
 
 // Only parse our exact generated entry shape. Older backend leases remain
 // readable during migration, but new heartbeats must leave the watched root.
-function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths) {
+async function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths, assertCurrent: () => void) {
   if (!existing?.startsWith(marker)) return undefined
   const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\((.+)\)\n$/.exec(existing.slice(marker.length))
   if (!match) throw new Error("Invalid managed CodeNomad plugin entry")
@@ -39,9 +41,10 @@ function managedStorage(feature: DesktopPluginFeature, existing: string | undefi
     throw new Error("Invalid managed CodeNomad plugin storage")
   }
   if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
-  const uncRoot = /^(\\\\wsl(?:\.localhost|\$)\\[^\\]+)/i.exec(paths.config)?.[1]
-  if (!uncRoot || nativeDirectory.includes("\\")) throw new Error("Invalid managed WSL plugin storage")
-  return { directory: `${uncRoot}${nativeDirectory.replaceAll("/", "\\")}`, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
+  for (const directory of presenceDirectories) assertNativePluginPath(directory)
+  if (!paths.resolveNativePath) throw new Error("Missing managed WSL plugin path resolver")
+  const resolved = await paths.resolveNativePath(nativeDirectory, assertCurrent)
+  return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
 }
 
 function within(directory: string, root: string): boolean {
@@ -68,16 +71,17 @@ export async function installDesktopPluginPresence(
     && !(feature === "automation" && isLegacyAutomationPlugin(existing))) {
     throw new Error(`Existing plugin entry is not managed by CodeNomad: ${entry}`)
   }
-  const storage = managedStorage(feature, existing, marker, paths)
+  const storage = await managedStorage(feature, existing, marker, paths, assertCurrent)
+  assertCurrent()
   const retainStorage = storage && !within(storage.directory, paths.config)
   const directory = retainStorage ? storage.directory : path.join(paths.data, feature)
   const nativeDirectory = retainStorage ? storage.nativeDirectory : (paths.nativeData ? path.posix.join(paths.nativeData, feature) : directory)
   const leases = path.join(directory, "presence")
   const nativeLeases = paths.nativeData ? path.posix.join(nativeDirectory, "presence") : leases
   const plugin = path.join(directory, `${hash}.mjs`)
-  const nativeUrl = new URL("file:///")
-  nativeUrl.pathname = `${nativeDirectory}/${hash}.mjs`
-  const pluginUrl = paths.nativeData ? nativeUrl.href : pathToFileURL(plugin).href
+  const pluginUrl = paths.nativeData
+    ? pathToFileURL(`${nativeDirectory}/${hash}.mjs`, { windows: false }).href
+    : pathToFileURL(plugin).href
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
   const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)})\n`
   await mkdir(leases, { recursive: true })

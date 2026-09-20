@@ -17,7 +17,8 @@
     "codenomad": "dist/bin.js"
   },
   "scripts": {
-    "build": "npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run build:pruning && npm run build:automation",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && npm run build:ui && npm run prepare-ui && tsc -p tsconfig.json && node ./scripts/copy-auth-pages.mjs && npm run build:pruning && npm run build:automation",
     "build:pruning": "node ./scripts/build-session-pruning.mjs",
     "build:automation": "node ./scripts/build-automation-plugin.mjs",
     "build:ui": "npm run build --prefix ../ui",

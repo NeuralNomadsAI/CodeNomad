@@ -21,9 +21,8 @@ function hasPagination(message: SessionCache["message"]): message is SessionCach
 }
 
 export function createPruningReload(cache: SessionCache) {
-  // These are public @opencode/client/solid APIs. beta-19419's plugin Data
-  // declaration omits them, but its audited TUI host passes the original cache
-  // directly (f91c6d8b25, packages/tui/src/plugin/api.tsx: data: host.data).
+  // These are public @opencode/client/solid APIs. The TUI plugin's narrower
+  // Data declaration does not guarantee their presence on the supplied cache.
   // Fail explicitly if that capability changes; invalidate/sync alone is unsafe.
   const messages = cache.message
   if (!hasPagination(messages)) throw new Error("Unsupported TUI cache: pagination publication API is unavailable")
@@ -41,7 +40,7 @@ export function createPruningReload(cache: SessionCache) {
       try {
         do {
           state.dirty = false
-          // beta-19419 tracks pagination independently of invalidate/sync. Join
+          // The native cache tracks pagination independently of invalidate/sync. Join
           // the public loadMore publication before the authoritative read; an
           // older page could otherwise reinsert deleted blocks after sync.
           // With no `all` option, loadMore joins an active successful page rather

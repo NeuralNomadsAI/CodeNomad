@@ -138,6 +138,10 @@ jobs:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [minimum, latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -150,11 +154,16 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
-      - name: Qualify the pinned client against the latest stable runtime
+      - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
-          npm install --prefix $sandbox '@opencode/cli@latest' --ignore-scripts --no-audit --no-fund
+          $version = '${{ matrix.runtime }}'
+          if ($version -eq 'minimum') {
+            $version = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          npm install --prefix $sandbox "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $cli = Join-Path $sandbox 'node_modules/@opencode/cli-windows-x64/bin/opencode.exe'
           & $cli --version
@@ -399,6 +408,43 @@ jobs:
           packages/server/src/server/routes/binary-validation.test.ts
           "packages/server/src/opencode-update/*.test.ts"
           packages/ui/src/lib/launch-errors.test.ts
+
+      - name: Test first installation without system Node
+        timeout-minutes: 10
+        run: node scripts/test-opencode-install-native.mjs
+
+      - name: Test migration failure guards
+        run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
+
+      - name: Certify native history migration at the minimum and latest stable
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
+          $arch = node -p "process.arch"
+          $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
+          $seeds = @(
+            @{ scope = '@opencode'; version = '2.0.3'; command = 'opencode' },
+            @{ scope = '@opencode-ai'; version = '0.0.0-beta-19271'; command = 'opencode2' }
+          )
+          $oldClis = foreach ($entry in $seeds) {
+            $seed = Join-Path $env:RUNNER_TEMP "opencode-migration-seed-$($entry.version)"
+            npm install --prefix $seed "$($entry.scope)/cli@$($entry.version)" --ignore-scripts --no-audit --no-fund | Out-Host
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Join-Path $seed "node_modules/$($entry.scope)/cli-$platform-$arch/bin/$($entry.command)$extension"
+          }
+          $minimum = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($version in @($minimum, 'latest')) {
+            $target = Join-Path $env:RUNNER_TEMP "opencode-migration-$version"
+            npm install --prefix $target "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $cli = Join-Path $target "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+            foreach ($oldCli in $oldClis) {
+              node scripts/test-opencode-history-migration.mjs $oldCli $cli
+              if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            }
+          }
 
   # Exercise the window persistence regressions on the architecture reported in
   # #676, independently of the Linux server gate. Packaging alone cannot test them.

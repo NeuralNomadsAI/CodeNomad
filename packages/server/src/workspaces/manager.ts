@@ -636,27 +636,7 @@ export class WorkspaceManager {
       const launch = buildServiceLaunchSpec(resolvedBinaryPath, {
         platform: this.options.platform,
       })
-      const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
-      const startupEnvironment = launch.kind === "wsl"
-        ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
-        : this.serviceStartupEnvironment()
-      const serviceOptions: OpenCodeSharedServiceOptions = {
-        kind: "lifecycle",
-        identity: launch.kind === "host"
-          ? hostOpenCodeServiceIdentity({
-              binary: launch.binary,
-              platform: launch.platform,
-              startupEnvironment,
-            })
-          : `wsl:${launch.distro.trim().toLowerCase()}:${path.posix.normalize(launch.binary)}`
-            + `:env:${startupEnvironmentHash(startupEnvironment, "linux")}`,
-        lifecycle: launch.kind === "host"
-          ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
-          : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
-        prepareDesktopPlugins: this.options.prepareDesktopPlugins
-          ? (connection, deadlineAt) => this.options.prepareDesktopPlugins!(launch, connection, deadlineAt)
-          : undefined,
-      }
+      const serviceOptions = await this.setupServiceOptions(resolvedBinaryPath, launchDeadlineAt)
       state.serviceOptions = serviceOptions
       this.throwIfCancelled(record)
       record.wslDistro = launch.kind === "wsl" ? launch.distro : undefined
@@ -983,6 +963,56 @@ export class WorkspaceManager {
       return Promise.resolve(this.options.wslHostDirectoryResolver(directory, distro, timeoutMs))
     }
     return resolveWslHostDirectory(directory, distro, undefined, timeoutMs)
+  }
+
+  async setupServiceOptions(binary: string, deadlineAt = Date.now() + DEFAULT_LAUNCH_TIMEOUT_MS): Promise<OpenCodeSharedServiceOptions> {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    const timeoutMs = Math.max(1, deadlineAt - this.now())
+    const startupEnvironment = launch.kind === "wsl"
+      ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, deadlineAt)
+      : this.serviceStartupEnvironment()
+    return {
+      kind: "lifecycle",
+      identity: launch.kind === "host"
+        ? hostOpenCodeServiceIdentity({ binary: launch.binary, platform: launch.platform, startupEnvironment })
+        : `wsl:${launch.distro.trim().toLowerCase()}:${path.posix.normalize(launch.binary)}:env:${startupEnvironmentHash(startupEnvironment, "linux")}`,
+      lifecycle: launch.kind === "host"
+        ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
+        : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
+      prepareDesktopPlugins: this.options.prepareDesktopPlugins
+        ? (connection, deadline) => this.options.prepareDesktopPlugins!(launch, connection, deadline) : undefined,
+    }
+  }
+
+  assertSetupExecutionHost(binary: string): void {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    for (const record of this.workspaces.values()) {
+      const distro = launch.kind === "wsl" ? launch.distro.toLowerCase() : undefined
+      if (record.wslDistro?.toLowerCase() !== distro) throw new Error("Close workspaces before changing the OpenCode execution host")
+    }
+  }
+
+  async reconnectAfterSetup(binary: string): Promise<void> {
+    this.assertSetupExecutionHost(binary)
+    const options = await this.setupServiceOptions(binary)
+    // This disposes client authority only; it never stops the shared daemon.
+    await this.sharedService.shutdown()
+    for (const record of this.workspaces.values()) {
+      record[WORKSPACE_STATE].serviceOptions = options
+      record.binaryId = binary
+    }
+    this.serviceAuthorization = (await this.sharedService.headers(options))?.authorization
+  }
+
+  async reloadConfigurationAfterSetup(binary: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent()
+    if (!this.sharedService.acquire) throw new Error("OpenCode connection acquisition unavailable")
+    await this.reconnectAfterSetup(binary)
+    const connection = await this.sharedService.acquire()
+    assertCurrent()
+    connection.assertCurrent()
+    await connection.client.location.reload({ signal: AbortSignal.timeout(30_000) })
+    connection.assertCurrent()
   }
 
   private createWslServiceLifecycle(

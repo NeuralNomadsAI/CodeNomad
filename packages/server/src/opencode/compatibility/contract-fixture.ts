@@ -15,6 +15,8 @@ export const legacyContractFixture = {
 
 export const modernContractFixture = {
   paths: {
+    "/api/location/reload": { post: {} },
+    "/api/session/{sessionID}/environment": { put: { requestBody: { content: { "application/json": { schema: { properties: { variables: { type: "object", additionalProperties: { type: "string" } } } } } } } } },
     "/api/session/{sessionID}": { patch: {} },
     "/api/form": { get: {} },
     "/api/session/{sessionID}/form/{formID}": { delete: {} },

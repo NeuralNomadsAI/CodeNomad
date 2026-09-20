@@ -263,7 +263,7 @@ describe("message history pagination", () => {
     assert.ok(updater.indexOf("invalidateMessageHistoryTraversal") < updater.indexOf("setSearchQuery(query)"))
     assert.match(source, /onInput=\{\(event\) => \{[\s\S]{0,200}updateSearchQuery\(event\.currentTarget\.value\)/)
     assert.match(source, /onCleanup\(\(\) => \{\s*searchLocatorAuthority\.reset\(\)\s*invalidateMessageHistoryTraversal/)
-    assert.match(source, /isCurrent: \(\) => searchLocatorAuthority\.isCurrent\(locatorAuthority\)/)
+    assert.match(source, /if \(searchLocatorAuthority\.isCurrent\(locatorAuthority\) && activeSearchMatch\(\)\?\.id === match\.id\)/)
   })
 
   it("reconciles resident additions and updates without treating eviction as deletion", () => {
@@ -309,7 +309,7 @@ describe("message history pagination", () => {
     assert.equal(next[1].preview, "after")
   })
 
-  it("batches match and active-index replacement before locator effects run", () => {
+  it("batches result-page and active-index replacement before locator effects run", () => {
     createRoot((dispose) => {
       const [matches, setMatches] = createSignal(["old", "middle", "latest"])
       const [activeIndex, setActiveIndex] = createSignal(1)
@@ -325,7 +325,7 @@ describe("message history pagination", () => {
 
       assert.deepEqual(locatorCalls, ["middle", "middle"])
       const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
-      assert.match(source, /batch\(\(\) => \{\s*setSearchMatches\(next\)\s*setActiveSearchIndex\(nextActiveIndex\)/)
+      assert.match(source, /batch\(\(\) => \{\s*setSearchMatches\(page\.hits\.map[\s\S]*?setActiveSearchIndex\(0\)[\s\S]*?setIsSearchPending\(false\)\s*\}\)/)
       dispose()
     })
   })

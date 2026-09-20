@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { evacuateWorktreeSessions, WorktreeDeletionFence } from "./worktree-session-evacuation"
-import { readLocationContext } from "../opencode/compatibility/location"
+import { readInternalLocationContext } from "./__tests__/location-context-fixture"
 
 function session(id: string, directory: string, parentID?: string): SessionInfo {
   return { id, parentID, projectID: "project", location: { directory }, cost: 0, tokens: {}, time: { created: 1, updated: 1 } } as SessionInfo
@@ -153,7 +153,7 @@ describe("evacuateWorktreeSessions", () => {
         },
         active: async () => ({}),
         move: async ({ directory }: { directory: string }, options?: { headers: Record<string, string> }) => {
-          const location = readLocationContext(options?.headers["x-codenomad-location"], "legacy") ?? { directory }
+          const location = readInternalLocationContext(options?.headers["x-codenomad-location"]) ?? { directory }
           moves.push(location)
           current.location = location as typeof original
         },
@@ -377,7 +377,7 @@ describe("evacuateWorktreeSessions", () => {
         list: async () => ({ data: [current], cursor: {} }),
         active: async () => ({}),
         move: async ({ directory }: { directory: string }, options?: { headers: Record<string, string> }) => {
-          const resolved = readLocationContext(options?.headers["x-codenomad-location"], "legacy")!
+          const resolved = readInternalLocationContext(options?.headers["x-codenomad-location"])!
           assert.equal(resolved.directory, directory)
           moves.push(resolved)
           current.location = { directory: resolved.directory, workspaceID: resolved.workspaceID! }
