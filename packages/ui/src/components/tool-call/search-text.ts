@@ -1,10 +1,10 @@
 import type { ToolSearchTextContext } from "./types"
 import {
-  extractDiffPayload,
   formatUnknown,
   isToolStateCompleted,
   isToolStateError,
   isToolStateRunning,
+  readFirstFileDiff,
   readToolStatePayload,
 } from "./utils"
 
@@ -100,7 +100,7 @@ export function getDiffToolSearchText(context: ToolSearchTextContext): string[] 
   appendString(values, input.filePath)
   appendString(values, input.path)
   appendString(values, metadata.diff)
-  appendString(values, extractDiffPayload(context.toolName, context.toolState)?.diffText)
+  appendString(values, readFirstFileDiff(metadata)?.patch)
   appendFormatted(values, output)
   appendFormatted(values, metadata.output)
   appendToolErrorText(values, context)

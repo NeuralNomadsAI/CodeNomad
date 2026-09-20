@@ -150,7 +150,7 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
 
 // OpenCode 2.x edit tool metadata: `metadata.files` is a list of FileDiff entries
 // `{ file, patch, additions, deletions, status }` rather than a `metadata.diff` string.
-function readFirstFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
+export function readFirstFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
   const files = metadata.files
   if (!Array.isArray(files) || files.length === 0) return null
   const first = files[0]
