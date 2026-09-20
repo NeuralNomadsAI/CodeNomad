@@ -405,7 +405,7 @@ jobs:
         run: node scripts/test-opencode-install-native.mjs
 
       - name: Test migration failure guards
-        run: node --test scripts/native-fixture-guards.test.mjs
+        run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
 
       - name: Certify native history migration at the minimum and latest stable
         timeout-minutes: 20
