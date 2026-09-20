@@ -294,6 +294,7 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/opencode-data.test.ts
+          packages/ui/src/stores/opencode-data-settlement.test.ts
           packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
