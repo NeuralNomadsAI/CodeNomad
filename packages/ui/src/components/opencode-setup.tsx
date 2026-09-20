@@ -1,5 +1,6 @@
 import { createEffect, onCleanup, onMount, Show, untrack } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
+import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { sseManager } from "../lib/sse-manager"
@@ -35,9 +36,9 @@ export default function OpenCodeSetup() {
   })
   return <>
     <Show when={needsOpenCodeSetup() && !openCodeSetupOpen()}>
-      <div class="fixed bottom-4 right-4 z-50 border border-base bg-surface-secondary p-3" role="status">
+      <Portal><div class="fixed bottom-4 right-4 z-50 border border-base bg-surface-secondary p-3" role="status">
         <button class="selector-button" onClick={() => openOpenCodeSetup()}>{t("settings.opencode.setup.required")}</button>
-      </div>
+      </div></Portal>
     </Show>
     <Dialog open={openCodeSetupOpen()} onOpenChange={setOpenCodeSetupOpen}>
       <Dialog.Portal><Dialog.Overlay class="modal-overlay" />

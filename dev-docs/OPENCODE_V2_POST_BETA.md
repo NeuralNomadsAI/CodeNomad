@@ -252,6 +252,10 @@ synthetic seed. Keep the compatibility audit in
 - Native 2.0.3→2.0.7 migration passed with 215-message histories, distinct old
   identities, forks, provider configuration/connections and same-version Form
   durability controls. Evidence: `codenomad-history-migration-IoFhtY`.
+- Native beta-19271→2.0.7 migration also passed on Windows; both beta-19271 and
+  2.0.3→2.0.7 passed under native Linux/WSL. Exact CLI archives were verified,
+  original seed hashes stayed unchanged, and isolated processes were cleaned up.
+  Evidence: `pr696-native-207-210/MIGRATION-MINIMUM207.md`.
 - Seven browser setup scenarios passed. Rendered captures distinguish minimum
   2.0.7 from recommendation 2.0.11 and keep 2.0.10 usable with optional update.
   Evidence: approved temporary `opencode/696-rigorous-browser/`.
@@ -264,5 +268,10 @@ synthetic seed. Keep the compatibility audit in
   also approved the compatible-daemon fixture and generated-output clean step.
 - Server builds clean generated `dist` before compilation; desktop acceptance
   checks that deleted adapters/installers do not survive incremental packaging.
+- Rebuilt Tauri acceptance found a recovery-layer regression when opening a
+  folder: the loading overlay intercepted the persistent setup button after
+  dismissal. The recovery entry now mounts through a body portal. The real-style
+  browser regression uses normal pointer clicks with the folder overlay present;
+  all seven setup scenarios and UI typecheck passed after correction.
 - Rebuilt-host acceptance and final remote CI are recorded in the PR after
   completion; earlier green tests are not substituted for those results.

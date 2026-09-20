@@ -62,13 +62,18 @@ test("missing installation and incompatible daemon expose different actions; res
   finally { await page.close() }
 })
 
-test("closing required-update screen leaves a persistent recovery entry", async () => {
+test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
   await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.6",
     latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
+    await page.evaluate(() => {
+      const overlay = document.createElement("div")
+      overlay.className = "folder-loading-overlay"
+      document.getElementById("root")!.append(overlay)
+    })
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-setup-required.png") })
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
