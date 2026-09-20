@@ -26,6 +26,7 @@ interface CacheRecord {
   error?: unknown
   inFlight?: Promise<void>
   trailing: boolean
+  mutationTail: Promise<void>
 }
 
 interface PluginControlsApi {
@@ -61,7 +62,10 @@ export class PluginControlsCache {
     enabled: boolean,
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
-    try {
+    const mutate = async () => {
+      if (this.records.get(record.key) !== record) {
+        throw new Error("Plugin control location is no longer active")
+      }
       const response = await this.api.setPluginActivation(instanceId, { location, pluginId, scope, enabled })
       if (this.records.get(record.key) !== record) return response
       // Fence any passive read that started before the mutation became durable.
@@ -73,11 +77,12 @@ export class PluginControlsCache {
       if (record.inFlight) record.trailing = true
       this.publish(record)
       return response
-    } catch (error) {
-      // The caller presents mutation failures. Keep this field reserved for
-      // passive read failures so a save error is not mislabeled as stale data.
-      throw error
     }
+    const result = record.mutationTail.then(mutate, mutate)
+    // Keep writes for one location ordered even when an earlier write fails.
+    // The caller presents mutation failures; passive read errors remain separate.
+    record.mutationTail = result.then(() => undefined, () => undefined)
+    return result
   }
 
   invalidateInstance(instanceId: string): void {
@@ -124,6 +129,7 @@ export class PluginControlsCache {
       loading: false,
       refreshing: false,
       trailing: false,
+      mutationTail: Promise.resolve(),
     }
     this.records.set(key, record)
     return record

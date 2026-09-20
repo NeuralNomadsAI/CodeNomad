@@ -69,21 +69,25 @@ already active. The mutation response publishes the durable configured state;
 `config.updated` and `plugin.updated` trigger fenced, coalesced refreshes until
 runtime state catches up.
 
-## Supported runtime families
+## Runtime qualification
 
 The feature uses only `config.get` and `plugin.list`, which are already consumed
 through CodeNomad's connection-scoped compatibility transport.
 
-| Runtime family | Evidence | Activation write |
-| --- | --- | --- |
-| `0.0.0-beta-19271` | Installed historical declarations contain location-scoped `config.get`, `plugin.list`, `ConfigEntry.plugins`, and plugin source/state metadata. Legacy workspace identity is preserved by the location context adapter. | Local JSONC rule; no legacy mutation endpoint. |
-| `2.0.3` | Historical stable declarations expose the same read shapes and ordered plugin entries. | Local JSONC rule. |
-| `2.0.4` | Pinned server/UI declarations and official V2 plugin/config documentation. | Local JSONC rule. |
-| `2.0.5` | Modern contract family with native evidence recorded in `OPENCODE_V2_COMPATIBILITY.md`. | Local JSONC rule. |
+The server, UI, and bundled plugin currently pin `2.0.11` together. Its
+declarations provide the location-scoped reads, ordered `ConfigEntry.plugins`,
+and plugin source/state metadata used here. CI also qualifies that pinned client
+against the latest stable runtime through the shared native compatibility
+fixture. The activation write remains a local JSONC rule; no runtime-specific
+mutation endpoint is used.
 
-There is no release-number-only gate. Unknown runtimes must first pass the
-existing authenticated OpenAPI contract recognition. Read or discovery
-failures leave controls unavailable and never fall back to guessed paths.
+Historical beta and stable contract-family results remain recorded in
+`OPENCODE_V2_COMPATIBILITY.md` as compatibility-adapter evidence, not as a
+separate support promise for this feature. Release support follows that
+document's current qualification policy. There is no release-number-only gate:
+unknown runtimes must first pass the existing authenticated OpenAPI contract
+recognition. Read or discovery failures leave controls unavailable and never
+fall back to guessed paths.
 
 ## Validation
 

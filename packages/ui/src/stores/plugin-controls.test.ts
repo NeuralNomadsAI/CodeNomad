@@ -113,6 +113,39 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "retained")
     assert.equal(cache.state("instance", location).error, undefined)
   })
+
+  it("serializes mutations for one location so older responses cannot replace newer state", async () => {
+    const first = deferred<PluginControlsSnapshot>()
+    const second = deferred<PluginControlsSnapshot>()
+    let writes = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => snapshot("initial"),
+      setPluginActivation: async (_instanceId, request) => ({
+        snapshot: await (writes++ === 0 ? first.promise : second.promise),
+        rule: request.enabled ? request.pluginId : `-${request.pluginId}`,
+        target: { scope: request.scope, path: "/repo/.opencode/opencode.jsonc", exists: true },
+        changed: true,
+        reloadPending: true,
+      }),
+    })
+    const location = { directory: "/repo" }
+    await cache.load("instance", location)
+
+    const disable = cache.mutate("instance", location, "first", "project", false)
+    const enable = cache.mutate("instance", location, "second", "project", true)
+    await tick()
+    assert.equal(writes, 1, "the second write waits for the first response")
+
+    first.resolve(snapshot("first", "disabled"))
+    await disable
+    await tick()
+    assert.equal(writes, 2)
+    second.resolve(snapshot("second", "enabled"))
+    await enable
+
+    assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "second")
+    assert.equal(cache.state("instance", location).snapshot?.controls[0]?.effective, "enabled")
+  })
 })
 
 function snapshot(id: string, effective: "default" | "enabled" | "disabled" = "default"): PluginControlsSnapshot {
