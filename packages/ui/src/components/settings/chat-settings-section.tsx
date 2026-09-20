@@ -19,6 +19,7 @@ const toolExpansionPresetOptions: ToolCallExpansionPreset[] = ["minimal", "balan
 
 const transcriptDetailPresets = {
   minimal: {
+    systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "collapsed",
     toolInputsVisibility: "hidden",
@@ -26,6 +27,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   balanced: {
+    systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
@@ -33,6 +35,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   detailed: {
+    systemMessagesVisibility: "collapsed",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
@@ -40,6 +43,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "expanded",
   },
   everything: {
+    systemMessagesVisibility: "expanded",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "expanded",
@@ -52,6 +56,7 @@ const transcriptDetailPresets = {
     Preferences,
     | "showThinkingBlocks"
     | "diagnosticsExpansion"
+    | "systemMessagesVisibility"
     | "toolInputsVisibility"
     | "showUsageMetrics"
     | "usageMetricsExpansion"
@@ -81,6 +86,7 @@ export const ChatSettingsSection: Component = () => {
     const expectedThinking = detail.showThinkingBlocks ? THINKING_EXPANSION_PRESETS[preset] : "hidden"
     return currentThinkingMode() === expectedThinking &&
       current.diagnosticsExpansion === detail.diagnosticsExpansion &&
+      current.systemMessagesVisibility === detail.systemMessagesVisibility &&
       current.toolInputsVisibility === detail.toolInputsVisibility &&
       current.showUsageMetrics === detail.showUsageMetrics &&
       current.usageMetricsExpansion === detail.usageMetricsExpansion

@@ -1,6 +1,7 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
+import SystemMessage from "./system-message"
 import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
@@ -558,7 +559,8 @@ type CompactionDisplayItem = {
   partId: string
 }
 
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem
+type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem
 
 interface MessageDisplayBlock {
   record: MessageRecord
@@ -574,6 +576,7 @@ interface MessageBlockProps {
   showThinking: () => boolean
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
+  systemMessagesVisibility?: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -646,6 +649,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.showThinking() ? 1 : 0,
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
+      props.systemMessagesVisibility?.() ?? "hidden",
       props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
@@ -786,6 +790,13 @@ export default function MessageBlock(props: MessageBlockProps) {
 
       const part = group.part
       const partIndex = orderedParts.indexOf(part)
+      if (part.type === "system") {
+        flushContent()
+        if (props.systemMessagesVisibility?.() && props.systemMessagesVisibility() !== "hidden") {
+          items.push({ type: "system", key: `${current.id}:system`, part })
+        }
+        return
+      }
       if (part.type === "tool") {
         flushContent()
         const item = toolItem(part as ToolCallPart)
@@ -1003,6 +1014,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                     messageId={props.messageId}
                     onContentRendered={props.onContentRendered}
                   />
+                </Match>
+                <Match when={item().type === "system"}>
+                  <SystemMessage part={(item() as SystemDisplayItem).part} visibility={props.systemMessagesVisibility?.() ?? "hidden"}
+                    activeSearchMatch={isActiveSearchResult()} />
                 </Match>
                 <Match when={item().type === "compaction"}>
                   <CompactionCard
