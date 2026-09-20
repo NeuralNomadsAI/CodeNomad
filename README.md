@@ -183,7 +183,7 @@ See full workaround in the original README.
 
 ## Community
 
-[![Star History](https://star-history.dera.page/svg?repos=NeuralNomadsAI/CodeNomad&type=Date)](https://star-history.dera.page/#NeuralNomadsAI/CodeNomad&Date)
+[![GitHub stars](https://img.shields.io/github/stars/NeuralNomadsAI/CodeNomad?style=flat-square&label=GitHub%20stars)](https://github.com/NeuralNomadsAI/CodeNomad/stargazers)
 
 ---
 
