@@ -2000,7 +2000,6 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
 const USAGE_EVENT_TYPES = new Set<string>([
   "session.step.ended",
   "session.step.failed",
-  "session.usage.updated",
 ])
 
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
@@ -2049,6 +2048,7 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
         if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
       }
+      updateSessionInfo(instanceId, sessionId)
     }
   }
   const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, project, (next) => {

@@ -57,6 +57,7 @@ import {
   getSessionHasMore,
   getSessionNextCursor,
   getSessionListIds,
+  sessionInfoByInstance,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
@@ -1460,7 +1461,10 @@ async function loadMessages(
   if (!planned) return
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
-  if (alreadyLoaded && !force) return
+  if (alreadyLoaded && !force) {
+    if (!sessionInfoByInstance().get(instanceId)?.has(sessionId)) updateSessionInfo(instanceId, sessionId)
+    return
+  }
 
   const previousError = getSessionMessagesLoadError(instanceId, sessionId)
   if (previousError && !force) return

@@ -313,6 +313,7 @@ jobs:
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
+          packages/ui/src/stores/session-usage-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

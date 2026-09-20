@@ -40,7 +40,16 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
   let contextAvailableFromPrevious = false
   let isSubscriptionModel = false
 
-  if (!hasUsageEntries && previousInfo) {
+  // Message-derived totals win when the transcript is loaded, since they drop
+  // after a revert while the server's session counters only ever grow. The
+  // session record fills in for usage-only events and unloaded transcripts.
+  if (!hasUsageEntries && session.tokens) {
+    totalInputTokens = session.tokens.input
+    totalOutputTokens = session.tokens.output
+    totalReasoningTokens = session.tokens.reasoning
+    totalCost = session.cost ?? 0
+    actualUsageTokens = previousInfo?.actualUsageTokens ?? 0
+  } else if (!hasUsageEntries && previousInfo) {
     totalInputTokens = previousInfo.inputTokens
     totalOutputTokens = previousInfo.outputTokens
     totalReasoningTokens = previousInfo.reasoningTokens
