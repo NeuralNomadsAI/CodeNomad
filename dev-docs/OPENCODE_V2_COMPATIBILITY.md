@@ -5,7 +5,7 @@
 
 ## Decision summary
 
-Future retirement of the earlier-runtime adapter is tracked separately in [OpenCode V2 post-beta preparation](OPENCODE_V2_POST_BETA.md). That draft preserves this register as the current support/evidence baseline and selects no new minimum runtime yet.
+Future retirement of the earlier-runtime adapter and the shared installation/required-update experience are tracked in the [OpenCode V2 stable-runtime transition plan](OPENCODE_V2_POST_BETA.md). That maintained plan preserves this register as the current support/evidence baseline and selects no new minimum runtime yet.
 
 At `bcfe4d24`, CodeNomad had a working modern-client path and backward-compatible service discovery, **not a complete backward-compatible V2 integration**. The follow-up change keeps that discovery fix and addresses the remaining issues through one connection-scoped integration module and one cross-runtime acceptance matrix.
 

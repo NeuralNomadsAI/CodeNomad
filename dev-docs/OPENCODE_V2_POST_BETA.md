@@ -1,22 +1,24 @@
-# OpenCode V2 post-beta preparation
+# OpenCode V2 stable-runtime transition and installation plan
 
-**Status:** draft preparation; runtime support is unchanged.
+**Status:** maintained implementation plan; this documentation increment is mergeable independently of the implementation gates. Runtime support is unchanged.
 **Starting point:** [PR #695](https://github.com/NeuralNomadsAI/CodeNomad/pull/695), merged into `dev` at `aa51cbb9` on 2026-09-16.
 **Related register:** [current compatibility contracts and evidence](OPENCODE_V2_COMPATIBILITY.md).
 
 ## Objective
 
-Prepare a small, deliberate retirement of earlier V2 wire contracts when OpenCode leaves beta. Continue ordinary CodeNomad development in parallel, merging compatible preparation in small increments. Keep the eventual support-policy change and deletion reviewable together.
+Track the transition to published stable OpenCode V2 contracts, a shared installation/update experience, and deliberate retirement of earlier wire contracts. Land this plan, then maintain it through focused implementation PRs. Keep the eventual support-policy change and adapter deletion reviewable together.
 
 Three versions must remain distinct:
 
-| Version | Current baseline | Post-beta decision |
+| Version | Current baseline | Transition decision |
 | --- | --- | --- |
 | CodeNomad dependencies | Exact `@opencode/client@2.0.4` and `@opencode/plugin@2.0.4` | Select reviewed dependency versions and update their lockfile together. |
 | Connected OpenCode daemon | Native acceptance on beta-19271, 2.0.3, 2.0.4 and 2.0.5 | Choose an explicit minimum runtime and supported release range. |
 | CodeNomad release | Support established by #695 | Announce the release that adopts the new minimum. |
 
-No minimum or retirement date is selected yet. A numeric `2.0.x` version or an npm dist-tag is not sufficient evidence of the product's exit from beta. Record the upstream announcement, exact packages and reviewed contracts before making that decision. A newer CLI installed on disk also does not prove the already-running daemon was upgraded.
+OpenCode V2 is available on the stable `latest` channel; beta exit is no longer a pending gate. Upstream's [availability announcement commit](https://github.com/anomalyco/opencode/commit/7b7a67080e) and the published `@opencode/cli`, `@opencode/client` and `@opencode/plugin` 2.0.10 packages (checked on 2026-09-19) establish that publication status. They do not establish API immutability or certify every runtime behavior.
+
+No minimum or retirement date is selected yet: choose these from reviewed contracts and historical-data acceptance. A newer CLI installed on disk also does not prove the already-running daemon was upgraded. [PR #715](https://github.com/NeuralNomadsAI/CodeNomad/pull/715) already moved the updater to the stable `@opencode/cli` package; first installation and the shared setup screen below remain implementation work.
 
 ## Permanent interface
 
@@ -49,7 +51,7 @@ Paths below are relative to the repository root. This is a working deletion map,
 | `packages/server/src/opencode/compatibility/requests.ts` | Legacy route, method and payload translations | Verify all consumed operations against the selected minimum and latest validated runtime before deletion. |
 | `packages/server/src/opencode/compatibility/transport.ts` | Legacy status-envelope and HTTP inbox timestamp conversions | Preserve authentication, lifetime/cancellation, origin checks, diagnostics and modern forwarding. Native SSE inbox timestamps remain a distinct schema. |
 | `packages/server/src/opencode/compatibility/events.ts` | Legacy permission-event renaming | Prove supported runtimes emit the canonical event; preserve durable metadata and reconnect reconciliation. |
-| `packages/server/src/workspaces/opencode-cli-service.ts` | `/api/health` fallback | Remove only when every supported daemon exposes authenticated `/api/status`; retain all discovery error/deadline guards. |
+| `packages/server/src/workspaces/opencode-cli-service.ts` | Older discovery routes | Current discovery tries authenticated `/api/status`, `/api/health`, then `/api/info`, advancing only on 404. Retire a route only against the selected supported contracts; retain authentication, response bounds and shared deadlines. |
 | `packages/server/src/opencode/compatibility/location.ts` and `proxy-locations.ts` | Legacy wire selectors and private-header reconstruction | Prove historical location identity remains representable and authorized. Keep import/cursor validation and global Forms scope. |
 | `packages/ui/src/stores/request-locations.ts` and its callers | Legacy request options/private context | Review Forms, metadata/provider credentials, session creation/moves and Shell calls together. Do not collapse cache keys while distinct identities remain observable. |
 | `packages/ui/src/stores/instance-invalidation.ts` and `session-pruning-events.ts` | Legacy-only catalog/content event branches | Keep current authoritative refresh, pruning events and in-flight invalidation coverage. |
@@ -60,12 +62,13 @@ Keep the original compatibility audit as historical evidence. Record which predi
 
 ## Work packages
 
-### P0 — Establish the preparation register (this increment)
+### P0 — Establish and maintain the transition register (this increment)
 
 - [x] Base the draft on the merged compatibility implementation.
 - [x] Distinguish dependency versions, daemon support and the CodeNomad release decision.
 - [x] Map retirement candidates and permanent guarantees to current files.
 - [x] Define historical-data acceptance, support-policy decisions and release gates below.
+- [x] Record stable publication and specify one setup experience for missing and below-minimum OpenCode, including the bundled-Node installation proposal.
 
 This increment adds documentation only. All implementation and native-validation checkboxes below are deliberately open.
 
@@ -75,10 +78,34 @@ This increment adds documentation only. All implementation and native-validation
 - [ ] Define the future minimum, supported release range and treatment of development/unlisted versions from publication evidence.
 - [ ] Evaluate the actual authenticated daemon identity before functional calls or mutations, for both proxy and direct callers; re-evaluate on connection replacement.
 - [ ] Surface a structured unsupported-runtime error with actual/required versions and an upgrade action explained in every UI locale. Authentication/transport errors retain their own classification.
+- [ ] Use the shared setup screen in P1a for missing binaries and below-minimum runtimes; gate affected connections using backend policy rather than a UI-only version comparison.
 - [ ] Verify below-minimum refusal, unknown-contract refusal, same-port replacement, independent cancellation and absence of speculative calls/retries.
 - [ ] Review plugin provisioning order so rejecting an unsupported runtime does not bypass the existing explicit-request-only pruning rule or daemon ownership policy.
 
 Do not add an inactive universal capability framework or a second client interface. The first implementation should keep the existing profile resolver and consumer seam, with the smallest support-policy decision needed by real callers. CodeNomad does not silently upgrade, restart or stop the shared daemon.
+
+### P1a — Shared installation and required-update experience
+
+**Proposed behavior, not yet implemented.** Use one setup screen with state-specific copy and actions, reachable from startup, connection recovery and Preferences. A persistent connection notice opens this same screen when a running application detects an unsupported replacement daemon; deduplicate it per execution target and connection generation. Block affected OpenCode operations, while keeping settings and unrelated supported connections accessible.
+
+| Detected state | Screen and action |
+| --- | --- |
+| OpenCode command missing | Explain the selected host or WSL distribution; offer **Install and start OpenCode**, choose an existing executable, and retry detection. |
+| Installed CLI or authenticated daemon below CodeNomad's minimum | Show installed CLI version, running daemon version when available, minimum required version and proposed target; offer **Update OpenCode** using the same installer. |
+| Supported daemon, newer optional release available | Non-blocking update notice using the same screen; being behind `latest` is not itself unsupported. |
+| Installed CLI is current but the running daemon is too old | Explain that installation succeeded but the shared service still needs an explicit restart; do not report connection readiness yet. |
+| Authentication, transport or unrecognized-contract failure | Preserve that diagnosis and provide retry/details; do not mislabel it as a missing installation or assume upgrading fixes it. |
+
+- [ ] Reuse `packages/server/src/opencode-update/service.ts` for installation and upgrade. Its package-manager command already performs an install, but status/upgrade currently require a successful existing-binary probe. Add a genuine missing state, not a fabricated version or an install attempt after any probe error.
+- [ ] Resolve the stable channel to an exact policy-compatible target before installation; re-resolve the executable and verify its actual version afterward. Coordinate concurrent requests per installation target and bound execution time/output. Preserve explicitly selected custom executables and their update instructions.
+- [ ] For desktop hosts without a system Node/npm, use the bundled Node to execute a bundled, pinned npm CLI. `scripts/prepare-node-runtime.cjs` currently copies only the Node executable, so npm and its dependencies/licensing must be included and packaging verified. Install into a persistent user-writable prefix outside application resources; explicitly resolve the resulting executable and child-process PATH without requiring a terminal or administrator rights.
+- [ ] Keep host and WSL execution targets explicit. Windows' bundled Node cannot install a native Linux CLI inside WSL; use a verified Linux runtime/package manager in the selected distribution or show its installation instructions. Remote connections require installation on the execution host, not on the browser's computer.
+- [ ] After **Install and start**, use the existing official `service status` / `service start` lifecycle and native-parent launch bridge, then authenticate and validate the actual daemon contract before resuming the pending workspace open. Do not spawn a private `serve` process or assume installer exit means readiness.
+- [ ] Treat updating files and restarting an existing shared daemon as separate outcomes. Explain that restart affects other OpenCode clients and active work; perform it only through an explicit user action and the official service lifecycle. Reacquire connection authority afterward; never replay a prompt or mutation automatically.
+- [ ] Localize all copy, show progress and actionable failures, and retain retry/manual-path choices in the same screen. Preserve the user's pending project selection and drafts through recovery.
+- [ ] Verify absent CLI with/without system Node/npm, below-minimum CLI and daemon, stale daemon after upgrade, optional updates, registry/install failures, custom paths, repeated clicks, and host/WSL targeting. Use isolated installation prefixes and synthetic services; test the rendered screen and packaged Electron/Tauri launches without changing a user's global CLI or shared daemon.
+
+Deliver P1/P1a in focused implementation PRs and update this register with their evidence. The setup experience must be available before raising the runtime floor in P4.
 
 ### P2 — Certify historical data on the replacement runtime
 
@@ -107,7 +134,8 @@ Old-runtime execution for generating migration fixtures is distinct from promisi
 
 ### P4 — Publish the new support floor
 
-- [ ] Record the upstream post-beta announcement and exact target contract/dependency versions.
+- [x] Record upstream stable availability (see Objective).
+- [ ] Select exact target contract/dependency versions from acceptance evidence.
 - [ ] Choose and announce the CodeNomad release/minimum OpenCode runtime, including the distinction between updating the CLI and the running daemon.
 - [ ] Run minimum + latest validated native acceptance, including packed/bundled pruning and rendered controls, on Windows, macOS and Linux.
 - [ ] Verify Electron and Tauri startup/reconnect/refusal behavior, plus host-to-WSL traversal for supported WSL configurations.
@@ -117,7 +145,7 @@ Old-runtime execution for generating migration fixtures is distinct from promisi
 
 ## Working in parallel
 
-Use this draft as the maintained preparation register. Keep it close to `dev` and small: merge completed backward-compatible preparation as independent increments, then update this register's progress and links. Avoid accumulating an alternate application implementation for the rest of beta.
+Merge this documentation increment as the maintained transition register. Track P1–P4 in focused implementation PRs, updating this document's progress and evidence links with each increment. Open implementation checkboxes are not blockers for the documentation PR; they remain gates for changing runtime support and retiring adapters.
 
 For each increment, record:
 
@@ -138,3 +166,6 @@ The eventual retirement change is ready when the support-policy, historical-data
 | 2026-09-16 | Remove legacy wire support separately from historical-data identity handling. | Adopted; P2 gates identity simplification. |
 | 2026-09-16 | Which upstream release marks beta exit, and which CodeNomad release raises the minimum? | Open; no version/date selected. |
 | 2026-09-16 | What supported range and future-version recognition replace two-profile negotiation? | Open; decide during P1 from the actual publication contract. |
+| 2026-09-20 | Stable V2 publication is established; stop waiting for beta exit. | Supersedes the beta-exit question above; the CodeNomad minimum/release decision remains open. |
+| 2026-09-20 | Land and maintain the plan independently of its implementation. | Documentation completion is distinct from P1–P4 acceptance. |
+| 2026-09-20 | Missing and too-old OpenCode share a setup screen and installer. | Specified in P1a, including required-update notices, bundled Node/npm, execution-host targeting and daemon revalidation; implementation pending. |

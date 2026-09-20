@@ -26,7 +26,7 @@ September 2026 published API-contract census, verified compatibility failures, c
 
 ### [OPENCODE_V2_POST_BETA.md](OPENCODE_V2_POST_BETA.md)
 
-Draft preparation for retiring earlier V2 runtime contracts after beta: support-policy decisions, a file-level retirement map, historical-data migration acceptance and incremental release gates. Current runtime support remains unchanged.
+Maintained stable-V2 transition plan: shared installation/required-update screen, bundled Node/npm proposal, support-policy decisions, adapter retirement map, historical-data acceptance and incremental release gates. Current runtime support remains unchanged.
 
 ### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
 
