@@ -1,5 +1,7 @@
 export const messagingMessages = {
   "transcriptFilters.title": "Содержимое сообщений",
+  "transcriptFilters.systemMessages": "Системные сообщения",
+  "messageBlock.system.label": "Система",
   "transcriptFilters.description": "Выберите видимость содержимого и начальное состояние развёртывания. Настройки применяются ко всем беседам.",
   "transcriptFilters.show": "Показать {name}",
   "transcriptFilters.hide": "Скрыть {name}",

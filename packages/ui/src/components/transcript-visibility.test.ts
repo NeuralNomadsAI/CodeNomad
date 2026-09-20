@@ -17,14 +17,21 @@ const rows = transcriptVisibilityRows((key) => key)
 const row = (key: string) => rows.find((item) => item.key === key)!
 
 describe("shared transcript visibility controls", () => {
+  it("hides system messages for older preferences and changes them independently", () => {
+    assert.equal(transcriptVisibility(current(), row("system")), "hidden")
+    for (const mode of ["hidden", "collapsed", "expanded"] as const) {
+      assert.deepEqual(transcriptVisibilityPatch(current(), row("system"), mode), { systemMessagesVisibility: mode })
+    }
+  })
   it("uses dev's order and label keys in both preferences and the popup", () => {
-    assert.deepEqual(rows.slice(0, 4), [
+    assert.deepEqual(rows.slice(0, 5), [
       { kind: "thinking", key: "thinking", label: "settings.behavior.expansionDefaults.thinking" },
       { kind: "diagnostics", key: "diagnostics", label: "settings.behavior.diagnosticsDefault.title" },
       { kind: "inputs", key: "inputs", label: "settings.behavior.toolInputsVisibility.title" },
       { kind: "usage", key: "usage", label: "settings.behavior.usageMetrics.title" },
+      { kind: "system", key: "system", label: "transcriptFilters.systemMessages" },
     ])
-    assert.ok(rows.slice(4).every((item) => item.kind === "tool"))
+    assert.ok(rows.slice(5).every((item) => item.kind === "tool"))
   })
   it("preserves every other effective tool setting when customizing one tool", () => {
     const before = current()

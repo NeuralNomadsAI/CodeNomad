@@ -165,7 +165,7 @@ try {
   const makeClient = () => OpenCode.make({ baseUrl, headers: {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   }, fetch: runtimeFetch })
-  assert.equal((await client.server.status()).version, runtimeVersion)
+  assert.equal((await client.server.info()).version, runtimeVersion)
   console.log(`Testing official runtime ${runtimeVersion}`)
   const { testNativeLocationIdentity } = await import("./test-opencode-location-native.mjs")
   await testNativeLocationIdentity({ client, connection, root })

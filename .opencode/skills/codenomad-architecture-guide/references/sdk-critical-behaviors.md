@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Server and UI pin `@opencode/client@2.0.4`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404. All probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed response failures do not trigger fallback. The shared transport maps canonical `server.status()` to the discovered route. Discovery alone does not prove client/API compatibility. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
+- Server and UI pin `@opencode/client@2.0.11`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404. All probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed response failures do not trigger fallback. The shared transport maps canonical `server.info()` to the discovered route. Older services do not provide `paths.tmp`; never infer that path from the backend host. Discovery alone does not prove client/API compatibility. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
 - The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
 - That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
