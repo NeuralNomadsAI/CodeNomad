@@ -4,6 +4,16 @@ import type { SessionMessageInfo } from "@opencode/client"
 import { normalizeSessionMessage } from "./normalizers.ts"
 
 describe("native session message normalization", () => {
+  it("preserves native system content and identity without making it assistant prose", () => {
+    const source = { id: "system", type: "system" as const, text: "Today's date is now: Sun Sep 20 2026\n<env>&amp;</env>",
+      description: "Context updated", time: { created: 1 } }
+    const result = normalizeSessionMessage("session", source)
+    assert.equal(result.info.nativeType, "system")
+    assert.equal(result.message.status, "complete")
+    assert.deepEqual(result.message.parts, [{ id: "system", type: "system", text: source.text,
+      description: source.description, sessionID: "session", messageID: "system" }])
+    assert.equal(source.text, result.message.parts[0].text)
+  })
   it("maps native user text into the existing render model", () => {
     const result = normalizeSessionMessage("session", {
       id: "user",
