@@ -167,3 +167,28 @@ test("optional install reconnects without restarting and leaves explicit activat
     assert.equal(restarts, 1)
   } finally { await page.close() }
 })
+
+test("configuration reload is an informed explicit action and never runs on setup reads", async () => {
+  const page = await browser.newPage()
+  let reloads = 0
+  await page.route("**/api/**", route => {
+    if (route.request().url().endsWith("/api/opencode/service")) {
+      assert.deepEqual(route.request().postDataJSON(), { reload: true })
+      reloads++
+    }
+    return route.fulfill({ json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11",
+      minimumVersion: "2.0.11", binaryPath: "opencode2", target: "wsl", canUpgrade: false,
+      serviceState: "ready", canRestart: false, canReload: true, daemonVersion: "2.0.11" } })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByText(/cancels pending permissions and forms/).waitFor()
+    assert.equal(reloads, 0)
+    await page.getByRole("button", { name: "Reload OpenCode configuration" }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(reloads, 1)
+    assert.equal(await page.getByRole("dialog").count(), 0)
+  } finally { await page.close() }
+})

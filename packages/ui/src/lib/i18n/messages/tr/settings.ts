@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "OpenCode yapılandırmasını yeniden yükle",
+  "settings.opencode.setup.reloadDescription": "Yüklü eklentiler hâlâ kullanılamıyorsa yapılandırmayı yeniden yükleyin. Bu işlem tüm bağlı istemciler için yüklenmiş tüm konumları yeniden oluşturur, bekleyen izin istekleriyle formları iptal eder ve terminallerle arka plan komutlarını kapatır. Etkin çalışma kesintiye uğrayabilir.",
   "settings.opencode.setup.description": "Projelerinizi çalıştıran sunucuda OpenCode'u kurun, güncelleyin ve bağlanın.",
   "settings.opencode.setup.missing": "OpenCode kurulu değil.",
   "settings.opencode.setup.update_required": "Bu OpenCode sürümü, bu CodeNomad sürümü tarafından desteklenmiyor.",

@@ -383,6 +383,7 @@ export interface OpenCodeUpdateStatus {
   binaryPath: string
   daemonVersion?: string
   serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "error"
+  canReload?: boolean
   serviceError?: string
   target: "host" | "wsl"
   canRestart: boolean

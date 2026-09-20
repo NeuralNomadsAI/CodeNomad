@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "OpenCode の設定を再読み込み",
+  "settings.opencode.setup.reloadDescription": "インストール済みプラグインが利用できない場合は設定を再読み込みしてください。接続中のすべてのクライアントで読み込み済みの全ロケーションが再構築され、保留中の権限要求とフォームが取り消され、ターミナルとバックグラウンドコマンドが終了します。進行中の作業が中断される場合があります。",
   "settings.opencode.setup.description": "プロジェクトを実行するサーバーで OpenCode をインストール、更新、接続します。",
   "settings.opencode.setup.missing": "OpenCode がインストールされていません。",
   "settings.opencode.setup.update_required": "この OpenCode バージョンは、この CodeNomad リリースではサポートされていません。",

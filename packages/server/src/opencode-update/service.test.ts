@@ -189,6 +189,65 @@ test("optional upgrades retain explicit activation for an admitted but older dae
   assert.equal(restarts, 1)
 })
 
+test("explicit configuration reload is admitted, fenced and serialized with service actions", async () => {
+  let selected = "/fixture/opencode", version = "2.0.11", reloads = 0
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  const service = new OpenCodeUpdateService(deps({
+    resolveBinary: () => ({ path: selected, label: "Fixture" }),
+    probeBinary: () => ({ valid: true, version: "2.0.11" }),
+    lifecycle: async () => ({ discover: async () => {
+      const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+      rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
+      return endpoint
+    }, ensure: async () => { throw new Error("reload must not start a daemon") } }),
+    reload: async (_binary, assertCurrent) => { entered(); await gate; assertCurrent(); reloads++ },
+  }))
+  assert.equal((await service.getStatus()).canReload, true)
+  assert.equal(reloads, 0)
+  const first = service.reload()
+  assert.equal(service.reload(), first)
+  await reached
+  await assert.rejects(service.start(), /action is in progress/)
+  selected = "/replacement/opencode"
+  await assert.rejects(service.start(true), /action is in progress/, "changing executables cannot overlap the shared-daemon reload")
+  await assert.rejects(service.reload(), /action is in progress/, "a different selection must not coalesce with the captured one")
+  release()
+  await assert.rejects(first, /selection changed/)
+  assert.equal(reloads, 0)
+  version = "2.0.10"
+  await assert.rejects(service.reload(), /opencode_update_required/)
+  assert.equal(reloads, 0)
+})
+
+test("an in-flight native reload holds shared-service authority across binary changes", async () => {
+  let selected = "/fixture/a/opencode", restarts = 0
+  let entered!: () => void, release!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
+  rememberRuntime(endpoint, { version: "2.0.11", pid: 123, discovery: "info" })
+  const service = new OpenCodeUpdateService(deps({
+    resolveBinary: () => ({ path: selected, label: "Fixture" }),
+    probeBinary: () => ({ valid: true, version: "2.0.12" }),
+    lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => endpoint,
+      restart: async () => { restarts++; return endpoint } }),
+    reload: async (_binary, assertCurrent) => { assertCurrent(); entered(); await gate },
+  }))
+  const first = service.reload()
+  await reached
+  selected = "/fixture/b/opencode"
+  try {
+    await assert.rejects(service.start(true), /action is in progress/)
+    await assert.rejects(service.reload(), /action is in progress/)
+    assert.equal(restarts, 0)
+  } finally { release() }
+  await assert.rejects(first, /selection changed/)
+  await service.reload()
+})
+
 test("legacy package-manager helpers retain V2 commands and beta comparison", () => {
   assert.deepEqual(buildOpenCodeUpgradeCommand(minimum, "npm"), { command: "npm", args: ["install", "-g", `@opencode/cli@${minimum}`] })
   assert.deepEqual(buildOpenCodeUpgradeCommand(minimum, "pnpm"), { command: "pnpm", args: ["add", "-g", "--allow-build=@opencode/cli", `@opencode/cli@${minimum}`] })

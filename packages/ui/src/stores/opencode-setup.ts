@@ -50,7 +50,7 @@ export function refreshOpenCodeSetup(afterMutation = false): Promise<void> {
   return request
 }
 
-export async function runOpenCodeSetup(action: "install" | "start" | "restart") {
+export async function runOpenCodeSetup(action: "install" | "start" | "restart" | "reload") {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -64,7 +64,7 @@ export async function runOpenCodeSetup(action: "install" | "start" | "restart") 
     await refreshOpenCodeSetup(true)
     if (epoch !== generation) return
     if (action !== "restart" && openCodeSetupStatus()?.serviceState === "restart_required") return
-    const status = await serverApi.startOpenCode(action === "restart")
+    const status = action === "reload" ? await serverApi.reloadOpenCodeConfiguration() : await serverApi.startOpenCode(action === "restart")
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {

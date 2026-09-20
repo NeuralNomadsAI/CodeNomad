@@ -21,6 +21,7 @@ test("optional setup rebinds real workspace ownership without restarting the sup
   let selected = originalBinary
   let starts = 0
   let restarts = 0
+  let reloads = 0
   const endpoint: Endpoint = { url: "http://127.0.0.1:1" }
   rememberRuntime(endpoint, { version: "2.0.11", pid: 123, discovery: "info" })
   const lifecycle: OpenCodeServiceLifecycle = {
@@ -30,7 +31,7 @@ test("optional setup rebinds real workspace ownership without restarting the sup
   }
   const validatedDirectories: string[] = []
   const client = {
-    location: { get: async ({ location }: { location: { directory: string } }) => {
+    location: { reload: async () => { reloads++ }, get: async ({ location }: { location: { directory: string } }) => {
       validatedDirectories.push(location.directory)
       return { directory: location.directory,
         project: { id: "fixture", directory: location.directory, canonical: location.directory } }
@@ -61,6 +62,7 @@ test("optional setup rebinds real workspace ownership without restarting the sup
     lifecycle: async binary => (await manager.setupServiceOptions(binary.path)).lifecycle,
     admitActivation: binary => manager.assertSetupExecutionHost(binary.path),
     reconnect: binary => manager.reconnectAfterSetup(binary.path),
+    reload: (binary, assertCurrent) => manager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
   })
 
   try {
@@ -88,6 +90,11 @@ test("optional setup rebinds real workspace ownership without restarting the sup
     assert.equal(manager.list().find(workspace => workspace.id === first.workspace.id)?.binaryId, installedBinary)
     assert.equal(manager.list().length, 2, "the failed open did not leak a workspace")
     assert.ok(validatedDirectories.includes(nextFolder))
+    assert.equal(starts, 0)
+    assert.equal(restarts, 0)
+    assert.equal(reloads, 0, "ordinary setup must never rebuild shared native locations")
+    await updater.reload()
+    assert.equal(reloads, 1, "an explicit reload reaches the admitted native client")
     assert.equal(starts, 0)
     assert.equal(restarts, 0)
   } finally {

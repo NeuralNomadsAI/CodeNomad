@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "重新加载 OpenCode 配置",
+  "settings.opencode.setup.reloadDescription": "如果已安装的插件仍不可用，请重新加载配置。这会为所有已连接的客户端重建所有已加载的位置，取消待处理的权限请求和表单，并关闭终端和后台命令。正在进行的工作可能会中断。",
   "settings.opencode.setup.description": "在运行项目的服务器上安装、更新并连接 OpenCode。",
   "settings.opencode.setup.missing": "尚未安装 OpenCode。",
   "settings.opencode.setup.update_required": "此 CodeNomad 版本不支持当前 OpenCode 版本。",

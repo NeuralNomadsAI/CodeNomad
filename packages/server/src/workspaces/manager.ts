@@ -990,6 +990,17 @@ export class WorkspaceManager {
     this.serviceAuthorization = (await this.sharedService.headers(options))?.authorization
   }
 
+  async reloadConfigurationAfterSetup(binary: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent()
+    if (!this.sharedService.acquire) throw new Error("OpenCode connection acquisition unavailable")
+    await this.reconnectAfterSetup(binary)
+    const connection = await this.sharedService.acquire()
+    assertCurrent()
+    connection.assertCurrent()
+    await connection.client.location.reload({ signal: AbortSignal.timeout(30_000) })
+    connection.assertCurrent()
+  }
+
   private createWslServiceLifecycle(
     spec: Extract<ServiceLaunchSpec, { kind: "wsl" }>,
     timeoutMs: number,

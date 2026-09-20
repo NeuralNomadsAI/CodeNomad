@@ -17,7 +17,7 @@ const OPENCODE_PACKAGE_NAME = "@opencode/cli"
 const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode%2Fcli/dist-tags"
 export const TARGET_OPENCODE_CHANNEL = "latest"
 const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
-const inFlightActivations = new Map<string, Promise<OpenCodeUpdateStatus>>()
+type ServiceAction = "start" | "restart" | "reload"
 
 type UpgradeResult = { success: true; version: string } | { success: false; error: string }
 
@@ -30,6 +30,7 @@ export interface OpenCodeUpdateServiceDeps {
   lifecycle?: (binary: ResolvedBinary) => Promise<OpenCodeServiceLifecycle>
   reconnect?: (binary: ResolvedBinary) => Promise<void>
   admitActivation?: (binary: ResolvedBinary) => void
+  reload?: (binary: ResolvedBinary, assertCurrent: () => void) => Promise<void>
 }
 
 export class OpenCodeUpdateError extends Error {
@@ -48,6 +49,8 @@ export class OpenCodeUpdateError extends Error {
 }
 
 export class OpenCodeUpdateService {
+  private activation?: { binaryPath: string; action: ServiceAction; pending: Promise<OpenCodeUpdateStatus> }
+
   constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
 
   async getStatus(): Promise<OpenCodeUpdateStatus> {
@@ -83,23 +86,36 @@ export class OpenCodeUpdateService {
           : identity && supportsOpenCodeVersion(identity.version) ? "ready" : "error"
         status.canRestart = Boolean(lifecycle.restart) && state === "ready"
           && (status.serviceState === "restart_required" || status.serviceState === "restart_available")
+        status.canReload = Boolean(this.deps.reload) && state === "ready" && Boolean(identity && supportsOpenCodeVersion(identity.version))
       } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
     }
     return status
   }
 
   start(restart = false): Promise<OpenCodeUpdateStatus> {
+    return this.runServiceAction(restart ? "restart" : "start")
+  }
+
+  reload(): Promise<OpenCodeUpdateStatus> {
+    return this.runServiceAction("reload")
+  }
+
+  private runServiceAction(action: ServiceAction): Promise<OpenCodeUpdateStatus> {
     const binary = this.deps.resolveBinary()
-    const existing = inFlightActivations.get(binary.path)
-    if (existing) return existing
-    const pending = this.activate(binary, restart).finally(() => {
-      if (inFlightActivations.get(binary.path) === pending) inFlightActivations.delete(binary.path)
+    // One updater owns one manager/shared-service authority. Executable selection
+    // is mutable and cannot be the lock key for daemon-wide operations.
+    const existing = this.activation
+    if (existing) return existing.action === action && existing.binaryPath === binary.path
+      ? existing.pending : Promise.reject(new Error("Another OpenCode service action is in progress"))
+    const pending = this.activate(binary, action).finally(() => {
+      if (this.activation?.pending === pending) this.activation = undefined
     })
-    inFlightActivations.set(binary.path, pending)
+    this.activation = { binaryPath: binary.path, action, pending }
     return pending
   }
 
-  private async activate(binary: ResolvedBinary, restart: boolean): Promise<OpenCodeUpdateStatus> {
+  private async activate(binary: ResolvedBinary, action: ServiceAction): Promise<OpenCodeUpdateStatus> {
+    const restart = action === "restart"
     const installedVersion = await this.readCurrentVersion(binary.path)
     assertSupportedOpenCode(installedVersion)
     const lifecycle = await this.deps.lifecycle?.(binary)
@@ -112,8 +128,21 @@ export class OpenCodeUpdateService {
         throw new Error("The shared daemon is not an older runtime eligible for this update")
       }
     }
-    if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
-    this.deps.admitActivation?.(binary)
+    const assertCurrent = () => {
+      if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
+      this.deps.admitActivation?.(binary)
+    }
+    assertCurrent()
+    if (action === "reload") {
+      const identity = previous && runtimeIdentity(previous)
+      if (!identity || !this.deps.reload) throw new Error("OpenCode configuration reload unavailable")
+      assertSupportedOpenCode(identity.version)
+      // Explicit daemon-wide mutation: never use this as an automatic watcher
+      // fallback, because native reload cancels pending Forms and permissions.
+      await this.deps.reload(binary, assertCurrent)
+      assertCurrent()
+      return this.getStatus()
+    }
     const endpoint = restart && previous ? await lifecycle.restart?.() : previous ?? await lifecycle.ensure()
     const identity = endpoint && runtimeIdentity(endpoint)
     if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
@@ -326,5 +355,6 @@ export function createOpenCodeUpdateService(
     lifecycle: binary => workspaceManager.setupServiceOptions(binary.path).then(options => options.lifecycle),
     reconnect: binary => workspaceManager.reconnectAfterSetup(binary.path),
     admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
+    reload: (binary, assertCurrent) => workspaceManager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
   })
 }

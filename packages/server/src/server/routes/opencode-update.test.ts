@@ -38,20 +38,23 @@ test("does not pass request-controlled binary paths to the update service", asyn
   await app.close()
 })
 
-test("service activation accepts only an explicit boolean restart intent", async () => {
-  const calls: boolean[] = []
+test("service activation accepts only exclusive explicit restart/reload intents", async () => {
+  const calls: Array<boolean | "reload"> = []
   const app = Fastify()
   registerOpenCodeUpdateRoutes(app, {
-    service: { start: async (restart: boolean) => { calls.push(restart); return { state: "ready" } } } as OpenCodeUpdateService,
+    service: {
+      start: async (restart: boolean) => { calls.push(restart); return { state: "ready" } },
+      reload: async () => { calls.push("reload"); return { state: "ready" } },
+    } as OpenCodeUpdateService,
     logger: { warn() {} } as unknown as Logger,
   })
   try {
-    for (const payload of [{ restart: "true" }, { restart: true, binary: "foreign" }, { command: "stop" }]) {
+    for (const payload of [{ restart: "true" }, { restart: true, binary: "foreign" }, { command: "stop" }, { reload: "true" }, { reload: true, restart: true }]) {
       assert.equal((await app.inject({ method: "POST", url: "/api/opencode/service", payload })).statusCode, 400)
     }
-    for (const payload of [{}, { restart: true }]) {
+    for (const payload of [{}, { restart: true }, { reload: true }]) {
       assert.equal((await app.inject({ method: "POST", url: "/api/opencode/service", payload })).statusCode, 200)
     }
-    assert.deepEqual(calls, [false, true])
+    assert.deepEqual(calls, [false, true, "reload"])
   } finally { await app.close() }
 })

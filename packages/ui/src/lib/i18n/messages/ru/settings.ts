@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "Перезагрузить конфигурацию OpenCode",
+  "settings.opencode.setup.reloadDescription": "Если установленные плагины недоступны, перезагрузите конфигурацию. Это пересоздаёт все загруженные расположения для всех подключённых клиентов, отменяет ожидающие запросы разрешений и формы, закрывает терминалы и фоновые команды. Активная работа может быть прервана.",
   "settings.opencode.setup.description": "Установите, обновите и подключите OpenCode на сервере, выполняющем ваши проекты.",
   "settings.opencode.setup.missing": "OpenCode не установлен.",
   "settings.opencode.setup.update_required": "Эта версия OpenCode не поддерживается текущим выпуском CodeNomad.",

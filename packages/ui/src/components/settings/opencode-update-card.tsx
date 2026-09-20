@@ -38,6 +38,10 @@ export const OpenCodeUpdateCard: Component = () => {
           </Show>
           <Show when={data().canRestart}><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
         </div>
+        <Show when={data().canReload}>
+          <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
+          <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
+        </Show>
       </>}
     </Show>
     <Show when={openCodeSetupError()}><p class="settings-error-message" role="alert">{t("settings.opencode.update.failed")}</p></Show>

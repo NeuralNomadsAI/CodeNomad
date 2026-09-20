@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "Recargar la configuración de OpenCode",
+  "settings.opencode.setup.reloadDescription": "Si los plugins instalados siguen sin estar disponibles, recarga la configuración. Esto reconstruye todas las ubicaciones cargadas para todos los clientes conectados, cancela los permisos y formularios pendientes y cierra los terminales y comandos en segundo plano. El trabajo activo puede interrumpirse.",
   "settings.opencode.setup.description": "Instala, actualiza y conecta OpenCode en el servidor que ejecuta tus proyectos.",
   "settings.opencode.setup.missing": "OpenCode no está instalado.",
   "settings.opencode.setup.update_required": "Esta versión de OpenCode no es compatible con esta versión de CodeNomad.",

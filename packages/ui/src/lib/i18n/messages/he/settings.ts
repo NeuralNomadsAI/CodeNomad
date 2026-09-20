@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.opencode.setup.reload": "טעינה מחדש של תצורת OpenCode",
+  "settings.opencode.setup.reloadDescription": "אם התוספים המותקנים עדיין אינם זמינים, טען מחדש את התצורה. פעולה זו בונה מחדש את כל המיקומים הטעונים עבור כל הלקוחות המחוברים, מבטלת בקשות הרשאה וטפסים ממתינים וסוגרת מסופים ופקודות ברקע. עבודה פעילה עלולה להיקטע.",
   "settings.opencode.setup.description": "התקנה, עדכון וחיבור של OpenCode בשרת שמריץ את הפרויקטים שלך.",
   "settings.opencode.setup.missing": "OpenCode אינו מותקן.",
   "settings.opencode.setup.update_required": "גרסת OpenCode זו אינה נתמכת בגרסה זו של CodeNomad.",
