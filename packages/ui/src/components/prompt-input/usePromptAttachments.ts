@@ -5,8 +5,8 @@ import type { Attachment } from "../../types/attachment"
 import { createAttachmentPlaceholderRegex } from "../../lib/attachment-placeholders"
 import { createPromptMentionRegex, getAttachmentPromptMentionCandidates } from "../../lib/attachment-mentions"
 import { tGlobal } from "../../lib/i18n"
-import { getFilePath } from "../../lib/native/file-path"
 import { showToastNotification } from "../../lib/notifications"
+import { PROMPT_INLINE_FILE_LIMITS } from "../../../../server/src/api-types"
 import {
   bracketedImageDisplayCounterRegex,
   findHighestAttachmentCounters,
@@ -15,6 +15,7 @@ import {
   imageDisplayCounterRegex,
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
+import { getInlineFileUsage, readDeviceFileSelection } from "./device-file-selection"
 
 type PromptAttachmentsOptions = {
   instanceId: Accessor<string>
@@ -38,7 +39,7 @@ type PromptAttachments = {
   handleDragOver: (e: DragEvent) => void
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
-  handleFileSelection: (files: FileList | File[] | null, selectionOptions?: { requireData?: boolean }) => void
+  handleDeviceFileSelection: (files: FileList | readonly File[] | null) => Promise<void>
   handleFilePathAttachment: (path: string, contents: string, options?: { encoding?: "utf-8" | "base64" }) => void
 
   handleRemoveAttachment: (attachmentId: string) => void
@@ -51,7 +52,6 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   const [pendingFileReads, setPendingFileReads] = createSignal(0)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
-  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let disposed = false
   onCleanup(() => { disposed = true })
 
@@ -304,7 +304,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   function handleDragOver(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (options.disabled?.()) {
+    if (options.disabled?.() || pendingFileReads() > 0) {
       setIsDragging(false)
       return
     }
@@ -366,15 +366,48 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? (extension === "pdf" ? "application/pdf" : "application/octet-stream")
   }
 
-  function showSkippedFilesWarning(count: number) {
+  function showTooLargeFilesWarning(count: number) {
     if (count <= 0) return
-    const messageKey = count === 1
-      ? "promptInput.attachFiles.skipped.one"
-      : "promptInput.attachFiles.skipped.other"
     showToastNotification({
       variant: "warning",
       title: tGlobal("promptInput.attachFiles.skipped.title"),
-      message: tGlobal(messageKey, { count }),
+      message: tGlobal(
+        count === 1 ? "promptInput.attachFiles.tooLarge.one" : "promptInput.attachFiles.tooLarge.other",
+        { count },
+      ),
+    })
+  }
+
+  function showAttachmentBudgetWarning(count: number) {
+    if (count <= 0) return
+    showToastNotification({
+      variant: "warning",
+      title: tGlobal("promptInput.attachFiles.skipped.title"),
+      message: tGlobal(
+        count === 1 ? "promptInput.attachFiles.limit.one" : "promptInput.attachFiles.limit.other",
+        {
+          count,
+          maxFiles: PROMPT_INLINE_FILE_LIMITS.maxFiles,
+          maxMegabytes: PROMPT_INLINE_FILE_LIMITS.maxTotalBytes / (1024 * 1024),
+        },
+      ),
+    })
+  }
+
+  function showDeviceSelectionWarning(count: number) {
+    if (count <= 0) return
+    showToastNotification({
+      variant: "warning",
+      title: tGlobal("promptInput.attachFiles.skipped.title"),
+      message: tGlobal(
+        count === 1 ? "promptInput.attachFiles.deviceRejected.one" : "promptInput.attachFiles.deviceRejected.other",
+        {
+          count,
+          maxFileMegabytes: PROMPT_INLINE_FILE_LIMITS.maxFileBytes / (1024 * 1024),
+          maxFiles: PROMPT_INLINE_FILE_LIMITS.maxFiles,
+          maxTotalMegabytes: PROMPT_INLINE_FILE_LIMITS.maxTotalBytes / (1024 * 1024),
+        },
+      ),
     })
   }
 
@@ -397,10 +430,23 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     return bytes
   }
 
-  function attachFileData(path: string, filename: string, mime: string, data: Uint8Array, previewUrl?: string) {
+  function attachFileData(
+    path: string,
+    filename: string,
+    mime: string,
+    data: Uint8Array,
+    previewUrl?: string,
+  ): "attached" | "too-large" | "budget" {
+    if (data.byteLength > PROMPT_INLINE_FILE_LIMITS.maxFileBytes) return "too-large"
+    const usage = getInlineFileUsage(attachments())
+    if (
+      usage.count + 1 > PROMPT_INLINE_FILE_LIMITS.maxFiles
+      || usage.bytes + data.byteLength > PROMPT_INLINE_FILE_LIMITS.maxTotalBytes
+    ) return "budget"
     const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
     attachment.url = previewUrl ?? `data:${mime};base64,${encodeBytesAsBase64(data)}`
     addAttachment(options.instanceId(), options.sessionId(), attachment)
+    return "attached"
   }
 
   function handleFilePathAttachment(path: string, contents: string, attachmentOptions?: { encoding?: "utf-8" | "base64" }) {
@@ -410,7 +456,9 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     const filename = getFilenameFromPath(path)
     const mime = inferMimeTypeFromPath(path)
     const data = attachmentOptions?.encoding === "base64" ? decodeBase64ToBytes(contents) : new TextEncoder().encode(contents)
-    attachFileData(path, filename, mime, data)
+    const result = attachFileData(path, filename, mime, data)
+    if (result === "too-large") showTooLargeFilesWarning(1)
+    if (result === "budget") showAttachmentBudgetWarning(1)
     options.getTextarea()?.focus()
   }
 
@@ -420,84 +468,34 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     setIsDragging(false)
   }
 
-  function handleFileSelection(files: FileList | File[] | null, selectionOptions?: { requireData?: boolean }) {
-    if (options.disabled?.()) return
+  async function handleDeviceFileSelection(files: FileList | readonly File[] | null) {
+    if (options.disabled?.() || pendingFileReads() > 0) return
     if (!files || files.length === 0) return
 
     const instanceId = options.instanceId()
     const sessionId = options.sessionId()
     const isCurrent = () => !disposed && options.instanceId() === instanceId && options.sessionId() === sessionId
-    let skippedCount = 0
-    let tooLargeCount = 0
+    setPendingFileReads(count => count + 1)
+    try {
+      const result = await readDeviceFileSelection(files, attachments(), isCurrent)
+      if (result.stale || !isCurrent()) return
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      // Device uploads must carry bytes even when the desktop exposes a local path:
-      // that path may not exist on the selected server or in its WSL environment.
-      const nativePath = selectionOptions?.requireData ? null : getFilePath(file)
-      const filename = file.name
-      const mime = file.type || inferMimeTypeFromPath(filename)
-      const canReadFileData = file.size <= MAX_READABLE_PICKED_FILE_BYTES
-
-      if (!nativePath && !canReadFileData) {
-        tooLargeCount += 1
-        continue
-      }
-
-      const path = nativePath || filename
-
-      const createAndStoreAttachment = (previewUrl?: string, data?: Uint8Array) => {
-        if (!isCurrent()) return
-        const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
-        if (previewUrl) {
-          attachment.url = previewUrl
+      let commitRejections = 0
+      for (const selected of result.files) {
+        const filename = selected.file.name
+        const mime = selected.file.type || inferMimeTypeFromPath(filename)
+        const previewUrl = `data:${mime};base64,${encodeBytesAsBase64(selected.data)}`
+        if (attachFileData(filename, filename, mime, selected.data, previewUrl) !== "attached") {
+          commitRejections += 1
         }
-        addAttachment(instanceId, sessionId, attachment)
       }
-
-      if (canReadFileData && typeof FileReader !== "undefined") {
-        const reader = new FileReader()
-        setPendingFileReads(count => count + 1)
-        reader.onloadend = () => setPendingFileReads(count => count - 1)
-        reader.onload = () => {
-          if (!isCurrent()) return
-          const result = reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : undefined
-          if (!result && selectionOptions?.requireData) {
-            showSkippedFilesWarning(1)
-            return
-          }
-          const previewUrl = result ? `data:${mime};base64,${encodeBytesAsBase64(result)}` : undefined
-          createAndStoreAttachment(previewUrl, result)
-        }
-        reader.onerror = () => {
-          if (!isCurrent()) return
-          if (nativePath) {
-            createAndStoreAttachment()
-          } else {
-            showSkippedFilesWarning(1)
-          }
-        }
-        reader.readAsArrayBuffer(file)
-      } else if (nativePath) {
-        createAndStoreAttachment()
-      } else {
-        skippedCount += 1
-      }
+      showDeviceSelectionWarning(
+        result.tooLargeCount + result.overBudgetCount + result.unreadableCount + commitRejections,
+      )
+    } finally {
+      setPendingFileReads(count => Math.max(0, count - 1))
+      if (isCurrent()) options.getTextarea()?.focus()
     }
-
-    showSkippedFilesWarning(skippedCount)
-    if (tooLargeCount > 0) {
-      showToastNotification({
-        variant: "warning",
-        title: tGlobal("promptInput.attachFiles.skipped.title"),
-        message: tGlobal(
-          tooLargeCount === 1 ? "promptInput.attachFiles.tooLarge.one" : "promptInput.attachFiles.tooLarge.other",
-          { count: tooLargeCount },
-        ),
-      })
-    }
-
-    options.getTextarea()?.focus()
   }
 
   function handleDrop(e: DragEvent) {
@@ -505,9 +503,9 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     e.stopPropagation()
     setIsDragging(false)
 
-    if (options.disabled?.()) return
+    if (options.disabled?.() || pendingFileReads() > 0) return
 
-    handleFileSelection(e.dataTransfer?.files ?? null)
+    void handleDeviceFileSelection(e.dataTransfer?.files ?? null)
   }
 
   return {
@@ -521,7 +519,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    handleFileSelection,
+    handleDeviceFileSelection,
     handleFilePathAttachment,
     handleRemoveAttachment,
     handleExpandTextAttachment,

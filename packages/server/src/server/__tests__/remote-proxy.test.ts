@@ -6,9 +6,11 @@ import os from "node:os"
 import path from "node:path"
 
 import { Agent, fetch } from "undici"
+import type { FastifyInstance } from "fastify"
 
 import type { AuthManager } from "../../auth/manager"
 import type { Logger } from "../../logger"
+import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
 import { RemoteProxySessionManager } from "../remote-proxy"
 import { resolveHttpsOptions } from "../tls"
 
@@ -72,6 +74,50 @@ describe("RemoteProxySessionManager", () => {
       }
       res.writeHead(200, { "content-type": "text/plain" })
       res.end(requestUrl)
+    })
+  })
+
+  it("forwards supported prompt bodies above Fastify's default while keeping other routes capped", async () => {
+    let requests = 0
+    let receivedBytes = 0
+    await withUpstreamServer(async (upstreamBaseUrl) => {
+      const manager = createSessionManager()
+      const session = await createSession(manager, `${upstreamBaseUrl}/base`)
+      await activateSession(session)
+      const body = JSON.stringify({
+        text: "inspect",
+        files: [{
+          name: "accepted.bin",
+          uri: `data:application/octet-stream;base64,${Buffer.alloc(
+            PROMPT_INLINE_FILE_LIMITS.maxFileBytes,
+          ).toString("base64")}`,
+        }],
+      })
+      const response = await proxyFetch(
+        `${session.proxyOrigin}/workspaces/workspace/instance/api/session/session-1/prompt`,
+        { method: "POST", headers: { "content-type": "application/json" }, body },
+      )
+      assert.equal(response.status, 200)
+      assert.equal(Number(await response.text()), Buffer.byteLength(body))
+      assert.equal(receivedBytes, Buffer.byteLength(body))
+      assert.equal(requests, 1)
+
+      const proxyApp = (manager as any).sessions.get(session.sessionId).app as FastifyInstance
+      const unrelated = await proxyApp.inject({
+        method: "POST",
+        url: "/api/large",
+        headers: { "content-type": "text/plain" },
+        payload: "x".repeat(1024 * 1024 + 1),
+      })
+      assert.equal(unrelated.statusCode, 413)
+      assert.equal(requests, 1)
+    }, (req, res) => {
+      requests += 1
+      req.on("data", (chunk: Buffer) => { receivedBytes += chunk.length })
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "text/plain" })
+        res.end(String(receivedBytes))
+      })
     })
   })
 

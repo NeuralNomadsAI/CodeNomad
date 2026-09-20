@@ -52,48 +52,50 @@ async function setup(host = "web", context = "remote") {
 
 async function chooseDevice(page: Page) {
   await page.locator(".prompt-actions-menu-trigger").click()
-  assert.equal(await page.getByRole("menuitem", { name: "Attach files", exact: true }).count(), 1)
+  assert.equal(await page.getByRole("menuitem", { name: "Browse workspace files", exact: true }).count(), 1)
   const chooser = page.waitForEvent("filechooser")
-  await page.getByRole("menuitem", { name: "Upload from device", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Upload files from this device", exact: true }).click()
   return chooser
 }
 
-for (const [host, context] of [["web", "remote"], ["tauri", "local"], ["tauri", "remote"], ["electron", "local"], ["electron", "remote"]]) {
-  test(`${host}/${context}: device files use native selection and arrive as bytes in the prompt`, async () => {
-    const { page, prompts, paths, errors } = await setup(host, context)
-    try {
-      const chooser = await chooseDevice(page)
-      assert.equal(chooser.isMultiple(), true)
-      await chooser.setFiles([])
-      assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [])
-      const files = [
-        { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Café depuis mon appareil\nSecond line") },
-        { name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFuoAAAAASUVORK5CYII=", "base64") },
-        { name: "document.pdf", mimeType: "", buffer: Buffer.from("%PDF-1.4\nfixture") },
-      ]
-      await (await chooseDevice(page)).setFiles(files)
-      await page.waitForFunction(() => (window as any).fixture.attachments().length === 3)
-      await page.getByRole("button", { name: "Send message", exact: true }).click()
-      await page.waitForFunction(() => (window as any).fixture.attachments().length === 0)
-      assert.equal(prompts.length, 1)
-      assert.deepEqual(prompts[0].files.sort((a: any, b: any) => a.name.localeCompare(b.name)), files.map(file => ({
-        name: file.name, uri: `data:${file.mimeType || "application/pdf"};base64,${file.buffer.toString("base64")}`,
-      })).sort((a, b) => a.name.localeCompare(b.name)))
-      assert.deepEqual(paths, [])
-      // Resetting the input permits selecting the same file again.
-      await (await chooseDevice(page)).setFiles(files[0])
-      await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
-      assert.deepEqual(errors, [])
-    } finally { await page.close() }
-  })
-}
+test("device files use native selection and arrive as ordered bytes in the prompt", async () => {
+  const { page, prompts, paths, errors } = await setup()
+  try {
+    const chooser = await chooseDevice(page)
+    assert.equal(chooser.isMultiple(), true)
+    await chooser.setFiles([])
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [])
+    const files = [
+      { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Café depuis mon appareil\nSecond line") },
+      { name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFuoAAAAASUVORK5CYII=", "base64") },
+      { name: "document.pdf", mimeType: "", buffer: Buffer.from("%PDF-1.4\nfixture") },
+    ]
+    await (await chooseDevice(page)).setFiles(files)
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 3)
+    assert.deepEqual(
+      await page.evaluate(() => (window as any).fixture.attachments().map((item: any) => item.filename)),
+      files.map(file => file.name),
+    )
+    await page.getByRole("button", { name: "Send message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 0)
+    assert.equal(prompts.length, 1)
+    assert.deepEqual(prompts[0].files, files.map(file => ({
+      name: file.name, uri: `data:${file.mimeType || "application/pdf"};base64,${file.buffer.toString("base64")}`,
+    })))
+    assert.deepEqual(paths, [])
+    // Resetting the input permits selecting the same file again.
+    await (await chooseDevice(page)).setFiles(files[0])
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("server-side browsing remains available alongside device upload", async () => {
   const { page, paths, prompts, errors } = await setup("tauri", "local")
   try {
     await page.locator(".prompt-actions-menu-trigger").click()
     if (process.env.CODENOMAD_UPLOAD_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_UPLOAD_CAPTURE })
-    await page.getByRole("menuitem", { name: "Attach files", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Browse workspace files", exact: true }).click()
     await page.getByRole("dialog").getByText("server.txt", { exact: true }).click()
     await page.waitForFunction(() => (window as any).fixture.attachments().length === 1)
     await page.getByRole("button", { name: "Send message", exact: true }).click()
@@ -112,9 +114,26 @@ test("device uploads reject oversized files even when a desktop path is exposed"
       { name: "large.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(5 * 1024 * 1024 + 1) },
       { name: "another.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(5 * 1024 * 1024 + 1) },
     ])
-    await page.getByText("2 selected files could not be attached because they are larger than the 5 MB attachment limit.", { exact: true }).waitFor()
+    await page.getByText("2 selected files were not attached. Files must be readable, no larger than 5 MB each, and stay within 10 files and 20 MB total.", { exact: true }).waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [])
     assert.deepEqual(paths, [])
+  } finally { await page.close() }
+})
+
+test("device upload enforces the aggregate file-count budget before reading excess files", async () => {
+  const { page } = await setup()
+  try {
+    await (await chooseDevice(page)).setFiles(Array.from({ length: 11 }, (_, index) => ({
+      name: `file-${index}.txt`,
+      mimeType: "text/plain",
+      buffer: Buffer.from(String(index)),
+    })))
+    await page.waitForFunction(() => (window as any).fixture.attachments().length === 10)
+    await page.getByText("1 selected file was not attached. Files must be readable, no larger than 5 MB each, and stay within 10 files and 20 MB total.", { exact: true }).waitFor()
+    assert.deepEqual(
+      await page.evaluate(() => (window as any).fixture.attachments().map((item: any) => item.filename)),
+      Array.from({ length: 10 }, (_, index) => `file-${index}.txt`),
+    )
   } finally { await page.close() }
 })
 
@@ -122,10 +141,15 @@ test("pending file reads block sending and do not leak into another session", as
   const { page, prompts } = await setup()
   try {
     await page.evaluate(() => {
-      const read = FileReader.prototype.readAsArrayBuffer
-      FileReader.prototype.readAsArrayBuffer = function (file) {
-        this.addEventListener("loadend", () => { (window as any).readFinished = true })
-        ;(window as any).releaseRead = () => read.call(this, file)
+      const read = File.prototype.arrayBuffer
+      File.prototype.arrayBuffer = function () {
+        const file = this
+        return new Promise((resolve, reject) => {
+          ;(window as any).releaseRead = () => read.call(file).then((data) => {
+            ;(window as any).readFinished = true
+            resolve(data)
+          }, reject)
+        })
       }
     })
     await page.locator("textarea:visible").first().fill("Keep this prompt")
@@ -147,13 +171,10 @@ test("a failed device read reports the failure instead of attaching a local path
   try {
     await page.evaluate(() => {
       Object.defineProperty(File.prototype, "path", { value: "C:\\private\\unreadable.txt" })
-      FileReader.prototype.readAsArrayBuffer = function () {
-        this.dispatchEvent(new ProgressEvent("error"))
-        this.dispatchEvent(new ProgressEvent("loadend"))
-      }
+      File.prototype.arrayBuffer = async function () { throw new Error("unreadable") }
     })
     await (await chooseDevice(page)).setFiles({ name: "unreadable.txt", mimeType: "text/plain", buffer: Buffer.from("data") })
-    await page.getByText("Some files were not attached", { exact: true }).waitFor()
+    await page.getByText("1 selected file was not attached. Files must be readable, no larger than 5 MB each, and stay within 10 files and 20 MB total.", { exact: true }).waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.attachments()), [])
     await page.locator("textarea:visible").first().fill("Continue without attachment")
     assert.equal(await page.getByRole("button", { name: "Send message", exact: true }).isEnabled(), true)

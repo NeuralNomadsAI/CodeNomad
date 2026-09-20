@@ -16,7 +16,7 @@ import { serverApi } from "../lib/api-client"
 import { preferences } from "../stores/preferences"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
-import type { FileSystemEntry } from "../../../server/src/api-types"
+import { PROMPT_INLINE_FILE_LIMITS, type FileSystemEntry } from "../../../server/src/api-types"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
@@ -95,7 +95,6 @@ export default function PromptInput(props: PromptInputProps) {
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
-  const MAX_READABLE_PICKED_FILE_BYTES = 5 * 1024 * 1024
   let textareaRef: HTMLTextAreaElement | undefined
   let fileInputRef: HTMLInputElement | undefined
   let wrapperRef: HTMLDivElement | undefined
@@ -226,7 +225,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    handleFileSelection,
+    handleDeviceFileSelection,
     handleFilePathAttachment,
     syncAttachmentCounters,
     handleExpandTextAttachment,
@@ -674,18 +673,18 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleAttachFiles() {
-    if (props.disabled) return
+    if (props.disabled || isReadingFiles()) return
     setIsFileBrowserOpen(true)
   }
 
   function handleUploadFiles() {
-    if (props.disabled) return
+    if (props.disabled || isReadingFiles()) return
     fileInputRef?.click()
   }
 
   async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
     if (props.disabled) return
-    if (typeof entry?.size === "number" && entry.size > MAX_READABLE_PICKED_FILE_BYTES) {
+    if (typeof entry?.size === "number" && entry.size > PROMPT_INLINE_FILE_LIMITS.maxFileBytes) {
       showAlertDialog(t("promptInput.attachFiles.tooLarge.one"), {
         title: t("promptInput.attachFiles.skipped.title"),
         variant: "warning",
@@ -716,7 +715,7 @@ export default function PromptInput(props: PromptInputProps) {
       input.value = ""
       return
     }
-    handleFileSelection(input.files, { requireData: true })
+    void handleDeviceFileSelection(Array.from(input.files ?? []))
     input.value = ""
   }
 
@@ -900,14 +899,16 @@ export default function PromptInput(props: PromptInputProps) {
       key: "attach",
       label: t("promptInput.attachFiles.title"),
       icon: <Paperclip class="h-4 w-4" aria-hidden="true" />,
-      disabled: Boolean(props.disabled),
+      disabled: Boolean(props.disabled) || isReadingFiles(),
       onSelect: handleAttachFiles,
     })
     items.push({
       key: "upload",
       label: t("promptInput.attachFiles.upload"),
-      icon: <Upload class="h-4 w-4" aria-hidden="true" />,
-      disabled: Boolean(props.disabled),
+      icon: isReadingFiles()
+        ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+        : <Upload class="h-4 w-4" aria-hidden="true" />,
+      disabled: Boolean(props.disabled) || isReadingFiles(),
       onSelect: handleUploadFiles,
     })
     if (hasHistory()) {
@@ -1078,7 +1079,7 @@ export default function PromptInput(props: PromptInputProps) {
           multiple
           class="sr-only"
           tabindex="-1"
-          disabled={props.disabled}
+          disabled={props.disabled || isReadingFiles()}
           onChange={handleFileInputChange}
         />
         <div class="prompt-input-footer">

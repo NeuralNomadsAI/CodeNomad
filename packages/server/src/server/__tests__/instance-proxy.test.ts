@@ -8,6 +8,7 @@ import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
+import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -30,7 +31,7 @@ async function harness(
   shellDirectories: Record<string, string | Error> = {},
   directoryMappings: Record<string, string> = {},
 ) {
-  const upstream = Fastify()
+  const upstream = Fastify({ bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes })
   apps.push(upstream)
   let requests = 0
   let releaseDelayedUpstream: (() => void) | undefined
@@ -817,6 +818,48 @@ describe("instance proxy location enforcement", () => {
     ])
     assert.deepEqual(servicePathCalls, Object.keys(mappings))
     assert.equal(requestCount(), 1)
+  })
+
+  it("forwards the supported inline-file limit and rejects larger prompt files before upstream", async () => {
+    const { app, requestCount } = await harness()
+    const acceptedUri = `data:application/octet-stream;base64,${Buffer.alloc(
+      PROMPT_INLINE_FILE_LIMITS.maxFileBytes,
+    ).toString("base64")}`
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: { text: "inspect", files: [{ name: "accepted.bin", uri: acceptedUri }] },
+    })
+    assert.equal(accepted.statusCode, 200)
+    assert.equal(JSON.parse(accepted.body).body.files[0].uri.length, acceptedUri.length)
+    assert.equal(requestCount(), 1)
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/prompt",
+      payload: {
+        text: "inspect",
+        files: [{
+          name: "rejected.bin",
+          uri: `data:application/octet-stream;base64,${Buffer.alloc(
+            PROMPT_INLINE_FILE_LIMITS.maxFileBytes + 1,
+          ).toString("base64")}`,
+        }],
+      },
+    })
+    assert.equal(rejected.statusCode, 413)
+    assert.equal(requestCount(), 1)
+  })
+
+  it("keeps the larger parser budget scoped to prompt requests", async () => {
+    const { app, requestCount } = await harness()
+    const response = await app.inject({
+      method: "POST",
+      url: "/workspaces/workspace/instance/api/session/session-1/command",
+      payload: { name: "fixture", text: "x".repeat(1024 * 1024) },
+    })
+    assert.equal(response.statusCode, 413)
+    assert.equal(requestCount(), 0)
   })
 
   it("bounds filesystem list targets to owned worktrees before translating them", async () => {
