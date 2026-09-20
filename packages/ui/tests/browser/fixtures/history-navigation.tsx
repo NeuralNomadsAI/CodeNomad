@@ -12,6 +12,7 @@ import { sessions, setSessions, setActiveSession, setProviders } from "../../../
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/session-api"
+import { historyWindowCursor } from "../../../src/stores/history-window"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
 import "../../../src/index.css"
 
@@ -76,6 +77,13 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
   latest: () => loadLatestMessageWindow(instanceId, sessionId),
   switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
   return: () => { setActiveSession(instanceId, sessionId); setVisible(true) },
+  missingSavedAnchor: (evict: boolean) => {
+    const target = { kind: "around" as const, messageID: "msg_removed" }
+    store.setScrollSnapshot(sessionId, "message-stream", { scrollTop: 100, atBottom: false,
+      anchorKey: target.messageID, anchorOffset: 0, followModeType: "escaped",
+      windowIsLatest: !evict, ...(evict ? { windowCursor: historyWindowCursor(target) } : {}) })
+    if (evict) store.clearSession(sessionId, { preserveScroll: true })
+  },
   stream: (delta: string) => {
     if (!streaming) { streaming = true; emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model }); emit("session.text.started", { assistantMessageID: assistantId }) }
     live += delta

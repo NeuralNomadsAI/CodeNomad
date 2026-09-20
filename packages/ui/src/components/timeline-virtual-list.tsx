@@ -73,7 +73,9 @@ export default function TimelineVirtualList<T>(props: {
       <button ref={marker} class="message-timeline-segment" tabIndex={-1} />
       <div ref={gap} style={{ height: "var(--message-timeline-segment-gap)" }} />
     </div>
-    <div class="timeline-virtual-content" style={{ height: `${layout().extent}px` }}>
+    <div class="timeline-virtual-content"
+      data-overflow={viewport().height > 0 && Math.round(layout().extent) > viewport().height ? "true" : undefined}
+      style={{ height: `${layout().extent}px` }}>
       <For each={visible()}>{item => <div class="timeline-virtual-row" style={{
         top: `${byItem().get(item)!.top}px`, height: `${byItem().get(item)!.height}px`,
         "padding-top": `${byItem().get(item)!.space}px`,

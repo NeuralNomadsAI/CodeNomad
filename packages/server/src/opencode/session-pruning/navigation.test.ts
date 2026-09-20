@@ -73,7 +73,7 @@ test("navigation enforces ownership, message membership and staged undo visibili
   try {
     await assert.rejects(readNavigationWindow(db, { ...scope, directory: "/foreign" }, { kind: "latest" }, signal()))
     assert.equal(db.isTransaction, false)
-    assert.deepEqual(await readNavigationWindow(db, scope, { kind: "around", messageID: "foreign" }, signal()), { status: "blocked", reason: "conflict" })
+    assert.deepEqual(await readNavigationWindow(db, scope, { kind: "around", messageID: "foreign" }, signal()), { status: "blocked", reason: "anchor_missing" })
     db.prepare("UPDATE session_v2 SET revert=?").run(JSON.stringify({ messageID: id(300) }))
     const latest = await readNavigationWindow(db, scope, { kind: "latest" }, signal())
     assert.equal(latest.status, "window")

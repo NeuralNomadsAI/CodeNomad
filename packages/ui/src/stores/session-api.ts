@@ -6,7 +6,7 @@ import {
 import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
-import { historyWindowCursor, historyWindowTarget, readHistoryWindow } from "./history-window"
+import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHistoryAnchorError } from "./history-window"
 import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
@@ -1675,6 +1675,13 @@ async function loadMessages(
     }
   } catch (error) {
     if (options?.signal?.aborted) return
+    if (error instanceof MissingHistoryAnchorError && intent === "open" && isCurrent()) {
+      // A persisted window can outlive its anchor (deletion, compaction, undo).
+      // Recover once through a fresh visible latest page; its successful commit
+      // replaces the stale snapshot. Explicit navigation must still fail visibly.
+      return loadMessages(instanceId, sessionId, { force: true, intent: "latest",
+        signal: options?.signal, registerInvalidation: options?.registerInvalidation })
+    }
     log.error("Failed to load messages:", error)
     const message = error instanceof Error ? error.message : String(error)
     if (isCurrent() && !message.includes("Stale read from")) {

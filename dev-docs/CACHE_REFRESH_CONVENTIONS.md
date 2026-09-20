@@ -23,7 +23,7 @@ where their authority, lifetime or runtime differs.
 
 | Area | Current behaviour | Implementation |
 | --- | --- | --- |
-| Session outline | Four recent metadata-only snapshots; paused cursor survives hidden/unmounted views, completed rail is reused immediately, and status/message changes refresh without clearing it. Instance generation, mutation revision and undo boundary fence reuse. Initial progress is visible. | `packages/ui/src/stores/session-outline.ts` |
+| Session outline | Four recent metadata-only snapshots; paused cursor survives hidden/unmounted views and transcript hydration, completed rail is reused immediately, and status/message changes refresh without clearing it. Instance generation, mutation revision and undo boundary fence reuse. Initial progress is visible. | `packages/ui/src/stores/session-outline.ts` |
 | Providers/models | Retained signals; shared in-flight catalogue load; dirty-bit trailing refresh; instance, location and request-generation checks. No completed-result TTL inside `fetchProviders` itself. | `packages/ui/src/stores/session-api.ts` |
 | Git changes | Filesystem events debounce for 100 ms; one passive refresh plus a pending follow-up; hidden tab marked stale; request versions protect status/diff. Server shares concurrent status requests, not completed results. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
 | Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI requests coalesced. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |

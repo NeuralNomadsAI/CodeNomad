@@ -27,7 +27,8 @@ export const outlineResultSchema = z.union([pruningBlockedSchema, z.object({
   total: z.number().int().nonnegative(), cursor: outlineCursorSchema.nullable(),
 }).strict()])
 export type OutlineResult = z.infer<typeof outlineResultSchema>
-export const navigationWindowResultSchema = z.union([pruningBlockedSchema, z.object({
+export const navigationWindowResultSchema = z.union([pruningBlockedSchema,
+  z.object({ status: z.literal("blocked"), reason: z.literal("anchor_missing") }).strict(), z.object({
   status: z.literal("window"),
   messages: z.array(z.object({ id, type: messageType, time: z.object({ created: z.number() }).passthrough() }).passthrough()).max(200),
   older: navigationTargetSchema.nullable(), newer: navigationTargetSchema.nullable(),

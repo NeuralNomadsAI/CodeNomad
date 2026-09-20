@@ -29,7 +29,7 @@ export async function readNavigationWindow(db: DatabaseSync, scope: HistoryScope
     let sequence: number | undefined
     if ("messageID" in target) {
       const anchor = db.prepare(`SELECT seq FROM session_message WHERE ${where} AND id=?`).get(...params, target.messageID)
-      if (!anchor) return { status: "blocked", reason: "conflict" }
+      if (!anchor) return { status: "blocked", reason: "anchor_missing" }
       sequence = Number(anchor.seq)
     }
     const select = (clause: string, args: SQLInputValue[], ascending: boolean, count: number) => db.prepare(

@@ -25,6 +25,7 @@ import { findHistoryMatches } from "../stores/session-history"
 import HistoryStatistics from "./history-statistics"
 import HistoryMessagePreview from "./history-message-preview"
 import { createSessionOutline } from "../stores/session-outline"
+import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
 import SessionCleanupProgress from "./session-cleanup-progress"
@@ -346,7 +347,7 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   })
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
-    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+    active: () => props.isActive !== false && !props.loading && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
   const projectSessionOutline = createSessionOutlineProjection()
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
@@ -643,12 +644,21 @@ export default function MessageSection(props: MessageSectionProps) {
     restoringScrollSnapshot = true
     const restore = async () => {
       setOlderMessageLoadFailed(false)
+      let restoredSnapshot = snapshot
       if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)) {
         try {
           if (props.onLoadMessageAnchor) {
             const controller = new AbortController()
             anchorRestoreController = controller
-            try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+            try {
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+              catch (error) {
+                if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
+                await props.onLoadLatestMessages(controller.signal)
+                if (!isCurrentRestore()) return
+                restoredSnapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
+              }
+            }
             finally { if (anchorRestoreController === controller) anchorRestoreController = null }
           } else await loadPagesUntilAnchor({
             hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
@@ -668,7 +678,7 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!isCurrentRestore()) return
       retryAnchorRestore = null
 
-      api.restoreScrollSnapshot(snapshot, {
+      api.restoreScrollSnapshot(restoredSnapshot, {
         behavior: "auto",
         fallback: () => {
           if (!isCurrentRestore()) return
@@ -680,7 +690,7 @@ export default function MessageSection(props: MessageSectionProps) {
         onApplied: () => {
           if (!isCurrentRestore()) return
           restoringScrollSnapshot = false
-          setLastGoodScrollSnapshot(restoreSessionId, snapshot)
+          setLastGoodScrollSnapshot(restoreSessionId, restoredSnapshot)
           setDidRestoreScroll(true)
         },
         onCancelled: () => {

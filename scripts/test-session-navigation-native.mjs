@@ -12,6 +12,8 @@ export async function testSessionNavigationNative({ client, location, locationOp
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method,
     input: { sessionID: session.id, ...input }, location }, locationOptions)).output
   try {
+    assert.deepEqual(await rpc("window", { target: { kind: "around", messageID: "msg_removed" } }),
+      { status: "blocked", reason: "anchor_missing" }, "missing restore anchor is distinct from ownership conflicts")
     const around = await rpc("window", { target: { kind: "around", messageID: id(1200) } })
     assert.equal(around.status, "window", JSON.stringify(around))
     assert.equal(around.messages.length, 200)

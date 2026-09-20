@@ -99,6 +99,47 @@ async function clickTimeline(page: Page, index: number, checkReaderPosition = fa
 }
 const snapshot = (page: Page) => page.evaluate(() => (window as any).fixture.snapshot())
 
+for (const evict of [false, true]) test(`missing saved anchor recovers once on session return (${evict ? 'evicted' : 'resident'})`, async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(evict => {
+      ;(window as any).fixture.switchAway()
+      ;(window as any).fixture.missingSavedAnchor(evict)
+      ;(window as any).fixture.return()
+    }, evict)
+    await f.page.waitForFunction(() => {
+      const s = (window as any).fixture.snapshot()
+      return s.scroll?.atBottom && s.scroll?.anchorKey !== 'msg_removed' && s.ids.includes((window as any).fixture.id(1499))
+    })
+    assert.equal(f.windows.filter(w => w.messageID === 'msg_removed').length, 1)
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForTimeout(400)
+    assert.equal(f.windows.filter(w => w.messageID === 'msg_removed').length, 1, 'dead anchor must be retired, including saved window cursor')
+    assert.equal(await f.page.getByRole('button', { name: /^(Reload messages|Recharger les messages)$/ }).count(), 0)
+  } finally { await f.close() }
+})
+
+test("restoration ownership conflicts retain the saved passage instead of falling back", async () => {
+  const f = await fixture()
+  try {
+    let conflicts = 0
+    await f.page.route('**/session-history/window', route => { conflicts++; return route.fulfill({ json: { status: 'blocked', reason: 'conflict' } }) })
+    await f.page.evaluate(() => {
+      ;(window as any).fixture.switchAway()
+      ;(window as any).fixture.missingSavedAnchor(false)
+      ;(window as any).fixture.return()
+    })
+    await f.page.getByRole('button', { name: /^(Reload messages|Recharger les messages)$/ }).first().waitFor()
+    assert.equal(conflicts, 1, JSON.stringify({ snapshot: await snapshot(f.page), windows: f.windows, errors: f.errors }))
+    const failed = await snapshot(f.page)
+    assert.equal(failed.scroll.anchorKey, 'msg_removed', 'conflict must preserve the reading destination')
+    assert.equal(failed.scroll.atBottom, false, 'only a confirmed missing anchor may reset to latest')
+    await f.page.waitForTimeout(300)
+    assert.equal((await snapshot(f.page)).nativeLists, failed.nativeLists, 'conflict must not start a retry loop')
+  } finally { await f.close() }
+})
+
 test("returning during an incomplete outline resumes accepted pages and retains the completed rail", async () => {
   const f = await fixture(false, true)
   try {
