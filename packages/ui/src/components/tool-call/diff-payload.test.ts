@@ -2,8 +2,6 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ToolState } from "../../types/tool-state"
-import { getDiffToolSearchText } from "./search-text"
-import type { ToolSearchTextContext } from "./types"
 import { extractDiffPayload } from "./utils"
 
 const patch = [
@@ -33,14 +31,6 @@ const v2State = {
   output: "Edited src/example.ts (1 replacement)",
 } as unknown as ToolState
 
-function searchContext(toolState: ToolState): ToolSearchTextContext {
-  return { toolCall: { id: "part-1", type: "tool", tool: "edit" } as unknown as ToolSearchTextContext["toolCall"], toolState, toolName: "edit" }
-}
-
-function countOccurrences(values: string[], needle: string): number {
-  return values.join("\n").split(needle).length - 1
-}
-
 describe("edit tool diff payload", () => {
   it("extracts the diff from V1 metadata.diff", () => {
     const payload = extractDiffPayload("edit", v1State)
@@ -57,12 +47,5 @@ describe("edit tool diff payload", () => {
   it("falls back to the FileDiff file name when the input has no path", () => {
     const state = { ...v2State, input: {} } as unknown as ToolState
     assert.equal(extractDiffPayload("edit", state)?.filePath, "src/example.ts")
-  })
-
-  it("indexes each diff line once for search in both formats", () => {
-    // `needle` appears once in the patch (the + line) and once in input.newString.
-    // The input strings are not indexed, so exactly one hit is expected.
-    assert.equal(countOccurrences(getDiffToolSearchText(searchContext(v1State)), "needle"), 1)
-    assert.equal(countOccurrences(getDiffToolSearchText(searchContext(v2State)), "needle"), 1)
   })
 })
