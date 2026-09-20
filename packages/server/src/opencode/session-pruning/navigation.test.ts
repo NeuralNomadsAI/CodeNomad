@@ -9,10 +9,10 @@ const id = (n: number) => `message-${String(n).padStart(5, "0")}`
 function fixture(count = 1500) {
   const db = new DatabaseSync(":memory:")
   db.exec(`CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
-    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT);
+    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT,time_updated INTEGER DEFAULT 0);
     CREATE UNIQUE INDEX session_message_session_seq_idx ON session_message(session_id,seq);
     INSERT INTO session_v2 VALUES ('s','/repo','p',NULL,NULL);`)
-  const insert = db.prepare("INSERT INTO session_message VALUES (?,'s','user',?,?)")
+  const insert = db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s','user',?,?)")
   for (let n = 0; n < count; n++) insert.run(id(n), n * 7, JSON.stringify({ text: `Passage ${n}`, time: { created: n + 1 } }))
   return db
 }
@@ -53,7 +53,7 @@ test("structural index pages stay bounded without excerpts and exclude newly app
     assert.equal(first.total, 18000)
     assert.equal(first.entries.length, 16384, "structural metadata must not require hundreds of excerpt-sized pages")
     assert(first.cursor)
-    db.prepare("INSERT INTO session_message VALUES (?,'s','user',?,?)").run(id(18000), 18000 * 7, JSON.stringify({ text: "Later", time: { created: 20000 } }))
+    db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s','user',?,?)").run(id(18000), 18000 * 7, JSON.stringify({ text: "Later", time: { created: 20000 } }))
     const ids = first.entries.map(entry => entry.id)
     let cursor: { after: number; through: number } | null = first.cursor
     while (cursor) {
@@ -139,5 +139,76 @@ test("demand excerpts preserve Markdown, bound tool output and enforce ownership
     await assert.rejects(readOutlinePreviews(db, { ...scope, directory: "/foreign" }, [id(1)], signal()))
     db.prepare("UPDATE session_v2 SET revert=?").run(JSON.stringify({ messageID: id(1) }))
     assert.deepEqual(await readOutlinePreviews(db, scope, [id(1)], signal()), { status: "previews", entries: [] })
+  } finally { db.close() }
+})
+
+test("persisted checkpoints reconcile offline edits, pruning, deletions and appends without replaying unchanged ranges", async () => {
+  const db = fixture(1500)
+  try {
+    const first = await readSessionOutline(db, scope, undefined, signal())
+    if (first.status !== "outline") assert.fail("Expected index")
+    const known = first.checkpoints.map(({ changed: _, ...checkpoint }) => checkpoint)
+    const unchanged = await readSessionOutline(db, scope, undefined, signal(), -1, known)
+    if (unchanged.status !== "outline") assert.fail("Expected revalidation")
+    assert.equal(unchanged.entries.length, 476, "only the live tail is conservatively refreshed")
+    db.prepare("DELETE FROM session_message WHERE id=?").run(id(250))
+    db.prepare("UPDATE session_message SET type='assistant',data=?,time_updated=1 WHERE id=?").run(
+      JSON.stringify({ content: [{ type: "tool", name: "read" }] }), id(260))
+    db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s','user',?,?)").run(id(1500), 1500 * 7, '{"text":"new"}')
+    const delta = await readSessionOutline(db, scope, undefined, signal(), -1, known)
+    if (delta.status !== "outline") assert.fail("Expected delta")
+    assert.equal(delta.total, 1500)
+    assert.equal(delta.entries.length, 988)
+    assert.equal(delta.checkpoints.filter(checkpoint => !checkpoint.changed).length, 1)
+    assert(!delta.entries.some(entry => entry.id === id(250)))
+    assert.equal(delta.entries.find(entry => entry.id === id(260))?.tools, 1)
+    // Pruning uses a conditional data update, without changing native timestamps.
+    db.prepare("UPDATE session_message SET data=? WHERE id=?").run('{"content":[]}', id(260))
+    const pruned = await readSessionOutline(db, scope, undefined, signal(), -1,
+      delta.checkpoints.map(({ changed: _, ...checkpoint }) => checkpoint))
+    if (pruned.status !== "outline") assert.fail("Expected prune delta")
+    assert.equal(pruned.entries.find(entry => entry.id === id(260))?.tools, 0)
+    assert.equal(db.isTransaction, false)
+  } finally { db.close() }
+})
+
+test("appending across repeated refreshes fills the tail checkpoint instead of growing one per message", async () => {
+  const db = fixture(1025)
+  try {
+    let known: import("./navigation-contract").OutlineCheckpoint[] = []
+    for (let seq = 1025; seq < 1065; seq++) {
+      db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s','user',?,?)")
+        .run(id(seq), seq * 7, '{"text":"new"}')
+      const page = await readSessionOutline(db, scope, undefined, signal(), -1, known)
+      if (page.status !== "outline") assert.fail("Expected index")
+      assert.equal(page.checkpoints.length, 3)
+      known = page.checkpoints.map(({ changed: _, ...checkpoint }) => checkpoint)
+    }
+  } finally { db.close() }
+})
+
+test("changed checkpoints with deletion holes never exceed the RPC page limit", async () => {
+  const db = fixture(18000)
+  try {
+    const { outlineResultSchema } = await import("./navigation-contract")
+    const known: import("./navigation-contract").OutlineCheckpoint[] = []
+    let cursor: { after: number; through: number } | undefined
+    do {
+      const page = await readSessionOutline(db, scope, cursor, signal())
+      if (page.status !== "outline") assert.fail("Expected index")
+      known.push(...page.checkpoints.map(({ changed: _, ...checkpoint }) => checkpoint))
+      cursor = page.cursor ?? undefined
+    } while (cursor)
+    db.prepare("DELETE FROM session_message WHERE id=?").run(id(250))
+    db.exec("UPDATE session_message SET time_updated=1")
+    let count = 0
+    do {
+      const page = await readSessionOutline(db, scope, cursor, signal(), -1, known)
+      assert(outlineResultSchema.safeParse(page).success, "every delta page satisfies the actual RPC contract")
+      if (page.status !== "outline") assert.fail("Expected delta")
+      count += page.entries.length
+      cursor = page.cursor ?? undefined
+    } while (cursor)
+    assert.equal(count, 17999)
   } finally { db.close() }
 })

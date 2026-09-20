@@ -13,7 +13,7 @@ function fixture() {
     getSharedServiceClient: async () => ({ session: { get: async () => structuredClone(session) }, rpc: {
       call: async (input: any) => {
         calls.push(input); afterRead()
-        return { output: input.method === "outline" ? { status: "outline", entries: [], total: 0, cursor: null }
+        return { output: input.method === "outline" ? { status: "outline", entries: [], total: 0, cursor: null, checkpoints: [] }
           : input.method === "outlinePreview" ? { status: "previews", entries: [] }
           : { status: "window", messages: [], older: null, newer: null, resume: { kind: "latest" }, latest: true } }
       },

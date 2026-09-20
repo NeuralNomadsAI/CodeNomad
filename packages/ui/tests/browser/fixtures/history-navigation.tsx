@@ -13,7 +13,8 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/session-api"
 import { historyWindowCursor } from "../../../src/stores/history-window"
-import { createSessionOutline } from "../../../src/stores/session-outline"
+import { createSessionOutline, captureSessionOutlineIndexes, seedSessionOutlineIndexes } from "../../../src/stores/session-outline"
+import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
 import "../../../src/index.css"
 
@@ -63,6 +64,13 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 }]])))
 setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 setActiveSession(instanceId, sessionId)
+const savedIndexes = sessionStorage.getItem("fixture-outline-restore")
+if (savedIndexes) {
+  const encoded = JSON.parse(savedIndexes)
+  const decoded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+  const tab = decoded?.session?.tabs[0]
+  if (tab?.kind === "workspace") seedSessionOutlineIndexes(instanceId, tab.outlineIndexes)
+}
 const [visible, setVisible] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
@@ -71,6 +79,15 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 ;(window as any).fixture = {
   id: navigationMessageId,
   releaseMessages,
+  index: () => captureSessionOutlineIndexes(instanceId)?.[sessionId],
+  saveIndexes: async (projectID?: string) => {
+    const indexes = captureSessionOutlineIndexes(instanceId)!
+    if (projectID) indexes[sessionId] = { ...indexes[sessionId], projectID }
+    const encoded = await encodeClientSnapshotV2({ version: 1, revision: 1, savedAt: Date.now(), layout: {},
+      session: { activeTabIndex: 0, tabs: [{ kind: "workspace", folder: "/fixture", activeSessionId: sessionId,
+        drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {}, outlineIndexes: indexes }] } })
+    sessionStorage.setItem("fixture-outline-restore", JSON.stringify(encoded))
+  },
   visitIndexes: async () => {
     for (let index = 0; index < 6; index++) await new Promise<void>(resolve => {
       createRoot(dispose => {

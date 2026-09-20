@@ -8,11 +8,12 @@ import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { addInstance, removeInstance } from "./instances"
 import { getRootClient } from "./opencode-client"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeInstanceGeneration, getOpenCodeSessionInbox, projectOpenCodeMessages } from "./opencode-data"
 import { messageStoreBus } from "./message-v2/bus"
 import { loadMessages, loadMoreMessages, loadNewerMessageWindow } from "./session-api"
 import { setActiveSession, setSessions } from "./session-state"
 import { handlePruningEvent } from "./session-pruning-events"
+import { executeSessionTechnicalPartDeletion } from "./session-history"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -26,7 +27,8 @@ async function waitFor(check: () => boolean, description: string) {
 }
 
 for (const ordering of ["UI-first", "SDK-first"] as const) {
-  test(`pruning keeps the native 200-message page and contiguous pagination (${ordering})`, async () => {
+  for (const finalResponse of ["none", "success", "timeout"] as const) {
+  test(`pruning keeps the native 200-message page and contiguous pagination (${ordering}, final=${finalResponse})`, async () => {
     const instanceId = `pruning-pagination-${ordering}`, sessionId = "s"
     const client = getRootClient(instanceId)
     const session = {
@@ -38,6 +40,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
     addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
     setSessions(new Map([[instanceId, new Map([[sessionId, session]])]]))
     const savedYolo = serverApi.getYoloState
+    const savedPrune = serverApi.pruneSessionHistory
     serverApi.getYoloState = async () => ({ enabled: false }) as any
     const messages: SessionMessageInfo[] = Array.from({ length: 400 }, (_, index) => ({
       id: `m${String(index).padStart(3, "0")}`, type: "assistant", agent: "build",
@@ -102,6 +105,17 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       // A late delta during repair must not revive the disposed projection.
       native("session.reasoning.delta", { assistantMessageID: "m399", ordinal: 0, delta: "stale" })
       await waitFor(() => sdkReads > 0, "SDK reconciliation requested its small seed")
+      if (finalResponse !== "none") {
+        serverApi.pruneSessionHistory = async () => {
+          if (finalResponse === "timeout") throw new Error("ambiguous timeout")
+          return { results: [] } as any
+        }
+        const deletion = executeSessionTechnicalPartDeletion({ instanceId, sessionId,
+          generation: getOpenCodeInstanceGeneration(instanceId), toolCount: 0, reasoningCount: 1, skipped: 0,
+          candidates: [{ messageID: "m250", revision: "a".repeat(64), toolCount: 0, reasoningCount: 1 }] })
+        if (finalResponse === "timeout") await assert.rejects(deletion, /ambiguous timeout/)
+        else await deletion
+      }
       if (ordering === "UI-first") {
         uiGate.resolve()
         await waitFor(() => !hasReasoning("m250"), "native page reload finished before SDK")
@@ -143,6 +157,8 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
       serverApi.getYoloState = savedYolo
+      serverApi.pruneSessionHistory = savedPrune
     }
   })
+  }
 }

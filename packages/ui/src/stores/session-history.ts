@@ -1,8 +1,8 @@
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import type { HistoryCandidate, HistoryPage, HistoryQuery } from "../../../server/src/opencode/session-pruning/history-contract"
-import { getOpenCodeInstanceGeneration, invalidateOpenCodeSessionContent } from "./opencode-data"
-import { invalidateSessionMessageLoad } from "./session-state"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { refreshSessionContent } from "./session-pruning-events"
 
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {
   signal?.throwIfAborted()
@@ -85,8 +85,7 @@ export async function executeSessionTechnicalPartDeletion(plan: SessionTechnical
     // Also invalidate after an ambiguous timeout/cancellation. Never fetch every
     // pruned message back into the UI: the ordinary active window reconciles.
     if (plan.generation === getOpenCodeInstanceGeneration(plan.instanceId)) {
-      invalidateOpenCodeSessionContent(plan.instanceId, plan.sessionId)
-      invalidateSessionMessageLoad(plan.instanceId, plan.sessionId)
+      refreshSessionContent(plan.instanceId, plan.sessionId)
     }
   }
 }

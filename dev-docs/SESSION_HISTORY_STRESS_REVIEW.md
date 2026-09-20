@@ -151,3 +151,67 @@ conversation is still not instantaneous. SQLite must inspect nested assistant JS
 for tool grouping, although bodies are no longer copied into JS or transported for
 index construction. The earlier whole-transcript allocation/streaming findings
 remain relevant; lower excerpt traffic alone does not resolve them.
+
+## Persisted index / checkpoint revalidation follow-up
+
+The optional structural index now joins the native restoration partition graph.
+On reload it seeds geometry before verification, then reconciles the complete
+sequence range using checkpoints. Only changed blocks return structure. The last
+block grows to 512 entries, preventing one-checkpoint-per-append accumulation.
+Draft/scroll saves reuse immutable normalized indexes and encoded chunk hashes.
+
+Validation so far:
+
+- 21 Chromium navigation cases passed together, including a real renderer reload
+  through the partition codec with the verification response held. The saved
+  1,500-row geometry appeared before release, then reflected an offline deletion,
+  an old technical-count edit and an appended message. A foreign-project index
+  was not displayed. The final growing-tail adjustment passed both targeted cases.
+- 75 restoration/codec/merge tests passed; two additional clear/disable cases and
+  the persistence cases then passed with all 33 client-state/persistence tests.
+  The 20,000-entry round-trip exceeds 1 MiB and keeps every native leaf below 1 MiB.
+  Missing/corrupt index chunks preserve draft, selection and scroll state.
+- Eight SQL/navigation cases and three ownership/race route cases pass, including
+  offline pruning and repeated appends without manifest growth per message.
+- All six Electron/Tauri project-tab restore browser cases pass. The selected-draft
+  hydration test passes with `--conditions=browser --test-force-exit`; an initial
+  plain Node invocation used Solid's server build and failed during module import.
+- Both package typechecks pass. The isolated OpenCode 2.0.5 native/UI fixture also
+  passes after the final tail-growth adjustment, including 1,501-message navigation
+  and checkpoint reuse. Packaged Tauri resources pass the build and smoke checks;
+  all 34 Electron native client-state storage tests pass.
+
+These are fixture results. At this stage native automation reported no visible
+session for this conversation, so installed-app restart restoration has not yet
+been measured. No fresh desktop latency claim follows from these test results.
+
+### Gatekeeper correction loop
+
+The first independent whole-PR review reproduced three P2 defects. All three have
+targeted fixes and passing regressions before the second review:
+
+1. Delta pages could exceed 16,384 entries when deletions left partially filled
+   checkpoint ranges. The reader now reserves one whole block before continuing;
+   an 18,000-message regression validates every delta page against the RPC schema
+   and recovers all 17,999 surviving entries.
+2. The final bulk-cleanup invalidation could cancel a pruning-event reload without
+   scheduling its replacement. Final success and ambiguous failure now use the
+   same coalesced content-refresh path as native events. Six native-page/SDK-order
+   cases cover success, timeout and event-only repair of the 200-message window.
+3. A terminal status during an unfinished fixed-horizon outline scan could leave
+   later arrivals unseen. Completion now compares the nonreactive message revision
+   and requests one trailing scan. The Solid regression holds the last page,
+   delivers a native message event and idle transition, and verifies the catch-up.
+
+Both package typechecks pass after these corrections. The first outline test run
+also exposed an incorrect expected request count: status cancellation retries the
+last page before the single trailing scan, for four reads rather than three. The
+corrected assertion passes and still requires exactly one catch-up.
+
+The second independent gatekeeper pass reports **zero actionable findings** and
+confirms all three fixes. Its separate SQL/persistence run passed 12 tests; its
+Solid/pruning assertions also passed, although those reviewer processes retained
+handles and hit the harness timeout. The primary validation used the documented
+`--conditions=browser --test-force-exit` invocation and exited successfully.
+The rebuilt packaged resources pass the smoke test after the fixes.
+All 21 Chromium navigation cases pass together again after the gatekeeper fixes.

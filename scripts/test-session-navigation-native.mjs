@@ -27,15 +27,21 @@ export async function testSessionNavigationNative({ client, location, locationOp
     const following = await rpc("window", { target: around.newer })
     assert(following.messages.some(message => message.id === around.messages.at(-1).id), "next window retains the viewport anchor")
     let cursor, count = 0
+    const checkpoints = []
     do {
       const outline = await rpc("outline", cursor ? { cursor } : {})
       assert.equal(outline.status, "outline")
       assert.equal(outline.entries.length, Math.min(16384, native.messages.length - count), "structural index does not wait for excerpt pagination")
       assert(outline.entries.every(entry => !("preview" in entry)))
+      checkpoints.push(...outline.checkpoints.map(({ changed, ...checkpoint }) => checkpoint))
       count += outline.entries.length
       cursor = outline.cursor
     } while (cursor)
     assert.equal(count, native.messages.length)
+    const verified = await rpc("outline", { known: checkpoints })
+    assert.equal(verified.status, "outline", JSON.stringify(verified))
+    assert.equal(verified.entries.length, native.messages.length % 512, "unchanged saved ranges do not resend their structure")
+    assert.equal(verified.checkpoints.filter(checkpoint => !checkpoint.changed).length, 2)
     const previews = await rpc("outlinePreview", { messageIDs: [id(1200)] })
     assert.equal(previews.status, "previews", JSON.stringify(previews))
     assert.equal(previews.entries[0].text, "Navigation passage 1200")

@@ -166,6 +166,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     expandedSessionIds: (source.expandedSessionIds ?? []).filter((id) => unavailable.has(id)),
   }
   if (source.occurrence !== undefined) tab.occurrence = source.occurrence
+  if (source.outlineIndexes) tab.outlineIndexes = keep(source.outlineIndexes)
   if (source.activeParentSessionId && unavailable.has(source.activeParentSessionId)) {
     tab.activeParentSessionId = source.activeParentSessionId
   }
@@ -196,6 +197,10 @@ function mergeWorkspaceState(
     ].filter((id, index, values) => values.indexOf(id) === index),
   }
   const restoreSelection = !authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId
+  if (current.outlineIndexes || preserved.outlineIndexes) {
+    result.outlineIndexes = mergeRecords(current.outlineIndexes ?? {}, preserved.outlineIndexes ?? {}, authority.idleMarkers)
+    for (const id of authority.deletedSessions ?? []) delete result.outlineIndexes[id]
+  }
   if (restoreSelection && preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {
     result.activeParentSessionId = preserved.activeParentSessionId
   }

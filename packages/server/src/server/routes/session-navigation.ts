@@ -8,7 +8,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
   const inputs = { window: navigationWindowInputSchema, outline: outlineInputSchema, outlinePreview: outlinePreviewInputSchema }
   const outputs = { window: navigationWindowResultSchema, outline: outlineResultSchema, outlinePreview: outlinePreviewResultSchema }
   for (const method of ["window", "outline", "outlinePreview"] as const) {
-    app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-history/${method}`, { bodyLimit: 8192 }, async (request, reply) => {
+    app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-history/${method}`, { bodyLimit: method === "outline" ? 96 * 1024 : 8192 }, async (request, reply) => {
       const parsed = inputs[method].safeParse(request.body)
       if (!parsed.success) return reply.code(400).send({ error: "Invalid history navigation request" })
       const client = await deps.workspaceManager.getSharedServiceClient()

@@ -11,8 +11,13 @@ challenge as history queries. They do not expose generic RPC or SQL access.
   type and technical-part counts, with no excerpt or body. SQL projects counts
   directly; large content never enters JS/RPC/renderer just to draw the rail.
   Its sequence horizon excludes newly appended messages until the next refresh;
-  `after` permits re-reading the small mutable tail and new arrivals. Cancellation
-  yields every 128 entries. Cold assistant/tool indexes still inspect native JSON
+   `known` supplies up to 512 contiguous checkpoint digests. Each covers up to 512
+   native row headers (ID, type, sequence, update stamp and stored byte length).
+   Only changed ranges require technical-count projection and return entries;
+   the live tail is conservatively refreshed and grows before adding a new range.
+   Deletions retain earlier checkpoint boundaries instead of shifting every range.
+   Each page uses its own read transaction. Cancellation
+   yields every 128 projected entries and between checkpoints. Cold assistant/tool indexes still inspect native JSON
   in SQLite, so first-load cost is not constant or free. Larger histories retain
   bounded pagination; the exact structural snapshot publishes once it is complete.
 - `outlinePreview` reads at most 12 requested IDs, in priority order. Each reply
@@ -58,6 +63,32 @@ It refreshes on activation, terminal status, undo/content mutation and reconnect
 hidden views cancel work. A refresh retains the last successful snapshot and
 errors provide an explicit retry. The initial outline scan is proportional to the
 session size; a subsequent jump loads only its bounded destination window.
+
+### Restoration of structural indexes
+
+Completed indexes join the existing restoration graph, with separate 512-entry
+content-addressed leaves and no excerpts or message bodies. Limits are 16 indexes,
+200,000 entries and 16 MiB across the snapshot, prioritizing selected sessions.
+The optional data uses a separate budget from drafts, attachments and selections.
+Missing/corrupt index chunks discard only that index. Frozen normalized indexes
+and encoded leaves are memoized so draft/scroll captures do not rehash each entry.
+The `outline-index-v1` root extension fences older renderers rather than letting
+them discard session documents they cannot interpret. Hosts without partition
+support keep their existing monolithic snapshot without the optional indexes.
+
+Hydration seeds indexes before mounting the session. Durable session identity,
+directory, project and undo boundary must match; ephemeral runtime generations
+are not written to disk. Restored geometry is provisional and all checkpoints are
+revalidated, including old ranges that may have been edited or deleted offline.
+The cache never supplies native mutation authority. Clearing/disabling restoration
+uses the existing native transaction and recapture suppression. Unsupported,
+over-budget or unavailable indexes fall back to a cold structural read.
+
+Revalidation still scans bounded row headers in SQLite; it avoids replaying
+unchanged structure and parsing unchanged technical content, not all database
+work. The stamps follow native message updates; pruning also changes stored byte
+length. Out-of-band writes that deliberately preserve both stamp and length are
+outside this cache invalidation contract.
 
 The timeline uses the same standard native scrollbar as the transcript, with one
 ordinary gutter. Marker rectangles give up width to it; fixed-size icons and

@@ -30,7 +30,7 @@ export default Plugin.define({
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
-        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after)),
+        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after, input.known)),
       outlinePreview: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readOutlinePreviews(db, scope, input.messageIDs, call.signal)),
       history: (input, call) => queryBoundHistory(ctx, input, call.signal),

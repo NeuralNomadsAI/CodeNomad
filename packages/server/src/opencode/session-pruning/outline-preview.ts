@@ -2,7 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite"
 import { setImmediate as yieldTurn } from "node:timers/promises"
 import type { HistoryScope } from "./history-store"
 import type { OutlinePreviewResult } from "./navigation-contract"
-import { ownedSession } from "./navigation-store"
+import { ownedSession } from "./navigation-scope"
 
 /** Demand-only excerpts, independent of index geometry and transcript windows. */
 export async function readOutlinePreviews(db: DatabaseSync, scope: HistoryScope, ids: string[], signal: AbortSignal): Promise<OutlinePreviewResult> {

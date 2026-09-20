@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mkdir } from "node:fs/promises"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -30,26 +30,31 @@ after(async () => { await browser?.close(); await server?.close() })
 
 async function fixture(mixed = false, pausePreviews = false, holdMessages = false) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
-  const db = new DatabaseSync(":memory:")
-  db.exec(`CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
-    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT);
+  const databaseDirectory = await mkdtemp(path.join(os.tmpdir(), "codenomad-outline-browser-"))
+  const databasePath = path.join(databaseDirectory, "history.sqlite")
+  const db = new DatabaseSync(databasePath)
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
+    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT,time_updated INTEGER DEFAULT 0);
     CREATE UNIQUE INDEX seq_idx ON session_message(session_id,seq);
     INSERT INTO session_v2 VALUES ('s','/fixture','p',NULL,NULL);`)
-  const insert = db.prepare("INSERT INTO session_message VALUES (?,'s',?,?,?)")
+  const insert = db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s',?,?,?)")
   for (let index = 0; index < 1500; index++) {
     const { id, type, ...data } = (mixed ? mixedNavigationMessage : navigationMessage)(index)
     insert.run(id, type, index, JSON.stringify(data))
   }
   for (let index = 0; index < 6; index++) {
     db.prepare("INSERT INTO session_v2 VALUES (?,'/fixture','p',NULL,NULL)").run(`cached-${index}`)
-    db.prepare("INSERT INTO session_message VALUES (?,?,'user',0,?)").run(`cached-message-${index}`, `cached-${index}`, JSON.stringify({ text: "Cached index" }))
+    db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,?,'user',0,?)").run(`cached-message-${index}`, `cached-${index}`, JSON.stringify({ text: "Cached index" }))
   }
   const errors: string[] = [], windows: any[] = []
   const outlines: Array<number | undefined> = []
   const previewRequests: string[][] = []
+  const outlineReplies: any[] = []
   let resumeOutline!: () => void
   const outlineGate = new Promise<void>(resolve => { resumeOutline = resolve })
   const reads = new Set<Promise<unknown>>()
+  let indexGate: Promise<void> | undefined, releaseIndex: (() => void) | undefined
   let hold: { messageID: string; release: () => void; promise: Promise<void> } | undefined
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
@@ -66,12 +71,16 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
       if (pausePreviews) await outlineGate
     }
     const scope = { directory: "/fixture", projectID: "p", sessionID: input.sessionID }
+    // Production opens an independent read-only connection for every RPC.
+    // Sharing one handle falsely nests yielding index/window transactions.
+    const reader = new DatabaseSync(databasePath, { readOnly: true })
     const read = method === "window"
-      ? readNavigationWindow(db, scope, input.target, new AbortController().signal)
-      : method === "outlinePreview" ? readOutlinePreviews(db, scope, input.messageIDs, new AbortController().signal)
-        : readSessionOutline(db, scope, input.cursor, new AbortController().signal, input.after)
+      ? readNavigationWindow(reader, scope, input.target, new AbortController().signal)
+      : method === "outlinePreview" ? readOutlinePreviews(reader, scope, input.messageIDs, new AbortController().signal)
+        : readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known)
     reads.add(read)
-    const response = await read.finally(() => reads.delete(read))
+    const response = await read.finally(() => { reads.delete(read); reader.close() })
+    if (method === "outline") { outlineReplies.push(response); await indexGate }
     if (method === "window") {
       windows.push(input.target)
       if (input.target.messageID === hold?.messageID) await hold!.promise
@@ -82,14 +91,22 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
   await page.waitForFunction(() => Boolean((window as any).fixture))
   await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
   if (!holdMessages) await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
-  return { page, windows, errors, outlines, previewRequests, resumeOutline,
+  return { page, windows, errors, outlines, outlineReplies, previewRequests, resumeOutline,
+    holdIndex: () => { indexGate = new Promise<void>(resolve => { releaseIndex = resolve }); return () => { releaseIndex?.(); indexGate = undefined } },
+    offlineEdit: () => {
+      db.prepare("DELETE FROM session_message WHERE id=?").run(navigationMessageId(250))
+      db.prepare("UPDATE session_message SET type='assistant',data=?,time_updated=1 WHERE id=?").run(
+        JSON.stringify({ content: [{ type: 'text', text: 'Updated' }, { type: 'tool', name: 'read' }] }), navigationMessageId(260))
+      const { id, type, ...data } = navigationMessage(1500)
+      insert.run(id, type, 1500, JSON.stringify(data))
+    },
     hold: (index: number) => {
       let release!: () => void
       const promise = new Promise<void>(done => { release = done })
       hold = { messageID: navigationMessageId(index), release, promise }
       return release
     },
-    close: async () => { hold?.release(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close() },
+    close: async () => { hold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
   }
 }
 
@@ -211,7 +228,46 @@ test("indexes survive more than four session visits and live refresh reads only 
     })
     await f.page.waitForFunction(() => document.querySelector('.message-timeline')?.getAttribute('data-segment-count') === '1501')
     await f.page.waitForTimeout(200)
-    assert.equal(f.outlines.at(-1), 1467, 'refresh preserves the first 1468 rows and re-reads the mutable tail')
+    assert.equal(f.outlineReplies.at(-1).entries.length, 476, 'refresh only returns the last changed checkpoint')
+    assert.equal(f.outlineReplies.at(-1).checkpoints.filter((checkpoint: any) => !checkpoint.changed).length, 2)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("restored partition index paints before revalidation and applies offline changes by checkpoint", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.saveIndexes())
+    f.offlineEdit()
+    const release = f.holdIndex()
+    await f.page.reload()
+    await f.page.waitForFunction(() => Boolean((window as any).fixture))
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    assert((await f.page.evaluate(() => (window as any).fixture.index())).entries.some((entry: any) => entry.id === 'msg_00250'),
+      'saved geometry is visible while native verification is blocked')
+    release()
+    await f.page.waitForFunction(() => {
+      const entries = (window as any).fixture.index()?.entries ?? []
+      return !entries.some((entry: any) => entry.id === 'msg_00250') && entries.some((entry: any) => entry.id === 'msg_01500')
+    })
+    const response = f.outlineReplies.at(-1)
+    assert.equal(response.entries.length, 988, 'only changed ranges travel back to the renderer')
+    assert.equal(response.checkpoints.filter((checkpoint: any) => !checkpoint.changed).length, 1)
+    assert.equal(response.entries.find((entry: any) => entry.id === 'msg_00260').tools, 1)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("restored index from another project is not displayed", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.saveIndexes('foreign'))
+    const release = f.holdIndex()
+    await f.page.reload()
+    await f.page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await f.page.locator('.message-timeline[data-segment-count="1500"]').count(), 0)
+    release()
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
