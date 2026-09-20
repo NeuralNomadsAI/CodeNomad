@@ -10,10 +10,10 @@ describe("tool presentation registry", () => {
   })
   it("lists OpenCode 2.x tools in the configurable settings rows", () => {
     const tools = getConfigurableToolEntries().map((entry) => entry.tool)
-    for (const tool of ["bash", "read", "edit", "write", "glob", "grep", "webfetch", "websearch", "execute", "task", "skill", "question", OTHER_TOOL_NAME]) {
+    for (const tool of ["bash", "read", "edit", "write", "patch", "glob", "grep", "webfetch", "websearch", "execute", "task", "skill", "question", OTHER_TOOL_NAME]) {
       assert.ok(tools.includes(tool), tool)
     }
-    for (const tool of ["patch", "apply_patch", "todowrite"]) {
+    for (const tool of ["apply_patch", "todowrite"]) {
       assert.ok(!tools.includes(tool), tool)
     }
   })

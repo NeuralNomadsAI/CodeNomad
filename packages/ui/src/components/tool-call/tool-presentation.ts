@@ -59,7 +59,7 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "patch",
     label: "patch",
-    configurable: false,
+    configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
   {

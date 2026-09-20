@@ -240,6 +240,7 @@ jobs:
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
+          packages/ui/src/components/tool-call/tool-presentation.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/components/virtual-follow-measurements.test.ts
