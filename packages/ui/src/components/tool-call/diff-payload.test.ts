@@ -48,4 +48,25 @@ describe("edit tool diff payload", () => {
     const state = { ...v2State, input: {} } as unknown as ToolState
     assert.equal(extractDiffPayload("edit", state)?.filePath, "src/example.ts")
   })
+
+  it("extracts a single-file OpenCode 2.x patch", () => {
+    const state = { ...v2State, input: {} } as unknown as ToolState
+    assert.equal(extractDiffPayload("patch", state)?.diffText, patch)
+  })
+
+  it("does not reduce a multi-file OpenCode 2.x patch to its first file", () => {
+    const otherPatch = patch.split("src/example.ts").join("src/other.ts")
+    const state = {
+      status: "completed",
+      input: {},
+      metadata: {
+        files: [
+          { file: "src/example.ts", patch, additions: 1, deletions: 1, status: "modified" },
+          { file: "src/other.ts", patch: otherPatch, additions: 1, deletions: 1, status: "modified" },
+        ],
+      },
+      output: "Applied patch to 2 files",
+    } as unknown as ToolState
+    assert.equal(extractDiffPayload("patch", state), null)
+  })
 })
