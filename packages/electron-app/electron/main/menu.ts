@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron"
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
+import { setViewMenuState, updateViewMenu, viewMenuItems } from "./view-menu"
 
 interface ApplicationMenuActions {
   getLocalTarget(): BrowserWindow | null
@@ -23,6 +24,7 @@ function target(local: boolean): BrowserWindow | null {
 
 function updateWorkspaceMenuState() {
   const window = target(true)
+  updateViewMenu(applicationMenu, window)
   const enabled = Boolean(window && workspaceEnabled.get(window.webContents.id))
   for (const id of ["open-workspace-folder", "open-workspace-terminal", "open-workspace-editor"]) {
     const item = applicationMenu?.getMenuItemById(id)
@@ -30,18 +32,21 @@ function updateWorkspaceMenuState() {
   }
 }
 
-export function setWorkspaceMenuEnabled(window: BrowserWindow, enabled: boolean) {
+export function setWorkspaceMenuEnabled(window: BrowserWindow, enabled: boolean, viewState?: unknown) {
+  setViewMenuState(window.webContents.id, viewState)
   workspaceEnabled.set(window.webContents.id, enabled)
   updateWorkspaceMenuState()
 }
 
 export function clearWorkspaceMenuWindow(webContentsId: number) {
+  setViewMenuState(webContentsId, undefined)
   workspaceEnabled.delete(webContentsId)
   updateWorkspaceMenuState()
 }
 
 export function popupTitlebarMenu(window: BrowserWindow, menu: TitlebarMenu, x: number, y: number) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid titlebar menu position")
+  updateWorkspaceMenuState()
   const submenu = applicationMenu?.getMenuItemById(`menu-${menu}`)?.submenu
   if (!submenu) throw new Error(`Unknown titlebar menu: ${menu}`)
   submenu.popup({ window, x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)) })
@@ -84,6 +89,8 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
         : [{ role: "delete" as const }, { type: "separator" as const }, { role: "selectAll" as const }]),
     ] },
     { id: "menu-view", label: "View", submenu: [
+      ...viewMenuItems(sendCommand),
+      { type: "separator" },
       { label: "Reload", accelerator: "CmdOrCtrl+R", click: withTarget((window) => actions?.reload(window)) },
       { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: withTarget((window) => actions?.forceReload(window)) },
       { label: "Toggle Developer Tools", accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I", click: withTarget((window) => window.webContents.toggleDevTools()) },
