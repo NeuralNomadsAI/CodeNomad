@@ -43,6 +43,13 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     const { id, type, ...data } = (mixed ? mixedNavigationMessage : navigationMessage)(index)
     insert.run(id, type, index, JSON.stringify(data))
   }
+  if (mixed) {
+    for (const [index, name] of [[6, "read"], [11, "glob"]] as const) {
+      const { id, type: _, ...data } = mixedNavigationMessage(index)
+      data.content.find((part: any) => part.type === "tool").name = name
+      db.prepare("UPDATE session_message SET data=? WHERE id=?").run(JSON.stringify(data), id)
+    }
+  }
   for (let index = 0; index < 6; index++) {
     db.prepare("INSERT INTO session_v2 VALUES (?,'/fixture','p',NULL,NULL)").run(`cached-${index}`)
     db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,?,'user',0,?)").run(`cached-message-${index}`, `cached-${index}`, JSON.stringify({ text: "Cached index" }))
@@ -387,6 +394,15 @@ test("mixed timeline keeps an exact scrollbar extent throughout manual browsing 
   const f = await fixture(true)
   try {
     const rail = f.page.locator('.message-timeline')
+    await f.page.evaluate(() => (window as any).fixture.tools(true))
+    await rail.evaluate(element => { element.scrollTop = 0 })
+    for (const [index, icon] of [[1, "terminal"], [6, "book-open"], [11, "search"]] as const) {
+      const historicalTool = rail.locator(`.message-timeline-tool[data-message-id="${navigationMessageId(index)}"]`)
+      await historicalTool.waitFor()
+      assert.equal(await historicalTool.locator(`svg.lucide-${icon}`).count(), 1,
+        `indexed tool ${index} keeps its ${icon} icon without loading the historical message`)
+      assert.equal(await historicalTool.locator("svg.lucide-layout-grid").count(), 0)
+    }
     for (const tools of [true, false]) {
       await f.page.evaluate(tools => (window as any).fixture.tools(tools), tools)
       await rail.hover()

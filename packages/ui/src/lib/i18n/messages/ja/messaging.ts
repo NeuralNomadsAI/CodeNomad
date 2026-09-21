@@ -31,7 +31,7 @@ export const messagingMessages = {
   "history.planning": "履歴を確認中：{count} 件",
   "history.pruning": "整理中：{count} / {total} 件",
   "transcriptFilters.title": "メッセージの内容",
-  "transcriptFilters.systemMessages": "システムメッセージ",
+  "transcriptFilters.systemMessages": "システム",
   "messageBlock.system.label": "システム",
   "transcriptFilters.description": "内容の表示・非表示と初期の展開状態を選択します。設定はすべての会話に適用されます。",
   "transcriptFilters.show": "{name}を表示",

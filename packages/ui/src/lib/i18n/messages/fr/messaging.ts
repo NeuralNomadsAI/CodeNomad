@@ -31,7 +31,7 @@ export const messagingMessages = {
   "history.planning": "Analyse de l’historique : {count} messages",
   "history.pruning": "Nettoyage : {count} / {total} messages",
   "transcriptFilters.title": "Contenu des messages",
-  "transcriptFilters.systemMessages": "Messages système",
+  "transcriptFilters.systemMessages": "Système",
   "messageBlock.system.label": "Système",
   "transcriptFilters.description": "Affichez ou masquez les contenus, puis choisissez leur dépliage initial. Ces réglages s’appliquent à toutes les conversations.",
   "transcriptFilters.show": "Afficher {name}",
