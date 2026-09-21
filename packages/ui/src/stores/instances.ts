@@ -48,7 +48,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
-import { updateSessionInfo } from "./message-v2/session-info"
+import { clearRevertedUsage, recordRevertedUsage, updateSessionInfo } from "./message-v2/session-info"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -1359,6 +1359,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
+  clearRevertedUsage(id)
   clearInstanceDraftPrompts(id)
   clearSessionListRequestState(id)
   clearSessionCatalogState(id)
@@ -2045,9 +2046,11 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       removeMessageV2(instanceId, event.data.inboxID, sessionId)
     }
     if (sessionId && event.type === "session.revert.committed") {
-      for (const messageId of messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)) {
-        if (messageId >= event.data.to) removeMessageV2(instanceId, messageId, sessionId)
-      }
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const removed = store.getSessionMessageIds(sessionId).filter((messageId) => messageId >= event.data.to)
+      const entries = store.getSessionUsage(sessionId)?.entries ?? {}
+      recordRevertedUsage(instanceId, sessionId, removed.flatMap((messageId) => entries[messageId] ? [entries[messageId]] : []))
+      for (const messageId of removed) removeMessageV2(instanceId, messageId, sessionId)
       updateSessionInfo(instanceId, sessionId)
     }
   }

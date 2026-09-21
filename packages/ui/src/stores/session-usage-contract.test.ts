@@ -94,8 +94,54 @@ test("opening an already-loaded session initializes totals from the hydrated ses
   } finally { cleanup() }
 })
 
-test("a committed revert that removes a message lowers the totals", () => {
+test("authoritative session totals win over a partially loaded transcript", () => {
+  const instanceId = "usage-partial-window", sessionId = "s"
+  const { emit, cleanup } = setup(instanceId, sessionId)
+  try {
+    const base = { sessionID: sessionId, assistantMessageID: "m" }
+    emit("session.step.started", { ...base, agent: "build", model, started: 1 }, 1)
+    emit("session.step.ended", { ...base, finish: "stop", cost: 1, tokens: tokens(10, 5) }, 2)
+    emit("session.usage.updated", { sessionID: sessionId, cost: 20, tokens: tokens(2000, 500) }, 3)
+    assertUsage(instanceId, sessionId, { cost: 20, input: 2000, output: 500 })
+  } finally { cleanup() }
+})
+
+test("a committed revert subtracts the removed messages from the session totals", () => {
   const instanceId = "usage-revert", sessionId = "s"
+  const { emit, cleanup } = setup(instanceId, sessionId)
+  try {
+    for (const [id, cost, created] of [["m1", 1, 1], ["m2", 4, 3]] as const) {
+      const base = { sessionID: sessionId, assistantMessageID: id }
+      emit("session.step.started", { ...base, agent: "build", model, started: created }, created)
+      emit("session.step.ended", { ...base, finish: "stop", cost, tokens: tokens(10 * cost, 5 * cost) }, created + 1)
+    }
+    emit("session.usage.updated", { sessionID: sessionId, cost: 5, tokens: tokens(50, 25) }, 5)
+    assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
+    emit("session.revert.committed", { sessionID: sessionId, to: "m2" }, 6)
+    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+    // The server's counters do not decrement; a later usage event must not
+    // restore the reverted usage.
+    emit("session.usage.updated", { sessionID: sessionId, cost: 5, tokens: tokens(50, 25) }, 7)
+    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+  } finally { cleanup() }
+})
+
+test("reverting the only message shows zero usage", () => {
+  const instanceId = "usage-revert-all", sessionId = "s"
+  const { emit, cleanup } = setup(instanceId, sessionId)
+  try {
+    const base = { sessionID: sessionId, assistantMessageID: "m1" }
+    emit("session.step.started", { ...base, agent: "build", model, started: 1 }, 1)
+    emit("session.step.ended", { ...base, finish: "stop", cost: 1, tokens: tokens(10, 5) }, 2)
+    emit("session.usage.updated", { sessionID: sessionId, cost: 1, tokens: tokens(10, 5) }, 3)
+    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+    emit("session.revert.committed", { sessionID: sessionId, to: "m1" }, 4)
+    assertUsage(instanceId, sessionId, { cost: 0, input: 0, output: 0 })
+  } finally { cleanup() }
+})
+
+test("message sums stand in when the server reports no session usage", () => {
+  const instanceId = "usage-no-session-totals", sessionId = "s"
   const { emit, cleanup } = setup(instanceId, sessionId)
   try {
     for (const [id, cost, created] of [["m1", 1, 1], ["m2", 4, 3]] as const) {
