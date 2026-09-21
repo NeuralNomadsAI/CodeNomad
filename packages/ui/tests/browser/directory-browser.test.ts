@@ -30,7 +30,9 @@ function metadataFor(scenario: Scenario, requestedPath?: string | null) {
   }
 }
 
-async function openFixture(page: Page, scenario: Scenario, query: string) {
+async function openFixture(page: Page, scenario: Scenario, query: string): Promise<string[]> {
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(String(error)))
   await page.route("**/api/filesystem**", (route) => {
     const request = new URL(route.request().url())
     let requested = request.searchParams.get("path")
@@ -49,6 +51,7 @@ async function openFixture(page: Page, scenario: Scenario, query: string) {
   })
   await page.goto(`${url}?${query}`)
   await page.locator(".directory-browser-current-path").waitFor()
+  return errors
 }
 
 const shortcutCount = (page: Page) => page.locator(".directory-browser-shortcut").count()
@@ -90,29 +93,29 @@ after(async () => {
   await server?.close()
 })
 
-test("restricted scope shows only the workspace-root shortcut and dedupes the initial path", async () => {
+test("restricted scope shows only the start-directory shortcut and dedupes the initial path", async () => {
   const page = await browser.newPage()
+  const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws&mode=directories")
   try {
-    const scenario: Scenario = { scope: "restricted", rootPath: "/ws", homePath: "/home" }
-    // initialPath equals rootPath, so the workspace + initial shortcuts collapse into one.
-    await openFixture(page, scenario, "initialPath=/ws&mode=directories")
+    // rootPath === initialPath, so the start-directory and initial shortcuts collapse into one.
     assert.equal(await shortcutCount(page), 1)
-    await page.locator(".directory-browser-shortcut").first().click()
-    await page.waitForFunction(
-      () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws",
-    )
-    assert.equal(await pathValue(page), "/ws")
+    // That single shortcut targets /ws, which is also the current path, so it is disabled.
+    assert.equal(await page.locator(".directory-browser-shortcut").first().isDisabled(), true)
   } finally {
+    assert.deepEqual(errors, [])
     await page.close()
   }
 })
 
 test("unrestricted scope shows start-directory, user-home and initial-path shortcuts", async () => {
   const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" },
+    "initialPath=/projects/start&mode=directories",
+  )
   try {
-    const scenario: Scenario = { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" }
-    await openFixture(page, scenario, "initialPath=/projects/start&mode=directories")
-    // Start directory (rootPath) + home (unrestricted) + initial path, all distinct.
+    // rootPath + home + initial path, all distinct.
     assert.equal(await shortcutCount(page), 3)
     // Second shortcut is the home button; clicking it returns to /home.
     await page.locator(".directory-browser-shortcut").nth(1).click()
@@ -121,54 +124,85 @@ test("unrestricted scope shows start-directory, user-home and initial-path short
     )
     assert.equal(await pathValue(page), "/home")
   } finally {
+    assert.deepEqual(errors, [])
     await page.close()
   }
 })
 
 test("edited path field is synced (not left stale) after using a shortcut", async () => {
   const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "restricted", rootPath: "/ws", homePath: "/home", parentPath: "/ws" },
+    "initialPath=/ws/sub&mode=directories",
+  )
   try {
-    const scenario: Scenario = { scope: "restricted", rootPath: "/ws", homePath: "/home", parentPath: "/ws" }
-    await openFixture(page, scenario, "initialPath=/ws/sub&mode=directories")
-    // Edit the path field without submitting it.
     const field = page.locator(".directory-browser-current-path")
     await field.fill("/ws/sub/typed")
-    // The workspace-root shortcut is the only one in restricted mode.
+    // The start-directory shortcut is the first one in restricted mode.
     await page.locator(".directory-browser-shortcut").first().click()
     await page.waitForFunction(
       () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws",
     )
     assert.equal(await pathValue(page), "/ws")
   } finally {
+    assert.deepEqual(errors, [])
     await page.close()
   }
 })
 
 test("files mode hides the new-folder action but keeps the shortcuts and open button", async () => {
   const page = await browser.newPage()
+  const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws&mode=files")
   try {
-    const scenario: Scenario = { scope: "restricted", rootPath: "/ws", homePath: "/home" }
-    await openFixture(page, scenario, "initialPath=/ws&mode=files")
     assert.equal(await shortcutCount(page), 1)
     assert.equal(await page.locator(".directory-browser-new-folder").count(), 0)
     assert.equal(await page.locator(".directory-browser-open-path").count(), 1)
   } finally {
+    assert.deepEqual(errors, [])
     await page.close()
   }
 })
 
-test("shortcuts and open button remain laid out at narrow widths", async () => {
+test("two-column breakpoint keeps the open button on its own full-width row (directory mode)", async () => {
   const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" },
+    "initialPath=/projects/start&mode=directories",
+  )
   try {
-    await page.setViewportSize({ width: 360, height: 800 })
-    const scenario: Scenario = { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" }
-    await openFixture(page, scenario, "initialPath=/projects/start&mode=directories")
+    await page.setViewportSize({ width: 600, height: 900 })
     assert.equal(await shortcutCount(page), 3)
     assert.equal(await page.locator(".directory-browser-open-path").count(), 1)
-    // Open button should span the full row at this width, not half.
-    const box = await page.locator(".directory-browser-open-path").boundingBox()
-    assert.ok(box !== null && box.width >= 300, `open button width ${box?.width} should fill the row`)
+    const bodyBox = await page.locator(".directory-browser-body").boundingBox()
+    const openBox = await page.locator(".directory-browser-open-path").boundingBox()
+    assert.ok(bodyBox && openBox, "layout boxes must be measurable")
+    // Open spans the full content row at the 381-640px two-column breakpoint.
+    assert.ok(openBox.width >= bodyBox.width - 16, `open width ${openBox.width} should fill content width ${bodyBox.width}`)
   } finally {
+    assert.deepEqual(errors, [])
+    await page.close()
+  }
+})
+
+test("two-column breakpoint keeps the open button on its own full-width row (file mode)", async () => {
+  const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "unrestricted", rootPath: "/cwd", homePath: "/home" },
+    "initialPath=/projects/start&mode=files",
+  )
+  try {
+    await page.setViewportSize({ width: 600, height: 900 })
+    assert.equal(await shortcutCount(page), 3)
+    assert.equal(await page.locator(".directory-browser-new-folder").count(), 0)
+    const bodyBox = await page.locator(".directory-browser-body").boundingBox()
+    const openBox = await page.locator(".directory-browser-open-path").boundingBox()
+    assert.ok(bodyBox && openBox, "layout boxes must be measurable")
+    assert.ok(openBox.width >= bodyBox.width - 16, `open width ${openBox.width} should fill content width ${bodyBox.width}`)
+  } finally {
+    assert.deepEqual(errors, [])
     await page.close()
   }
 })

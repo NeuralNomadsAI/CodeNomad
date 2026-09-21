@@ -86,6 +86,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [loadingPaths, setLoadingPaths] = createSignal<Set<string>>(new Set())
   const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
   const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
+  const [initialAbsolutePath, setInitialAbsolutePath] = createSignal("")
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
@@ -131,10 +132,15 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       if (startPath) {
         const metadata = await navigateTo(startPath)
         if (metadata) {
+          // Capture the canonical absolute path actually opened so the Initial Path
+          // shortcut targets exactly where the dialog started (the server resolves
+          // relative paths against homePath in unrestricted mode, not rootPath).
+          setInitialAbsolutePath(getAbsolutePathFromMetadata(metadata))
           return
         }
         // initialPath was rejected (e.g. no longer under an allowed root);
         // silently fall back to the default root so the dialog stays usable.
+        // Do NOT set initialAbsolutePath, so no broken Initial Path shortcut remains.
         setError(null)
       }
       await navigateTo(undefined)
@@ -320,10 +326,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     ) {
       shortcuts.push({ id: "home", target: meta.homePath, labelKey: "directoryBrowser.goToHome" })
     }
-    const initial = props.initialPath?.trim()
+    const initial = initialAbsolutePath()
     if (initial) {
-      const target = isAbsolutePathLike(initial) ? initial : resolveAbsolutePath(meta.rootPath, initial)
-      shortcuts.push({ id: "initial", target, labelKey: "directoryBrowser.goToInitial" })
+      shortcuts.push({ id: "initial", target: initial, labelKey: "directoryBrowser.goToInitial" })
     }
     const seen = new Set<string>()
     const result: DirectoryShortcut[] = []
