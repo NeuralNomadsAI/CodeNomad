@@ -29,20 +29,26 @@ export function setViewMenuState(windowId: number, value: unknown): void {
   states.set(windowId, state)
 }
 
-export function updateViewMenu(menu: Menu | null, window: BrowserWindow | null): void {
+// Labels are captured in Electron's native model at insertion time. Return true
+// when the caller must rebuild; checked/enabled can be updated in place.
+export function updateViewMenu(menu: Menu | null, window: BrowserWindow | null): boolean {
   const state = window ? states.get(window.webContents.id) : undefined
+  if (state && entries.some(([key, id]) => menu?.getMenuItemById(id)?.label !== state[key].label)) return true
   for (const [key, id] of entries) {
     const item = menu?.getMenuItemById(id)
     if (!item) continue
-    if (state) item.label = state[key].label
     item.checked = state?.[key].checked ?? false
     item.enabled = state?.[key].enabled ?? false
   }
+  return false
 }
 
-export function viewMenuItems(sendCommand: (id: string) => () => void): MenuItemConstructorOptions[] {
+export function viewMenuItems(sendCommand: (id: string) => () => void, window: BrowserWindow | null): MenuItemConstructorOptions[] {
+  const state = window ? states.get(window.webContents.id) : undefined
+  // Do not insert unnamed items before the first localized renderer snapshot.
+  if (!state) return []
   return entries.flatMap(([key, id]): MenuItemConstructorOptions[] => [
     ...(key === "timeline" ? [{ type: "separator" as const }] : []),
-    { id, label: "", type: "checkbox", enabled: false, checked: false, click: sendCommand(id) },
+    { id, ...state[key], type: "checkbox", click: sendCommand(id) },
   ])
 }

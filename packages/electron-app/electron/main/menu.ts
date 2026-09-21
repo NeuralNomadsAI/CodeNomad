@@ -24,7 +24,10 @@ function target(local: boolean): BrowserWindow | null {
 
 function updateWorkspaceMenuState() {
   const window = target(true)
-  updateViewMenu(applicationMenu, window)
+  if (updateViewMenu(applicationMenu, window)) {
+    buildApplicationMenu()
+    return
+  }
   const enabled = Boolean(window && workspaceEnabled.get(window.webContents.id))
   for (const id of ["open-workspace-folder", "open-workspace-terminal", "open-workspace-editor"]) {
     const item = applicationMenu?.getMenuItemById(id)
@@ -56,6 +59,12 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
   actions = menuActions
   if (menuInstalled) return
   menuInstalled = true
+  buildApplicationMenu()
+  app.on("browser-window-focus", updateWorkspaceMenuState)
+  app.on("browser-window-blur", updateWorkspaceMenuState)
+}
+
+function buildApplicationMenu() {
   const isMac = process.platform === "darwin"
   const sendCommand = (id: string) => () => target(true)?.webContents.send("menu:action", id)
   const withTarget = (operation: (window: BrowserWindow) => void) => () => {
@@ -89,7 +98,7 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
         : [{ role: "delete" as const }, { type: "separator" as const }, { role: "selectAll" as const }]),
     ] },
     { id: "menu-view", label: "View", submenu: [
-      ...viewMenuItems(sendCommand),
+      ...viewMenuItems(sendCommand, target(true)),
       { type: "separator" },
       { label: "Reload", accelerator: "CmdOrCtrl+R", click: withTarget((window) => actions?.reload(window)) },
       { label: "Force Reload", accelerator: "CmdOrCtrl+Shift+R", click: withTarget((window) => actions?.forceReload(window)) },
@@ -119,6 +128,4 @@ export function createApplicationMenu(menuActions: ApplicationMenuActions) {
   applicationMenu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(applicationMenu)
   updateWorkspaceMenuState()
-  app.on("browser-window-focus", updateWorkspaceMenuState)
-  app.on("browser-window-blur", updateWorkspaceMenuState)
 }
