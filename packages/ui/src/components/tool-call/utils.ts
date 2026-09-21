@@ -4,6 +4,7 @@ import type { ToolState, ToolStateCompleted, ToolStateError, ToolStateRunning } 
 import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
+import { getCanonicalToolName } from "./tool-presentation"
 const log = getLogger("session")
 
 
@@ -46,6 +47,23 @@ export function getRelativePath(path: string): string {
   if (!path) return ""
   const parts = path.split(/[\\/]/)
   return parts.slice(-1)[0] || path
+}
+
+// Strips the tool label prefix from a renderer title so the header can show the
+// raw tool name once. Both the raw name ("subagent") and its registry tool
+// ("task") are accepted as prefixes because renderers are shared across aliases.
+export function getToolTitleDetail(rawTitle: string, toolName: string): string {
+  const title = rawTitle.trim()
+  if (!title) return ""
+  const canonical = getCanonicalToolName(toolName)
+  const labels = [toolName.trim(), getToolName(toolName).trim(), canonical, getToolName(canonical).trim()].filter(Boolean)
+  for (const label of new Set(labels)) {
+    if (title === label) return ""
+    if (title.startsWith(`${label} `)) return title.slice(label.length).trimStart()
+    if (title.startsWith(`${label}[`)) return title.slice(label.length).trimStart()
+    if (title.startsWith(`${label} · `)) return title.slice(label.length + 3).trimStart()
+  }
+  return title
 }
 
 export function ensureMarkdownContent(

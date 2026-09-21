@@ -240,6 +240,8 @@ jobs:
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
+          packages/ui/src/components/tool-call/tool-presentation.test.ts
+          packages/ui/src/components/transcript-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/components/virtual-follow-measurements.test.ts
@@ -297,6 +299,7 @@ jobs:
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/tool-call/diff-payload.test.ts
           packages/ui/src/components/tool-call/renderers/edit.test.ts
+          packages/ui/src/components/tool-call/renderers/task-title.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts

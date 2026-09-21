@@ -33,7 +33,8 @@ function presets(values: Record<ToolCallExpansionPreset, VisibilityPreference>) 
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "bash",
-    label: "bash",
+    label: "shell",
+    aliases: ["shell"],
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
@@ -64,12 +65,18 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "apply_patch",
     label: "apply_patch",
-    configurable: true,
+    configurable: false,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
   {
     tool: "webfetch",
     label: "webfetch",
+    configurable: true,
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+  },
+  {
+    tool: "websearch",
+    label: "websearch",
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
   },
@@ -88,12 +95,19 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "todowrite",
     label: "todowrite",
-    configurable: true,
+    configurable: false,
     expansionPresets: presets({ minimal: expanded, balanced: expanded, detailed: expanded, everything: expanded }),
   },
   {
     tool: "task",
-    label: "task",
+    label: "subagent",
+    aliases: ["subagent"],
+    configurable: true,
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+  },
+  {
+    tool: "execute",
+    label: "execute",
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
@@ -136,6 +150,16 @@ const registryMap = TOOL_REGISTRY.reduce<Record<string, ToolRegistryEntry>>((acc
 
 export function getToolRegistryEntry(toolName: string): ToolRegistryEntry {
   return registryMap[toolName] ?? otherToolEntry
+}
+
+// Registry tool id for a raw tool name, following aliases (e.g. "subagent" → "task").
+// Unregistered tools map to OTHER_TOOL_NAME.
+export function getCanonicalToolName(toolName: string): string {
+  return getToolRegistryEntry(toolName).tool
+}
+
+export function getRegisteredToolEntries(): ToolRegistryEntry[] {
+  return TOOL_REGISTRY
 }
 
 export function getConfigurableToolEntries(): ToolRegistryEntry[] {

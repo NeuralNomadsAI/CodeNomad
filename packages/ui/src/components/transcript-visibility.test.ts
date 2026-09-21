@@ -42,6 +42,21 @@ describe("shared transcript visibility controls", () => {
       assert.equal(transcriptVisibility(after, item), transcriptVisibility(before, item), item.key)
     }
   })
+  it("keeps overrides for registered tools that are hidden from the settings list", () => {
+    const before = current()
+    before.toolCallExpansionDefaults = {
+      preset: "custom",
+      thinking: "expanded",
+      tools: { apply_patch: "hidden", todowrite: "expanded", read: "collapsed", other: "collapsed" },
+    }
+    assert.ok(!rows.some((item) => item.key === "apply_patch" || item.key === "todowrite"))
+    const after = { ...before, ...transcriptVisibilityPatch(before, row("read"), "expanded") }
+    assert.equal(after.toolCallExpansionDefaults.tools.read, "expanded")
+    assert.equal(after.toolCallExpansionDefaults.tools.apply_patch, "hidden")
+    assert.equal(after.toolCallExpansionDefaults.tools.todowrite, "expanded")
+    assert.equal(transcriptVisibility(after, { kind: "tool", key: "apply_patch", label: "" }), "hidden")
+    assert.equal(transcriptVisibility(after, { kind: "tool", key: "todowrite", label: "" }), "expanded")
+  })
   it("supports all three tool modes", () => {
     for (const mode of ["hidden", "collapsed", "expanded"] as const) {
       const before = current()
