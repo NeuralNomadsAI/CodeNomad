@@ -1,4 +1,5 @@
 export const messagingMessages = {
+  "history.navigation.outlineLoading": "Tam zaman çizelgesi yükleniyor… {loaded} / {total}",
   "history.navigation.loading": "Bölüm yükleniyor…",
   "history.navigation.outlineUnavailable": "Tam zaman çizelgesi kullanılamıyor",
   "history.scope": "Arama kapsamı",
