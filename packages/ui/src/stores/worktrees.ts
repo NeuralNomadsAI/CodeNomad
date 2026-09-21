@@ -19,6 +19,7 @@ const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
+const [pendingFamilyMoveSlugs, setPendingFamilyMoveSlugs] = createSignal(new Map<string, string>())
 const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
@@ -228,6 +229,10 @@ export function getDefaultWorktreeDirectory(instanceId: string): string | undefi
   return defaultDirectories.get(instanceId)
 }
 
+export function getPendingWorktreeSlug(instanceId: string, sessionId: string): string | undefined {
+  return pendingFamilyMoveSlugs().get(`${instanceId}:${getParentSessionId(instanceId, sessionId)}`)
+}
+
 async function setWorktreeSlugForParentSession(
   instanceId: string,
   parentSessionId: string,
@@ -281,8 +286,15 @@ async function setWorktreeSlugForParentSession(
   })
 
   familyMoveRequests.set(key, task)
+  setPendingFamilyMoveSlugs(previous => new Map(previous).set(key, normalizedSlug))
   await task.finally(() => {
-    if (familyMoveRequests.get(key) === task) familyMoveRequests.delete(key)
+    if (familyMoveRequests.get(key) !== task) return
+    familyMoveRequests.delete(key)
+    setPendingFamilyMoveSlugs(previous => {
+      const next = new Map(previous)
+      next.delete(key)
+      return next
+    })
   })
 }
 
