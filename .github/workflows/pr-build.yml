@@ -176,6 +176,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-aside-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   tests:
     needs: authorize
