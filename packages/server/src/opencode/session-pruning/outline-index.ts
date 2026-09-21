@@ -5,6 +5,12 @@ import type { HistoryScope } from "./history-store"
 import type { OutlineCheckpoint, OutlineEntry, OutlineResult } from "./navigation-contract"
 import { ownedSession } from "./navigation-scope"
 
+function boundedToolName(value: unknown): string {
+  if (typeof value !== "string") return ""
+  const truncated = value.slice(0, 256)
+  return /[\uD800-\uDBFF]$/.test(truncated) ? truncated.slice(0, -1) : truncated
+}
+
 // Checkpoint boundaries survive deletion: removing an early row must not shift
 // every later chunk. Only changed chunks need technical-part JSON projection.
 export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
@@ -56,7 +62,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
           const tools = Number(row.tools)
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
             tools, reasoning: Number(row.reasoning),
-            ...(tools ? { toolName: typeof row.tool_name === "string" ? row.tool_name : "" } : {}) })
+            ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}) })
           if (entries.length % 128 === 0) await yieldTurn(undefined, { signal })
         }
       }

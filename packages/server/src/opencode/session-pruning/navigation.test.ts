@@ -131,6 +131,13 @@ test("demand excerpts preserve Markdown, bound tool output and enforce ownership
     if (index.status !== "outline") assert.fail("Expected index")
     assert.equal(index.entries[1].tools, 1)
     assert.equal(index.entries[1].toolName, "shell")
+    const unicodeName = "🔧".repeat(256)
+    db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
+      { type: "tool", name: unicodeName, state: {} },
+    ] }), id(2))
+    const unicodeIndex = await readSessionOutline(db, scope, undefined, signal())
+    if (unicodeIndex.status !== "outline") assert.fail("Expected Unicode index")
+    assert.equal(unicodeIndex.entries[2].toolName, "🔧".repeat(128), "tool metadata must satisfy its UTF-16 RPC bound")
     const previews = await readOutlinePreviews(db, scope, [id(1), "foreign"], signal())
     if (previews.status !== "previews") assert.fail("Expected previews")
     assert.equal(previews.entries.length, 1)
