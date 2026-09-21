@@ -152,6 +152,16 @@ export function getToolRegistryEntry(toolName: string): ToolRegistryEntry {
   return registryMap[toolName] ?? otherToolEntry
 }
 
+// Registry tool id for a raw tool name, following aliases (e.g. "subagent" → "task").
+// Unregistered tools map to OTHER_TOOL_NAME.
+export function getCanonicalToolName(toolName: string): string {
+  return getToolRegistryEntry(toolName).tool
+}
+
+export function getRegisteredToolEntries(): ToolRegistryEntry[] {
+  return TOOL_REGISTRY
+}
+
 export function getConfigurableToolEntries(): ToolRegistryEntry[] {
   return TOOL_REGISTRY.filter((entry) => entry.configurable)
 }

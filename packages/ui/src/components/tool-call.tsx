@@ -13,7 +13,7 @@ import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
-import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
 import { resolveFormToolTarget } from "./form-request-tool-target"
@@ -33,6 +33,7 @@ import {
   buildToolSpeechText,
   ensureMarkdownContent,
   getToolName,
+  getToolTitleDetail,
   isToolStateCompleted,
   isToolStateRunning,
   getDefaultToolAction,
@@ -801,7 +802,7 @@ export default function ToolCall(props: ToolCallProps) {
     const state = toolState()
     const currentTool = toolName()
 
-    if (currentTool !== "task") {
+    if (getCanonicalToolName(currentTool) !== "task") {
       if (!state || state.status === "pending") return getRendererAction()
 
       const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
@@ -834,19 +835,7 @@ export default function ToolCall(props: ToolCallProps) {
 
   const toolTypeLabel = createMemo(() => toolName())
 
-  const headerTitleDetail = createMemo(() => {
-    const rawTitle = renderToolTitle().trim()
-    const typeLabel = toolTypeLabel().trim()
-    if (!rawTitle) return ""
-    const labels = [typeLabel, getToolName(toolName()).trim()].filter(Boolean)
-    for (const label of labels) {
-      if (rawTitle === label) return ""
-      if (rawTitle.startsWith(`${label} `)) return rawTitle.slice(label.length).trimStart()
-      if (rawTitle.startsWith(`${label}[`)) return rawTitle.slice(label.length).trimStart()
-      if (rawTitle.startsWith(`${label} · `)) return rawTitle.slice(label.length + 3).trimStart()
-    }
-    return rawTitle
-  })
+  const headerTitleDetail = createMemo(() => getToolTitleDetail(renderToolTitle(), toolName()))
 
   const headerText = createMemo(() => {
     // Keep this as a memo so copy always matches what's rendered.

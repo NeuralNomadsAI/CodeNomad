@@ -8,6 +8,8 @@ import { loadMessages } from "../../../stores/session-api"
 import { loading, messagesLoaded } from "../../../stores/session-state"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
+import { getCanonicalToolName } from "../tool-presentation"
+import { describeTaskTitle, readSubagentName } from "./task-title"
 
 interface TaskSummaryItem {
   id: string
@@ -109,25 +111,6 @@ function summarizeStatusLabel(status?: ToolState["status"]) {
   return status
 }
 
-function readSubagentName(input: Record<string, any>): string | undefined {
-  if (typeof input.subagent_type === "string") return input.subagent_type
-  if (typeof input.agent === "string") return input.agent
-  return undefined
-}
-
-function describeTaskTitle(input: Record<string, any>) {
-  const description = typeof input.description === "string" ? input.description : undefined
-  const subagent = readSubagentName(input)
-  const base = getToolName("task")
-  if (description && subagent) {
-    return `${base}[${subagent}] ${description}`
-  }
-  if (description) {
-    return `${base} ${description}`
-  }
-  return base
-}
-
 function describeGenericToolTitle(tool: string, input: Record<string, any>) {
   const base = getToolName(tool)
   const detail =
@@ -151,8 +134,8 @@ function describeToolTitle(item: TaskSummaryItem): string {
     return item.title
   }
 
-  if (item.tool === "task") {
-    return describeTaskTitle({ ...item.metadata, ...item.input })
+  if (getCanonicalToolName(item.tool) === "task") {
+    return describeTaskTitle({ ...item.metadata, ...item.input }, item.tool)
   }
 
   if (item.state) {
@@ -171,11 +154,11 @@ export const taskRenderer: ToolRenderer = {
   tools: ["task"],
   getSearchText: getTaskToolSearchText,
   getAction: ({ t }) => t("toolCall.task.action.delegating"),
-  getTitle({ toolState }) {
+  getTitle({ toolState, toolName }) {
     const state = toolState()
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
-    return describeTaskTitle(input)
+    return describeTaskTitle(input, toolName())
   },
   renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
