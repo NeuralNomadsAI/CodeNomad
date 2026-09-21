@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.update.available": "OpenCode {version} זמין.",
   "settings.opencode.setup.manage": "ניהול OpenCode…",
   "settings.opencode.setup.connected": "OpenCode מחובר.",
   "settings.opencode.setup.disconnected": "OpenCode אינו מחובר.",

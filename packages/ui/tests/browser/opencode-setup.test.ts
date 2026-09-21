@@ -354,3 +354,75 @@ test("continuing an already-connected recovery retries only the pending workspac
     assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { await page.close() }
 })
+
+test("settings expose and install an optional update directly, with retry feedback and no implicit restart", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
+  let installed = false, attempts = 0, starts = 0
+  let releaseInstall: (() => void) | undefined
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      attempts++
+      if (attempts === 1) return route.fulfill({ status: 502, json: { error: "upgrade_failed" } })
+      await new Promise<void>(resolve => { releaseInstall = resolve })
+      installed = true
+      return route.fulfill({ json: { success: true, version: "2.0.11" } })
+    }
+    if (request.url().endsWith("/api/opencode/service")) {
+      assert.equal(request.postDataJSON().restart, false)
+      starts++
+    }
+    return route.fulfill({ json: { state: "ready", currentVersion: installed ? "2.0.11" : "2.0.9",
+      latestVersion: "2.0.11", updateAvailable: !installed, canUpgrade: !installed,
+      minimumVersion: "2.0.7", recommendedVersion: "2.0.11", versionAssessment: "tested",
+      binaryPath: "opencode2", target: "host", daemonVersion: "2.0.9",
+      serviceState: installed ? "restart_available" : "ready", canRestart: installed } })
+  })
+  try {
+    await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByText("OpenCode 2.0.11 est disponible.", { exact: true }).waitFor()
+    const update = page.getByRole("button", { name: "Mettre à jour vers OpenCode 2.0.11", exact: true })
+    await update.waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-update.png") })
+    await page.getByRole("button", { name: "Gérer OpenCode…", exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: "Mettre à jour vers OpenCode 2.0.11", exact: true }).waitFor()
+    await page.getByRole("dialog").getByRole("button", { name: "Fermer", exact: true }).click()
+    await update.click()
+    await page.getByRole("alert").waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await update.click()
+    await page.locator("button:disabled").filter({ hasText: "OpenCode" }).waitFor()
+    for (let count = 0; count < 100 && !releaseInstall; count++) await page.waitForTimeout(10)
+    assert.ok(releaseInstall)
+    releaseInstall()
+    await page.getByText("OpenCode est à jour.", { exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector('[role="alert"]'))
+    assert.equal(attempts, 2)
+    assert.equal(starts, 1)
+    assert.equal(await update.count(), 0)
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await page.getByText(/Vous pouvez continuer avec le service/).waitFor()
+  } finally { releaseInstall?.(); await page.close() }
+})
+
+test("settings distinguish manual updates and failed registry checks from an up-to-date installation", async () => {
+  const page = await browser.newPage()
+  let offline = false
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "ready", currentVersion: "2.0.9",
+    latestVersion: offline ? null : "2.0.11", updateAvailable: offline ? null : true, canUpgrade: false,
+    checkError: offline ? "update_check_failed" : undefined, minimumVersion: "2.0.7", recommendedVersion: "2.0.11",
+    binaryPath: "custom-opencode", target: "host", serviceState: "ready", daemonVersion: "2.0.9" } }))
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByText("OpenCode 2.0.11 is available.", { exact: true }).waitFor()
+    await page.getByText(/Select a supported executable/).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Update to OpenCode 2.0.11" }).count(), 0)
+    offline = true
+    await page.reload({ waitUntil: "domcontentloaded" })
+    await page.getByText("Could not read the installed OpenCode version.", { exact: true }).waitFor()
+    assert.equal(await page.getByText("OpenCode is up to date.", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("OpenCode 2.0.11 is available.", { exact: true }).count(), 0)
+  } finally { await page.close() }
+})

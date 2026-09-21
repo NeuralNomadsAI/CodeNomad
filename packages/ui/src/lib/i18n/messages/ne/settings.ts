@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.opencode.update.available": "OpenCode {version} उपलब्ध छ।",
   "settings.opencode.setup.manage": "OpenCode व्यवस्थापन गर्नुहोस्…",
   "settings.opencode.setup.connected": "OpenCode जडान भएको छ।",
   "settings.opencode.setup.disconnected": "OpenCode जडान भएको छैन।",
