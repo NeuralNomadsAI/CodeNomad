@@ -17,7 +17,7 @@ export const messagingMessages = {
   "history.planning": "正在检查历史：{count} 条消息",
   "history.pruning": "正在清理：{count} / {total} 条消息",
   "transcriptFilters.title": "消息内容",
-  "transcriptFilters.systemMessages": "系统消息",
+  "transcriptFilters.systemMessages": "系统",
   "messageBlock.system.label": "系统",
   "transcriptFilters.description": "显示或隐藏内容，并选择初始展开状态。这些设置适用于所有对话。",
   "transcriptFilters.show": "显示{name}",

@@ -18,11 +18,13 @@ function projectSessionOutline(entries: readonly OutlineEntry[], resident: reado
     const label = t(`messageTimeline.segment.${type}.label`)
     const text = local.filter(segment => segment.type !== "tool").map(segment => segment.tooltip).join("\n")
     const chars = local.length ? local.reduce((n, segment) => n + segment.totalChars, 0) : 0
-    const tools = local.length ? local.filter(segment => segment.type === "tool").length : entry?.tools ?? 0
+    const localTools = local.filter(segment => segment.type === "tool")
+    const tools = local.length ? localTools.length : entry?.tools ?? 0
+    const toolName = localTools.find(segment => segment.toolName?.trim())?.toolName ?? entry?.toolName
     const result: TimelineSegment[] = [{ id: `${id}:outline`, messageId: id, type, label, tooltip: text.slice(0, 220), totalChars: chars }]
     if (tools) result.unshift({ id: `${id}:outline-tools`, messageId: id, type: "tool", label: t("messageTimeline.tool.fallbackLabel"),
       tooltip: local.filter(segment => segment.type === "tool").map(segment => segment.tooltip).join("\n").slice(0, 220), totalChars: tools * 100,
-      toolPartIds: local.flatMap(segment => segment.toolPartIds ?? []) })
+      toolName: toolName?.trim() || undefined, toolPartIds: local.flatMap(segment => segment.toolPartIds ?? []) })
     return result
   })
 }
@@ -37,6 +39,7 @@ export function createSessionOutlineProjection() {
       const cached = previous.get(segment.id)
       return cached && cached.type === segment.type && cached.label === segment.label
         && cached.tooltip === segment.tooltip && cached.totalChars === segment.totalChars
+        && cached.toolName === segment.toolName
         && cached.toolPartIds?.length === segment.toolPartIds?.length
         && (segment.toolPartIds ?? []).every((id, index) => id === cached.toolPartIds?.[index])
         ? cached : segment

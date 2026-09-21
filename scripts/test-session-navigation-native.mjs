@@ -5,8 +5,12 @@ export async function testSessionNavigationNative({ client, location, locationOp
   const exported = await client.session.export({ sessionID: seed.id })
   await client.session.remove({ sessionID: seed.id })
   const id = index => `msg_navigation_${String(index).padStart(5, "0")}`
+  const nativeTool = structuredClone(template.content.find(part => part.type === "tool"))
+  assert(nativeTool)
   const messages = Array.from({ length: 1501 }, (_, index) => ({
-    ...structuredClone(template), id: id(index), content: [{ type: "text", text: `Navigation passage ${index}` }],
+    ...structuredClone(template), id: id(index), content: index === 6
+      ? [{ ...nativeTool, id: "part_navigation_tool" }]
+      : [{ type: "text", text: `Navigation passage ${index}` }],
   }))
   const session = await client.session.import({ ...exported, messages, location }, locationOptions)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method,
@@ -26,18 +30,20 @@ export async function testSessionNavigationNative({ client, location, locationOp
     assert(prior.messages.some(message => message.id === around.messages[0].id), "prior window retains the viewport anchor")
     const following = await rpc("window", { target: around.newer })
     assert(following.messages.some(message => message.id === around.messages.at(-1).id), "next window retains the viewport anchor")
-    let cursor, count = 0
+    let cursor, count = 0, indexedTool
     const checkpoints = []
     do {
       const outline = await rpc("outline", cursor ? { cursor } : {})
       assert.equal(outline.status, "outline")
       assert.equal(outline.entries.length, Math.min(16384, native.messages.length - count), "structural index does not wait for excerpt pagination")
       assert(outline.entries.every(entry => !("preview" in entry)))
+      indexedTool ??= outline.entries.find(entry => entry.id === id(6))
       checkpoints.push(...outline.checkpoints.map(({ changed, ...checkpoint }) => checkpoint))
       count += outline.entries.length
       cursor = outline.cursor
     } while (cursor)
     assert.equal(count, native.messages.length)
+    assert.equal(indexedTool?.toolName, nativeTool.name, "outline reads the representative name from native tool storage")
     const verified = await rpc("outline", { known: checkpoints })
     assert.equal(verified.status, "outline", JSON.stringify(verified))
     assert.equal(verified.entries.length, native.messages.length % 512, "unchanged saved ranges do not resend their structure")
@@ -45,6 +51,6 @@ export async function testSessionNavigationNative({ client, location, locationOp
     const previews = await rpc("outlinePreview", { messageIDs: [id(1200)] })
     assert.equal(previews.status, "previews", JSON.stringify(previews))
     assert.equal(previews.entries[0].text, "Navigation passage 1200")
-    console.log("PASS: native 1501-message outline, direct distant windows, overlap and exact native payload/restore parity")
+    console.log("PASS: native 1501-message outline with representative tool metadata, direct distant windows, overlap and exact native payload/restore parity")
   } finally { await client.session.remove({ sessionID: session.id }) }
 }

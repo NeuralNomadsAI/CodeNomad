@@ -4,7 +4,7 @@ import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 import { sessions } from "./session-state"
-import { normalizePersistedOutline, type PersistedOutline } from "./session-outline-persistence"
+import { hasCompleteOutlineToolMetadata, normalizePersistedOutline, type PersistedOutline } from "./session-outline-persistence"
 
 interface OutlineScan {
   entries: OutlineEntry[]
@@ -91,7 +91,9 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
       const seedKey = JSON.stringify([instanceId, sessionID]), seed = restored.get(seedKey)
       const saved = seed?.generation === generation && seed.revision === revision && seed.value.directory === directory
         && seed.value.projectID === projectID && (seed.value.revert ?? null) === revert ? seed.value : undefined
-      snapshot = snapshots.get(key) ?? { entries: saved?.entries ?? [], checkpoints: saved?.checkpoints ?? [], persisted: saved }
+      const completeToolMetadata = saved ? hasCompleteOutlineToolMetadata(saved) : false
+      snapshot = snapshots.get(key) ?? { entries: saved?.entries ?? [], checkpoints: completeToolMetadata ? saved!.checkpoints : [],
+        persisted: completeToolMetadata ? saved : undefined }
       if (directory && projectID) restored.delete(seedKey)
       snapshots.delete(key)
       snapshots.set(key, snapshot)

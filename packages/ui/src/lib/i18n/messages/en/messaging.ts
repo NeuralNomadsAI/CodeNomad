@@ -17,7 +17,7 @@ export const messagingMessages = {
   "history.planning": "Inspecting history: {count} messages",
   "history.pruning": "Cleaning: {count} / {total} messages",
   "transcriptFilters.title": "Message content",
-  "transcriptFilters.systemMessages": "System messages",
+  "transcriptFilters.systemMessages": "System",
   "messageBlock.system.label": "System",
   "transcriptFilters.description": "Show or hide content, then choose whether it starts expanded. These settings apply to all conversations.",
   "transcriptFilters.show": "Show {name}",
