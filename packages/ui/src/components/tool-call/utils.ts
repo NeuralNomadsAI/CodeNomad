@@ -44,7 +44,7 @@ export function getToolName(tool: string): string {
 
 export function getRelativePath(path: string): string {
   if (!path) return ""
-  const parts = path.split("/")
+  const parts = path.split(/[\\/]/)
   return parts.slice(-1)[0] || path
 }
 
@@ -124,7 +124,8 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   if (!diffCapableTools.has(toolName)) return null
 
   const { metadata, input, output } = readToolStatePayload(state)
-  const candidates = [metadata.diff, output, metadata.output]
+  const fileDiff = readSingleFileDiff(metadata)
+  const candidates = [metadata.diff, fileDiff?.patch, output, metadata.output]
   let diffText: string | null = null
 
   for (const candidate of candidates) {
@@ -141,9 +142,26 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   const filePath =
     (typeof input.filePath === "string" ? input.filePath : undefined) ||
     (typeof metadata.filePath === "string" ? metadata.filePath : undefined) ||
-    (typeof input.path === "string" ? input.path : undefined)
+    (typeof input.path === "string" ? input.path : undefined) ||
+    fileDiff?.file
 
   return { diffText, filePath }
+}
+
+// OpenCode 2.x edit/patch tool metadata: `metadata.files` is a list of FileDiff
+// entries `{ file, patch, additions, deletions, status }` rather than a
+// `metadata.diff` string. The single-file diff viewer can only present one
+// entry, so a multi-file patch is left to the renderer's own fallback instead
+// of being cut down to its first file.
+export function readSingleFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
+  const files = metadata.files
+  if (!Array.isArray(files) || files.length !== 1) return null
+  const only = files[0]
+  if (!only || typeof only !== "object") return null
+  return {
+    file: typeof only.file === "string" ? only.file : undefined,
+    patch: typeof only.patch === "string" ? only.patch : undefined,
+  }
 }
 
 export function readToolStatePayload(state?: ToolState): {
