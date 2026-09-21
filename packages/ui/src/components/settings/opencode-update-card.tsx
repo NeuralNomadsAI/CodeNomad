@@ -1,62 +1,30 @@
 import { onMount, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { openSettings } from "../../stores/settings-screen"
-import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetupError,
-  refreshOpenCodeSetup, runOpenCodeSetup, setOpenCodeSetupOpen } from "../../stores/opencode-setup"
+import { isOpenCodeConnected, openCodeSetupStatus as status, openCodeSetupError,
+  openOpenCodeSetup, refreshOpenCodeSetup } from "../../stores/opencode-setup"
 
 export const OpenCodeUpdateCard: Component = () => {
   const { t } = useI18n()
   onMount(() => void refreshOpenCodeSetup())
-  return <section class="settings-card" aria-busy={busy()}>
+  return <section class="settings-card">
     <div class="settings-card-header"><div>
       <h3 class="settings-card-title">{t("settings.opencode.update.title")}</h3>
       <p class="settings-card-subtitle">{t("settings.opencode.setup.description")}</p>
     </div><span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span></div>
-    <Show when={status()} fallback={<p role="status">{t("settings.opencode.update.checking")}</p>}>
-      {data => <>
-        <p role="status">{t(`settings.opencode.setup.${data().state}`)}</p>
-        <div class="settings-info-grid">
-          <div class="settings-info-row"><span>{t("settings.opencode.update.installed")}</span><span>{data().currentVersion ?? "—"}</span></div>
-          <div class="settings-info-row"><span>{t("settings.opencode.setup.minimum")}</span><span>{data().minimumVersion}</span></div>
-          <div class="settings-info-row"><span>{t("settings.opencode.setup.recommended")}</span><span>{data().recommendedVersion}</span></div>
-          <div class="settings-info-row"><span>{t("settings.opencode.setup.daemon")}</span><span>{data().daemonVersion ?? "—"}</span></div>
-        </div>
-        <p class="settings-toggle-caption">{t("settings.opencode.setup.minimumReason", { version: data().minimumVersion })}</p>
-        <Show when={data().incompatibilityReason && data().incompatibilityReason !== "step_timestamp"}>
-          <p role="alert">{t(`settings.opencode.setup.${data().incompatibilityReason}`)}</p>
-        </Show>
-        <Show when={(data().daemonVersion || data().currentVersion) && data().versionAssessment === "untested"}>
-          <p role="status">{t("settings.opencode.setup.untested", { version: data().daemonVersion ?? data().currentVersion ?? "" })}</p>
-        </Show>
-        <p class="settings-toggle-caption break-all">{data().binaryPath}</p>
-        <Show when={data().target === "wsl"}><p>{t("settings.opencode.setup.wsl")}</p></Show>
-        <Show when={data().serviceState === "restart_required" || data().serviceState === "restart_available"}><p role="status">{t(data().serviceState === "restart_required"
-          ? "settings.opencode.setup.restartRequired" : "settings.opencode.setup.restartAvailable")}</p></Show>
-        <Show when={data().serviceState === "error"}><p role="alert">{t("settings.opencode.setup.serviceError")}</p></Show>
-        <Show when={data().checkError}><p role="status">{t("settings.opencode.update.checkFailed")}</p></Show>
-        <Show when={!data().canUpgrade && (data().state === "missing" || data().state === "update_required" || data().serviceState === "incompatible")}>
-          <p>{t("settings.opencode.setup.manual")}</p>
-        </Show>
-        <div class="settings-info-actions">
-          <Show when={data().canUpgrade}><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("install")}>
-            {busy() ? t("settings.opencode.update.updating") : data().state === "missing" ? t("settings.opencode.setup.install")
-              : t("settings.opencode.update.action", { version: data().latestVersion ?? "" })}
-          </button></Show>
-          <Show when={data().state === "ready" && data().serviceState !== "restart_required" && data().serviceState !== "incompatible"}>
-            <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("start")}>{t("settings.opencode.setup.connect")}</button>
-          </Show>
-          <Show when={data().canRestart}><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
-        </div>
-        <Show when={data().canReload}>
-          <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
-          <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
-        </Show>
-      </>}
-    </Show>
-    <Show when={openCodeSetupError()}><p class="settings-error-message" role="alert">{t("settings.opencode.setup.actionFailed")}</p></Show>
-    <div class="settings-info-actions">
-      <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => void refreshOpenCodeSetup()}>{t("settings.opencode.update.retry")}</button>
-      <button type="button" class="settings-pill-button" disabled={busy()} onClick={() => { setOpenCodeSetupOpen(false); void openSettings("opencode") }}>{t("settings.opencode.setup.chooseBinary")}</button>
+    <div class="settings-card-body">
+      <Show when={status()} fallback={<p role="status">{t(openCodeSetupError() ? "settings.opencode.update.checkFailed" : "settings.opencode.update.checking")}</p>}>
+        {data => <>
+          <p role="status">{t(isOpenCodeConnected() ? "settings.opencode.setup.connected"
+            : data().state === "ready" ? "settings.opencode.setup.disconnected" : `settings.opencode.setup.${data().state}`)}</p>
+          <div class="settings-info-grid">
+            <div class="settings-info-row"><span>{t("settings.opencode.update.installed")}</span><span>{data().currentVersion ?? "—"}</span></div>
+            <div class="settings-info-row"><span>{t("settings.opencode.setup.daemon")}</span><span>{data().daemonVersion ?? "—"}</span></div>
+          </div>
+        </>}
+      </Show>
+      <div class="settings-info-actions"><button type="button" class="settings-pill-button" onClick={() => openOpenCodeSetup()}>
+        {t("settings.opencode.setup.manage")}
+      </button></div>
     </div>
   </section>
 }

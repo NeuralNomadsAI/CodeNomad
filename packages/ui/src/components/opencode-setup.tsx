@@ -4,11 +4,11 @@ import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { sseManager } from "../lib/sse-manager"
-import { OpenCodeUpdateCard } from "./settings/opencode-update-card"
+import { OpenCodeSetupPanel } from "./settings/opencode-setup-panel"
 import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupOpen, openCodeSetupStatus,
   openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
 
-export default function OpenCodeSetup() {
+export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
   const { t } = useI18n()
   const { serverSettings } = useConfig()
   createEffect(() => { serverSettings().opencodeBinary; untrack(invalidateOpenCodeSetup) })
@@ -18,6 +18,7 @@ export default function OpenCodeSetup() {
   })
   let announced = ""
   createEffect(() => {
+    if (props.automatic === false) return
     const status = openCodeSetupStatus()
     if (!status || !needsOpenCodeSetup(status)) { announced = ""; return }
     const key = `${status.binaryPath}:${status.state}:${status.daemonVersion ?? ""}`
@@ -35,7 +36,7 @@ export default function OpenCodeSetup() {
     })
   })
   return <>
-    <Show when={needsOpenCodeSetup() && !openCodeSetupOpen()}>
+    <Show when={props.automatic !== false && needsOpenCodeSetup() && !openCodeSetupOpen()}>
       <Portal><div class="fixed bottom-4 right-4 z-50 border border-base bg-surface-secondary p-3" role="status">
         <button class="selector-button" onClick={() => openOpenCodeSetup()}>{t("settings.opencode.setup.required")}</button>
       </div></Portal>
@@ -46,7 +47,7 @@ export default function OpenCodeSetup() {
           <Dialog.Content class="modal-surface w-full max-w-2xl max-h-[85vh] overflow-auto">
             <header class="window-header"><Dialog.Title class="window-title">{t("settings.opencode.update.title")}</Dialog.Title>
               <Dialog.CloseButton class="window-action" aria-label={t("app.launchError.close")}>{t("app.launchError.close")}</Dialog.CloseButton></header>
-            <div class="window-body"><OpenCodeUpdateCard /></div>
+            <div class="window-body"><OpenCodeSetupPanel /></div>
           </Dialog.Content>
         </div>
       </Dialog.Portal>

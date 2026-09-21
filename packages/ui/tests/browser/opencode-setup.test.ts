@@ -8,6 +8,7 @@ import path from "node:path"
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    cacheDir: "node_modules/.vite-opencode-setup",
     plugins: [solid(), { name: "setup-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -194,6 +195,7 @@ test("configuration reload is an informed explicit action and never runs on setu
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.open())
+    await page.getByText("Troubleshooting", { exact: true }).click()
     await page.getByText(/cancels pending permissions and forms/).waitFor()
     assert.equal(reloads, 0)
     await page.getByRole("button", { name: "Reload OpenCode configuration" }).click()
@@ -228,8 +230,127 @@ test("activation failure after installation retains the installed version and re
     assert.equal(await page.getByRole("button", { name: "Install and start OpenCode" }).count(), 0)
     assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
     await page.getByRole("button", { name: "Connect and continue" }).click()
-    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'))
+    await page.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Connect and continue" }).count(), 0)
     assert.equal(installations, 1)
     assert.equal(attempts, 2)
+  } finally { await page.close() }
+})
+
+test("settings show a concise summary and open a separate manager with working disclosures and feedback", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  let reads = 0, starts = 0, reloads = 0
+  let holdCheck = false, releaseCheck: (() => void) | undefined
+  let releaseReload: (() => void) | undefined
+  const status = { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11", minimumVersion: "2.0.7",
+    recommendedVersion: "2.0.11", binaryPath: "C:/fixture/opencode.exe", target: "host", canUpgrade: false,
+    serviceState: "ready", daemonVersion: "2.0.11", canRestart: false, canReload: true }
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/storage/binaries/validate")) return route.fulfill({ json: { valid: true, version: "2.0.11" } })
+    if (request.url().endsWith("/api/opencode/service")) {
+      if (request.postDataJSON().reload) {
+        reloads++
+        await new Promise<void>(resolve => { releaseReload = resolve })
+      } else starts++
+    } else if (request.url().includes("/api/opencode/")) {
+      reads++
+      if (holdCheck) await new Promise<void>(resolve => { releaseCheck = resolve })
+    }
+    return route.fulfill({ json: status })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await page.getByText("Minimum version", { exact: true }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Connect and continue" }).count(), 0)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-summary.png") })
+    await page.getByRole("button", { name: "Manage OpenCode…", exact: true }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.waitFor()
+    assert.equal(await dialog.getByRole("button", { name: "Connect and continue" }).count(), 0)
+    assert.equal(await dialog.getByText("Minimum version", { exact: true }).isVisible(), false)
+    assert.equal(await dialog.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).isVisible(), false)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-manager.png") })
+    await dialog.getByText("Choose executable", { exact: true }).click()
+    await dialog.locator(".selector-input").waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 1, "choosing the executable must not navigate back to settings")
+    await dialog.locator(".selector-input").fill("C:/fixture/custom-opencode.exe")
+    await dialog.getByRole("button", { name: "Add", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.selectedBinary() === "C:/fixture/custom-opencode.exe")
+    await dialog.getByText("Choose executable", { exact: true }).click()
+    const before = reads
+    holdCheck = true
+    await dialog.getByRole("button", { name: "Check status and updates" }).click()
+    await dialog.getByRole("button", { name: "Reading installed version..." }).waitFor()
+    assert.equal(await dialog.getByRole("button", { name: "Reading installed version..." }).isDisabled(), true)
+    await page.waitForTimeout(30)
+    holdCheck = false; releaseCheck?.()
+    await dialog.getByText("Status and update check complete.").waitFor()
+    assert.ok(reads > before)
+    await dialog.getByText("Troubleshooting", { exact: true }).click()
+    await dialog.getByText(/cancels pending permissions and forms/).waitFor()
+    await dialog.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await dialog.getByText("Reloading OpenCode configuration…", { exact: true }).waitFor()
+    await page.waitForFunction(() => document.querySelector('[aria-busy="true"]'))
+    // Wait for the request to reach the route before releasing its result.
+    for (let count = 0; count < 100 && !releaseReload; count++) await page.waitForTimeout(10)
+    assert.equal(reloads, 1)
+    releaseReload?.()
+    await dialog.getByText("OpenCode configuration reloaded.").waitFor()
+    assert.equal(await dialog.count(), 1, "management keeps completion feedback visible")
+    assert.equal(starts, 0, "already-connected management does not start the service")
+    await dialog.getByRole("button", { name: "Close", exact: true }).click()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { releaseCheck?.(); releaseReload?.(); await page.close() }
+})
+
+test("French settings remain readable at narrow widths and failed checks recover visibly", async () => {
+  const page = await browser.newPage({ viewport: { width: 420, height: 800 } })
+  let fail = false
+  await page.route("**/api/**", route => route.fulfill(fail
+    ? { status: 503, json: { error: "unavailable" } }
+    : { json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11", minimumVersion: "2.0.7",
+      recommendedVersion: "2.0.11", binaryPath: "C:/fixture/opencode.exe", target: "host", canUpgrade: false,
+      serviceState: "ready", daemonVersion: "2.0.11", canReload: true } }))
+  try {
+    await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Gérer OpenCode…", exact: true }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.getByText("OpenCode est connecté.", { exact: true }).waitFor()
+    await dialog.getByRole("button", { name: "Vérifier l’état et les mises à jour" }).waitFor()
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-fr-narrow.png") })
+    assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true)
+    fail = true
+    await dialog.getByRole("button", { name: "Vérifier l’état et les mises à jour" }).click()
+    await dialog.getByRole("alert").waitFor()
+    fail = false
+    await dialog.getByRole("button", { name: "Vérifier l’état et les mises à jour" }).click()
+    await dialog.getByText("Vérification de l’état et des mises à jour terminée.").waitFor()
+    assert.equal(await dialog.getByRole("alert").count(), 0)
+  } finally { await page.close() }
+})
+
+test("continuing an already-connected recovery retries only the pending workspace", async () => {
+  const page = await browser.newPage()
+  let mutations = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() !== "GET" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+    return route.fulfill({ json: { state: "ready", currentVersion: "2.0.11", latestVersion: "2.0.11", minimumVersion: "2.0.7",
+      recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: false, serviceState: "ready", daemonVersion: "2.0.11" } })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("button", { name: "Continue", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(mutations, 0)
+    assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { await page.close() }
 })
