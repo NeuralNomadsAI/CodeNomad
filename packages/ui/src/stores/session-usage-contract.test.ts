@@ -152,12 +152,17 @@ test("hydrating a session after a revert shows the same lifetime totals as befor
     assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
   } finally { first.cleanup() }
 
-  // A fresh renderer only has the persisted session record and an empty transcript.
-  const reloaded = setup(instanceId, sessionId, { session: { cost: 1, tokens: tokens(10, 5) } })
-  setMessagesLoaded(previous => new Map(previous).set(instanceId, new Set([sessionId])))
+  // A fresh renderer only has the persisted session record and an empty
+  // transcript. It gets its own instance identity because removeInstance()
+  // leaves the previous session info in place.
+  const reloadedInstanceId = `${instanceId}-fresh`
+  const reloaded = setup(reloadedInstanceId, sessionId, { session: { cost: 1, tokens: tokens(10, 5) } })
+  setMessagesLoaded(previous => new Map(previous).set(reloadedInstanceId, new Set([sessionId])))
   try {
-    await loadMessages(instanceId, sessionId)
-    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+    assert.equal(getSessionInfo(reloadedInstanceId, sessionId), undefined)
+    assert.equal(messageStoreBus.getOrCreate(reloadedInstanceId).getSessionMessageIds(sessionId).length, 0)
+    await loadMessages(reloadedInstanceId, sessionId)
+    assertUsage(reloadedInstanceId, sessionId, { cost: 1, input: 10, output: 5 })
   } finally { reloaded.cleanup() }
 })
 
