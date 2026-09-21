@@ -106,7 +106,7 @@ test("authoritative session totals win over a partially loaded transcript", () =
   } finally { cleanup() }
 })
 
-test("a committed revert subtracts the removed messages from the session totals", () => {
+test("a committed revert keeps the lifetime session totals", () => {
   const instanceId = "usage-revert", sessionId = "s"
   const { emit, cleanup } = setup(instanceId, sessionId)
   try {
@@ -118,26 +118,47 @@ test("a committed revert subtracts the removed messages from the session totals"
     emit("session.usage.updated", { sessionID: sessionId, cost: 5, tokens: tokens(50, 25) }, 5)
     assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
     emit("session.revert.committed", { sessionID: sessionId, to: "m2" }, 6)
-    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
-    // The server's counters do not decrement; a later usage event must not
-    // restore the reverted usage.
+    assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
     emit("session.usage.updated", { sessionID: sessionId, cost: 5, tokens: tokens(50, 25) }, 7)
-    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+    assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
   } finally { cleanup() }
 })
 
-test("reverting the only message shows zero usage", () => {
-  const instanceId = "usage-revert-all", sessionId = "s"
+test("a revert from an anchored historical window shows the same lifetime totals", () => {
+  const instanceId = "usage-revert-anchored", sessionId = "s"
   const { emit, cleanup } = setup(instanceId, sessionId)
   try {
+    // Only the boundary message is resident; the newer $4 message that the
+    // native revert deletes was never loaded into this window.
     const base = { sessionID: sessionId, assistantMessageID: "m1" }
     emit("session.step.started", { ...base, agent: "build", model, started: 1 }, 1)
     emit("session.step.ended", { ...base, finish: "stop", cost: 1, tokens: tokens(10, 5) }, 2)
-    emit("session.usage.updated", { sessionID: sessionId, cost: 1, tokens: tokens(10, 5) }, 3)
-    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+    emit("session.usage.updated", { sessionID: sessionId, cost: 5, tokens: tokens(50, 25) }, 3)
     emit("session.revert.committed", { sessionID: sessionId, to: "m1" }, 4)
-    assertUsage(instanceId, sessionId, { cost: 0, input: 0, output: 0 })
+    assert.equal(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).length, 0)
+    assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
   } finally { cleanup() }
+})
+
+test("hydrating a session after a revert shows the same lifetime totals as before reload", async () => {
+  const instanceId = "usage-revert-reload", sessionId = "s"
+  const first = setup(instanceId, sessionId)
+  try {
+    const base = { sessionID: sessionId, assistantMessageID: "m1" }
+    first.emit("session.step.started", { ...base, agent: "build", model, started: 1 }, 1)
+    first.emit("session.step.ended", { ...base, finish: "stop", cost: 1, tokens: tokens(10, 5) }, 2)
+    first.emit("session.usage.updated", { sessionID: sessionId, cost: 1, tokens: tokens(10, 5) }, 3)
+    first.emit("session.revert.committed", { sessionID: sessionId, to: "m1" }, 4)
+    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+  } finally { first.cleanup() }
+
+  // A fresh renderer only has the persisted session record and an empty transcript.
+  const reloaded = setup(instanceId, sessionId, { session: { cost: 1, tokens: tokens(10, 5) } })
+  setMessagesLoaded(previous => new Map(previous).set(instanceId, new Set([sessionId])))
+  try {
+    await loadMessages(instanceId, sessionId)
+    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
+  } finally { reloaded.cleanup() }
 })
 
 test("message sums stand in when the server reports no session usage", () => {
@@ -150,7 +171,5 @@ test("message sums stand in when the server reports no session usage", () => {
       emit("session.step.ended", { ...base, finish: "stop", cost, tokens: tokens(10 * cost, 5 * cost) }, created + 1)
     }
     assertUsage(instanceId, sessionId, { cost: 5, input: 50, output: 25 })
-    emit("session.revert.committed", { sessionID: sessionId, to: "m2" }, 5)
-    assertUsage(instanceId, sessionId, { cost: 1, input: 10, output: 5 })
   } finally { cleanup() }
 })

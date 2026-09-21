@@ -2,46 +2,7 @@ import type { Provider } from "../../types/session"
 import { DEFAULT_MODEL_OUTPUT_LIMIT } from "../session-models"
 import { providers, sessions, sessionInfoByInstance, setSessionInfoByInstance, updateThreadTotalsForSession } from "../session-state"
 import { messageStoreBus } from "./bus"
-import type { SessionUsageState, UsageEntry } from "./types"
-
-interface UsageTotals {
-  cost: number
-  inputTokens: number
-  outputTokens: number
-  reasoningTokens: number
-}
-
-// OpenCode's session usage counters only ever grow; a committed revert deletes
-// messages without decrementing them. Track the reverted usage separately so
-// the displayed totals can subtract it from the authoritative session totals.
-const revertedUsage = new Map<string, UsageTotals>()
-
-function revertedKey(instanceId: string, sessionId: string) {
-  return `${instanceId}:${sessionId}`
-}
-
-export function recordRevertedUsage(instanceId: string, sessionId: string, entries: UsageEntry[]): void {
-  if (!entries.length) return
-  const key = revertedKey(instanceId, sessionId)
-  const current = revertedUsage.get(key) ?? { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
-  for (const entry of entries) {
-    current.cost += entry.cost
-    current.inputTokens += entry.inputTokens
-    current.outputTokens += entry.outputTokens
-    current.reasoningTokens += entry.reasoningTokens
-  }
-  revertedUsage.set(key, current)
-}
-
-export function clearRevertedUsage(instanceId: string, sessionId?: string): void {
-  if (sessionId) {
-    revertedUsage.delete(revertedKey(instanceId, sessionId))
-    return
-  }
-  for (const key of revertedUsage.keys()) {
-    if (key.startsWith(`${instanceId}:`)) revertedUsage.delete(key)
-  }
-}
+import type { SessionUsageState } from "./types"
 
 function getLatestUsageEntry(usage?: SessionUsageState) {
   if (!usage?.latestMessageId) return undefined
@@ -79,15 +40,15 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
   let contextAvailableFromPrevious = false
   let isSubscriptionModel = false
 
-  // The session record carries the server's cumulative usage, which covers the
-  // whole session regardless of which messages are currently loaded. Message
-  // sums only stand in when the server does not report session usage.
+  // The session record carries the server's lifetime usage, which covers the
+  // whole session regardless of which messages are currently loaded and is not
+  // reduced by reverts. Message sums only stand in when the server does not
+  // report session usage.
   if (session.tokens) {
-    const reverted = revertedUsage.get(revertedKey(instanceId, sessionId))
-    totalInputTokens = Math.max(0, session.tokens.input - (reverted?.inputTokens ?? 0))
-    totalOutputTokens = Math.max(0, session.tokens.output - (reverted?.outputTokens ?? 0))
-    totalReasoningTokens = Math.max(0, session.tokens.reasoning - (reverted?.reasoningTokens ?? 0))
-    totalCost = Math.max(0, (session.cost ?? 0) - (reverted?.cost ?? 0))
+    totalInputTokens = session.tokens.input
+    totalOutputTokens = session.tokens.output
+    totalReasoningTokens = session.tokens.reasoning
+    totalCost = session.cost ?? 0
     if (!hasUsageEntries) actualUsageTokens = previousInfo?.actualUsageTokens ?? 0
   } else if (!hasUsageEntries && previousInfo) {
     totalInputTokens = previousInfo.inputTokens
