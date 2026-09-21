@@ -6,7 +6,11 @@ import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import type { PromptAsideController } from "./usePromptAside"
 
-export default function PromptAsideWindow(props: { id: string; controller: PromptAsideController }) {
+export default function PromptAsideWindow(props: {
+  id: string
+  controller: PromptAsideController
+  returnFocus?: () => HTMLElement | undefined
+}) {
   const { t } = useI18n()
   const aside = props.controller
   const [copied, setCopied] = createSignal(false)
@@ -23,7 +27,8 @@ export default function PromptAsideWindow(props: { id: string; controller: Promp
   return (
     <DismissibleWindow id={props.id} open={aside.open()} onClose={aside.close}
       title={t("promptInput.btw.title")} description={t("promptInput.btw.description")}
-      class="session-aside-window" initialFocus={() => aside.pending() ? closeButton : input}>
+      class="session-aside-window" initialFocus={() => aside.pending() ? closeButton : input}
+      returnFocus={props.returnFocus}>
       <div class="window-header">
         <h2 class="window-title">{t("promptInput.btw.title")}</h2>
         <button ref={closeButton} type="button" class="window-icon-button" aria-label={t("promptInput.btw.close")} onClick={aside.close}><X /></button>

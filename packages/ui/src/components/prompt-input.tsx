@@ -1155,7 +1155,7 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
       </div>
 
-      <PromptAsideWindow id={asideId} controller={aside} />
+      <PromptAsideWindow id={asideId} controller={aside} returnFocus={() => textareaRef} />
       <DirectoryBrowserDialog
         open={isFileBrowserOpen()}
         mode="files"

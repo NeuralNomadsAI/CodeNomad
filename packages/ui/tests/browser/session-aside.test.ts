@@ -90,6 +90,7 @@ test("bare /btw opens a question form; attachments and normal command routing su
     await dialog.getByRole("heading", { name: "Side answer" }).waitFor()
     assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).attachments, 1)
     await dialog.getByRole("button", { name: "Close side question" }).click()
+    await page.waitForFunction(() => document.activeElement?.matches(".prompt-input-container textarea"))
     await composer(page).fill("/btw [Pasted #1] [Image #1]")
     await page.evaluate(() => { (window as any).fixture.paste(); (window as any).fixture.image() })
     await page.locator(".send-button").click()
