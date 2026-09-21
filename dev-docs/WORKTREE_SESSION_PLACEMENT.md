@@ -172,6 +172,26 @@ authorized workspace spelling before changing UI state.
 
 ## Evidence and regression coverage
 
+### Existing-worktree selection latency (2026-09-21)
+
+Reproduced in the running Windows Tauri app with disposable sessions: choosing an
+existing checkout immediately displayed Workspace again, and the move endpoint
+did not respond within 90 seconds. Native location/list/refresh requests completed;
+the CodeNomad catalogue alone took 76.1 seconds for 174 entries. Repeated fresh
+transaction scans multiplied the per-checkout Git process cost.
+
+HEAD/branch annotations now come from one NUL-delimited `git worktree list`
+snapshot. Native OpenCode still supplies the inventory; physical common-directory
+and linked-checkout backlink checks retain local ownership and root validation.
+The same catalogue completed in 5.2 seconds during the first patched measurement.
+This is a local observation, not a performance bound. Authoritative transaction
+rescans, mutation fences and rollback remain in place.
+
+The selector displays the requested worktree and a busy spinner while moving,
+disables additional selections, and reconciles to the native location on success
+or failure. Browser regressions cover both delayed outcomes without optimistic
+mutation of the session location.
+
 ### Final native/UI integration (2026-09-17)
 
 Follow-up: search/filter mode presents independent flat rows. The "Show subsessions"

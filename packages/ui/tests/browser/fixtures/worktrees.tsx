@@ -48,6 +48,17 @@ await updatePreferences({ locale: "en" })
   calls,
   location: () => session.location.directory,
   worktrees: () => getWorktrees(id),
+  holdMove: (fail = false) => {
+    const move = serverApi.moveSessionFamily
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    serverApi.moveSessionFamily = async (...args) => {
+      await gate
+      if (fail) throw new Error("Fixture move rejected")
+      return move(...args)
+    }
+    ;(window as any).fixture.releaseMove = release
+  },
   refreshBurst: async () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })

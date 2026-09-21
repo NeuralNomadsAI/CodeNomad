@@ -155,3 +155,26 @@ test("creation uses the selected source and the returned stable worktree ID", as
     ])
   } finally { await page.close() }
 })
+
+for (const fail of [false, true]) {
+  test(`retains the requested worktree while moving and ${fail ? "restores the native location on failure" : "confirms it on success"}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await prepare(page)
+      await page.evaluate(fail => (window as any).fixture.holdMove(fail), fail)
+      const trigger = page.locator(".selector-trigger")
+      await trigger.click()
+      await page.getByRole("option", { name: /feature/ }).locator(".selector-option-label").click()
+      await page.getByRole("listbox").waitFor({ state: "hidden" })
+      assert.match(await trigger.innerText(), /feature/)
+      assert.equal(await trigger.isDisabled(), true)
+      assert.equal(await trigger.getAttribute("aria-busy"), "true")
+      assert.equal(await page.evaluate(() => (window as any).fixture.location()), "/repo", "pending UI does not mutate native placement")
+      await page.evaluate(() => (window as any).fixture.releaseMove())
+      await page.waitForFunction(() => document.querySelector(".selector-trigger")?.getAttribute("aria-busy") === "false")
+      assert.equal(await trigger.isDisabled(), false)
+      assert.match(await trigger.innerText(), fail ? /Workspace/ : /feature/)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), fail ? [] : [{ move: "stable-feature-id" }])
+    } finally { await page.close() }
+  })
+}
