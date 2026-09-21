@@ -1,0 +1,85 @@
+.message-timeline-tools-control {
+  flex: 0 0 var(--session-timeline-footer-height, 29px);
+  min-height: var(--session-timeline-footer-height, 29px);
+  display: grid;
+  place-items: center;
+  border-block-start: 1px solid var(--border-divider);
+  background-color: var(--surface-chrome);
+}
+
+.message-timeline-tools-toggle {
+  position: relative;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.message-timeline-tools-toggle-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.message-timeline-tools-toggle-box {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--text-muted);
+  background-color: transparent;
+  color: var(--text-muted);
+  opacity: 0.4;
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.message-timeline-tools-toggle:hover .message-timeline-tools-toggle-box {
+  opacity: 0.72;
+}
+
+.message-timeline-tools-toggle-input:focus-visible + .message-timeline-tools-toggle-box {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+.message-timeline-tools-toggle-input:checked + .message-timeline-tools-toggle-box {
+  background-color: transparent;
+  opacity: 0.62;
+}
+
+.message-timeline-tools-toggle-input:checked + .message-timeline-tools-toggle-box::after {
+  content: "";
+  position: absolute;
+  width: 3px;
+  height: 6px;
+  inset-block-start: 1px;
+  inset-inline-start: 3px;
+  border-inline-end: 1px solid currentColor;
+  border-block-end: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+@media (pointer: coarse) {
+  .message-timeline-tools-toggle {
+    width: var(--touch-target-size);
+    height: 100%;
+  }
+
+  .message-timeline-tools-toggle-box {
+    width: 15px;
+    height: 15px;
+  }
+
+  .message-timeline-tools-toggle-input:checked + .message-timeline-tools-toggle-box::after {
+    width: 4px;
+    height: 8px;
+    inset-block-start: 1px;
+    inset-inline-start: 5px;
+  }
+}

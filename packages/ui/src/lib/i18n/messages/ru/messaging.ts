@@ -17,7 +17,7 @@ export const messagingMessages = {
   "history.planning": "Проверка истории: {count} сообщений",
   "history.pruning": "Очистка: {count} / {total} сообщений",
   "transcriptFilters.title": "Содержимое сообщений",
-  "transcriptFilters.systemMessages": "Системные сообщения",
+  "transcriptFilters.systemMessages": "Система",
   "messageBlock.system.label": "Система",
   "transcriptFilters.description": "Выберите видимость содержимого и начальное состояние развёртывания. Настройки применяются ко всем беседам.",
   "transcriptFilters.show": "Показать {name}",

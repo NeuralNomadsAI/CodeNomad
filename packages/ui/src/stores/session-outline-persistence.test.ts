@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { normalizePersistedOutline, normalizeOutlineIndexes, outlineBudget } from "./session-outline-persistence"
+import { hasCompleteOutlineToolMetadata, normalizePersistedOutline, normalizeOutlineIndexes, outlineBudget } from "./session-outline-persistence"
 import { canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, canCommitClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-state-codec"
 
 function index(count = 20000) {
   return normalizePersistedOutline({ format: 1, directory: "/repo", projectID: "p",
-    entries: Array.from({ length: count }, (_, seq) => ({ id: `message-${seq}`, seq, type: "assistant", tools: seq % 2, reasoning: 1 })),
+    entries: Array.from({ length: count }, (_, seq) => ({ id: `message-${seq}`, seq, type: "assistant", tools: seq % 2,
+      reasoning: 1, ...(seq % 2 ? { toolName: "shell" } : {}) })),
     checkpoints: Array.from({ length: Math.ceil(count / 512) }, (_, chunk) => ({ after: chunk * 512 - 1,
       through: Math.min(count, (chunk + 1) * 512) - 1, digest: "a".repeat(64) })),
   })!
@@ -50,6 +51,10 @@ test("a missing or corrupt optional index chunk preserves the selected session, 
 test("index normalization bounds optional storage, rejects invalid ordering and never stores excerpts", () => {
   const valid = index(2)
   assert.equal(normalizePersistedOutline(valid), valid, "verified immutable indexes avoid repeated traversal on capture")
+  assert(hasCompleteOutlineToolMetadata(valid))
+  const legacy = normalizePersistedOutline({ ...valid,
+    entries: valid.entries.map(({ toolName: _, ...entry }) => entry) })!
+  assert.equal(hasCompleteOutlineToolMetadata(legacy), false, "older indexes trigger one native metadata refresh")
   assert.equal(normalizePersistedOutline({ ...valid, entries: [valid.entries[1], valid.entries[0]] }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, checkpoints: [{ after: 0, through: 1, digest: "a".repeat(64) }] }), undefined)
   const sanitized = normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, preview: "do not persist bodies" })) })!

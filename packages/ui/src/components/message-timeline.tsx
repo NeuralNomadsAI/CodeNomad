@@ -13,6 +13,8 @@ import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
+import { toggleShowTimelineTools } from "../stores/preferences"
+import TimelineToolsToggle from "./timeline-tools-toggle"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -307,6 +309,7 @@ export function buildTimelineSegments(
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const { t } = useI18n()
   const previewId = createUniqueId()
+  const timelineId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
   const [visiblePreviewSegments, setVisiblePreviewSegments] = createSignal<TimelineSegment[]>([])
@@ -576,6 +579,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   return (
     <div class="message-timeline-container">
       <div
+        id={timelineId}
         ref={(element) => {
           setScrollElement(element)
         }}
@@ -668,7 +672,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           }}
         </Show>
       </div>
-
+      <TimelineToolsToggle controls={timelineId} shown={showTools()} onToggle={toggleShowTimelineTools} />
     </div>
   )
 }

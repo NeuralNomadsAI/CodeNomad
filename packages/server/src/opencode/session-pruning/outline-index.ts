@@ -27,6 +27,11 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const project = db.prepare(`SELECT id,type,seq,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool') ELSE 0 END AS tools,
+      CASE WHEN type='assistant' THEN coalesce((SELECT substr(CASE
+          WHEN json_type(value,'$.name')='text' THEN json_extract(value,'$.name')
+          WHEN json_type(value,'$.tool')='text' THEN json_extract(value,'$.tool') END,1,256)
+        FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool'
+        AND (json_type(value,'$.name')='text' OR json_type(value,'$.tool')='text') LIMIT 1),'') ELSE '' END AS tool_name,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
@@ -48,8 +53,10 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
         || chunkEnd >= maximum
       if (changed) {
         for (const row of project.iterate(...params, after, chunkEnd)) {
+          const tools = Number(row.tools)
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
-            tools: Number(row.tools), reasoning: Number(row.reasoning) })
+            tools, reasoning: Number(row.reasoning),
+            ...(tools ? { toolName: typeof row.tool_name === "string" ? row.tool_name : "" } : {}) })
           if (entries.length % 128 === 0) await yieldTurn(undefined, { signal })
         }
       }

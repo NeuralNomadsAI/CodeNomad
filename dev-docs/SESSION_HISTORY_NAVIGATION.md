@@ -8,7 +8,8 @@ challenge as history queries. They do not expose generic RPC or SQL access.
 ## Read contract
 
 - An outline page returns at most 16,384 structural entries: native ID, sequence,
-  type and technical-part counts, with no excerpt or body. SQL projects counts
+  type, technical-part counts and the first tool name used by the aggregate marker,
+  with no excerpt or body. SQL projects this metadata
   directly; large content never enters JS/RPC/renderer just to draw the rail.
   Its sequence horizon excludes newly appended messages until the next refresh;
    `known` supplies up to 512 contiguous checkpoint digests. Each covers up to 512
@@ -72,6 +73,8 @@ content-addressed leaves and no excerpts or message bodies. Limits are 16 indexe
 The optional data uses a separate budget from drafts, attachments and selections.
 Missing/corrupt index chunks discard only that index. Frozen normalized indexes
 and encoded leaves are memoized so draft/scroll captures do not rehash each entry.
+Indexes saved before representative tool names were added display immediately, then
+perform one complete checkpoint revalidation before being persisted again.
 The `outline-index-v1` root extension fences older renderers rather than letting
 them discard session documents they cannot interpret. Hosts without partition
 support keep their existing monolithic snapshot without the optional indexes.
