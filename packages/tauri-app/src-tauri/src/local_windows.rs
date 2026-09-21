@@ -19,6 +19,7 @@ pub(crate) struct LocalWindowRecord {
     pending_folders: VecDeque<PendingFolder>,
     renderer_ready: bool,
     workspace_menu_enabled: bool,
+    pub(crate) view_menu_state: Option<crate::view_menu::ViewMenuState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ impl Registry {
             pending_folders: VecDeque::new(),
             renderer_ready: false,
             workspace_menu_enabled: false,
+            view_menu_state: None,
         };
         self.records.insert(label.clone(), record.clone());
         self.mark_focused(&label);
@@ -137,6 +139,20 @@ impl LocalWindows {
             .get_mut(label)
             .ok_or_else(|| "Unknown local window".to_string())?;
         record.workspace_menu_enabled = enabled;
+        if !enabled {
+            record.view_menu_state = None;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_view_menu_state(
+        &self,
+        label: &str,
+        state: Option<crate::view_menu::ViewMenuState>,
+    ) -> Result<(), String> {
+        let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
+        let record = registry.records.get_mut(label).ok_or("Unknown local window")?;
+        record.view_menu_state = state;
         Ok(())
     }
 

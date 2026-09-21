@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
 import { Show, createMemo, createSignal, createUniqueId, untrack } from "solid-js"
-import { ChevronDown, Copy, FolderOpen, Trash2 } from "lucide-solid"
+import { ChevronDown, Copy, FolderOpen, Loader2, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -10,6 +10,7 @@ import {
   createWorktree,
   deleteWorktree,
   getParentSessionId,
+  getPendingWorktreeSlug,
   getGitRepoStatus,
   getWorktreeSlugForParentSession,
   getWorktrees,
@@ -144,10 +145,11 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const isChildSession = createMemo(() => Boolean(session()?.parentId))
   const parentId = createMemo(() => getParentSessionId(props.instanceId, props.sessionId))
   const currentSlug = createMemo(() => getWorktreeSlugForParentSession(props.instanceId, parentId()))
+  const movingSlug = createMemo(() => getPendingWorktreeSlug(props.instanceId, parentId()))
 
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
   const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
-  const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable())
+  const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable() || Boolean(movingSlug()))
   let listbox: HTMLUListElement | undefined
 
   const worktreeOptions = createMemo<WorktreeOption[]>(() => {
@@ -183,7 +185,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   })
 
   const selectedOption = createMemo<WorktreeOption | undefined>(() => {
-    const slug = currentSlug()
+    const slug = movingSlug() ?? currentSlug()
     const match = worktreeOptions().find((opt) => opt.kind === "worktree" && opt.slug === slug)
     if (match) return match
     // Fallback to root if mapped slug is missing.
@@ -327,6 +329,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       setCreateOpen(true)
       return
     }
+    if (movingSlug() || value.slug === currentSlug()) return
+    setIsOpen(false)
     await setWorktreeSlugForParentSession(props.instanceId, parentId(), value.slug)
   }
 
@@ -459,7 +463,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           )
         }}
       >
-        <Select.Trigger class="selector-trigger">
+        <Select.Trigger class="selector-trigger" aria-busy={Boolean(movingSlug())}>
           <div class="flex-1 min-w-0">
             <Select.Value<WorktreeOption>>
               {(state) => {
@@ -494,7 +498,9 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
             </Select.Value>
           </div>
           <Select.Icon class="selector-trigger-icon">
-            <ChevronDown class="w-3 h-3" />
+            <Show when={movingSlug()} fallback={<ChevronDown class="w-3 h-3" />}>
+              <Loader2 class="w-3 h-3 animate-spin" aria-hidden="true" />
+            </Show>
           </Select.Icon>
         </Select.Trigger>
 

@@ -226,7 +226,9 @@ jobs:
       - name: Test Electron client state
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh
-        run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
+        run: |
+          npm run test:native --workspace @neuralnomads/codenomad-electron-app
+          node --import tsx --test packages/electron-app/electron/main/view-menu.test.ts
 
       - name: Test changed runnable UI behavior
         run: >-

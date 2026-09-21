@@ -40,7 +40,7 @@ import {
   selectBrowserOpenOwner,
 } from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
-import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
+import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -698,10 +698,12 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Native menus execute the same commands as the command palette.
+  // Native visibility actions share the shell/preferences state; other actions use palette commands.
+  const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
         const instance = activeInstance()
         if (instance) showCommandPalette(instance.id)
@@ -733,12 +735,6 @@ const App: Component = () => {
 
     const unsubscribe = window.electronAPI?.onMenuAction?.(executeMenuAction)
     onCleanup(() => unsubscribe?.())
-  })
-
-  createEffect(() => {
-    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
-      log.warn("Failed to update native workspace menu state", error)
-    })
   })
 
   return (
