@@ -1,7 +1,7 @@
 import path from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { realpath } from "node:fs/promises"
+import { readFile, realpath, stat } from "node:fs/promises"
 
 export interface LogLike {
   debug?: (obj: any, msg?: string) => void
@@ -49,6 +49,65 @@ export async function readCheckout(directory: string) {
   ])
   const [root, common, gitDirectory] = paths.split(/\r?\n/)
   return { root: await realpath(root), common: await realpath(common), gitDirectory: await realpath(gitDirectory), head, branch }
+}
+
+// One Git snapshot supplies HEAD/branch annotations for every local checkout.
+// Native OpenCode remains the inventory authority; callers intersect its entries
+// with these registrations and verify each checkout's physical common directory.
+export async function readWorktreeAnnotations(directory: string) {
+  const output = await git(directory, ["worktree", "list", "--porcelain", "-z"])
+  return output.split("\0\0").filter(Boolean).map(record => {
+    const fields = record.split("\0")
+    const root = fields.find(field => field.startsWith("worktree "))?.slice(9)
+    if (!root) throw new Error("Git returned a worktree without a directory")
+    const head = fields.find(field => field.startsWith("HEAD "))?.slice(5)
+    const branch = fields.find(field => field.startsWith("branch refs/heads/"))?.slice(18)
+    return { root, head, branch }
+  })
+}
+
+export async function readCheckoutIdentity(directory: string) {
+  const entry = path.join(directory, ".git")
+  const info = await stat(entry)
+  let gitDirectory = entry
+  if (!info.isDirectory()) {
+    const pointer = (await readFile(entry, "utf8")).replace(/\r?\n$/, "")
+    if (!pointer.startsWith("gitdir: ")) throw new Error("Invalid worktree Git directory")
+    gitDirectory = path.resolve(directory, pointer.slice(8))
+  }
+  const common = await readFile(path.join(gitDirectory, "commondir"), "utf8").catch(error => {
+    if (error.code === "ENOENT") return "."
+    throw error
+  })
+  const resolvedGit = await realpath(gitDirectory)
+  const resolvedCommon = await realpath(path.resolve(gitDirectory, common.replace(/\r?\n$/, "")))
+  const backlink = resolvedGit === resolvedCommon ? undefined : (await readFile(path.join(resolvedGit, "gitdir"), "utf8")).replace(/\r?\n$/, "")
+  return {
+    gitDirectory: resolvedGit,
+    common: resolvedCommon,
+    root: backlink ? await realpath(path.dirname(path.resolve(resolvedGit, backlink))) : undefined,
+  }
+}
+
+export async function createCheckoutRootVerifier(directory: string) {
+  // Read shared/system/global configuration once, letting Git expand includes.
+  // Conditional includes and config.worktree can differ for each checkout, so
+  // their presence requires Git's own resolution even if this checkout is plain.
+  const config = await git(directory, ["config", "--null", "--list", "--includes"])
+  const configuredRoot = config.split("\0").some(entry => {
+    const [key, value] = entry.split("\n", 2)
+    return key === "core.worktree" || key === "extensions.worktreeconfig" || key.startsWith("includeif.")
+      || (key === "core.bare" && value !== "false")
+  }) || ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE"].some(key => process.env[key] !== undefined)
+
+  return async (checkout: string) => {
+    if (!configuredRoot) return
+    // Administrative gitdir backlinks describe registration, not necessarily
+    // the effective worktree. Keep annotations batched; only exceptional config
+    // needs this single extra process (which also rejects bare checkouts).
+    const root = await git(checkout, ["rev-parse", "--show-toplevel"])
+    if (await realpath(root) !== await realpath(checkout)) throw new Error("Native worktree entry is not a checkout root")
+  }
 }
 
 export function isValidWorktreeSlug(slug: string): boolean {

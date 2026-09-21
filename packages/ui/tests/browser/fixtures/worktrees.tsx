@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { createSignal, Show } from "solid-js"
 import WorktreeSelector from "../../../src/components/worktree-selector"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -18,7 +19,11 @@ const entries = [
 ]
 const session: any = { id: "session", instanceId: id, parentId: null, title: "Fixture", location: { directory: "/repo" },
   projectID: "fixture", cost: 0, tokens: {}, time: { created: 1, updated: 1 }, agent: "build", status: "idle", model: { providerId: "fixture", modelId: "fixture" } }
-const client: any = { session: { list: async () => ({ data: [session], cursor: {} }), active: async () => ({}) } }
+const secondSession = { ...session, id: "session-b", location: { directory: "/repo" } }
+const fixtureSessions = [session, secondSession]
+const [selectedSession, setSelectedSession] = createSignal(session.id)
+const [mounted, setMounted] = createSignal(true)
+const client: any = { session: { list: async () => ({ data: fixtureSessions, cursor: {} }), active: async () => ({}) } }
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
 const uiConfig = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => uiConfig as any
@@ -33,21 +38,48 @@ serverApi.createWorktree = async (_id, input) => {
 }
 serverApi.moveSessionFamily = async (_id, _session, input) => {
   calls.push({ move: input.worktreeSlug })
-  session.location = { directory: entries.find(entry => entry.slug === input.worktreeSlug)!.directory }
-  return { rootSessionId: session.id, sessionIds: [session.id], worktreeSlug: input.worktreeSlug }
+  const target = fixtureSessions.find(candidate => candidate.id === _session)!
+  target.location = { directory: entries.find(entry => entry.slug === input.worktreeSlug)!.directory }
+  return { rootSessionId: target.id, sessionIds: [target.id], worktreeSlug: input.worktreeSlug }
 }
 serverApi.deleteWorktree = async (_id, slug) => { calls.push({ delete: slug }); entries.splice(entries.findIndex(entry => entry.slug === slug), 1) }
 addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
-setSessions(previous => new Map(previous).set(id, new Map([[session.id, session]])))
+setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions.map(session => [session.id, session]))))
 await ensureWorktreesLoaded(id)
 render(() => <ConfigProvider><I18nProvider><div style={{ width: "380px", margin: "40px" }}>
-  <WorktreeSelector instanceId={id} sessionId={session.id} />
+  <Show when={mounted()}><WorktreeSelector instanceId={id} sessionId={selectedSession()} /></Show>
 </div></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   calls,
+  selectSession: setSelectedSession,
+  setMounted,
   location: () => session.location.directory,
   worktrees: () => getWorktrees(id),
+  holdFamilyMoves: () => {
+    const move = serverApi.moveSessionFamily
+    const releases = new Map<string, (fail: boolean) => void>()
+    const requests: string[] = []
+    serverApi.moveSessionFamily = async (...args) => {
+      requests.push(args[1])
+      const fail = await new Promise<boolean>(resolve => { releases.set(args[1], resolve) })
+      if (fail) throw new Error("Fixture move rejected")
+      return move(...args)
+    }
+    ;(window as any).fixture.moveRequests = requests
+    ;(window as any).fixture.releaseFamilyMove = (sessionId: string, fail = false) => releases.get(sessionId)!(fail)
+  },
+  holdMove: (fail = false) => {
+    const move = serverApi.moveSessionFamily
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    serverApi.moveSessionFamily = async (...args) => {
+      await gate
+      if (fail) throw new Error("Fixture move rejected")
+      return move(...args)
+    }
+    ;(window as any).fixture.releaseMove = release
+  },
   refreshBurst: async () => {
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
