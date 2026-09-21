@@ -10,6 +10,7 @@ import {
   createWorktree,
   deleteWorktree,
   getParentSessionId,
+  getPendingWorktreeSlug,
   getGitRepoStatus,
   getWorktreeSlugForParentSession,
   getWorktrees,
@@ -144,11 +145,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const isChildSession = createMemo(() => Boolean(session()?.parentId))
   const parentId = createMemo(() => getParentSessionId(props.instanceId, props.sessionId))
   const currentSlug = createMemo(() => getWorktreeSlugForParentSession(props.instanceId, parentId()))
-  const [pendingMove, setPendingMove] = createSignal<{ instanceId: string; sessionId: string; slug: string }>()
-  const movingSlug = createMemo(() => {
-    const move = pendingMove()
-    return move?.instanceId === props.instanceId && move.sessionId === parentId() ? move.slug : undefined
-  })
+  const movingSlug = createMemo(() => getPendingWorktreeSlug(props.instanceId, parentId()))
 
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
   const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
@@ -333,14 +330,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       return
     }
     if (movingSlug() || value.slug === currentSlug()) return
-    const move = { instanceId: props.instanceId, sessionId: parentId(), slug: value.slug }
-    setPendingMove(move)
     setIsOpen(false)
-    try {
-      await setWorktreeSlugForParentSession(move.instanceId, move.sessionId, move.slug)
-    } finally {
-      if (pendingMove() === move) setPendingMove(undefined)
-    }
+    await setWorktreeSlugForParentSession(props.instanceId, parentId(), value.slug)
   }
 
   return (

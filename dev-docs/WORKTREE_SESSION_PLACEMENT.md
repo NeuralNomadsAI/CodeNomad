@@ -192,6 +192,14 @@ disables additional selections, and reconciles to the native location on success
 or failure. Browser regressions cover both delayed outcomes without optimistic
 mutation of the session location.
 
+The independent gatekeeper review added two regression cases. Administrative
+backlinks alone do not establish Git's effective root when `core.worktree` or
+worktree-specific configuration redirects it. The catalogue now reads effective
+configuration once and asks Git to validate each root when configuration can
+change it; ordinary scans retain a constant process count. Pending selector
+targets now live with the store's per-instance/family request and survive A/B
+session navigation and remounts, including either completion order and failure.
+
 ### Final native/UI integration (2026-09-17)
 
 Follow-up: search/filter mode presents independent flat rows. The "Show subsessions"

@@ -89,6 +89,27 @@ export async function readCheckoutIdentity(directory: string) {
   }
 }
 
+export async function createCheckoutRootVerifier(directory: string) {
+  // Read shared/system/global configuration once, letting Git expand includes.
+  // Conditional includes and config.worktree can differ for each checkout, so
+  // their presence requires Git's own resolution even if this checkout is plain.
+  const config = await git(directory, ["config", "--null", "--list", "--includes"])
+  const configuredRoot = config.split("\0").some(entry => {
+    const [key, value] = entry.split("\n", 2)
+    return key === "core.worktree" || key === "extensions.worktreeconfig" || key.startsWith("includeif.")
+      || (key === "core.bare" && value !== "false")
+  }) || ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE"].some(key => process.env[key] !== undefined)
+
+  return async (checkout: string) => {
+    if (!configuredRoot) return
+    // Administrative gitdir backlinks describe registration, not necessarily
+    // the effective worktree. Keep annotations batched; only exceptional config
+    // needs this single extra process (which also rejects bare checkouts).
+    const root = await git(checkout, ["rev-parse", "--show-toplevel"])
+    if (await realpath(root) !== await realpath(checkout)) throw new Error("Native worktree entry is not a checkout root")
+  }
+}
+
 export function isValidWorktreeSlug(slug: string): boolean {
   return Boolean(slug.trim() && slug.length <= 200 && !/[\x00-\x1F\x7F]/.test(slug))
 }

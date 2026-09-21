@@ -4,7 +4,7 @@ import path from "node:path"
 import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { WorktreeDescriptor, WorktreeListResponse } from "../api-types"
 import { locationRequestOptions } from "../opencode/compatibility/location"
-import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
+import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 
 export interface NativeWorktreeContext {
@@ -37,6 +37,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
   const options = locationRequestOptions(location, { includeDirectory: true })
   await client.worktree.refresh({ projectID: current.project.id }, options)
   const native = await client.worktree.list({ projectID: current.project.id }, options)
+  const verifyCheckoutRoot = await createCheckoutRootVerifier(workspacePath)
   const annotations = new Map<string, Awaited<ReturnType<typeof readWorktreeAnnotations>>[number]>()
   for (const annotation of await readWorktreeAnnotations(workspacePath)) {
     const registered = await realpath(annotation.root).catch(error => {
@@ -70,6 +71,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
     const checkout = await readCheckoutIdentity(host)
     if (!await sameDirectory(local.common, checkout.common)) return
     if (!await sameDirectory(checkout.root ?? mainHost, registeredDirectory)) throw new Error("Native worktree entry is not a checkout root")
+    await verifyCheckoutRoot(host)
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
     const root = await sameDirectory(local.root, registeredDirectory)
