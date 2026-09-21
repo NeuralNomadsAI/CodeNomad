@@ -16,6 +16,7 @@ mod native_request;
 mod native_service_start;
 mod preferences_window;
 mod shutdown;
+mod view_menu;
 mod windows_update;
 mod workspace_open;
 
@@ -152,6 +153,7 @@ pub struct WorkspaceMenuItems {
 }
 
 fn update_workspace_menu_state(app: &AppHandle) {
+    view_menu::update(app);
     let state = app.state::<AppState>();
     let enabled = local_windows::focused_window(app)
         .filter(|window| identity::local_window_id(window.label()).is_ok())
@@ -259,11 +261,17 @@ fn set_workspace_menu_enabled(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     enabled: bool,
+    view_state: Option<view_menu::ViewMenuState>,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
+    if let Some(view_state) = &view_state {
+        view_state.validate()?;
+    }
     if !enabled {
         app.state::<local_windows::LocalWindows>()
             .set_workspace_menu_enabled(webview.label(), false)?;
+        app.state::<local_windows::LocalWindows>()
+            .set_view_menu_state(webview.label(), view_state)?;
         update_workspace_menu_state(&app);
         return Ok(());
     }
@@ -278,6 +286,8 @@ fn set_workspace_menu_enabled(
     }
     app.state::<local_windows::LocalWindows>()
         .set_workspace_menu_enabled(webview.label(), enabled)?;
+    app.state::<local_windows::LocalWindows>()
+        .set_view_menu_state(webview.label(), view_state)?;
     update_workspace_menu_state(&app);
     Ok(())
 }
@@ -1700,7 +1710,11 @@ fn main() {
                 | "open-workspace-editor-vscode"
                 | "open-workspace-editor-cursor"
                 | "open-workspace-editor-zed"
-                | "open-workspace-editor-vscodium") => {
+                | "open-workspace-editor-vscodium"
+                | "view-left-panel"
+                | "view-right-panel"
+                | "view-timeline"
+                | "view-timeline-tools") => {
                     if let Some(window) = local_windows::focused_local_window(app_handle) {
                         let _ = window.emit("menu:action", action);
                     }
@@ -2119,17 +2133,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     submenus.push(edit_menu);
 
     // View menu
-    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View")
-        .item(&reload_item)
-        .item(&force_reload_item)
-        .item(&toggle_devtools_item)
-        .separator()
-        .item(&reset_zoom_item)
-        .item(&zoom_in_item)
-        .item(&zoom_out_item)
-        .separator()
-        .item(&toggle_fullscreen_item)
-        .build()?;
+    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View").build()?;
+    view_menu::append(app, &view_menu)?;
+    view_menu.append_items(&[
+        &reload_item,
+        &force_reload_item,
+        &toggle_devtools_item,
+        &PredefinedMenuItem::separator(app)?,
+        &reset_zoom_item,
+        &zoom_in_item,
+        &zoom_out_item,
+        &PredefinedMenuItem::separator(app)?,
+        &toggle_fullscreen_item,
+    ])?;
     submenus.push(view_menu);
 
     // Window menu
