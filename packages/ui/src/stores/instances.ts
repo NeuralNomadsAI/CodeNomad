@@ -48,6 +48,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -1995,6 +1996,12 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   }
 }
 
+// Events after which assistant message cost/token totals may have changed.
+const USAGE_EVENT_TYPES = new Set<string>([
+  "session.step.ended",
+  "session.step.failed",
+])
+
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -2021,13 +2028,16 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-    )) projectOpenCodeMessages(
-      instanceId,
-      sessionId,
-      data,
-      preserveOmitted,
-      force || event.type !== "session.inbox.enqueued",
-    )
+    )) {
+      projectOpenCodeMessages(
+        instanceId,
+        sessionId,
+        data,
+        preserveOmitted,
+        force || event.type !== "session.inbox.enqueued",
+      )
+      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+    }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
     projectMessages(data, preserveOmitted)
