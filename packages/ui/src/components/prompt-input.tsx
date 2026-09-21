@@ -1,4 +1,4 @@
-import { Suspense, createEffect, createSignal, lazy, on, onCleanup, onMount, Show } from "solid-js"
+import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, onMount, Show } from "solid-js"
 import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
@@ -12,6 +12,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
 import { serverApi } from "../lib/api-client"
 import { isDesktopHost, isLocalWindow } from "../lib/runtime-env"
 import { preferences } from "../stores/preferences"
@@ -24,6 +25,8 @@ import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
+import { usePromptAside } from "./prompt-input/usePromptAside"
+import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
 import {
   initializePromptInputHeight,
   persistPromptInputHeight,
@@ -86,6 +89,17 @@ function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachmen
 
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
+  const asideId = createUniqueId()
+  const aside = usePromptAside({
+    instanceId: () => props.instanceId,
+    sessionId: () => props.sessionId,
+    active: () => props.isActive !== false,
+  })
+  // /btw is a local UI command, like OpenCode's TUI command of the same name.
+  const promptCommands = () => [
+    { name: "btw", description: t("promptInput.btw.commandDescription") },
+    ...getCommands(props.instanceId).filter(command => command.name !== "btw"),
+  ]
   initializePromptInputHeight()
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
@@ -320,7 +334,7 @@ export default function PromptInput(props: PromptInputProps) {
     setPrompt,
     getTextarea: () => textareaRef ?? null,
     instanceAgents,
-    commands: () => getCommands(props.instanceId),
+    commands: promptCommands,
   })
 
   const {
@@ -521,6 +535,28 @@ export default function PromptInput(props: PromptInputProps) {
     const restoredPayload = restoredQueuedPayload
 
     const isShellMode = mode() === "shell"
+
+    const asideMatch = !isShellMode && /^\/btw(?:\s+([\s\S]*))?$/.exec(text)
+    if (asideMatch) {
+      const question = preparePromptSubmission({ mode: "slash", text, attachments: currentAttachments,
+        commandToken: "/btw", commandArgs: asideMatch[1] ?? "" }).resolvedCommandArgs
+      if (aside.launch(question)) {
+        // Pasted text is consumed by the side question; image/file attachments
+        // are not sent. Retain image tokens so normal attachment cleanup keeps them.
+        const imageTokens = currentAttachments.flatMap(attachment => {
+          if (attachment.source.type !== "file") return []
+          const placeholder = getAttachmentPlaceholder(attachment.display)
+          return placeholder?.kind === "image"
+            ? draftText.match(createAttachmentPlaceholderRegex("image", placeholder.counter)) ?? [] : []
+        })
+        if (imageTokens.length) setPrompt(imageTokens.join(" "))
+        else clearPrompt()
+        clearHistoryDraft()
+        setShowPicker(false)
+        restoredQueuedPayload = undefined
+      }
+      return
+    }
 
     // Slash command routing (match OpenCode TUI): only run if the command exists.
     const isSlashCandidate = !isShellMode && text.startsWith("/")
@@ -973,7 +1009,7 @@ export default function PromptInput(props: PromptInputProps) {
                 void handleSend()
               }}
               agents={instanceAgents()}
-              commands={getCommands(props.instanceId)}
+              commands={promptCommands()}
               searchQuery={searchQuery()}
               textareaRef={textareaRef}
               workspaceId={props.instanceId}
@@ -1119,6 +1155,7 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
       </div>
 
+      <PromptAsideWindow id={asideId} controller={aside} />
       <DirectoryBrowserDialog
         open={isFileBrowserOpen()}
         mode="files"
