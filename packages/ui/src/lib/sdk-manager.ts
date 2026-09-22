@@ -65,8 +65,11 @@ export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
       return response
     }
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
-    if (method === "GET" && /^\/api\/(?:project|session\/active)\/?$/.test(requestUrl.pathname)) {
-      return backgroundReads.run(init?.signal ?? new AbortController().signal, read)
+    // Catalogues from every restored project used to consume all HTTP/1.1
+    // connections before the saved session/message reads could even dispatch.
+    // Share the secondary budget with inventory scans, including reconnects.
+    if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(requestUrl.pathname)) {
+      return backgroundReads.run(init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
     }
     return read()
   }

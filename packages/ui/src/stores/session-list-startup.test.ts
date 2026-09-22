@@ -62,6 +62,8 @@ it("retries direct saved-session hydration superseded by the first connection", 
   f.client.session.get = async () => ++calls === 1 ? response.promise : page("saved").data[0]
   try {
     const hydration = hydrateRestoredSessionChain(id, ["saved"])
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(calls, 1, "the old response must already be in flight before reconnect")
     f.connect()
     response.resolve(page("obsolete").data[0])
     await hydration
@@ -182,6 +184,8 @@ it("does not revive an aborted startup read after the stream connects", async ()
   const controller = new AbortController()
   try {
     const request = fetchSessions(id, { signal: controller.signal })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(f.reads(), 1, "exercise cancellation after dispatch, rather than queued admission")
     f.connect()
     controller.abort()
     f.first.resolve(page("obsolete"))
