@@ -308,8 +308,15 @@ export function markPreservedWorkspaceUnavailable(
   current?: RestorableWorkspaceTabState,
   authority?: RestorableWorkspaceRuntimeAuthority,
 ): RestorableSessionPreservation {
-  const index = findWorkspaceSourceIndex(preservation, workspace)
-  if (index === undefined) return preservation
+  let index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index === undefined) {
+    // Workspaces opened after startup are not present in the saved snapshot.
+    if (!current) return preservation
+    index = preservation.sourceTabs.length
+    preservation.sourceTabs.push(current)
+    preservation.results.push({ status: "pending" })
+    preservation.removalRevisions.push(0)
+  }
   if (preservation.results[index]?.status === "removed") return preservation
   const source = preservation.sourceTabs[index]
   if (current) preservation.sourceTabs[index] = source?.kind === "workspace"
