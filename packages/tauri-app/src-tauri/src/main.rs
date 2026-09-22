@@ -146,6 +146,7 @@ pub struct WakeLockState {
     handle: Option<KeepAwake>,
 }
 
+#[derive(Clone)]
 pub struct WorkspaceMenuItems {
     folder: MenuItem<Wry>,
     terminal: MenuItem<Wry>,
@@ -153,21 +154,29 @@ pub struct WorkspaceMenuItems {
 }
 
 fn update_workspace_menu_state(app: &AppHandle) {
-    view_menu::update(app);
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || update_workspace_menu_state_on_main(&main_app)) {
+        eprintln!("[menu] failed to schedule state refresh: {error}");
+    }
+}
+
+// Resolve the target when the queued update runs, not on a worker before a
+// possible focus change. Native menu APIs must never run under our mutexes.
+fn update_workspace_menu_state_on_main(app: &AppHandle) {
+    // Native menu tracking can temporarily take focus away from the window.
+    // State and command dispatch must resolve the same focused-or-MRU target.
+    let window = local_windows::focused_window(app);
+    let (enabled, view_state) = app
+        .state::<local_windows::LocalWindows>()
+        .menu_state(window.as_ref().map(tauri::Webview::label));
+    view_menu::update(app, view_state.as_ref());
     let state = app.state::<AppState>();
-    let enabled = local_windows::focused_window(app)
-        .filter(|window| identity::local_window_id(window.label()).is_ok())
-        .is_some_and(|window| {
-            app.state::<local_windows::LocalWindows>()
-                .workspace_menu_enabled(window.label())
-        });
-    if let Ok(items) = state.workspace_menu_items.lock() {
-        if let Some(items) = items.as_ref() {
-            let _ = items.folder.set_enabled(enabled);
-            let _ = items.terminal.set_enabled(enabled);
-            let _ = items.editor.set_enabled(enabled);
-        }
-    };
+    let items = state.workspace_menu_items.lock().ok().and_then(|items| items.clone());
+    if let Some(items) = items {
+        let _ = items.folder.set_enabled(enabled);
+        let _ = items.terminal.set_enabled(enabled);
+        let _ = items.editor.set_enabled(enabled);
+    }
 }
 
 fn is_asset_renderer_origin(url: &Url) -> bool {
@@ -391,20 +400,24 @@ async fn popup_titlebar_menu(
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
-    let app_menu = webview
-        .app_handle()
-        .menu()
-        .ok_or_else(|| "Application menu is unavailable".to_string())?;
-    let item = app_menu
-        .get(id)
-        .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
-    let submenu = item
-        .as_submenu()
-        .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
-    webview
-        .window()
-        .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
-        .map_err(|error| error.to_string())
+    let app = webview.app_handle().clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.clone().run_on_main_thread(move || {
+        let result = (|| {
+            require_local_app_webview(&webview, &app.state::<AppState>())?;
+            update_workspace_menu_state_on_main(&app);
+            let app_menu = app.menu().ok_or_else(|| "Application menu is unavailable".to_string())?;
+            let item = app_menu.get(id).ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+            let submenu = item.as_submenu().ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+            webview.window()
+                .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+                .map_err(|error| error.to_string())
+        })();
+        let _ = sender.send(result);
+    }).map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await.map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

@@ -156,17 +156,18 @@ impl LocalWindows {
         Ok(())
     }
 
-    pub(crate) fn workspace_menu_enabled(&self, label: &str) -> bool {
-        self.registry
-            .lock()
-            .ok()
-            .and_then(|registry| {
-                registry
-                    .records
-                    .get(label)
-                    .map(|record| record.workspace_menu_enabled)
-            })
-            .unwrap_or(false)
+    pub(crate) fn menu_state(
+        &self,
+        focused: Option<&str>,
+    ) -> (bool, Option<crate::view_menu::ViewMenuState>) {
+        let Ok(registry) = self.registry.lock() else {
+            return (false, None);
+        };
+        let label = select_local_label(focused, registry.mru_label().as_deref());
+        let record = label.as_ref().and_then(|label| registry.records.get(label));
+        record
+            .map(|record| (record.workspace_menu_enabled, record.view_menu_state.clone()))
+            .unwrap_or_default()
     }
 
     pub(crate) fn set_backend_target(&self, target: Option<String>) {
