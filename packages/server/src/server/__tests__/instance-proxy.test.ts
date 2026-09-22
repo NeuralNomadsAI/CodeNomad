@@ -231,6 +231,35 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("proxies session instruction entries with or without ambient location context", async () => {
+    const { app, requestCount, sessionGets } = await harness()
+    const ambient = { "x-codenomad-location": encodeURIComponent(JSON.stringify({ directory: "/repo/worktree" })) }
+    const remove = await app.inject({ method: "DELETE",
+      url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries/codenomad.voice-mode",
+      headers: ambient })
+    assert.equal(remove.statusCode, 200)
+    assert.equal(JSON.parse(remove.body).url, "/api/experimental/session/session/instructions/entries/codenomad.voice-mode")
+    assert.equal(JSON.parse(remove.body).headers["x-codenomad-location"], undefined)
+    const put = await app.inject({ method: "PUT",
+      url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries/codenomad.voice-mode",
+      payload: { value: "x" }, headers: ambient })
+    assert.equal(put.statusCode, 200)
+    // The generated list route must be reachable through the workspace as well.
+    const list = await app.inject({ method: "GET",
+      url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries" })
+    assert.equal(list.statusCode, 200)
+    assert.deepEqual(sessionGets, ["session", "session", "session"])
+    assert.equal(requestCount(), 3)
+  })
+
+  it("rejects instruction entries for sessions belonging to another workspace", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { session: "/other" })
+    const response = await app.inject({ method: "DELETE",
+      url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries/codenomad.voice-mode" })
+    assert.equal(response.statusCode, 403)
+    assert.equal(requestCount(), 0)
+  })
+
   it("filters the project list and its sandboxes to the workspace", async () => {
     const { app, requestCount } = await harness()
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/project" })
