@@ -41,7 +41,7 @@ function Fixture() {
       <div style={{ height: "35px", background: "var(--surface-shade-light)" }} />
     </section>
     <section data-fixture="right" style={{ width: "280px", height: "170px", "margin-top": "32px" }}>
-      <RightPanel t={t} instanceId={instance.id} instance={instance} activeSessionId={() => null}
+      <RightPanel isActive={() => true} t={t} instanceId={instance.id} instance={instance} activeSessionId={() => null}
         activeSession={() => null} latestTodoState={() => null} isPhoneLayout={() => false}
         rightDrawerWidth={() => 280} rightDrawerWidthInitialized={() => true}
         onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
