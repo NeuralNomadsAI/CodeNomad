@@ -15,7 +15,14 @@ interface Scenario {
 let server: ViteDevServer, browser: Browser, url: string
 
 function metadataFor(scenario: Scenario, requestedPath?: string | null) {
-  const currentPath = requestedPath && requestedPath.length > 0 ? requestedPath : scenario.rootPath
+  let currentPath = requestedPath && requestedPath.length > 0 ? requestedPath : scenario.rootPath
+  // Mirror the server: a relative initial path is canonicalized under homePath in
+  // unrestricted mode and under rootPath in restricted mode.
+  const isAbsolute = currentPath.startsWith("/") || /^[a-zA-Z]:/.test(currentPath)
+  if (currentPath !== "." && !isAbsolute) {
+    const base = scenario.scope === "unrestricted" ? scenario.homePath : scenario.rootPath
+    currentPath = `${base}/${currentPath}`
+  }
   return {
     entries: [],
     metadata: {
@@ -175,11 +182,15 @@ test("two-column breakpoint keeps the open button on its own full-width row (dir
     await page.setViewportSize({ width: 600, height: 900 })
     assert.equal(await shortcutCount(page), 3)
     assert.equal(await page.locator(".directory-browser-open-path").count(), 1)
-    const bodyBox = await page.locator(".directory-browser-body").boundingBox()
+    const currentBox = await page.locator(".directory-browser-current").boundingBox()
     const openBox = await page.locator(".directory-browser-open-path").boundingBox()
-    assert.ok(bodyBox && openBox, "layout boxes must be measurable")
-    // Open spans the full content row at the 381-640px two-column breakpoint.
-    assert.ok(openBox.width >= bodyBox.width - 16, `open width ${openBox.width} should fill content width ${bodyBox.width}`)
+    assert.ok(currentBox && openBox, "layout boxes must be measurable")
+    // Open spans the full grid row, so its left/right edges align with the grid container.
+    assert.ok(Math.abs(openBox.x - currentBox.x) <= 2, `open left ${openBox.x} should match grid left ${currentBox.x}`)
+    assert.ok(
+      Math.abs(openBox.x + openBox.width - (currentBox.x + currentBox.width)) <= 2,
+      `open right ${openBox.x + openBox.width} should match grid right ${currentBox.x + currentBox.width}`,
+    )
   } finally {
     assert.deepEqual(errors, [])
     await page.close()
@@ -197,10 +208,67 @@ test("two-column breakpoint keeps the open button on its own full-width row (fil
     await page.setViewportSize({ width: 600, height: 900 })
     assert.equal(await shortcutCount(page), 3)
     assert.equal(await page.locator(".directory-browser-new-folder").count(), 0)
-    const bodyBox = await page.locator(".directory-browser-body").boundingBox()
+    const currentBox = await page.locator(".directory-browser-current").boundingBox()
     const openBox = await page.locator(".directory-browser-open-path").boundingBox()
-    assert.ok(bodyBox && openBox, "layout boxes must be measurable")
-    assert.ok(openBox.width >= bodyBox.width - 16, `open width ${openBox.width} should fill content width ${bodyBox.width}`)
+    assert.ok(currentBox && openBox, "layout boxes must be measurable")
+    assert.ok(Math.abs(openBox.x - currentBox.x) <= 2, `open left ${openBox.x} should match grid left ${currentBox.x}`)
+    assert.ok(
+      Math.abs(openBox.x + openBox.width - (currentBox.x + currentBox.width)) <= 2,
+      `open right ${openBox.x + openBox.width} should match grid right ${currentBox.x + currentBox.width}`,
+    )
+  } finally {
+    assert.deepEqual(errors, [])
+    await page.close()
+  }
+})
+
+test("unrestricted relative initial path is canonicalized under homePath, not rootPath", async () => {
+  const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "unrestricted", rootPath: "/srv/start", homePath: "/home/user" },
+    "initialPath=projects&mode=directories",
+  )
+  try {
+    // The dialog opens at the server-canonicalized location (/home/user/projects), captured as the initial target.
+    await page.waitForFunction(
+      () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/home/user/projects",
+    )
+    assert.equal(await pathValue(page), "/home/user/projects")
+    assert.equal(await shortcutCount(page), 3)
+    // Navigate to the start directory, then the Initial Path shortcut must return to the captured target.
+    await page.locator(".directory-browser-shortcut").nth(0).click()
+    await page.waitForFunction(
+      () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/srv/start",
+    )
+    await page.locator(".directory-browser-shortcut").nth(2).click()
+    await page.waitForFunction(
+      () => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/home/user/projects",
+    )
+    assert.equal(await pathValue(page), "/home/user/projects")
+  } finally {
+    assert.deepEqual(errors, [])
+    await page.close()
+  }
+})
+
+test("initial shortcut is cleared when the dialog reopens without an initial path", async () => {
+  const page = await browser.newPage()
+  const errors = await openFixture(
+    page,
+    { scope: "restricted", rootPath: "/ws", homePath: "/home" },
+    "initialPath=/ws/start&mode=directories",
+  )
+  try {
+    // First opening captures /ws/start, so root + initial are present (2 shortcuts).
+    await page.waitForFunction(() => document.querySelectorAll(".directory-browser-shortcut").length === 2)
+    // Close, drop the initial path, and reopen the same mounted dialog.
+    await page.evaluate(() => (window as any).directoryBrowserFixture.close())
+    await page.evaluate(() => (window as any).directoryBrowserFixture.setInitialPath(""))
+    await page.evaluate(() => (window as any).directoryBrowserFixture.open())
+    // After reopen with no initial path, only the start-directory shortcut remains.
+    await page.waitForFunction(() => document.querySelectorAll(".directory-browser-shortcut").length === 1)
+    assert.equal(await shortcutCount(page), 1)
   } finally {
     assert.deepEqual(errors, [])
     await page.close()

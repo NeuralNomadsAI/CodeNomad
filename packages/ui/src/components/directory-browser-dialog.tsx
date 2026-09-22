@@ -100,6 +100,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     setCurrentMetadata(null)
     setPathInput("")
     setPathInputDirty(false)
+    setInitialAbsolutePath("")
     metadataCache.clear()
     inFlightRequests.clear()
     setError(null)

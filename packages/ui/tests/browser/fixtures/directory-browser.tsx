@@ -7,7 +7,7 @@ import DirectoryBrowserDialog from "../../../src/components/directory-browser-di
 import "../../../src/index.css"
 
 const params = new URLSearchParams(location.search)
-const initialPath = params.get("initialPath") ?? ""
+const [initialPath, setInitialPath] = createSignal(params.get("initialPath") ?? "")
 const mode = (params.get("mode") as "directories" | "files") ?? "directories"
 const title = params.get("title") ?? "Test"
 
@@ -23,7 +23,7 @@ render(
             open={open()}
             mode={mode}
             title={title}
-            initialPath={initialPath}
+            initialPath={initialPath()}
             onSelect={(path) => {
               navigations.push(path)
             }}
@@ -38,4 +38,7 @@ render(
 
 ;(window as any).directoryBrowserFixture = {
   navigations: () => navigations,
+  setInitialPath: (value: string) => setInitialPath(value),
+  open: () => setOpen(true),
+  close: () => setOpen(false),
 }
