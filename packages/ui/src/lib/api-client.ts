@@ -53,11 +53,10 @@ import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
+import { authenticatedFetch } from "./auth-recovery"
+import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 
-const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env?.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
@@ -136,7 +135,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${path}`)
 
   try {
-    const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -165,7 +164,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })

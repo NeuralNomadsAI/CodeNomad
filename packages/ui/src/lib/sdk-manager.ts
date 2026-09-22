@@ -1,6 +1,7 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 import { backgroundReads } from "./background-read-queue"
+import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 
@@ -48,7 +49,7 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
     const read = async () => {
-      const response = await globalThis.fetch(new URL(relativeUrl, baseUrl), {
+      const response = await authenticatedFetch(new URL(relativeUrl, baseUrl), {
         ...init,
         credentials: init?.credentials ?? "include",
       })
