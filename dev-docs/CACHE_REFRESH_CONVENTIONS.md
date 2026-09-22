@@ -88,8 +88,12 @@ composer catalogues load once the client is ready, independently of the complete
 project-family inventory. Supplemental metadata waits for session hydration.
 Creation-ownership release starts alongside saved-session hydration; its HTTP
 acknowledgement must not gate the visible conversation.
-The visible root page and saved ancestry bypass the secondary budget. Complete
-session inventories and restored chains from other projects share that budget,
+The visible project's first session page, project identity and worktree
+membership bypass the secondary budget, as does saved ancestry. Otherwise a slow
+Git/permission scan can hide every other-worktree conversation until it finishes.
+The first project page publishes verified families additively, without waiting
+for the historical cursor traversal. Only the complete inventory removes absent
+rows. Historical pages and restored chains from other projects share that budget,
 so their parallel hydration cannot queue ahead of the visible transcript.
 Before selection is known, root pages also share the secondary budget. Pending
 root/ancestry reads observe active selection and leave that queue immediately

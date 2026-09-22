@@ -6,7 +6,8 @@ import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../..
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
 import { activeInstanceId } from "../../../src/stores/instances"
 import { activeSessionId } from "../../../src/stores/session-state"
-import { sessions } from "../../../src/stores/session-state"
+import { sessions, getSessionListIds } from "../../../src/stores/session-state"
+import { backgroundReads } from "../../../src/lib/background-read-queue"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -25,6 +26,13 @@ const SessionView = location.search.includes("foreground")
   ? (await import("../../../src/components/session/session-view")).default : undefined
 if (SessionView) await import("../../../src/index.css")
 ;(window as any).messageCount = () => messageStoreBus.getOrCreate(activeInstanceId()!).getSessionMessageIds("saved-session").length
+;(window as any).sessionListIds = getSessionListIds
+if (location.search.includes("inventory")) {
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  ;(window as any).releaseInventoryBudget = release
+  for (let i = 0; i < 2; i++) void backgroundReads.run(new AbortController().signal, () => blocked)
+}
 
 await initializeClientState()
 function Fixture() {
