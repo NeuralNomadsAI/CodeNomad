@@ -6,6 +6,7 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
 import { readGitCommonDirectory } from "../git-common-directory"
 import { sharesGitCommonDirectory } from "../git-worktrees"
+import { runGitProcess } from "../git-process"
 
 const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], {
   encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
@@ -84,5 +85,17 @@ describe("Git ownership preflight admission", () => {
     await assert.rejects(readGitCommonDirectory(missing))
     git(temp, "init", missing)
     assert.equal(await readGitCommonDirectory(missing), realpathSync(path.join(missing, ".git")))
+  })
+
+  it("admits a newly selected worktree before the pending Git display batch", async () => {
+    const blockers = Array.from({ length: 2 }, () => runGitProcess(repo, ["-c", "alias.pause=!sleep 0.2", "pause"]))
+    const display = Array.from({ length: 24 }, () => runGitProcess(repo, ["diff", "--numstat"]))
+    const ownership = readGitCommonDirectory(linked)
+    await Promise.all([...blockers, ...display, ownership])
+    const starts = events(trace).filter(event => event.event === "start")
+    const foregroundIndex = starts.findIndex(event => event.argv.includes("--git-common-dir"))
+    const lastDisplayIndex = starts.map(event => event.argv.includes("--numstat")).lastIndexOf(true)
+    assert.ok(foregroundIndex >= 0 && foregroundIndex < lastDisplayIndex,
+      `ownership at ${foregroundIndex} waited behind all display reads (last at ${lastDisplayIndex})`)
   })
 })

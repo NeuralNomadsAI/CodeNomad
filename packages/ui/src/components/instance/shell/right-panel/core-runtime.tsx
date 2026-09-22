@@ -37,13 +37,13 @@ const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 
 interface CoreRightPanelRuntimeOptions {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
   instanceId: string
   instance: Instance
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
   latestTodoState: Accessor<ToolState | null>
-  isActive: Accessor<boolean>
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
@@ -131,6 +131,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const gitChangesBranchLabel = createMemo(() => gitChangesWorktree()?.branch?.trim() || null)
   const gitScopeKey = createMemo(() => `${options.instanceId}:git:${worktreeSlugForViewer()}`)
   const git = useGitChanges({
+    isActive: options.isActive,
     t: options.t,
     instanceId: options.instanceId,
     rightPanelTab: options.rightPanelTab,
@@ -226,7 +227,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         activeSessionId={options.activeSessionId}
         activeSession={options.activeSession}
         latestTodoState={options.latestTodoState}
-        isActive={options.isActive}
+        isActive={() => options.isActive() && options.rightPanelTab() === "status"}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}

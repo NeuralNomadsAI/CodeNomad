@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "foreground", "foreground-user", "foreground-existing"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
@@ -64,6 +64,8 @@ test(`${host} restores the active project and saved session identity before hydr
   let released = false
   const blocked: string[] = []
   const requested: string[] = []
+  const cursors: string[] = []
+  let includeLinked = true
   const projects: any[] = mode === "foreground-existing"
     ? ["first", "second", ...Array.from({ length: 6 }, (_, i) => `extra-${i}`)].map(id => ({
         id, path: `D:/${id}`, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
@@ -82,7 +84,23 @@ test(`${host} restores the active project and saved session identity before hydr
           binaryId: "fixture", binaryLabel: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), requestId: input.requestId }
         projects.push(body)
       } else body = projects
+    } else if (mode === "foreground-inventory" && /\/(?:worktrees|location|session)$/.test(path)) {
+      const id = path.split("/")[path.startsWith("/api/") ? 3 : 2]
+      const directory = `D:/${id}`
+      const session = (sessionID: string, folder: string) => ({ id: sessionID, title: sessionID, projectID: id,
+        location: { directory: folder }, time: { created: 1, updated: 1 } })
+      const query = new URL(request.url()).searchParams
+      if (query.has("cursor")) cursors.push(query.get("cursor")!)
+      body = path.endsWith("/worktrees") ? { isGitRepo: true, worktrees: [
+        { slug: "root", directory, serviceDirectory: directory, kind: "root" },
+        ...(includeLinked || id !== "second" ? [{ slug: "linked", directory: `${directory}/linked`, serviceDirectory: `${directory}/linked`, kind: "worktree" }] : []),
+      ] } : path.endsWith("/location") ? { directory, project: { id } }
+        : query.has("project") ? { data: [session("saved-session", directory), session("linked-session", `${directory}/linked`),
+            session("foreign-session", "D:/unowned")], cursor: { next: `${id}-next` } }
+        : query.has("cursor") ? { data: [session("older-session", `${directory}/linked`)], cursor: {} }
+        : { data: [session("saved-session", directory)], cursor: {} }
     } else if (foreground && (path.endsWith("/creation/release") || path.endsWith("/worktrees")
+      || path.endsWith("/git-status") || path.endsWith("/vcs/status")
       || (mode === "foreground-existing" && path.endsWith("/api/session"))
       || /\/api\/(location|agent|provider|model|command|shell|session\/active)$/.test(path))) {
       blocked.push(path)
@@ -108,7 +126,7 @@ test(`${host} restores the active project and saved session identity before hydr
     await route.fulfill({ json: body })
   })
   try {
-    await page.goto(`${url}${foreground ? "?foreground" : ""}`)
+    await page.goto(`${url}${foreground ? `?${mode}` : ""}`)
     const selected = page.getByRole("tab", { name: "D:/second", exact: true })
     await selected.waitFor()
     assert.equal(await selected.getAttribute("aria-selected"), "true", "project selection must not wait for its conversation requests")
@@ -117,7 +135,20 @@ test(`${host} restores the active project and saved session identity before hydr
       await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
       assert.equal(await page.evaluate(() => (window as any).messageCount()), 200)
       assert.equal(released, false)
-      if (mode !== "foreground-existing") {
+      if (mode === "foreground-inventory") {
+        await page.waitForFunction(() => (window as any).sessionListIds("second").includes("linked-session"))
+        assert.equal(await page.evaluate(() => (window as any).sessionListIds("second").includes("foreign-session")), false)
+        assert.deepEqual(cursors, [], "recent worktree rows publish before historical cursor traversal can dispatch")
+        assert.equal(requested.some(path => path === "/workspaces/first/instance/api/location"), false,
+          "hidden project dependencies remain queued while both secondary slots are occupied")
+        await page.getByRole("tab", { name: "D:/first", exact: true }).click()
+        await page.waitForFunction(() => (window as any).sessionListIds("first").includes("linked-session"))
+        assert.equal(released, false, "selection promotes metadata, membership and the first project page without releasing secondary reads")
+        await page.getByRole("tab", { name: "D:/second", exact: true }).click()
+        includeLinked = false
+        await page.evaluate(() => (window as any).reloadWorktrees("second"))
+        await page.evaluate(() => (window as any).releaseInventoryBudget())
+      } else if (mode !== "foreground-existing") {
         assert.ok(blocked.some(path => path.endsWith("/creation/release")), "ownership acknowledgement is still stalled")
         assert.ok(blocked.some(path => path.endsWith("/location")), "project metadata is still stalled")
       } else {
@@ -143,6 +174,11 @@ test(`${host} restores the active project and saved session identity before hydr
     releaseSessions()
     released = true
     releaseSecondary()
+    if (mode === "foreground-inventory") {
+      await page.waitForFunction(() => (window as any).sessionListLoading("second") === false)
+      assert.equal(await page.evaluate(() => (window as any).sessionListIds("second").includes("linked-session")), false,
+        "a partial row excluded by final membership must not be retained as a concurrent creation")
+    }
     await page.locator('[data-restoring="false"]').waitFor()
     assert.equal(await page.getByRole("tab", { name: userSelection ? "D:/first" : "D:/second", exact: true }).getAttribute("aria-selected"), "true")
     await page.waitForFunction(index => (window as any).savedSnapshot?.session?.activeTabIndex === index, userSelection ? 0 : 1)

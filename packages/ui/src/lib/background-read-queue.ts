@@ -2,15 +2,17 @@
 export class BackgroundReadQueue {
   private active = 0
   private readonly waiting: Array<() => void> = []
+  private readonly visibleWaiting: Array<() => void> = []
 
   constructor(private readonly concurrency = 2) {}
 
-  async run<T>(signal: AbortSignal, read: () => Promise<T>): Promise<T> {
+  async run<T>(signal: AbortSignal, read: () => Promise<T>, priority: "normal" | "visible" = "normal"): Promise<T> {
     signal.throwIfAborted()
+    const waiting = priority === "visible" ? this.visibleWaiting : this.waiting
     await new Promise<void>((resolve, reject) => {
       const abort = () => {
-        const index = this.waiting.indexOf(start)
-        if (index >= 0) this.waiting.splice(index, 1)
+        const index = waiting.indexOf(start)
+        if (index >= 0) waiting.splice(index, 1)
         reject(signal.reason)
       }
       const start = () => {
@@ -20,7 +22,7 @@ export class BackgroundReadQueue {
       }
       if (this.active < this.concurrency) start()
       else {
-        this.waiting.push(start)
+        waiting.push(start)
         signal.addEventListener("abort", abort, { once: true })
       }
     })
@@ -29,7 +31,10 @@ export class BackgroundReadQueue {
       return await read()
     } finally {
       this.active -= 1
-      this.waiting.shift()?.()
+      // Visible secondary panels go before bulk scans, within the same budget.
+      // They still leave foreground transcript connections available.
+      const next = this.visibleWaiting.shift() ?? this.waiting.shift()
+      next?.()
     }
   }
 }

@@ -806,13 +806,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
           <RightPanel
+            isActive={() => props.isActiveInstance !== false}
             t={t}
             instanceId={props.instance.id}
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
             latestTodoState={latestTodoState}
-            isActive={() => Boolean(props.isActiveInstance) && (rightPinned() || rightOpen())}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -835,13 +835,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
       >
         <RightPanel
+          isActive={() => props.isActiveInstance !== false && rightOpen()}
           t={t}
           instanceId={props.instance.id}
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
           latestTodoState={latestTodoState}
-          isActive={() => Boolean(props.isActiveInstance) && (rightPinned() || rightOpen())}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
