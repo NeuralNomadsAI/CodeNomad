@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-solid"
 import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
+import { OpenCodeExecutableCard } from "./opencode-executable-card"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
@@ -22,6 +23,7 @@ export const OpenCodeSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack">
+      <OpenCodeExecutableCard />
       <OpenCodeUpdateCard />
 
       <div class="settings-card">
