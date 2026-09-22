@@ -6,7 +6,8 @@ import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../..
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
 import { activeInstanceId } from "../../../src/stores/instances"
 import { activeSessionId } from "../../../src/stores/session-state"
-import { sessions, getSessionListIds } from "../../../src/stores/session-state"
+import { sessions, getSessionListIds, loading } from "../../../src/stores/session-state"
+import { reloadWorktrees } from "../../../src/stores/worktrees"
 import { backgroundReads } from "../../../src/lib/background-read-queue"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -27,6 +28,8 @@ const SessionView = location.search.includes("foreground")
 if (SessionView) await import("../../../src/index.css")
 ;(window as any).messageCount = () => messageStoreBus.getOrCreate(activeInstanceId()!).getSessionMessageIds("saved-session").length
 ;(window as any).sessionListIds = getSessionListIds
+;(window as any).reloadWorktrees = reloadWorktrees
+;(window as any).sessionListLoading = (id: string) => loading().fetchingSessions.get(id)
 if (location.search.includes("inventory")) {
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })

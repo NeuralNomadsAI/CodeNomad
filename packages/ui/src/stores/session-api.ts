@@ -602,7 +602,15 @@ async function fetchSessions(instanceId: string, options?: {
             instanceSessions.get(apiSession.id),
             deletedSessionIds.has(apiSession.id),
           )
-          if (merged) instanceSessions.set(apiSession.id, merged)
+          if (merged) {
+            // Rows introduced by this request belong to its reconciliation
+            // baseline, not to the concurrent SSE/local-creation exception.
+            if (!instanceSessions.has(apiSession.id)) {
+              existingSessions.set(apiSession.id, merged)
+              if (merged.parentId === null) existingCatalogIds.add(apiSession.id)
+            }
+            instanceSessions.set(apiSession.id, merged)
+          }
         }
         next.set(instanceId, instanceSessions)
         return next

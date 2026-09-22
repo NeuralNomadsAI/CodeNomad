@@ -65,6 +65,7 @@ test(`${host} restores the active project and saved session identity before hydr
   const blocked: string[] = []
   const requested: string[] = []
   const cursors: string[] = []
+  let includeLinked = true
   const projects: any[] = mode === "foreground-existing"
     ? ["first", "second", ...Array.from({ length: 6 }, (_, i) => `extra-${i}`)].map(id => ({
         id, path: `D:/${id}`, status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
@@ -92,7 +93,7 @@ test(`${host} restores the active project and saved session identity before hydr
       if (query.has("cursor")) cursors.push(query.get("cursor")!)
       body = path.endsWith("/worktrees") ? { isGitRepo: true, worktrees: [
         { slug: "root", directory, serviceDirectory: directory, kind: "root" },
-        { slug: "linked", directory: `${directory}/linked`, serviceDirectory: `${directory}/linked`, kind: "worktree" },
+        ...(includeLinked || id !== "second" ? [{ slug: "linked", directory: `${directory}/linked`, serviceDirectory: `${directory}/linked`, kind: "worktree" }] : []),
       ] } : path.endsWith("/location") ? { directory, project: { id } }
         : query.has("project") ? { data: [session("saved-session", directory), session("linked-session", `${directory}/linked`),
             session("foreign-session", "D:/unowned")], cursor: { next: `${id}-next` } }
@@ -144,6 +145,8 @@ test(`${host} restores the active project and saved session identity before hydr
         await page.waitForFunction(() => (window as any).sessionListIds("first").includes("linked-session"))
         assert.equal(released, false, "selection promotes metadata, membership and the first project page without releasing secondary reads")
         await page.getByRole("tab", { name: "D:/second", exact: true }).click()
+        includeLinked = false
+        await page.evaluate(() => (window as any).reloadWorktrees("second"))
         await page.evaluate(() => (window as any).releaseInventoryBudget())
       } else if (mode !== "foreground-existing") {
         assert.ok(blocked.some(path => path.endsWith("/creation/release")), "ownership acknowledgement is still stalled")
@@ -171,6 +174,11 @@ test(`${host} restores the active project and saved session identity before hydr
     releaseSessions()
     released = true
     releaseSecondary()
+    if (mode === "foreground-inventory") {
+      await page.waitForFunction(() => (window as any).sessionListLoading("second") === false)
+      assert.equal(await page.evaluate(() => (window as any).sessionListIds("second").includes("linked-session")), false,
+        "a partial row excluded by final membership must not be retained as a concurrent creation")
+    }
     await page.locator('[data-restoring="false"]').waitFor()
     assert.equal(await page.getByRole("tab", { name: userSelection ? "D:/first" : "D:/second", exact: true }).getAttribute("aria-selected"), "true")
     await page.waitForFunction(index => (window as any).savedSnapshot?.session?.activeTabIndex === index, userSelection ? 0 : 1)
