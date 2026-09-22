@@ -14,6 +14,7 @@ type ServiceSection = "mcp" | "plugins"
 interface InstanceServiceStatusProps {
   sections?: ServiceSection[]
   showSectionHeadings?: boolean
+  pluginsActive?: boolean
   class?: string
   initialInstance?: Instance
 }
@@ -185,11 +186,14 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     <div class={props.class}>
       <Show when={includeMcp()}>{renderMcpSection()}</Show>
       <Show when={includePlugins()}>
-        <PluginActivationControls
-          instanceId={instance().id}
-          location={pluginLocation()}
-          showHeading={showHeadings()}
-        />
+        <Show when={props.pluginsActive !== false}>
+          <PluginActivationControls
+            instanceId={instance().id}
+            location={pluginLocation()}
+            showHeading={showHeadings()}
+            active={props.pluginsActive}
+          />
+        </Show>
       </Show>
     </div>
   )

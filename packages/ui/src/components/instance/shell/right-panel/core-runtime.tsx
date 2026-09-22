@@ -43,6 +43,7 @@ interface CoreRightPanelRuntimeOptions {
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
   latestTodoState: Accessor<ToolState | null>
+  isActive: Accessor<boolean>
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
@@ -225,6 +226,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         activeSessionId={options.activeSessionId}
         activeSession={options.activeSession}
         latestTodoState={options.latestTodoState}
+        isActive={options.isActive}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}

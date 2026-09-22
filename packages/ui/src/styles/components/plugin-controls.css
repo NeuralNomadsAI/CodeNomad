@@ -1,26 +1,18 @@
 .plugin-controls {
+  --plugin-control-scope-width: 3rem;
   @apply space-y-2;
 }
 
-.plugin-controls-intro,
-.plugin-control-detail,
-.plugin-control-note {
-  @apply text-[11px];
-  color: var(--text-muted);
-}
-
-.plugin-controls-toolbar,
-.plugin-controls-subheading {
-  @apply text-[11px] font-semibold uppercase tracking-wide;
-  color: var(--text-secondary);
-}
-
-.plugin-controls-toolbar {
-  @apply flex items-center justify-between;
+.plugin-controls-header,
+.plugin-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, var(--plugin-control-scope-width));
+  align-items: center;
 }
 
 .plugin-controls .icon-button-compact {
   @apply inline-flex h-6 w-6 items-center justify-center border;
+  justify-self: start;
   border-color: var(--border-base);
   color: var(--text-muted);
   background-color: var(--surface-base);
@@ -31,120 +23,31 @@
   color: var(--text-primary);
 }
 
-.plugin-control-list,
-.plugin-configured-list {
-  @apply space-y-1.5;
+.plugin-control-list {
+  @apply space-y-1;
 }
 
-.plugin-control-card {
-  @apply border px-2 py-1.5;
+.plugin-control-row {
+  @apply border px-2 py-1;
   border-color: var(--border-base);
   background-color: var(--surface-secondary);
 }
 
-.plugin-control-card-main,
-.plugin-control-meta,
-.plugin-configured-entry {
-  @apply flex items-center gap-1.5;
-}
-
-.plugin-control-card-main {
-  @apply justify-between;
-}
-
-.plugin-control-identity {
-  min-width: 0;
-}
-
 .plugin-control-name {
-  @apply break-words text-xs font-medium;
+  @apply min-w-0 truncate text-xs font-medium;
   color: var(--text-primary);
 }
 
-.plugin-control-meta {
-  @apply mt-1 flex-wrap;
+.plugin-control-scope-label {
+  @apply text-center text-[10px] font-medium uppercase tracking-wide;
+  color: var(--text-muted);
 }
 
-.plugin-status-badge,
-.plugin-rule-badge,
-.plugin-scope-badge,
-.plugin-options-badge {
-  @apply inline-flex px-1.5 py-0.5 text-[10px];
-  background-color: var(--badge-neutral-bg);
-  color: var(--badge-neutral-text);
+.plugin-control-switch {
+  @apply flex min-w-0 items-center justify-center;
 }
 
-.plugin-status-active { color: var(--status-ready-fg); }
-.plugin-status-failed { color: var(--status-error-fg); }
-.plugin-status-inactive { color: var(--text-muted); }
-
-.plugin-activation-switch {
-  @apply relative h-5 w-9 shrink-0 border p-0;
-  border-color: var(--border-strong);
-  background-color: var(--surface-base);
-}
-
-.plugin-activation-switch-indicator {
-  @apply absolute block h-3 w-3;
-  inset-block-start: 3px;
-  inset-inline-start: 3px;
-  background-color: var(--text-muted);
-  transition: transform 120ms ease, background-color 120ms ease;
-}
-
-.plugin-activation-switch-checked {
-  border-color: var(--status-ready-fg);
-}
-
-.plugin-activation-switch-checked .plugin-activation-switch-indicator {
-  transform: translateX(16px);
-  background-color: var(--status-ready-fg);
-}
-
-[dir="rtl"] .plugin-activation-switch-checked .plugin-activation-switch-indicator {
-  transform: translateX(-16px);
-}
-
-.plugin-activation-switch:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.plugin-activation-switch:focus-visible {
-  outline: 2px solid var(--accent-primary);
-  outline-offset: 1px;
-}
-
-.plugin-activation-switch-pending .plugin-activation-switch-indicator {
-  animation: pulse 1s infinite;
-}
-
-.plugin-control-error,
 .plugin-controls-warning {
   @apply mt-1 break-words text-[11px];
   color: var(--status-error-fg);
-}
-
-.plugin-control-note {
-  @apply mt-1;
-  color: var(--status-warning);
-}
-
-.plugin-controls-subheading {
-  @apply pt-1;
-}
-
-.plugin-configured-entry {
-  @apply min-w-0 border px-2 py-1 text-[10px];
-  border-color: var(--border-base);
-  background-color: var(--surface-base);
-}
-
-.plugin-configured-entry code {
-  @apply min-w-0 flex-1 truncate;
-  color: var(--text-primary);
-}
-
-.plugin-configured-kind {
-  color: var(--text-muted);
 }

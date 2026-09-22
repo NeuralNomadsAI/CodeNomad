@@ -322,7 +322,8 @@ export class WorkspaceManager {
   getServicePathStyle(id: string): "win32" | "posix" | undefined {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
-    return record.wslDistro || this.options.platform !== "win32" ? "posix" : "win32"
+    const platform = this.options.platform ?? process.platform
+    return record.wslDistro || platform !== "win32" ? "posix" : "win32"
   }
 
   /** Translate a path reported by the authenticated daemon for local filesystem access. */

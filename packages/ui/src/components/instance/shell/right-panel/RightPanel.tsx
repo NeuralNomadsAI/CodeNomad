@@ -84,6 +84,7 @@ interface RightPanelProps {
   activeSession: Accessor<Session | null>
 
   latestTodoState: Accessor<ToolState | null>
+  isActive: Accessor<boolean>
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -200,6 +201,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         activeSessionId: props.activeSessionId,
         activeSession: props.activeSession,
         latestTodoState: props.latestTodoState,
+        isActive: () => props.isActive() && rightPanelTab() === "status",
         isPhoneLayout: props.isPhoneLayout,
         rightDrawerWidth: props.rightDrawerWidth,
         rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,

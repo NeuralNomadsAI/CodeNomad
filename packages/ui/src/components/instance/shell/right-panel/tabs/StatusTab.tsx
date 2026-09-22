@@ -41,6 +41,7 @@ interface StatusTabProps {
   activeSession: Accessor<Session | null>
 
   latestTodoState: Accessor<ToolState | null>
+  isActive: Accessor<boolean>
 
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
@@ -249,7 +250,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
-        <InstanceServiceStatus initialInstance={props.instance} sections={["plugins"]} showSectionHeadings={false} class="space-y-2" />
+        <InstanceServiceStatus
+          initialInstance={props.instance}
+          sections={["plugins"]}
+          showSectionHeadings={false}
+          pluginsActive={props.isActive() && isSectionExpanded("plugins")}
+          class="space-y-2"
+        />
       ),
     }).statusSections ?? []
 

@@ -1,13 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, type Component } from "solid-js"
 import { RefreshCw } from "lucide-solid"
+import Switch from "@suid/material/Switch"
 import type {
   PluginActivationControl,
-  PluginConfigScope,
   PluginControlLocation,
   PluginControlScope,
-  PluginRuntimeInventoryEntry,
-  PluginRuntimeSource,
-  PluginScopeRuleState,
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -20,35 +17,45 @@ interface PluginActivationControlsProps {
   instanceId: string
   location: PluginControlLocation
   showHeading?: boolean
+  active?: boolean
 }
 
 const log = getLogger("session")
 
 export const PluginActivationControls: Component<PluginActivationControlsProps> = (props) => {
   const { t } = useI18n()
-  const [scope, setScope] = createSignal<PluginControlScope | null>(null)
   const [pending, setPending] = createSignal<Set<string>>(new Set())
   const headingId = `plugin-controls-${createUniqueId()}`
-  const state = createMemo(() => pluginControlsCache.state(props.instanceId, props.location))
+  const directory = createMemo(() => props.location.directory)
+  const requestLocation = (): PluginControlLocation => ({ directory: directory() })
+  const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
   const snapshot = createMemo(() => state().snapshot)
-  const controls = createMemo(() => snapshot()?.controls ?? [])
-  const runtime = createMemo(() => snapshot()?.runtime ?? [])
-  const configuredOnly = createMemo(() => controls().filter((control) => !control.runtime))
-  const selectedTarget = createMemo(() => snapshot()?.targets.find((target) => target.scope === scope()))
-  let loadedIdentity: string | undefined
+  const controls = createMemo(() => (
+    snapshot()?.controls.filter((control) => control.runtime?.source.type !== "builtin") ?? []
+  ))
+  let currentIdentity: string | undefined
+  let demandedIdentity: string | undefined
   let locationGeneration = 0
 
   createEffect(() => {
     const instanceId = props.instanceId
-    const location = { ...props.location }
-    const identity = JSON.stringify([instanceId, location.directory, location.workspaceID])
-    if (loadedIdentity !== identity) {
-      loadedIdentity = identity
+    const location = requestLocation()
+    const identity = JSON.stringify([instanceId, location.directory])
+    if (currentIdentity !== identity) {
+      currentIdentity = identity
       locationGeneration += 1
-      setScope(null)
       setPending(new Set<string>())
     }
-    void pluginControlsCache.load(instanceId, location)
+    const current = state()
+    if (props.active === false) {
+      demandedIdentity = undefined
+      return
+    }
+    const firstDemand = demandedIdentity !== identity
+    demandedIdentity = identity
+    if (current.stale || (!current.snapshot && !current.loading && (!current.error || firstDemand))) {
+      void pluginControlsCache.load(instanceId, location, { force: Boolean(current.error) })
+    }
   })
 
   const setPendingPlugin = (pluginId: string, value: boolean) => {
@@ -60,13 +67,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     })
   }
 
-  const toggle = async (control: PluginActivationControl, enabled: boolean) => {
-    const selectedScope = scope()
-    if (!selectedScope || pending().has(control.id)) return
+  const toggle = async (control: PluginActivationControl, scope: PluginControlScope, enabled: boolean) => {
+    if (pending().has(control.id)) return
     const requestGeneration = locationGeneration
     setPendingPlugin(control.id, true)
     try {
-      const response = await pluginControlsCache.mutate(props.instanceId, props.location, control.id, selectedScope, enabled)
+      const response = await pluginControlsCache.mutate(props.instanceId, requestLocation(), control.id, scope, enabled)
       if (requestGeneration !== locationGeneration) return
       showToastNotification({
         variant: "success",
@@ -74,11 +80,11 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           ? "instanceServiceStatus.plugins.toast.ruleSaved"
           : "instanceServiceStatus.plugins.toast.ruleUnchanged", {
           name: control.id,
-          scope: scopeLabel(selectedScope),
+          scope: scopeLabel(scope),
         }),
       })
     } catch (error) {
-      log.error("Failed to update plugin activation rule", { pluginId: control.id, scope: selectedScope, error })
+      log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
       if (requestGeneration === locationGeneration) {
         showToastNotification({ variant: "error", message: t(errorMessageKey(error)) })
       }
@@ -87,68 +93,38 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     }
   }
 
-  const renderControl = (control: PluginActivationControl, runtimeEntry?: PluginRuntimeInventoryEntry) => {
-    const selectedState = () => scope() ? control[scope()!] : control.effective
-    const checked = () => selectedState() === "default" ? control.effective !== "disabled" : selectedState() === "enabled"
+  const renderControl = (control: PluginActivationControl) => {
     const isPending = () => pending().has(control.id)
-    const overridden = () => Boolean(
-      scope() === "global"
-      && control.controllingRule?.scope === "project"
-      && control.global !== control.effective,
-    )
-    return (
-      <article class="plugin-control-card" data-plugin-id={control.id}>
-        <div class="plugin-control-card-main">
-          <div class="plugin-control-identity">
-            <div class="plugin-control-name">{control.id}</div>
-            <div class="plugin-control-meta">
-              <span class={`badge-shape plugin-status-badge plugin-status-${runtimeStatus(runtimeEntry)}`}>
-                {t(`instanceServiceStatus.plugins.runtime.${runtimeStatus(runtimeEntry)}`)}
-              </span>
-              <span class="badge-shape plugin-rule-badge">
-                {t(`instanceServiceStatus.plugins.ruleState.${control.effective}`)}
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            class="plugin-activation-switch"
-            classList={{ "plugin-activation-switch-checked": checked(), "plugin-activation-switch-pending": isPending() }}
-            aria-checked={checked()}
-            aria-label={t("instanceServiceStatus.plugins.toggleAriaLabel", { name: control.id })}
-            disabled={!scope() || isPending()}
-            onClick={() => void toggle(control, !checked())}
-          >
-            <span class="plugin-activation-switch-indicator" aria-hidden="true" />
-          </button>
+    const renderSwitch = (scope: PluginControlScope) => {
+      const checked = () => scopeChecked(control, scope)
+      return (
+        <div class="plugin-control-switch" data-scope={scope}>
+          <Switch
+            checked={checked()}
+            disabled={isPending()}
+            color="success"
+            size="small"
+            inputProps={{
+              "aria-label": t("instanceServiceStatus.plugins.toggleAriaLabel", {
+                name: `${control.id} — ${scopeLabel(scope)}`,
+              }),
+            }}
+            onChange={(_, nextChecked) => {
+              if (isPending()) return
+              void toggle(control, scope, Boolean(nextChecked))
+            }}
+          />
         </div>
-        <Show when={runtimeEntry}>
-          {(entry) => <div class="plugin-control-detail">{sourceLabel(entry().source)}</div>}
-        </Show>
-        <Show when={runtimeEntry?.state.status === "failed"}>
-          <div class="plugin-control-error">{(runtimeEntry!.state as Extract<PluginRuntimeInventoryEntry["state"], { status: "failed" }>).error}</div>
-        </Show>
-        <Show when={overridden()}>
-          <div class="plugin-control-note">{t("instanceServiceStatus.plugins.globalOverridden")}</div>
-        </Show>
-      </article>
+      )
+    }
+    return (
+      <div class="plugin-control-row" data-plugin-id={control.id}>
+        <span class="plugin-control-name">{control.id}</span>
+        {renderSwitch("global")}
+        {renderSwitch("project")}
+      </div>
     )
   }
-
-  const renderScope = (candidate: PluginControlScope) => (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={scope() === candidate}
-      class="plugin-scope-option"
-      classList={{ "plugin-scope-option-selected": scope() === candidate }}
-      onClick={() => setScope(candidate)}
-    >
-      <span class="plugin-scope-option-title">{t(`instanceServiceStatus.plugins.scope.${candidate}`)}</span>
-      <span class="plugin-scope-option-detail">{t(`instanceServiceStatus.plugins.scope.${candidate}.detail`)}</span>
-    </button>
-  )
 
   return (
     <section
@@ -162,90 +138,29 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         </div>
       </Show>
 
-      <div class="plugin-controls-intro">{t("instanceServiceStatus.plugins.description")}</div>
-
-      <fieldset class="plugin-scope-fieldset">
-        <legend>{t("instanceServiceStatus.plugins.scope.legend")}</legend>
-        <div class="plugin-scope-options" role="radiogroup" aria-label={t("instanceServiceStatus.plugins.scope.legend")}>
-          {renderScope("global")}
-          {renderScope("project")}
-        </div>
-        <Show when={!scope()}>
-          <div class="plugin-scope-required" role="status">{t("instanceServiceStatus.plugins.scope.required")}</div>
-        </Show>
-        <Show when={selectedTarget()}>
-          {(target) => (
-            <div class="plugin-target-path" title={target().path}>
-              {t(target().exists
-                ? "instanceServiceStatus.plugins.target.existing"
-                : "instanceServiceStatus.plugins.target.new", { path: target().path })}
-            </div>
-          )}
-        </Show>
-      </fieldset>
-
-      <div class="plugin-controls-toolbar">
-        <span>{t("instanceServiceStatus.plugins.runtime.heading")}</span>
+      <div class="plugin-controls-header">
         <button
           type="button"
           class="icon-button-compact"
           title={t("instanceServiceStatus.plugins.refresh")}
           aria-label={t("instanceServiceStatus.plugins.refresh")}
           disabled={state().loading || state().refreshing}
-          onClick={() => void pluginControlsCache.load(props.instanceId, props.location, { force: true })}
+          onClick={() => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })}
         >
           <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
         </button>
+        <span class="plugin-control-scope-label">{scopeLabel("global")}</span>
+        <span class="plugin-control-scope-label">{scopeLabel("project")}</span>
       </div>
 
       <Show when={snapshot()} fallback={<p class="right-panel-empty-text" role="status">{state().loading
         ? t("instanceServiceStatus.plugins.loading")
-        : t("instanceServiceStatus.plugins.errors.load")}</p>}>
-        <Show when={runtime().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.runtime.empty")}</p>}>
+        : state().error
+          ? t("instanceServiceStatus.plugins.errors.load")
+          : t("instanceServiceStatus.plugins.loading")}</p>}>
+        <Show when={controls().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
           <div class="plugin-control-list">
-            <For each={runtime()}>{(entry) => {
-              const control = () => entry.id ? controls().find((candidate) => candidate.id === entry.id) : undefined
-              return <Show when={control()} fallback={
-                <RuntimeOnlyPlugin
-                  entry={entry}
-                  status={t(`instanceServiceStatus.plugins.runtime.${runtimeStatus(entry)}`)}
-                  source={sourceLabel(entry.source)}
-                />
-              }>
-                {(resolved) => renderControl(resolved(), entry)}
-              </Show>
-            }}</For>
-          </div>
-        </Show>
-
-        <Show when={configuredOnly().length > 0}>
-          <div class="plugin-controls-subheading">{t("instanceServiceStatus.plugins.inactive.heading")}</div>
-          <div class="plugin-control-list">
-            <For each={configuredOnly()}>{(control) => renderControl(control)}</For>
-          </div>
-        </Show>
-
-        <div class="plugin-controls-subheading">{t("instanceServiceStatus.plugins.configured.heading")}</div>
-        <Show
-          when={(snapshot()?.configured.sources.length ?? 0) + (snapshot()?.configured.rules.length ?? 0) > 0}
-          fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.configured.empty")}</p>}
-        >
-          <div class="plugin-configured-list">
-            <For each={snapshot()?.configured.sources ?? []}>{(source) => (
-              <div class="plugin-configured-entry">
-                <span class="plugin-configured-kind">{t("instanceServiceStatus.plugins.configured.source")}</span>
-                <code>{source.target}</code>
-                <span class="badge-shape plugin-scope-badge">{configScopeLabel(source.scope)}</span>
-                <Show when={source.hasOptions}><span class="badge-shape plugin-options-badge">{t("instanceServiceStatus.plugins.configured.options")}</span></Show>
-              </div>
-            )}</For>
-            <For each={snapshot()?.configured.rules ?? []}>{(rule) => (
-              <div class="plugin-configured-entry">
-                <span class="plugin-configured-kind">{t("instanceServiceStatus.plugins.configured.rule")}</span>
-                <code>{rule.enabled ? rule.selector : `-${rule.selector}`}</code>
-                <span class="badge-shape plugin-scope-badge">{configScopeLabel(rule.scope)}</span>
-              </div>
-            )}</For>
+            <For each={controls()}>{renderControl}</For>
           </div>
         </Show>
       </Show>
@@ -256,41 +171,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     </section>
   )
 
-  function sourceLabel(source: PluginRuntimeSource): string {
-    if (source.type === "package") return t("instanceServiceStatus.plugins.source.package", { source: source.target })
-    if (source.type === "local") return t("instanceServiceStatus.plugins.source.local", { source: source.path })
-    return t(`instanceServiceStatus.plugins.source.${source.type}`)
-  }
-
   function scopeLabel(value: PluginControlScope): string {
     return t(`instanceServiceStatus.plugins.scope.${value}`)
   }
-
-  function configScopeLabel(value: PluginConfigScope): string {
-    return t(`instanceServiceStatus.plugins.configScope.${value}`)
-  }
 }
 
-const RuntimeOnlyPlugin: Component<{ entry: PluginRuntimeInventoryEntry; status: string; source: string }> = (props) => (
-  <article class="plugin-control-card">
-    <div class="plugin-control-name">{props.entry.id ?? runtimeSourceValue(props.entry.source)}</div>
-    <div class="plugin-control-meta">
-      <span class={`badge-shape plugin-status-badge plugin-status-${runtimeStatus(props.entry)}`}>{props.status}</span>
-    </div>
-    <div class="plugin-control-detail">{props.source}</div>
-    <Show when={props.entry.state.status === "failed"}>
-      <div class="plugin-control-error">{(props.entry.state as Extract<PluginRuntimeInventoryEntry["state"], { status: "failed" }>).error}</div>
-    </Show>
-  </article>
-)
-
-function runtimeSourceValue(source: PluginRuntimeSource): string {
-  return source.type === "package" ? source.target : source.type === "local" ? source.path : source.type
-}
-
-function runtimeStatus(entry?: PluginRuntimeInventoryEntry): "active" | "failed" | "inactive" {
-  if (!entry) return "inactive"
-  return entry.state.status
+function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {
+  const scoped = control[scope]
+  return scoped === "default" ? control.effective !== "disabled" : scoped === "enabled"
 }
 
 function errorMessageKey(error: unknown): string {

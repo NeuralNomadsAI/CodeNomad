@@ -12,17 +12,19 @@ export interface PluginControlsState {
   snapshot?: PluginControlsSnapshot
   loading: boolean
   refreshing: boolean
+  stale: boolean
   error?: unknown
 }
 
 interface CacheRecord {
   readonly key: string
   readonly instanceId: string
-  readonly location: PluginControlLocation
+  location: PluginControlLocation
   generation: number
   snapshot?: PluginControlsSnapshot
   loading: boolean
   refreshing: boolean
+  stale: boolean
   error?: unknown
   inFlight?: Promise<void>
   trailing: boolean
@@ -34,7 +36,7 @@ interface PluginControlsApi {
   setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse>
 }
 
-const EMPTY_STATE: PluginControlsState = { loading: false, refreshing: false }
+const EMPTY_STATE: PluginControlsState = { loading: false, refreshing: false, stale: false }
 
 export class PluginControlsCache {
   private readonly records = new Map<string, CacheRecord>()
@@ -50,8 +52,8 @@ export class PluginControlsCache {
 
   load(instanceId: string, location: PluginControlLocation, options?: { force?: boolean }): Promise<void> {
     const record = this.record(instanceId, location)
-    if (record.snapshot && !options?.force) return Promise.resolve()
-    return this.loadRecord(record, Boolean(options?.force))
+    if (record.snapshot && !record.stale && !options?.force) return Promise.resolve()
+    return this.loadRecord(record, Boolean(options?.force || record.stale))
   }
 
   async mutate(
@@ -74,8 +76,10 @@ export class PluginControlsCache {
       record.error = undefined
       record.loading = false
       record.refreshing = false
+      record.stale = false
       if (record.inFlight) record.trailing = true
       this.publish(record)
+      if (scope === "global") this.invalidateSiblingLocations(record)
       return response
     }
     const result = record.mutationTail.then(mutate, mutate)
@@ -86,16 +90,29 @@ export class PluginControlsCache {
   }
 
   invalidateInstance(instanceId: string): void {
+    this.invalidate(instanceId)
+  }
+
+  invalidateLocation(instanceId: string, location: PluginControlLocation): void {
+    this.invalidate(instanceId, location)
+  }
+
+  private invalidate(instanceId: string, location?: PluginControlLocation): void {
+    const locationKey = location ? cacheKey(instanceId, location) : undefined
     for (const record of this.records.values()) {
-      if (record.instanceId !== instanceId) continue
+      if (record.instanceId !== instanceId || (locationKey && record.key !== locationKey)) continue
       record.generation += 1
-      if (record.inFlight) {
-        record.trailing = true
-        record.refreshing = Boolean(record.snapshot)
-        this.publish(record)
-      } else {
-        void this.loadRecord(record, true)
-      }
+      record.stale = true
+      this.publish(record)
+    }
+  }
+
+  private invalidateSiblingLocations(current: CacheRecord): void {
+    for (const record of this.records.values()) {
+      if (record === current || record.instanceId !== current.instanceId) continue
+      record.generation += 1
+      record.stale = true
+      this.publish(record)
     }
   }
 
@@ -120,7 +137,10 @@ export class PluginControlsCache {
   private record(instanceId: string, location: PluginControlLocation): CacheRecord {
     const key = cacheKey(instanceId, location)
     const existing = this.records.get(key)
-    if (existing) return existing
+    if (existing) {
+      existing.location = { ...location }
+      return existing
+    }
     const record: CacheRecord = {
       key,
       instanceId,
@@ -128,6 +148,7 @@ export class PluginControlsCache {
       generation: 0,
       loading: false,
       refreshing: false,
+      stale: false,
       trailing: false,
       mutationTail: Promise.resolve(),
     }
@@ -141,6 +162,7 @@ export class PluginControlsCache {
       return record.inFlight
     }
     const generation = record.generation
+    record.stale = false
     record.loading = !record.snapshot
     record.refreshing = Boolean(record.snapshot)
     record.error = undefined
@@ -162,8 +184,11 @@ export class PluginControlsCache {
         record.refreshing = false
         const trailing = record.trailing
         record.trailing = false
+        if (trailing) {
+          void this.loadRecord(record, true)
+          return
+        }
         this.publish(record)
-        if (trailing) void this.loadRecord(record, true)
       })
     record.inFlight = promise
     return promise
@@ -175,6 +200,7 @@ export class PluginControlsCache {
       snapshot: record.snapshot,
       loading: record.loading,
       refreshing: record.refreshing,
+      stale: record.stale,
       error: record.error,
     }
     this.setStates((previous) => {
@@ -188,5 +214,5 @@ export class PluginControlsCache {
 export const pluginControlsCache = new PluginControlsCache(serverApi)
 
 function cacheKey(instanceId: string, location: PluginControlLocation): string {
-  return `${JSON.stringify(instanceId)}:${JSON.stringify([location.directory, location.workspaceID])}`
+  return `${JSON.stringify(instanceId)}:${JSON.stringify(location.directory)}`
 }

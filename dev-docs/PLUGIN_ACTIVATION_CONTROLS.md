@@ -33,13 +33,25 @@ WSL paths are translated through the workspace's selected distro. No path is
 derived from the CodeNomad process environment, CLI debug output, or
 `OPENCODE_CONFIG_CONTENT`.
 
-Global rules can be overridden by later project rules. The UI reports runtime
-inventory separately from configured sources and rules, and requires an
-explicit Global or Project choice before enabling a write. An exact disabled
-ID remains in the configured inventory even when it is absent from
-`plugin.list`, so it can be re-enabled. A plugin hidden only by a broad wildcard
-cannot be named safely unless the runtime or an exact configured rule reveals
-its ID.
+Global rules can be overridden by later project rules. The UI presents one
+compact row per user/configured plugin with separate **Global** and **Project**
+switches; each gesture therefore names its write scope directly. Built-in
+OpenCode entries remain in the authoritative snapshot but are not presented as
+user activation controls. An exact disabled ID remains available even when it
+is absent from `plugin.list`, so it can be re-enabled. A plugin hidden only by a
+broad wildcard cannot be named safely unless the runtime or an exact configured
+rule reveals its ID.
+
+Display snapshots are keyed by workspace instance and worktree directory, not
+by session workspace identifiers. Changing sessions inside one worktree reuses
+the same snapshot. The UI requests the first snapshot only while the Plugins
+surface is visible and expanded. Location-scoped plugin events mark only their
+worktree stale. Configuration events mark the instance's worktrees stale
+because the event does not identify whether the global document changed.
+Hidden surfaces retain their last snapshot without starting background
+OpenCode reads, then refresh on the next visible demand. A successful Global
+mutation likewise marks sibling worktree snapshots stale without refreshing
+them in the background.
 
 ## Mutation guarantees
 
@@ -99,7 +111,9 @@ fall back to guessed paths.
   serialization, and scope mutations: `plugin-controls.test.ts`
 - strict CodeNomad route and error mapping: `plugin-controls.test.ts` beside
   the route
-- cache sharing, retained snapshots, generation fencing, and trailing refresh:
+- worktree-scoped cache sharing, retained snapshots, demand-driven invalidation,
+  generation fencing, and trailing refresh:
   `packages/ui/src/stores/plugin-controls.test.ts`
-- real Solid UI, full stylesheet, explicit scope, square controls, mutation,
-  and native event dispatcher: `packages/ui/tests/browser/plugin-controls.test.ts`
+- real Solid UI, full stylesheet, dual explicit scope switches, lazy visibility,
+  shared rounded geometry, mutation, and native event dispatcher:
+  `packages/ui/tests/browser/plugin-controls.test.ts`

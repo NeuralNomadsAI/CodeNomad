@@ -187,6 +187,16 @@ describe("workspace manager shared service lifecycle", () => {
     )
   })
 
+  it("uses the current host path style when no platform override is supplied", async () => {
+    const { manager } = createHarness()
+    try {
+      const { workspace } = await manager.create(process.cwd())
+      assert.equal(manager.getServicePathStyle(workspace.id), process.platform === "win32" ? "win32" : "posix")
+    } finally {
+      await manager.shutdown()
+    }
+  })
+
   it("keeps WSL worktree reservation paths case-sensitive", { skip: process.platform !== "win32" }, async () => {
     const { manager } = createHarness(new ControlledSharedService(), { platform: "win32" })
     const releaseUpper = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo")

@@ -19,6 +19,8 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", location).loading, true)
     assert.equal(cache.load("instance", location, { force: true }), pending)
     cache.invalidateInstance("instance")
+    assert.equal(cache.state("instance", location).stale, true)
+    assert.equal(cache.load("instance", location), pending)
     assert.equal(reads, 1)
 
     first.resolve(snapshot("first"))
@@ -30,6 +32,94 @@ describe("plugin controls cache", () => {
     second.resolve(snapshot("second"))
     await tick()
     assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "second")
+  })
+
+  it("marks hidden snapshots stale without starting background work", async () => {
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => snapshot(`read-${++reads}`),
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const location = { directory: "/repo" }
+    await cache.load("instance", location)
+
+    cache.invalidateInstance("instance")
+
+    assert.equal(reads, 1)
+    assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "read-1")
+    assert.equal(cache.state("instance", location).stale, true)
+    await cache.load("instance", location)
+    assert.equal(reads, 2)
+    assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "read-2")
+    assert.equal(cache.state("instance", location).stale, false)
+  })
+
+  it("shares one worktree snapshot across session workspace identifiers", async () => {
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        reads += 1
+        return snapshot("shared")
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const firstSession = { directory: "/repo", workspaceID: "session-one" }
+    const secondSession = { directory: "/repo", workspaceID: "session-two" }
+
+    await cache.load("instance", firstSession)
+    await cache.load("instance", secondSession)
+
+    assert.equal(reads, 1)
+    assert.equal(cache.state("instance", secondSession).snapshot?.controls[0]?.id, "shared")
+  })
+
+  it("invalidates only the event worktree", async () => {
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, location) => {
+        reads += 1
+        return { ...snapshot(location.directory), location }
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const first = { directory: "/repo/one" }
+    const second = { directory: "/repo/two" }
+    await cache.load("instance", first)
+    await cache.load("instance", second)
+
+    cache.invalidateLocation("instance", first)
+
+    assert.equal(cache.state("instance", first).stale, true)
+    assert.equal(cache.state("instance", second).stale, false)
+    assert.equal(reads, 2)
+  })
+
+  it("marks sibling worktrees stale after a global mutation without refreshing them", async () => {
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, location) => {
+        reads += 1
+        return { ...snapshot(location.directory), location }
+      },
+      setPluginActivation: async (_instanceId, payload) => ({
+        changed: true,
+        rule: `-${payload.pluginId}`,
+        reloadPending: true,
+        target: { scope: payload.scope, path: "/config/opencode.jsonc", exists: true },
+        snapshot: { ...snapshot("mutated"), location: payload.location },
+      }),
+    })
+    const first = { directory: "/repo/one" }
+    const second = { directory: "/repo/two" }
+    await cache.load("instance", first)
+    await cache.load("instance", second)
+
+    await cache.mutate("instance", first, "first", "global", false)
+
+    assert.equal(cache.state("instance", first).snapshot?.controls[0]?.id, "mutated")
+    assert.equal(cache.state("instance", first).stale, false)
+    assert.equal(cache.state("instance", second).stale, true)
+    assert.equal(reads, 2)
   })
 
   it("keeps the last successful snapshot when a passive refresh fails", async () => {

@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import type { PluginControlsSnapshot } from "../../../../server/src/api-types"
 import { PluginActivationControls } from "../../../src/components/plugin-activation-controls"
@@ -12,6 +13,8 @@ const instanceId = "plugin-controls-fixture"
 const location = { directory: "/repo" }
 const calls: Array<Record<string, unknown>> = []
 let reads = 0
+const [viewActive, setViewActive] = createSignal(false)
+const [workspaceID, setWorkspaceID] = createSignal("session-one")
 
 const active = {
   key: "acme.reviewer",
@@ -27,10 +30,17 @@ const failed = {
   features: { rpc: true as const },
   state: { status: "failed" as const, error: "Setup failed safely", ref: "err_fixture" },
 }
+const builtin = {
+  key: "opencode.provider.demo",
+  id: "opencode.provider.demo",
+  source: { type: "builtin" as const },
+  features: { server: true as const },
+  state: { status: "active" as const },
+}
 
 let snapshot: PluginControlsSnapshot = {
   location,
-  runtime: [active, failed],
+  runtime: [active, failed, builtin],
   configured: {
     sources: [{ target: "@acme/reviewer", scope: "global", path: "/daemon/opencode.jsonc", entryIndex: 0, hasOptions: true }],
     rules: [
@@ -41,6 +51,7 @@ let snapshot: PluginControlsSnapshot = {
   controls: [
     { id: active.id, runtime: active, effective: "enabled", global: "enabled", project: "default" },
     { id: failed.id, runtime: failed, effective: "enabled", global: "enabled", project: "default" },
+    { id: builtin.id, runtime: builtin, effective: "enabled", global: "enabled", project: "default" },
     {
       id: "sleeping.plugin",
       effective: "disabled",
@@ -95,7 +106,11 @@ render(() => (
     <I18nProvider>
       <ThemeProvider>
         <main style={{ width: "430px", margin: "24px", padding: "12px", "background-color": "var(--surface-secondary)" }}>
-          <PluginActivationControls instanceId={instanceId} location={location} />
+          <PluginActivationControls
+            instanceId={instanceId}
+            location={{ ...location, workspaceID: workspaceID() }}
+            active={viewActive()}
+          />
         </main>
       </ThemeProvider>
     </I18nProvider>
@@ -106,6 +121,10 @@ await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   calls,
   reads: () => reads,
+  isActive: viewActive,
+  show: () => setViewActive(true),
+  hide: () => setViewActive(false),
+  switchSession: () => setWorkspaceID((current) => current === "session-one" ? "session-two" : "session-one"),
   activateSleepingPlugin: () => {
     const runtime = {
       key: "sleeping.plugin",
@@ -136,8 +155,13 @@ await updatePreferences({ locale: "en" })
       instanceId,
       event: { id: `event-${index}`, created: Date.now(), type: index % 2 ? "plugin.updated" : "config.updated", data: {}, location },
     }))
-    ;(serverEvents as any).dispatchBatch(events)
-    await Promise.resolve()
+    ;(serverEvents as any).dispatchBatch(events.slice(0, 1))
+    const firstReadDeadline = Date.now() + 2_000
+    while (burstReads < 1) {
+      if (Date.now() > firstReadDeadline) throw new Error("The first event did not start a refresh")
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    ;(serverEvents as any).dispatchBatch(events.slice(1))
     release()
     const deadline = Date.now() + 2_000
     while (burstReads < 2) {
