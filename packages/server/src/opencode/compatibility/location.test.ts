@@ -75,6 +75,24 @@ test("move, creation and import validate context without reconstructing legacy b
   assert.throws(() => applyLocationContext(cursorUrl, "GET", undefined, headers()), /Cursor already carries/)
 })
 
+test("session sub-routes ignore ambient location context without a native slot", () => {
+  const headers = () => new Headers(locationRequestOptions({ directory: "/repo" }, { includeDirectory: true })!.headers)
+  for (const [method, pathname, body] of [
+    ["DELETE", "/api/experimental/session/ses_1/instructions/entries/codenomad.voice-mode", undefined],
+    ["PUT", "/api/experimental/session/ses_1/instructions/entries/codenomad.voice-mode", { value: "x" }],
+    ["GET", "/api/experimental/session/ses_1/instructions/entries", undefined],
+    ["POST", "/api/session/ses_1/prompt", { text: "hi" }],
+  ] as const) {
+    const requestHeaders = headers()
+    assert.equal(applyLocationContext(new URL(`http://localhost${pathname}`), method, body, requestHeaders), body)
+    assert.equal(requestHeaders.has(LOCATION_CONTEXT_HEADER), false)
+  }
+  // Session identity routes without a sub-path keep the strict directory check.
+  assert.throws(() => applyLocationContext(
+    new URL("http://localhost/api/session"), "GET", undefined, headers(),
+  ), /does not match/)
+})
+
 test("directory-only credential context remains global", async () => {
   const endpoint = { url: "http://localhost:1234" }
   rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
