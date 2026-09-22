@@ -1,17 +1,11 @@
 import path from "node:path"
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import { readFile, realpath, stat } from "node:fs/promises"
+import { readGitCommonDirectory } from "./git-common-directory"
+import { runWorktreeGit as git } from "./git-process"
 
 export interface LogLike {
   debug?: (obj: any, msg?: string) => void
   warn?: (obj: any, msg?: string) => void
-}
-
-const execute = promisify(execFile)
-async function git(directory: string, args: string[]): Promise<string> {
-  const { stdout } = await execute("git", ["-C", directory, ...args], { windowsHide: true, maxBuffer: 1024 * 1024 })
-  return stdout.replace(/\r?\n$/, "")
 }
 
 export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise<{ repoRoot: string; isGitRepo: boolean }> {
@@ -32,9 +26,8 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
 // even when independent clones share OpenCode's project ID. This is only a
 // negative preflight; a match still requires the native worktree inventory.
 export async function sharesGitCommonDirectory(left: string, right: string): Promise<boolean> {
-  const common = async (directory: string) => realpath(await git(directory, ["rev-parse", "--path-format=absolute", "--git-common-dir"]))
   try {
-    const [a, b] = await Promise.all([common(left), common(right)])
+    const [a, b] = await Promise.all([readGitCommonDirectory(left), readGitCommonDirectory(right)])
     return a === b
   } catch { return false }
 }
