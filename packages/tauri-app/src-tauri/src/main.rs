@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(any(windows, test))]
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -75,6 +75,7 @@ pub struct AppState {
     pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
+    native_menu_popup_active: AtomicBool,
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
@@ -163,6 +164,13 @@ fn update_workspace_menu_state(app: &AppHandle) {
 // Resolve the target when the queued update runs, not on a worker before a
 // possible focus change. Native menu APIs must never run under our mutexes.
 fn update_workspace_menu_state_on_main(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    // TrackPopupMenu dispatches nested focus/IPC callbacks while muda holds a
+    // mutable submenu borrow. Keep renderer snapshots current, but defer native
+    // traversal/mutation until the popup has returned and released that borrow.
+    if state.native_menu_popup_active.load(Ordering::Relaxed) {
+        return;
+    }
     // Native menu tracking can temporarily take focus away from the window.
     // State and command dispatch must resolve the same focused-or-MRU target.
     let window = local_windows::focused_window(app);
@@ -170,8 +178,11 @@ fn update_workspace_menu_state_on_main(app: &AppHandle) {
         .state::<local_windows::LocalWindows>()
         .menu_state(window.as_ref().map(tauri::Webview::label));
     view_menu::update(app, view_state.as_ref());
-    let state = app.state::<AppState>();
-    let items = state.workspace_menu_items.lock().ok().and_then(|items| items.clone());
+    let items = state
+        .workspace_menu_items
+        .lock()
+        .ok()
+        .and_then(|items| items.clone());
     if let Some(items) = items {
         let _ = items.folder.set_enabled(enabled);
         let _ = items.terminal.set_enabled(enabled);
@@ -400,23 +411,46 @@ async fn popup_titlebar_menu(
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
+    // Reject overlapping async requests before they queue behind the native
+    // tracking loop. The main-thread check also fences simultaneous requests.
+    if state.native_menu_popup_active.load(Ordering::Relaxed) {
+        return Err("A native titlebar menu is already open".to_string());
+    }
     let app = webview.app_handle().clone();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    app.clone().run_on_main_thread(move || {
-        let result = (|| {
-            require_local_app_webview(&webview, &app.state::<AppState>())?;
-            update_workspace_menu_state_on_main(&app);
-            let app_menu = app.menu().ok_or_else(|| "Application menu is unavailable".to_string())?;
-            let item = app_menu.get(id).ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
-            let submenu = item.as_submenu().ok_or_else(|| "Titlebar menu is invalid".to_string())?;
-            webview.window()
-                .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
-                .map_err(|error| error.to_string())
-        })();
-        let _ = sender.send(result);
-    }).map_err(|error| error.to_string())?;
+    app.clone()
+        .run_on_main_thread(move || {
+            let result = (|| {
+                let state = app.state::<AppState>();
+                require_local_app_webview(&webview, &state)?;
+                if state.native_menu_popup_active.load(Ordering::Relaxed) {
+                    return Err("A native titlebar menu is already open".to_string());
+                }
+                update_workspace_menu_state_on_main(&app);
+                let app_menu = app
+                    .menu()
+                    .ok_or_else(|| "Application menu is unavailable".to_string())?;
+                let item = app_menu
+                    .get(id)
+                    .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+                let submenu = item
+                    .as_submenu()
+                    .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+                state.native_menu_popup_active.store(true, Ordering::Relaxed);
+                let result = webview
+                    .window()
+                    .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+                    .map_err(|error| error.to_string());
+                state.native_menu_popup_active.store(false, Ordering::Relaxed);
+                update_workspace_menu_state_on_main(&app);
+                result
+            })();
+            let _ = sender.send(result);
+        })
+        .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || receiver.recv())
-        .await.map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?
 }
 
@@ -1601,6 +1635,7 @@ fn main() {
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
+            native_menu_popup_active: AtomicBool::new(false),
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,

@@ -1,4 +1,4 @@
-param([int]$OwnerPid, [ValidateSet('snapshot','dismiss','focus','select')] [string]$Action='snapshot', [long]$Handle=0, [int]$Index=0)
+param([int]$OwnerPid, [ValidateSet('snapshot','dismiss','focus','select')] [string]$Action='snapshot', [long]$Handle=0, [int]$Index=0, [long]$MenuHandle=0)
 $ErrorActionPreference='Stop'
 Add-Type @'
 using System;
@@ -14,6 +14,8 @@ public static class NativeMenuFixture {
   [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr menu, uint index, uint flags);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint index, StringBuilder text, int size, uint flags);
@@ -32,7 +34,9 @@ public static class NativeMenuFixture {
 $windows=@([NativeMenuFixture]::Windows($OwnerPid))
 if ($Handle -and -not ($windows | Where-Object handle -eq $Handle)) { throw 'Target is not owned by fixture process' }
 if ($Action -eq 'focus') {
+  [void][NativeMenuFixture]::ShowWindow([IntPtr]$Handle, 9)
   if (-not [NativeMenuFixture]::SetForegroundWindow([IntPtr]$Handle)) { throw 'Fixture focus failed' }
+  if ([NativeMenuFixture]::GetForegroundWindow().ToInt64() -ne $Handle) { throw 'Fixture foreground did not change' }
 }
 $popups=@($windows | Where-Object cls -eq '#32768')
 if ($Action -eq 'dismiss') {
@@ -45,16 +49,22 @@ if ($Action -eq 'select') {
   for ($i=0; $i -lt $Index; $i++) { [void][NativeMenuFixture]::PostMessage($popup, 0x100, [IntPtr]40, [IntPtr]0) }
   [void][NativeMenuFixture]::PostMessage($popup, 0x100, [IntPtr]13, [IntPtr]0)
 }
-if ($Action -ne 'snapshot') { '{"ok":true}'; exit }
+if ($Action -ne 'snapshot') { @{ok=$true;foreground=[NativeMenuFixture]::GetForegroundWindow().ToInt64()} | ConvertTo-Json -Compress; exit }
+if ($MenuHandle) {
+  if (-not $Handle) { throw 'Retained menu reads require its fixture-owned window' }
+  $popups=@([pscustomobject]@{handle=$Handle})
+}
 $menus=@(foreach ($popup in $popups) {
   $menu=[IntPtr]::Zero
-  if ([NativeMenuFixture]::SendMessageTimeout([IntPtr]$popup.handle, 0x1e1, [IntPtr]0, [IntPtr]0, 2, 1000, [ref]$menu) -eq [IntPtr]::Zero) { throw 'Native popup is unresponsive' }
+  if ($MenuHandle) { $menu=[IntPtr]$MenuHandle }
+  elseif ([NativeMenuFixture]::SendMessageTimeout([IntPtr]$popup.handle, 0x1e1, [IntPtr]0, [IntPtr]0, 2, 1000, [ref]$menu) -eq [IntPtr]::Zero) { throw 'Native popup is unresponsive' }
+  if ([NativeMenuFixture]::GetMenuItemCount($menu) -lt 0) { throw 'Invalid retained menu' }
   $items=@(for ($i=0; $i -lt [NativeMenuFixture]::GetMenuItemCount($menu); $i++) {
     $text=New-Object System.Text.StringBuilder 512
     [void][NativeMenuFixture]::GetMenuString($menu, $i, $text, 512, 0x400)
     $state=[NativeMenuFixture]::GetMenuState($menu, $i, 0x400)
     [pscustomobject]@{index=$i;text=$text.ToString();enabled=($state -band 3) -eq 0;checked=($state -band 8) -ne 0}
   })
-  [pscustomobject]@{handle=$popup.handle;items=$items}
+  [pscustomobject]@{handle=$popup.handle;menuHandle=$menu.ToInt64();items=$items}
 })
-[pscustomobject]@{windows=$windows;menus=$menus} | ConvertTo-Json -Depth 8 -Compress
+[pscustomobject]@{windows=$windows;menus=$menus;foreground=[NativeMenuFixture]::GetForegroundWindow().ToInt64()} | ConvertTo-Json -Depth 8 -Compress

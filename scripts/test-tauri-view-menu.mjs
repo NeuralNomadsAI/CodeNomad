@@ -19,7 +19,7 @@ const config=path.join(profile, 'config.yaml')
 await writeFile(config, JSON.stringify({server:{opencodeBinary:path.join(profile,'missing-opencode.exe')},ui:{locale:'en'}}))
 const env=Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(PATH|OPENCODE_.*|XDG_.*|CLI_.*|CODENOMAD_.*|NODE_.*|ELECTRON_.*|WEBVIEW2_.*|HOME|USERPROFILE|APPDATA|LOCALAPPDATA)$/i.test(key)))
-Object.assign(env, {HOME:profile,USERPROFILE:profile,APPDATA:path.join(profile,'roaming'),LOCALAPPDATA:path.join(profile,'local'),
+Object.assign(env, {HOME:profile,USERPROFILE:profile,APPDATA:path.join(profile,'AppData/Roaming'),LOCALAPPDATA:path.join(profile,'AppData/Local'),
   XDG_CONFIG_HOME:path.join(profile,'config'),XDG_DATA_HOME:path.join(profile,'data'),XDG_STATE_HOME:path.join(profile,'state'),
   OPENCODE_TEST_HOME:profile,OPENCODE_CONFIG_DIR:path.join(profile,'opencode'),CLI_CONFIG:config,
   CLI_HTTP_PORT:'0',CLI_HTTPS_PORT:'0',CODENOMAD_UPDATE_CHANNEL:'menu-fixture',PATH:`${process.env.SystemRoot}\\System32`})
@@ -41,9 +41,9 @@ const stopped=new Promise(resolve=>child.once('exit',resolve))
 let output='',browser
 child.stdout.on('data',c=>{output=(output+c).slice(-1024*1024)})
 child.stderr.on('data',c=>{output=(output+c).slice(-1024*1024)})
-const native=(action='snapshot',handle=0,index=0)=>JSON.parse(execFileSync('pwsh',[
+const native=(action='snapshot',handle=0,index=0,menuHandle=0)=>JSON.parse(execFileSync('pwsh',[
   '-NoProfile','-File',path.join(repo,'scripts/fixtures/tauri-menu-windows.ps1'),'-OwnerPid',String(child.pid),
-  '-Action',action,'-Handle',String(handle),'-Index',String(index)],{encoding:'utf8',timeout:8000}))
+  '-Action',action,'-Handle',String(handle),'-Index',String(index),'-MenuHandle',String(menuHandle)],{encoding:'utf8',timeout:8000,windowsHide:true}))
 const checks=[]
 try {
   await boundedFixtureOperation(async () => {
@@ -51,8 +51,13 @@ try {
   browser=await chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:10000})
   const page=await until(()=>browser.contexts().flatMap(c=>c.pages()).find(p=>/^http:\/\/127\.0\.0\.1:/.test(p.url())),'Fixture backend unavailable',60000)
   page.setDefaultTimeout(10000)
+  const fixtureUrl=new URL('/menu-fixture',page.url()).href
+  await page.route(fixtureUrl,route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Native menu fixture</title><h1>Isolated native menu regression</h1>'}))
+  await page.goto(fixtureUrl)
   await page.waitForFunction(()=>Boolean(window.__TAURI__?.core))
-  // The real renderer supplies the production bridge. No projects or native sessions are opened.
+  const local=await until(()=>native().windows.find(w=>w.title==='CodeNomad'),'Local fixture window unavailable')
+  native('focus',local.handle)
+  // Same-origin fixture uses the real native IPC and event dispatcher, with no sessions.
   await page.evaluate(async()=>{
     window.fixtureActions=[]
     await window.__TAURI__.event.listen('menu:action',event=>window.fixtureActions.push(event.payload))
@@ -61,24 +66,40 @@ try {
     enabled:true,viewState:Object.fromEntries(['leftPanel','rightPanel','timeline','timelineTools'].map(key=>[key,{label:`fixture-${key}`,checked,enabled:true}]))
   }),checked)
   const popup=async()=>{
-    await page.evaluate(()=>{window.fixturePopup=window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'view',x:100,y:50});window.fixturePopup.catch(()=>{})})
-    return until(()=>{const result=native();return result.menus.length ? result : null},'Native popup did not open')
+    await page.evaluate(()=>{window.fixturePopupError=null;window.fixturePopup=window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'view',x:100,y:50});window.fixturePopup.catch(error=>{window.fixturePopupError=String(error)})})
+    return until(async()=>{const error=await page.evaluate(()=>window.fixturePopupError);assert.equal(error,null);const result=native();return result.menus.length ? result : null},'Native popup did not open')
   }
   await publish(true)
+  console.log('Opening initial native popup')
   let result=await popup()
+  const retainedMenu=result.menus[0].menuHandle
   assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked&&i.enabled).length,4)
+  await publish(false)
+  console.log('Published deferred state')
+  assert.equal(native().menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked).length,4,'updates during tracking are deferred')
+  const nested=await page.evaluate(()=>window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'file',x:100,y:50}).then(()=>null,error=>String(error)))
+  assert.match(nested,/already open/)
+  console.log('Nested popup rejected')
   native('dismiss')
   await page.evaluate(()=>window.fixturePopup)
-  checks.push('real native checkbox labels and enabled/checked state')
+  console.log('Initial popup dismissed')
+  result=native('snapshot',local.handle,0,retainedMenu)
+  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,4,'latest snapshot applies after tracking')
+  checks.push('native state, deferred reentrant publication, nested-popup rejection and trailing refresh')
   // Concurrent async popup requests and native focus changes exercise worker/UI scheduling.
-  const local=result.windows.find(w=>w.title==='CodeNomad')
-  assert(local)
+  await page.evaluate(()=>window.__TAURI__.core.invoke('open_preferences_window',{request:{section:'general'}}))
+  console.log('Opened second fixture window')
+  const second=await until(()=>native().windows.find(w=>w.title && w.handle!==local.handle),'Second fixture window unavailable')
   for(let i=0;i<8;i++) {
+    console.log(`Focus cycle ${i+1}`)
     await publish(i%2===0)
+    assert.equal(native('focus',local.handle).foreground,local.handle)
     result=await popup()
-    native('focus',local.handle)
+    assert.equal(result.foreground,local.handle)
+    assert.equal(native('focus',second.handle).foreground,second.handle)
     native('dismiss')
     await page.evaluate(()=>window.fixturePopup)
+    assert.equal(native('focus',local.handle).foreground,local.handle)
     await page.evaluate(()=>window.__TAURI__.core.invoke('cli_get_status'))
   }
   checks.push('8 async popup/focus cycles complete with native IPC heartbeat')
