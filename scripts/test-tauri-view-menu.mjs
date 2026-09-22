@@ -86,6 +86,18 @@ try {
   result=native('snapshot',local.handle,0,retainedMenu)
   assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,4,'latest snapshot applies after tracking')
   checks.push('native state, deferred reentrant publication, nested-popup rejection and trailing refresh')
+  await page.evaluate(()=>{
+    window.concurrentResults=[]
+    window.concurrentPopups=[0,1].map(i=>window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'view',x:100,y:50})
+      .then(()=>window.concurrentResults.push({i,ok:true}),error=>window.concurrentResults.push({i,error:String(error)})))
+  })
+  await until(()=>page.evaluate(()=>window.concurrentResults.some(r=>r.error?.includes('already open'))),'Concurrent popup was not rejected')
+  assert.equal(native().menus.length,1)
+  native('dismiss')
+  await page.evaluate(()=>Promise.all(window.concurrentPopups))
+  assert.equal(native().menus.length,0,'rejected request must not open a delayed popup')
+  assert.equal(await page.evaluate(()=>window.concurrentResults.filter(r=>r.ok).length),1)
+  checks.push('concurrent popup admission rejects overlap without a delayed second popup')
   // Concurrent async popup requests and native focus changes exercise worker/UI scheduling.
   await page.evaluate(()=>window.__TAURI__.core.invoke('open_preferences_window',{request:{section:'general'}}))
   console.log('Opened second fixture window')

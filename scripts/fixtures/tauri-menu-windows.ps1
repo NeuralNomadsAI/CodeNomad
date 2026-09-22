@@ -16,6 +16,15 @@ public static class NativeMenuFixture {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
+  public static void Focus(IntPtr hwnd) {
+    uint pid; var targetThread=GetWindowThreadProcessId(hwnd, out pid);
+    var thread=GetCurrentThreadId();
+    var attached=AttachThreadInput(thread, targetThread, true);
+    try { ShowWindow(hwnd, 9); SetForegroundWindow(hwnd); }
+    finally { if (attached) AttachThreadInput(thread, targetThread, false); }
+  }
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr menu, uint index, uint flags);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint index, StringBuilder text, int size, uint flags);
@@ -34,8 +43,7 @@ public static class NativeMenuFixture {
 $windows=@([NativeMenuFixture]::Windows($OwnerPid))
 if ($Handle -and -not ($windows | Where-Object handle -eq $Handle)) { throw 'Target is not owned by fixture process' }
 if ($Action -eq 'focus') {
-  [void][NativeMenuFixture]::ShowWindow([IntPtr]$Handle, 9)
-  if (-not [NativeMenuFixture]::SetForegroundWindow([IntPtr]$Handle)) { throw 'Fixture focus failed' }
+  [NativeMenuFixture]::Focus([IntPtr]$Handle)
   if ([NativeMenuFixture]::GetForegroundWindow().ToInt64() -ne $Handle) { throw 'Fixture foreground did not change' }
 }
 $popups=@($windows | Where-Object cls -eq '#32768')

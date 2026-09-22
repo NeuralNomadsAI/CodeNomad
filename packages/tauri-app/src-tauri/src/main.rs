@@ -76,6 +76,7 @@ pub struct AppState {
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
     native_menu_popup_active: AtomicBool,
+    native_menu_popup_pending: Arc<AtomicBool>,
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
@@ -398,6 +399,14 @@ fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
     }
 }
 
+struct NativeMenuAdmission(Arc<AtomicBool>);
+
+impl Drop for NativeMenuAdmission {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[tauri::command]
 async fn popup_titlebar_menu(
     webview: tauri::Webview,
@@ -406,20 +415,26 @@ async fn popup_titlebar_menu(
     x: f64,
     y: f64,
 ) -> Result<(), String> {
+    identity::local_window_id(webview.label())?;
+    // Reserve before any URL/native getter can wait behind an existing popup.
+    // Admission spans queued work as well as tracking; dropping the closure on
+    // scheduling failure also releases it. Tracking remains a separate flag so
+    // the admitted request can apply its pre-popup refresh.
+    state
+        .native_menu_popup_pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "A native titlebar menu is already open".to_string())?;
+    let admission = NativeMenuAdmission(Arc::clone(&state.native_menu_popup_pending));
     require_local_app_webview(&webview, &state)?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
-    // Reject overlapping async requests before they queue behind the native
-    // tracking loop. The main-thread check also fences simultaneous requests.
-    if state.native_menu_popup_active.load(Ordering::Relaxed) {
-        return Err("A native titlebar menu is already open".to_string());
-    }
     let app = webview.app_handle().clone();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     app.clone()
         .run_on_main_thread(move || {
+            let admission = admission;
             let result = (|| {
                 let state = app.state::<AppState>();
                 require_local_app_webview(&webview, &state)?;
@@ -445,6 +460,7 @@ async fn popup_titlebar_menu(
                 update_workspace_menu_state_on_main(&app);
                 result
             })();
+            drop(admission);
             let _ = sender.send(result);
         })
         .map_err(|error| error.to_string())?;
@@ -1636,6 +1652,7 @@ fn main() {
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
             native_menu_popup_active: AtomicBool::new(false),
+            native_menu_popup_pending: Arc::new(AtomicBool::new(false)),
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
