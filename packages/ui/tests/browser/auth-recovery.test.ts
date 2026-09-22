@@ -79,6 +79,7 @@ async function setup(width = 1100) {
   await page.request.post(`${url}/api/auth/login`, { data: { username: "fixture", password: "fixture-only" } })
   await page.goto(`${url}/auth-fixture`)
   await page.waitForFunction(() => (window as any).fixture?.opens() > 0)
+  await page.evaluate(() => (window as any).fixture.seed())
   return { page, errors }
 }
 
@@ -103,9 +104,30 @@ test("server restart opens recovery via SSE; real login preserves the composer a
     await dialog.waitFor({ state: "hidden" })
     await page.waitForFunction(n => (window as any).fixture.opens() > n, opens)
     assert.equal(page.url(), previousUrl)
+    // The restarted backend has no workspaces. Normal reconciliation unmounts
+    // the old composer; reopening the project under a new ID restores its state.
+    await composer.waitFor({ state: "hidden" })
+    await page.evaluate(() => (window as any).fixture.seed("reopened-fixture"))
+    await composer.waitFor()
+    await page.waitForFunction(() => (document.querySelector(".prompt-input-container textarea") as HTMLTextAreaElement)?.value === "UNSENT_DRAFT")
     assert.equal(await composer.inputValue(), "UNSENT_DRAFT")
     assert.equal(await page.evaluate(() => (window as any).fixture.attachments()), 1)
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a late generic alert cannot steal focus or pointer events from auth recovery", async () => {
+  const { page } = await setup()
+  try {
+    restart()
+    const dialog = page.getByRole("dialog", { name: "Sign in to CodeNomad again" })
+    await dialog.waitFor()
+    await page.evaluate(() => (window as any).fixture.lateAlert())
+    await dialog.getByLabel("Username", { exact: true }).fill("fixture")
+    await dialog.getByLabel("Password", { exact: true }).fill("fixture-only")
+    await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await page.getByText("Late failure", { exact: true }).waitFor()
   } finally { await page.close() }
 })
 

@@ -228,6 +228,13 @@ export function useAppSessionCapture() {
     onInstanceLifecycleAuthority((event) => {
       const lifecycleToken = ++nextInstanceLifecycleToken
       instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
+      // A fresh page has no startup snapshot. Capture live work before an
+      // unavailable workspace is removed during backend-restart reconciliation.
+      if (!preservation && event.type === "unavailable") {
+        const captured = captureState(scrollAuthority)
+        preservation = createRestorableSessionPreservation(captured.state)
+        captured.tabIds.forEach((id, index) => recordRestoredTab(preservation!, index, id))
+      }
       if (!preservation) {
         if (event.type === "removed") {
           const authoritativeState = captureState(scrollAuthority).state
