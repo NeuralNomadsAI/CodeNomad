@@ -119,6 +119,8 @@ try {
   result=await popup()
   assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,4)
   native('select',0,0)
+  console.log('Native selection sent')
+  await writeFile(path.join(profile,'selection-state.json'),JSON.stringify({native:native(),actions:await page.evaluate(()=>window.fixtureActions)},null,2))
   await until(()=>page.evaluate(()=>window.fixtureActions.includes('view-left-panel')),'Native click did not dispatch to local renderer')
   await page.evaluate(()=>window.fixturePopup)
   checks.push('native selection dispatches view-left-panel to original renderer')

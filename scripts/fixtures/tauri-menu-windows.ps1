@@ -13,6 +13,10 @@ public static class NativeMenuFixture {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int size);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
+  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left, top, right, bottom; }
+  [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr hwnd, IntPtr menu, uint item, out Rect rect);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -43,8 +47,13 @@ public static class NativeMenuFixture {
 $windows=@([NativeMenuFixture]::Windows($OwnerPid))
 if ($Handle -and -not ($windows | Where-Object handle -eq $Handle)) { throw 'Target is not owned by fixture process' }
 if ($Action -eq 'focus') {
-  [NativeMenuFixture]::Focus([IntPtr]$Handle)
-  if ([NativeMenuFixture]::GetForegroundWindow().ToInt64() -ne $Handle) { throw 'Fixture foreground did not change' }
+  $deadline=[DateTime]::UtcNow.AddSeconds(2)
+  do {
+    [NativeMenuFixture]::Focus([IntPtr]$Handle)
+    if ([NativeMenuFixture]::GetForegroundWindow().ToInt64() -eq $Handle) { break }
+    Start-Sleep -Milliseconds 25
+  } while ([DateTime]::UtcNow -lt $deadline)
+  if ([NativeMenuFixture]::GetForegroundWindow().ToInt64() -ne $Handle) { throw "Fixture foreground did not change: expected $Handle, actual $([NativeMenuFixture]::GetForegroundWindow())" }
 }
 $popups=@($windows | Where-Object cls -eq '#32768')
 if ($Action -eq 'dismiss') {
@@ -52,10 +61,14 @@ if ($Action -eq 'dismiss') {
 }
 if ($Action -eq 'select') {
   if ($popups.Count -ne 1) { throw 'Expected one fixture popup' }
-  $popup=[IntPtr]$popups[0].handle
-  [void][NativeMenuFixture]::PostMessage($popup, 0x100, [IntPtr]36, [IntPtr]0)
-  for ($i=0; $i -lt $Index; $i++) { [void][NativeMenuFixture]::PostMessage($popup, 0x100, [IntPtr]40, [IntPtr]0) }
-  [void][NativeMenuFixture]::PostMessage($popup, 0x100, [IntPtr]13, [IntPtr]0)
+  if (-not ($windows | Where-Object handle -eq ([NativeMenuFixture]::GetForegroundWindow().ToInt64()))) { throw 'Fixture must own foreground before selection' }
+  $menu=[IntPtr]::Zero
+  if ([NativeMenuFixture]::SendMessageTimeout([IntPtr]$popups[0].handle, 0x1e1, [IntPtr]0, [IntPtr]0, 2, 1000, [ref]$menu) -eq [IntPtr]::Zero) { throw 'Native popup is unresponsive' }
+  $rect=[NativeMenuFixture+Rect]::new()
+  if (-not [NativeMenuFixture]::GetMenuItemRect([IntPtr]::Zero,$menu,$Index,[ref]$rect)) { throw 'Native item rectangle unavailable' }
+  [void][NativeMenuFixture]::SetCursorPos(($rect.left+$rect.right)/2,($rect.top+$rect.bottom)/2)
+  [NativeMenuFixture]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+  [NativeMenuFixture]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
 }
 if ($Action -ne 'snapshot') { @{ok=$true;foreground=[NativeMenuFixture]::GetForegroundWindow().ToInt64()} | ConvertTo-Json -Compress; exit }
 if ($MenuHandle) {
