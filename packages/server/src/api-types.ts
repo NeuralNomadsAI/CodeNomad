@@ -328,6 +328,8 @@ export type PluginScopeRuleState = "default" | "enabled" | "disabled"
 export interface PluginActivationControl {
   id: string
   runtime?: PluginRuntimeInventoryEntry
+  /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
+  builtin: boolean
   effective: PluginScopeRuleState
   global: PluginScopeRuleState
   project: PluginScopeRuleState

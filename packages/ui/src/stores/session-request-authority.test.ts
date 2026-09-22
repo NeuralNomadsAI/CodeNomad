@@ -1528,7 +1528,7 @@ describe("session request authority", () => {
     }
     ;(oldClient as any).mcp = { list: () => wait({ data: [] }) }
     ;(oldClient as any).plugin = { list: () => wait({ data: [] }) }
-    setInstanceMetadata(instanceId, { project: { id: "cached" } as any, mcpStatus: {} as any, plugins: [] })
+    setInstanceMetadata(instanceId, { project: { id: "cached" } as any, mcpStatus: {} as any })
     const oldRequest = loadInstanceMetadata(instances().get(instanceId)!, { force: true })
 
     const newClient = {

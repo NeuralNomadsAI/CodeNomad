@@ -48,6 +48,7 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.equal(await page.getByText("Runtime inventory", { exact: true }).count(), 0)
   assert.equal(await page.getByText("Configured entries", { exact: true }).count(), 0)
   assert.equal(await page.getByText("opencode.provider.demo", { exact: true }).count(), 0)
+  assert.equal(await page.getByText("opencode.prompt.identity", { exact: true }).count(), 0)
   assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').first().isDisabled(), false)
 
   const inherited = page.locator('[data-plugin-id="broken.plugin"]')
@@ -111,6 +112,32 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   await page.waitForFunction((before) => (window as any).fixture.reads() > before, readsBeforeActivation)
   const burstReads = await page.evaluate(() => (window as any).fixture.eventBurst())
   assert.equal(burstReads, 2, "an in-flight event burst must coalesce into one trailing refresh")
+  assert.deepEqual(errors, [])
+  await page.close()
+})
+
+test("V2 plugin controls disable Project when it resolves to the Global document", async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await page.goto(url)
+
+  await page.evaluate(() => (window as any).fixture.setTargets(["global"]))
+  await page.evaluate(() => (window as any).fixture.show())
+  await page.getByText("acme.reviewer", { exact: true }).waitFor()
+
+  const row = page.locator('[data-plugin-id="acme.reviewer"]')
+  assert.equal(await row.locator('[data-scope="global"] input[type="checkbox"]').isDisabled(), false)
+  assert.equal(await row.locator('[data-scope="project"] input[type="checkbox"]').isDisabled(), true)
+
+  const mutationsBefore = await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length)
+  await row.locator('[data-scope="project"] input[type="checkbox"]').click({ force: true })
+  await page.waitForTimeout(200)
+  assert.equal(
+    await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length),
+    mutationsBefore,
+    "a disabled Project switch must not mutate",
+  )
   assert.deepEqual(errors, [])
   await page.close()
 })

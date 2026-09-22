@@ -31,7 +31,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
   const snapshot = createMemo(() => state().snapshot)
   const controls = createMemo(() => (
-    snapshot()?.controls.filter((control) => control.runtime?.source.type !== "builtin") ?? []
+    snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
   ))
   let currentIdentity: string | undefined
   let demandedIdentity: string | undefined
@@ -97,11 +97,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const isPending = () => pending().has(control.id)
     const renderSwitch = (scope: PluginControlScope) => {
       const checked = () => scopeChecked(control, scope)
+      const available = () => snapshot()?.targets.some((target) => target.scope === scope) === true
       return (
         <div class="plugin-control-switch" data-scope={scope}>
           <Switch
             checked={checked()}
-            disabled={isPending()}
+            disabled={isPending() || !available()}
             color="success"
             size="small"
             inputProps={{
@@ -110,7 +111,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
               }),
             }}
             onChange={(_, nextChecked) => {
-              if (isPending()) return
+              if (isPending() || !available()) return
               void toggle(control, scope, Boolean(nextChecked))
             }}
           />

@@ -45,15 +45,18 @@ let snapshot: PluginControlsSnapshot = {
     sources: [{ target: "@acme/reviewer", scope: "global", path: "/daemon/opencode.jsonc", entryIndex: 0, hasOptions: true }],
     rules: [
       { selector: "*", enabled: true, scope: "global", path: "/daemon/opencode.jsonc", order: 0, entryIndex: 1 },
+      { selector: "opencode.prompt.identity", enabled: false, scope: "global", path: "/daemon/opencode.jsonc", order: 0, entryIndex: 2 },
       { selector: "sleeping.plugin", enabled: false, scope: "project", path: "/repo/.opencode/opencode.jsonc", order: 1, entryIndex: 0 },
     ],
   },
   controls: [
-    { id: active.id, runtime: active, effective: "enabled", global: "enabled", project: "default" },
-    { id: failed.id, runtime: failed, effective: "default", global: "default", project: "default" },
-    { id: builtin.id, runtime: builtin, effective: "enabled", global: "enabled", project: "default" },
+    { id: active.id, runtime: active, builtin: false, effective: "enabled", global: "enabled", project: "default" },
+    { id: failed.id, runtime: failed, builtin: false, effective: "default", global: "default", project: "default" },
+    { id: builtin.id, runtime: builtin, builtin: true, effective: "enabled", global: "enabled", project: "default" },
+    { id: "opencode.prompt.identity", builtin: true, effective: "disabled", global: "disabled", project: "default" },
     {
       id: "sleeping.plugin",
+      builtin: false,
       effective: "disabled",
       global: "enabled",
       project: "disabled",
@@ -124,6 +127,9 @@ await updatePreferences({ locale: "en" })
   isActive: viewActive,
   show: () => setViewActive(true),
   hide: () => setViewActive(false),
+  setTargets: (scopes: Array<"global" | "project">) => {
+    snapshot.targets = snapshot.targets.filter((target) => scopes.includes(target.scope))
+  },
   switchSession: () => setWorkspaceID((current) => current === "session-one" ? "session-two" : "session-one"),
   activateSleepingPlugin: () => {
     const runtime = {

@@ -326,6 +326,11 @@ export class WorkspaceManager {
     return record.wslDistro || platform !== "win32" ? "posix" : "win32"
   }
 
+  getServiceWslDistro(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.wslDistro : undefined
+  }
+
   /** Translate a path reported by the authenticated daemon for local filesystem access. */
   async getHostPathForServicePath(id: string, servicePath: string): Promise<string | undefined> {
     const record = this.workspaces.get(id)

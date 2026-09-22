@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { afterEach, describe, it } from "node:test"
 import { parse } from "jsonc-parser"
 import { PluginControls, PluginControlsError } from "./plugin-controls"
@@ -69,6 +70,58 @@ describe("OpenCode V2 plugin activation controls", () => {
       ["same.id", true],
     ])
     assert.equal(snapshot.controls.find((entry) => entry.id === "same.id")?.effective, "enabled")
+  })
+
+  it("replays object-form sources as ordered add operations", async () => {
+    const fixture = createFixture({
+      globalPlugins: ["same.id", "-same.id", { package: "same.id", options: {} }],
+      runtime: [activePlugin("same.id", "same.id")],
+    })
+
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+
+    assert.deepEqual(snapshot.configured.rules.map((rule) => [rule.selector, rule.enabled]), [
+      ["same.id", false],
+      ["same.id", true],
+    ])
+    assert.equal(snapshot.controls.find((entry) => entry.id === "same.id")?.effective, "enabled")
+  })
+
+  it("correlates relative and file URL local sources with their runtime entrypoint", async () => {
+    for (const kind of ["relative", "file"] as const) {
+      const fixture = createFixture({ runtime: [] })
+      const configuredTarget = kind === "file"
+        ? pathToFileURL(path.join(fixture.projectDirectory, "plugins", "reviewer")).href
+        : "./plugins/reviewer"
+      const sourceDirectory = kind === "file"
+        ? path.join(fixture.projectDirectory, "plugins", "reviewer")
+        : path.join(fixture.projectDirectory, ".opencode", "plugins", "reviewer")
+      const entrypoint = path.join(sourceDirectory, "server.js")
+      fixture.runtime.push({
+        id: "acme.reviewer",
+        source: { type: "local", path: entrypoint },
+        features: { server: true },
+        state: { status: "active" },
+      })
+      fixture.setProjectPlugins([
+        configuredTarget,
+        "-acme.reviewer",
+        { package: configuredTarget, options: {} },
+      ])
+
+      const snapshot = await fixture.controls.read("workspace", fixture.location)
+      assert.equal(snapshot.controls.find((entry) => entry.id === "acme.reviewer")?.effective, "enabled")
+    }
+  })
+
+  it("marks an exact disabled OpenCode builtin even when runtime inventory omits it", async () => {
+    const fixture = createFixture({ globalPlugins: ["-opencode.prompt.identity"], runtime: [] })
+
+    const control = (await fixture.controls.read("workspace", fixture.location)).controls
+      .find((entry) => entry.id === "opencode.prompt.identity")
+
+    assert.equal(control?.builtin, true)
+    assert.equal(control?.effective, "disabled")
   })
 
   it("serializes mutations, writes only the selected project layer, and preserves prior rules", async () => {
@@ -140,6 +193,156 @@ describe("OpenCode V2 plugin activation controls", () => {
 
     assert.equal(response.target.path, "/daemon/config/opencode.jsonc")
     assert.deepEqual((parse(fs.readFileSync(path.join(globalHost, "opencode.jsonc"), "utf8")) as any).plugins, ["-acme.reviewer"])
+  })
+
+  it("uses the canonical service directory for WSL requests and snapshot identity", async () => {
+    const host = temporaryDirectory()
+    const globalHost = path.join(host, "daemon-global")
+    const projectHost = path.join(host, "daemon-project")
+    fs.mkdirSync(globalHost, { recursive: true })
+    fs.mkdirSync(projectHost, { recursive: true })
+    fs.writeFileSync(path.join(globalHost, "opencode.jsonc"), `{ "plugins": [] }\n`)
+    const entries = [{ type: "directory", path: "/daemon/config" }]
+    const manager = fakeManager({
+      entries,
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")],
+      style: "posix",
+      serviceDirectory: "/srv/project",
+      translate: (servicePath) => servicePath === "/daemon/config" ? globalHost : servicePath === "/srv/project" ? projectHost : undefined,
+    })
+    const controls = new PluginControls({ workspaceManager: manager as any, worktreeDeletionFence: openFence(), logger: logger() })
+
+    const snapshot = await controls.read("workspace", { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\project" })
+
+    assert.equal(snapshot.location.directory, "/srv/project")
+    assert.deepEqual(manager.calls.configLocations, ["/srv/project"])
+    assert.deepEqual(manager.calls.pluginLocations, ["/srv/project"])
+  })
+
+  it("does not expose Project when it resolves to the Global configuration file", async () => {
+    const directory = temporaryDirectory()
+    const configFile = path.join(directory, "opencode.jsonc")
+    fs.writeFileSync(configFile, `{ "plugins": [] }\n`)
+    const manager = fakeManager({
+      entries: [
+        { type: "document", path: configFile, info: { plugins: [] } },
+        { type: "directory", path: directory },
+      ],
+      runtime: [activePlugin("known", "known-package")],
+    })
+    const controls = new PluginControls({ workspaceManager: manager as any, worktreeDeletionFence: openFence(), logger: logger() })
+
+    const snapshot = await controls.read("workspace", { directory })
+    assert.deepEqual(snapshot.targets.map((target) => target.scope), ["global"])
+    await assert.rejects(
+      controls.mutate("workspace", { location: { directory }, pluginId: "known", scope: "project", enabled: false }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
+    )
+    assert.deepEqual((parse(fs.readFileSync(configFile, "utf8")) as any).plugins, [])
+  })
+
+  it("does not expose Project through a symlink to the Global configuration", async () => {
+    const root = temporaryDirectory()
+    const globalDirectory = path.join(root, "global")
+    const projectDirectory = path.join(root, "project")
+    const globalFile = path.join(globalDirectory, "opencode.jsonc")
+    fs.mkdirSync(globalDirectory, { recursive: true })
+    fs.mkdirSync(projectDirectory, { recursive: true })
+    fs.writeFileSync(globalFile, `{ "plugins": [] }\n`)
+    fs.symlinkSync(globalDirectory, path.join(projectDirectory, ".opencode"), process.platform === "win32" ? "junction" : "dir")
+    const manager = fakeManager({
+      entries: [
+        { type: "document", path: globalFile, info: { plugins: [] } },
+        { type: "directory", path: globalDirectory },
+      ],
+      runtime: [activePlugin("known", "known-package")],
+    })
+    const controls = new PluginControls({ workspaceManager: manager as any, worktreeDeletionFence: openFence(), logger: logger() })
+
+    const snapshot = await controls.read("workspace", { directory: projectDirectory })
+    assert.deepEqual(snapshot.targets.map((target) => target.scope), ["global"])
+    await assert.rejects(
+      controls.mutate("workspace", { location: { directory: projectDirectory }, pluginId: "known", scope: "project", enabled: false }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
+    )
+    assert.deepEqual((parse(fs.readFileSync(globalFile, "utf8")) as any).plugins, [])
+  })
+
+  it("does not expose Project at the global configuration root when no document exists", async () => {
+    const directory = temporaryDirectory()
+    const manager = fakeManager({
+      entries: [{ type: "directory", path: directory }],
+      runtime: [activePlugin("known", "known-package")],
+    })
+    const controls = new PluginControls({ workspaceManager: manager as any, worktreeDeletionFence: openFence(), logger: logger() })
+
+    const snapshot = await controls.read("workspace", { directory })
+    assert.deepEqual(snapshot.targets.map((target) => target.scope), ["global"])
+    await assert.rejects(
+      controls.mutate("workspace", { location: { directory }, pluginId: "known", scope: "project", enabled: false }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
+    )
+    assert.equal(fs.existsSync(path.join(directory, ".opencode", "opencode.jsonc")), false)
+  })
+
+  it("uses normalized daemon entries for authorization while preserving raw placeholders", async () => {
+    const fixture = createFixture({
+      globalPlugins: ["{env:PLUGIN_RULE}"],
+      reportedGlobalPlugins: ["-known"],
+      runtime: [],
+    })
+
+    const response = await fixture.controls.mutate("workspace", {
+      location: fixture.location,
+      pluginId: "known",
+      scope: "global",
+      enabled: true,
+    })
+
+    assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "enabled")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["{env:PLUGIN_RULE}", "known"])
+  })
+
+  it("never treats a concrete pending rule as the normalized form of a placeholder", async () => {
+    const fixture = createFixture({
+      globalPlugins: ["{env:PLUGIN_RULE}", "-known", "known"],
+      reportedGlobalPlugins: ["known"],
+      runtime: [activePlugin("known", "known-package")],
+    })
+
+    const response = await fixture.controls.mutate("workspace", {
+      location: fixture.location,
+      pluginId: "known",
+      scope: "global",
+      enabled: false,
+    })
+
+    assert.equal(response.changed, true)
+    assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "disabled")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
+      "{env:PLUGIN_RULE}", "-known", "known", "-known",
+    ])
+  })
+
+  it("preserves normalized ordering when a placeholder follows a concrete rule", async () => {
+    const fixture = createFixture({
+      globalPlugins: ["-known", "{env:PLUGIN_RULE}"],
+      reportedGlobalPlugins: ["-known", "known"],
+      runtime: [activePlugin("known", "known-package")],
+    })
+
+    const response = await fixture.controls.mutate("workspace", {
+      location: fixture.location,
+      pluginId: "known",
+      scope: "global",
+      enabled: false,
+    })
+
+    assert.equal(response.changed, true)
+    assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "disabled")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
+      "-known", "{env:PLUGIN_RULE}", "-known",
+    ])
   })
 
   it("keeps daemon-reported virtual precedence when adding a missing global document", async () => {
@@ -253,14 +456,57 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
     )
   })
+
+  it("fences a mutation again immediately before the atomic rename", async () => {
+    const fixture = createFixture({
+      runtime: [activePlugin("known", "known-package")],
+      assertCurrent: (count) => { if (count === 4) throw new Error("stale connection") },
+    })
+    const before = fs.readFileSync(fixture.globalFile, "utf8")
+
+    await assert.rejects(
+      fixture.controls.mutate("workspace", {
+        location: fixture.location,
+        pluginId: "known",
+        scope: "global",
+        enabled: false,
+      }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
+    )
+
+    assert.equal(fixture.calls.assertCurrent, 4)
+    assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
+  })
+
+  it("fences a no-op mutation after reading the target document", async () => {
+    const fixture = createFixture({
+      globalPlugins: ["-known"],
+      runtime: [],
+      assertCurrent: (count) => { if (count === 3) throw new Error("stale connection") },
+    })
+
+    await assert.rejects(
+      fixture.controls.mutate("workspace", {
+        location: fixture.location,
+        pluginId: "known",
+        scope: "global",
+        enabled: false,
+      }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
+    )
+    assert.equal(fixture.calls.assertCurrent, 3)
+  })
 })
 
 function createFixture(options: {
   globalPlugins?: unknown[]
+  reportedGlobalPlugins?: unknown[]
   projectPlugins?: unknown[]
+  reportedProjectPlugins?: unknown[]
   runtime?: any[]
   omitProjectDocument?: boolean
   ownsLocation?: boolean
+  assertCurrent?: (count: number) => void
   worktreeDeletionFence?: { enter(identities: string[]): (() => void) | undefined }
 } = {}) {
   const root = temporaryDirectory()
@@ -273,14 +519,22 @@ function createFixture(options: {
   fs.writeFileSync(globalFile, `${JSON.stringify({ plugins: options.globalPlugins ?? [] }, null, 2)}\n`)
   if (!options.omitProjectDocument) fs.writeFileSync(projectFile, `${JSON.stringify({ plugins: options.projectPlugins ?? [] }, null, 2)}\n`)
   const entries: any[] = [
-    { type: "document", path: globalFile, info: { plugins: options.globalPlugins ?? [] } },
+    { type: "document", path: globalFile, info: { plugins: options.reportedGlobalPlugins ?? options.globalPlugins ?? [] } },
     { type: "directory", path: globalDirectory },
   ]
+  let projectEntry: any
   if (!options.omitProjectDocument) {
-    entries.push({ type: "document", path: projectFile, info: { plugins: options.projectPlugins ?? [] } })
+    projectEntry = { type: "document", path: projectFile, info: { plugins: options.reportedProjectPlugins ?? options.projectPlugins ?? [] } }
+    entries.push(projectEntry)
     entries.push({ type: "directory", path: path.dirname(projectFile) })
   }
-  const manager = fakeManager({ entries, runtime: options.runtime ?? [], ownsLocation: options.ownsLocation })
+  const runtime = options.runtime ?? []
+  const manager = fakeManager({
+    entries,
+    runtime,
+    ownsLocation: options.ownsLocation,
+    assertCurrent: options.assertCurrent,
+  })
   return {
     controls: new PluginControls({
       workspaceManager: manager as any,
@@ -293,6 +547,12 @@ function createFixture(options: {
     projectDirectory,
     globalFile,
     projectFile,
+    runtime,
+    setProjectPlugins: (plugins: unknown[]) => {
+      if (!projectEntry) throw new Error("Project document is omitted")
+      projectEntry.info.plugins = plugins
+      fs.writeFileSync(projectFile, `${JSON.stringify({ plugins }, null, 2)}\n`)
+    },
   }
 }
 
@@ -302,12 +562,14 @@ function fakeManager(options: {
   ownsLocation?: boolean
   style?: "win32" | "posix"
   translate?: (servicePath: string) => string | undefined
+  serviceDirectory?: string
+  wslDistro?: string
   assertCurrent?: (count: number) => void
 }) {
-  const calls = { config: 0, plugins: 0, assertCurrent: 0 }
+  const calls = { config: 0, plugins: 0, assertCurrent: 0, configLocations: [] as string[], pluginLocations: [] as string[] }
   const client = {
-    config: { get: async () => { calls.config++; return options.entries } },
-    plugin: { list: async () => { calls.plugins++; return { location: { directory: "unused" }, data: options.runtime } } },
+    config: { get: async (input: any) => { calls.config++; calls.configLocations.push(input.location.directory); return options.entries } },
+    plugin: { list: async (input: any) => { calls.plugins++; calls.pluginLocations.push(input.location.directory); return { location: { directory: "unused" }, data: options.runtime } } },
   }
   return {
     calls,
@@ -320,8 +582,10 @@ function fakeManager(options: {
       },
     }),
     ownsLocation: async () => options.ownsLocation !== false,
+    getServiceDirectoryForPath: async (_id: string, directory: string) => options.serviceDirectory ?? directory,
     getWorktreeIdentityForPath: async () => "fixture-worktree",
     getServicePathStyle: () => options.style ?? (process.platform === "win32" ? "win32" : "posix"),
+    getServiceWslDistro: () => options.wslDistro,
     getHostPathForServicePath: async (_id: string, servicePath: string) => options.translate?.(servicePath) ?? servicePath,
   }
 }

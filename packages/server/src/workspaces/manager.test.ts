@@ -337,7 +337,7 @@ describe("workspace manager shared service lifecycle", () => {
       },
     })
 
-    await manager.create(process.cwd())
+    const { workspace } = await manager.create(process.cwd())
 
     assert.deepEqual(factoryCall?.[0], { kind: "wsl", distro: "Ubuntu", binary: "/home/dev/opencode" })
     assert.equal(typeof factoryCall?.[1], "number")
@@ -357,6 +357,7 @@ describe("workspace manager shared service lifecycle", () => {
     )
     const record = [...(manager as any).workspaces.values()][0]
     assert.equal(record.wslDistro, "Ubuntu")
+    assert.equal(manager.getServiceWslDistro(workspace.id), "Ubuntu")
   })
 
   it("translates a case-insensitive Windows CA path before WSL identity and lifecycle construction", async () => {

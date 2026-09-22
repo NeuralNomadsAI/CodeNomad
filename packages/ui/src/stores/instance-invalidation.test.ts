@@ -8,7 +8,7 @@ describe("instance invalidation targets", () => {
     assert.deepEqual(getInstanceRefreshTargets("command.updated"), ["commands"])
     assert.deepEqual(getInstanceRefreshTargets("models-dev.refreshed"), ["agents", "providers", "commands"])
     assert.deepEqual(getInstanceRefreshTargets("model.updated"), ["providers"])
-    assert.deepEqual(getInstanceRefreshTargets("plugin.updated"), ["agents", "providers", "commands", "metadata"])
+    assert.deepEqual(getInstanceRefreshTargets("plugin.updated"), ["agents", "providers", "commands"])
     assert.deepEqual(getInstanceRefreshTargets("plugin.added"), [])
   })
 

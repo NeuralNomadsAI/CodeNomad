@@ -1,5 +1,6 @@
-import { stat } from "node:fs/promises"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
+import { isDeepStrictEqual } from "node:util"
 import type { ConfigEntry, LocationRef, PluginInfo } from "@opencode/client"
 import type {
   PluginActivationControl,
@@ -22,18 +23,23 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import { locationRequestOptions } from "./compatibility/location"
 import {
   appendPluginControlRule,
+  hostPluginControlDocumentFileSystem,
   readPluginControlDocument,
   replacePluginControlDocument,
   type PluginConfigEntry,
+  type PluginControlDocumentFileSystem,
   PluginControlDocumentError,
 } from "./plugin-control-document"
+import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
   | "getSharedServiceConnection"
   | "ownsLocation"
+  | "getServiceDirectoryForPath"
   | "getWorktreeIdentityForPath"
   | "getServicePathStyle"
+  | "getServiceWslDistro"
   | "getHostPathForServicePath"
 >
 
@@ -52,10 +58,11 @@ interface ReadContext {
   style: PathStyle
   globalDirectory: string
   targets: ResolvedTarget[]
+  fileSystem: PluginControlDocumentFileSystem
 }
 
 interface ResolvedTarget extends PluginControlTarget {
-  hostPath: string
+  ioPath: string
 }
 
 interface ConfigDocumentView {
@@ -104,16 +111,31 @@ export class PluginControls {
       try {
         let document
         try {
-          document = await readPluginControlDocument(target.hostPath)
+          document = await readPluginControlDocument(target.ioPath, context.fileSystem)
         } catch (error) {
           throw mapDocumentError(error)
         }
-        const before = buildSnapshot(context, { servicePath: target.path, plugins: document.plugins, scope: request.scope })
+        // The daemon's ConfigEntry values have already applied environment and
+        // config substitutions. Keep those values authoritative for inventory
+        // and state; the raw document is used only for conflict-safe editing.
+        const authoritative = buildSnapshot(context)
+        const projection = mutationTargetPlugins(
+          context,
+          target.path,
+          document.plugins,
+          authoritative.controls.map((candidate) => candidate.id),
+        )
+        const before = buildSnapshot(context, {
+          servicePath: target.path,
+          plugins: projection.plugins,
+          scope: request.scope,
+        })
         const control = before.controls.find((candidate) => candidate.id === request.pluginId)
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
-        if (control[request.scope] === desired) {
+        assertCurrentConnection(context.connection)
+        if (projection.noOpSafe && control[request.scope] === desired) {
           return {
             snapshot: before,
             rule: request.enabled ? request.pluginId : `-${request.pluginId}`,
@@ -125,16 +147,17 @@ export class PluginControls {
 
         const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
         const updated = appendPluginControlRule(document, rule)
-        assertCurrentConnection(context.connection)
         try {
-          await replacePluginControlDocument(document, updated)
+          await replacePluginControlDocument(document, updated, {
+            beforeCommit: () => assertCurrentConnection(context.connection),
+          }, context.fileSystem)
         } catch (error) {
           throw mapDocumentError(error)
         }
         target.exists = true
         const snapshot = buildSnapshot(context, {
           servicePath: target.path,
-          plugins: [...document.plugins, rule],
+          plugins: [...projection.plugins, rule],
           scope: request.scope,
         })
         this.options.logger.info({ workspaceId, scope: request.scope, pluginId: request.pluginId }, "Updated OpenCode plugin activation rule")
@@ -149,9 +172,15 @@ export class PluginControls {
     if (!this.options.workspaceManager.get(workspaceId)) {
       throw new PluginControlsError("Workspace not found", "not-found")
     }
-    const location = normalizeLocation(input)
+    const requestedLocation = normalizeLocation(input)
     const connection = await this.options.workspaceManager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode service is unavailable", "unavailable")
+    const serviceDirectory = await this.options.workspaceManager.getServiceDirectoryForPath(
+      workspaceId,
+      requestedLocation.directory,
+    )
+    if (!serviceDirectory) throw new PluginControlsError("Location is not owned by this workspace", "forbidden")
+    const location = { ...requestedLocation, directory: serviceDirectory }
     if (!await this.options.workspaceManager.ownsLocation(workspaceId, location, connection.client)) {
       throw new PluginControlsError("Location is not owned by this workspace", "forbidden")
     }
@@ -186,9 +215,13 @@ export class PluginControls {
     if (!validAbsolutePath(paths, location.directory)) {
       throw new PluginControlsError("OpenCode location directory is invalid", "invalid")
     }
-    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory)
+    const distro = this.options.workspaceManager.getServiceWslDistro(workspaceId)
+    const fileSystem = distro
+      ? createWslPluginControlDocumentFileSystem(distro)
+      : hostPluginControlDocumentFileSystem
+    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, fileSystem, Boolean(distro))
     assertCurrentConnection(connection)
-    return { connection, entries, runtime, location, paths, style, globalDirectory, targets }
+    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem }
   }
 
   private async resolveTargets(
@@ -196,18 +229,39 @@ export class PluginControls {
     paths: path.PlatformPath,
     globalDirectory: string,
     projectDirectory: string,
+    fileSystem: PluginControlDocumentFileSystem,
+    nativeWsl: boolean,
   ): Promise<ResolvedTarget[]> {
-    const [globalHost, projectHost] = await Promise.all([
-      this.options.workspaceManager.getHostPathForServicePath(workspaceId, globalDirectory),
-      this.options.workspaceManager.getHostPathForServicePath(workspaceId, projectDirectory),
-    ])
-    if (!globalHost || !projectHost || !path.isAbsolute(globalHost) || !path.isAbsolute(projectHost)) {
+    const [globalIoRoot, projectIoRoot] = nativeWsl
+      ? [globalDirectory, projectDirectory]
+      : await Promise.all([
+        this.options.workspaceManager.getHostPathForServicePath(workspaceId, globalDirectory),
+        this.options.workspaceManager.getHostPathForServicePath(workspaceId, projectDirectory),
+      ])
+    if (!globalIoRoot || !projectIoRoot) {
       throw new PluginControlsError("OpenCode configuration paths could not be mapped to the execution host", "unavailable")
     }
-    return Promise.all([
-      selectTarget("global", paths, globalDirectory, globalHost),
-      selectTarget("project", paths, projectDirectory, projectHost),
-    ])
+    const ioPaths = nativeWsl ? path.posix : hostPathStyle()
+    if (!ioPaths.isAbsolute(globalIoRoot) || !ioPaths.isAbsolute(projectIoRoot)) {
+      throw new PluginControlsError("OpenCode configuration paths could not be mapped to the execution host", "unavailable")
+    }
+    const globalCandidates = targetCandidates("global", paths, globalDirectory, globalIoRoot, ioPaths)
+    const projectCandidates = targetCandidates("project", paths, projectDirectory, projectIoRoot, ioPaths)
+    let inspected: Array<{ writePath: string; exists: boolean }>
+    try {
+      inspected = await fileSystem.inspectMany([...globalCandidates, ...projectCandidates].map((candidate) => candidate.ioPath))
+    } catch (error) {
+      throw mapDocumentError(error)
+    }
+    const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length))
+    const projectTarget = selectTarget("project", projectCandidates, inspected.slice(globalCandidates.length))
+    // An opened global config directory can make the direct project candidate
+    // resolve to the global document. Never expose two scopes backed by one
+    // file: a Project write would otherwise mutate Global configuration.
+    return samePath(paths, globalDirectory, projectDirectory)
+      || samePath(ioPaths, globalTarget.ioPath, projectTarget.ioPath)
+      ? [globalTarget]
+      : [globalTarget, projectTarget]
   }
 
   private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -238,8 +292,18 @@ function buildSnapshot(
     document.plugins.forEach((entry, entryIndex) => {
       if (typeof entry !== "string") {
         sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined })
+        const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtime, runtimeSourceIds)
+        const isFirstRuntimeSourceDeclaration = Boolean(runtimeId && !declaredTargets.has(entry.package))
+        const selectsPlugin = entry.package.startsWith("opencode.")
+          || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(entry.package))
+        if (selectsPlugin) {
+          rules.push({ selector: entry.package, enabled: true, scope: document.scope, path: document.path, order: document.order, entryIndex })
+        } else if (runtimeId && rules.some((rule) => !rule.enabled && matchesSelector(rule.selector, runtimeId))) {
+          // Every object entry is an ordered add operation. Loading the source
+          // after a matching removal enables its resolved plugin again.
+          rules.push({ selector: runtimeId, enabled: true, scope: document.scope, path: document.path, order: document.order, entryIndex })
+        }
         declaredTargets.add(entry.package)
-        const runtimeId = runtimeSourceIds.get(entry.package)
         if (runtimeId) knownDefinitions.add(runtimeId)
         return
       }
@@ -251,14 +315,19 @@ function buildSnapshot(
         return
       }
 
-      const runtimeSourceId = runtimeSourceIds.get(selector)
+      const runtimeSourceId = runtimeIdForConfiguredTarget(context, document, selector, runtime, runtimeSourceIds)
       const isFirstRuntimeSourceDeclaration = Boolean(runtimeSourceId && !declaredTargets.has(selector))
       const selectsPlugin = selector === "*" || selector.endsWith(".*") || selector.startsWith("opencode.")
         || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(selector))
       if (!selectsPlugin) {
         sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false })
         declaredTargets.add(selector)
-        if (runtimeSourceId) knownDefinitions.add(runtimeSourceId)
+        if (runtimeSourceId) {
+          if (rules.some((rule) => !rule.enabled && matchesSelector(rule.selector, runtimeSourceId))) {
+            rules.push({ selector: runtimeSourceId, enabled: true, scope: document.scope, path: document.path, order: document.order, entryIndex })
+          }
+          knownDefinitions.add(runtimeSourceId)
+        }
         return
       }
       rules.push({ selector, enabled: true, scope: document.scope, path: document.path, order: document.order, entryIndex })
@@ -269,9 +338,11 @@ function buildSnapshot(
   const controls = [...ids].filter(validPluginId).sort((left, right) => left.localeCompare(right)).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
+    const runtimeEntry = runtime.find((entry) => entry.id === id)
     return {
       id,
-      runtime: runtime.find((entry) => entry.id === id),
+      ...(runtimeEntry ? { runtime: runtimeEntry } : {}),
+      builtin: runtimeEntry?.source.type === "builtin" || id.startsWith("opencode."),
       effective: stateForRule(controllingRule),
       global: stateForRule(matching.filter((rule) => rule.scope === "global").at(-1)),
       project: stateForRule(matching.filter((rule) => rule.scope === "project").at(-1)),
@@ -285,6 +356,41 @@ function buildSnapshot(
     controls,
     targets: context.targets.map(publicTarget),
   }
+}
+
+function mutationTargetPlugins(
+  context: ReadContext,
+  servicePath: string,
+  rawPlugins: readonly PluginConfigEntry[],
+  authorizedIds: readonly string[],
+): { plugins: readonly PluginConfigEntry[]; noOpSafe: boolean } {
+  const normalized = configDocuments(context)
+    .filter((document) => Boolean(document.path && samePath(context.paths, document.path, servicePath)))
+    .at(-1)?.plugins ?? []
+  const noOpSafe = !rawPlugins.some(containsConfigVariable)
+  let normalizedIndex = 0
+  const pendingRules: string[] = []
+  for (const entry of rawPlugins) {
+    if (containsConfigVariable(entry)) {
+      if (normalizedIndex < normalized.length) normalizedIndex += 1
+      continue
+    }
+    if (normalizedIndex < normalized.length) {
+      if (isDeepStrictEqual(entry, normalized[normalizedIndex])) normalizedIndex += 1
+      continue
+    }
+    if (typeof entry !== "string") continue
+    const selector = entry.startsWith("-") ? entry.slice(1) : entry
+    if (!selector || !authorizedIds.some((id) => matchesSelector(selector, id))) continue
+    pendingRules.push(entry)
+  }
+  return { plugins: [...normalized, ...pendingRules], noOpSafe }
+}
+
+function containsConfigVariable(value: unknown): boolean {
+  if (typeof value === "string") return /\{(?:env|file):[^}]+\}/.test(value)
+  if (Array.isArray(value)) return value.some(containsConfigVariable)
+  return isRecord(value) && Object.values(value).some(containsConfigVariable)
 }
 
 function configDocuments(
@@ -333,28 +439,48 @@ function classifyScope(context: ReadContext, servicePath?: string): PluginConfig
   return containsPath(context.paths, configRoot, context.location.directory) ? "project" : "other"
 }
 
-async function selectTarget(
+interface TargetCandidate {
+  servicePath: string
+  ioPath: string
+}
+
+function targetCandidates(
   scope: PluginControlScope,
   servicePaths: path.PlatformPath,
   serviceRoot: string,
-  hostRoot: string,
-): Promise<ResolvedTarget> {
+  ioRoot: string,
+  ioPaths: path.PlatformPath,
+): TargetCandidate[] {
   const relativeCandidates = scope === "global"
     ? ["opencode.json", "opencode.jsonc"]
     : ["opencode.json", "opencode.jsonc", servicePaths.join(".opencode", "opencode.json"), servicePaths.join(".opencode", "opencode.jsonc")]
-  const candidates = relativeCandidates.map((relative) => ({
+  return relativeCandidates.map((relative) => ({
     servicePath: servicePaths.join(serviceRoot, relative),
-    hostPath: path.join(hostRoot, ...relative.split(/[\\/]/)),
+    ioPath: ioPaths.join(ioRoot, ...relative.split(/[\\/]/)),
   }))
+}
+
+function selectTarget(
+  scope: PluginControlScope,
+  candidates: readonly TargetCandidate[],
+  inspected: readonly { writePath: string; exists: boolean }[],
+): ResolvedTarget {
+  if (candidates.length !== inspected.length) {
+    throw new PluginControlsError("OpenCode configuration target inspection was incomplete", "unavailable")
+  }
   let selected = candidates.at(-1)!
   let exists = false
-  for (const candidate of candidates) {
-    if (await pathExists(candidate.hostPath)) {
-      selected = candidate
+  candidates.forEach((candidate, index) => {
+    const result = inspected[index]!
+    if (result.exists) {
+      selected = { ...candidate, ioPath: result.writePath }
       exists = true
     }
+  })
+  if (!exists) {
+    selected = { ...selected, ioPath: inspected.at(-1)!.writePath }
   }
-  return { scope, path: selected.servicePath, hostPath: selected.hostPath, exists }
+  return { scope, path: selected.servicePath, ioPath: selected.ioPath, exists }
 }
 
 function normalizeRuntimeEntry(plugin: PluginInfo, index: number): PluginRuntimeInventoryEntry {
@@ -404,6 +530,33 @@ function normalizePluginEntries(input: unknown): PluginConfigEntry[] {
   return output
 }
 
+function runtimeIdForConfiguredTarget(
+  context: ReadContext,
+  document: ConfigDocumentView,
+  target: string,
+  runtime: readonly PluginRuntimeInventoryEntry[],
+  direct: ReadonlyMap<string, string>,
+): string | undefined {
+  const exact = direct.get(target)
+  if (exact) return exact
+  let localTarget: string | undefined
+  try {
+    if (target.startsWith("file://")) {
+      localTarget = fileURLToPath(target, { windows: context.style === "win32" })
+    } else if (target.startsWith("./") || target.startsWith("../")) {
+      localTarget = context.paths.resolve(document.path ? context.paths.dirname(document.path) : context.location.directory, target)
+    } else if (context.paths.isAbsolute(target)) {
+      localTarget = target
+    }
+  } catch {
+    return undefined
+  }
+  if (!localTarget) return undefined
+  return runtime.find((entry) => entry.id && entry.source.type === "local"
+    && (samePath(context.paths, localTarget, entry.source.path)
+      || containsPath(context.paths, localTarget, entry.source.path)))?.id
+}
+
 function normalizeLocation(input: PluginControlLocation): LocationRef & PluginControlLocation {
   const directory = input.directory?.trim()
   const workspaceID = input.workspaceID?.trim()
@@ -431,7 +584,7 @@ function validPluginId(value: string): boolean {
 }
 
 function validAbsolutePath(paths: path.PlatformPath, value: string): boolean {
-  return paths.isAbsolute(value) && !value.includes("\0")
+  return paths.isAbsolute(value) && !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 function samePath(paths: path.PlatformPath, left: string, right: string): boolean {
@@ -446,14 +599,8 @@ function containsPath(paths: path.PlatformPath, candidate: string, directory: st
   return relative === "" || (!relative.startsWith(`..${paths.sep}`) && relative !== ".." && !paths.isAbsolute(relative))
 }
 
-async function pathExists(candidate: string): Promise<boolean> {
-  try {
-    await stat(candidate)
-    return true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-    throw new PluginControlsError("Unable to inspect OpenCode configuration target", "unavailable", { cause: error })
-  }
+function hostPathStyle(): path.PlatformPath {
+  return process.platform === "win32" ? path.win32 : path.posix
 }
 
 function sourceDetail(source: PluginRuntimeSource): string {

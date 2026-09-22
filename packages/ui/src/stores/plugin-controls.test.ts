@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { PluginControlsSnapshot } from "../../../server/src/api-types"
+import type { PluginControlLocation, PluginControlsSnapshot } from "../../../server/src/api-types"
 import { PluginControlsCache } from "./plugin-controls"
 
 describe("plugin controls cache", () => {
@@ -71,6 +71,154 @@ describe("plugin controls cache", () => {
 
     assert.equal(reads, 1)
     assert.equal(cache.state("instance", secondSession).snapshot?.controls[0]?.id, "shared")
+  })
+
+  it("adopts the canonical service directory as an alias for WSL cache identity", async () => {
+    let reads = 0
+    const mutations: PluginControlLocation[] = []
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        reads += 1
+        return { ...snapshot("canonical"), location: serviceLocation }
+      },
+      setPluginActivation: async (_instanceId, payload) => {
+        mutations.push(payload.location)
+        return {
+          changed: true,
+          rule: `-${payload.pluginId}`,
+          reloadPending: true,
+          target: { scope: payload.scope, path: "/srv/repo/.opencode/opencode.jsonc", exists: true },
+          snapshot: { ...snapshot(payload.pluginId, "disabled"), location: serviceLocation },
+        }
+      },
+    })
+
+    await cache.load("instance", hostLocation)
+    await cache.load("instance", serviceLocation)
+    assert.equal(reads, 1)
+    assert.equal(cache.state("instance", hostLocation).snapshot?.controls[0]?.id, "canonical")
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "canonical")
+
+    cache.invalidateLocation("instance", serviceLocation)
+    assert.equal(cache.state("instance", hostLocation).stale, true)
+    await cache.mutate("instance", hostLocation, "canonical", "project", false)
+    assert.deepEqual(mutations, [serviceLocation])
+  })
+
+  it("keeps the first successful canonical response when host and service aliases race", async () => {
+    const hostResponse = deferred<PluginControlsSnapshot>()
+    const serviceResponse = deferred<PluginControlsSnapshot>()
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, location) => (
+        location.directory === hostLocation.directory ? hostResponse.promise : serviceResponse.promise
+      ),
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+
+    const hostLoad = cache.load("instance", hostLocation)
+    const serviceLoad = cache.load("instance", serviceLocation)
+    hostResponse.resolve({ ...snapshot("host-won"), location: serviceLocation })
+    await hostLoad
+
+    assert.equal(cache.state("instance", hostLocation).snapshot?.controls[0]?.id, "host-won")
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "host-won")
+
+    serviceResponse.reject(new Error("late alias failure"))
+    await serviceLoad
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "host-won")
+    assert.equal(cache.state("instance", serviceLocation).error, undefined)
+  })
+
+  it("retains canonical invalidations that arrive before a WSL alias is learned", async () => {
+    const stale = deferred<PluginControlsSnapshot>()
+    const fresh = deferred<PluginControlsSnapshot>()
+    let reads = 0
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => (reads++ === 0 ? stale.promise : fresh.promise),
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+
+    const pending = cache.load("instance", hostLocation)
+    cache.invalidateLocation("instance", serviceLocation)
+    assert.equal(cache.load("instance", hostLocation), pending, "visible demand shares the in-flight read")
+    stale.resolve({ ...snapshot("stale"), location: serviceLocation })
+    await pending
+    await tick()
+
+    assert.equal(cache.state("instance", hostLocation).snapshot, undefined)
+    assert.equal(reads, 2)
+    fresh.resolve({ ...snapshot("fresh"), location: serviceLocation })
+    await tick()
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "fresh")
+  })
+
+  it("matches nothing when an event names a directory that was never loaded", async () => {
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, location) => {
+        reads += 1
+        return { ...snapshot(location.directory), location }
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const first = { directory: "/repo/one" }
+    const second = { directory: "/repo/two" }
+    const firstLoad = cache.load("instance", first)
+    const secondLoad = cache.load("instance", second)
+
+    cache.invalidateLocation("instance", { directory: "/repo/three" })
+    await Promise.all([firstLoad, secondLoad])
+    await tick()
+
+    assert.equal(cache.state("instance", first).stale, false)
+    assert.equal(cache.state("instance", second).stale, false)
+    assert.equal(cache.state("instance", first).snapshot?.controls[0]?.id, "/repo/one")
+    assert.equal(cache.state("instance", second).snapshot?.controls[0]?.id, "/repo/two")
+    assert.equal(reads, 2)
+  })
+
+  it("consumes a pending canonical invalidation on mutation without an extra refresh", async () => {
+    const stale = deferred<PluginControlsSnapshot>()
+    const fresh = deferred<PluginControlsSnapshot>()
+    let reads = 0
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => (reads++ === 0 ? stale.promise : fresh.promise),
+      setPluginActivation: async (_instanceId, payload) => ({
+        changed: true,
+        rule: `-${payload.pluginId}`,
+        reloadPending: true,
+        target: { scope: payload.scope, path: "/srv/repo/.opencode/opencode.jsonc", exists: true },
+        snapshot: { ...snapshot("mutated", "disabled"), location: serviceLocation },
+      }),
+    })
+
+    const pending = cache.load("instance", hostLocation)
+    cache.invalidateLocation("instance", serviceLocation)
+    stale.resolve({ ...snapshot("stale"), location: serviceLocation })
+    await pending
+    await tick()
+    assert.equal(reads, 2)
+
+    fresh.resolve({ ...snapshot("fresh"), location: serviceLocation })
+    await tick()
+    await cache.mutate("instance", hostLocation, "fresh", "project", false)
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "mutated")
+
+    // The mutation superseded the pre-alias event; a later passive load must
+    // not discard the durable mutation snapshot.
+    const readsBefore = reads
+    await cache.load("instance", serviceLocation)
+    await tick()
+    assert.equal(reads, readsBefore)
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "mutated")
   })
 
   it("invalidates only the event worktree", async () => {
@@ -243,7 +391,7 @@ function snapshot(id: string, effective: "default" | "enabled" | "disabled" = "d
     location: { directory: "/repo" },
     runtime: [],
     configured: { rules: [], sources: [] },
-    controls: [{ id, effective, global: "default", project: effective }],
+    controls: [{ id, builtin: false, effective, global: "default", project: effective }],
     targets: [
       { scope: "global", path: "/global/opencode.jsonc", exists: true },
       { scope: "project", path: "/repo/.opencode/opencode.jsonc", exists: true },

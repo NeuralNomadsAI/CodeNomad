@@ -17,9 +17,10 @@ export interface PluginControlsState {
 }
 
 interface CacheRecord {
-  readonly key: string
+  readonly keys: Set<string>
   readonly instanceId: string
   location: PluginControlLocation
+  canonicalLocation: boolean
   generation: number
   snapshot?: PluginControlsSnapshot
   loading: boolean
@@ -40,6 +41,7 @@ const EMPTY_STATE: PluginControlsState = { loading: false, refreshing: false, st
 
 export class PluginControlsCache {
   private readonly records = new Map<string, CacheRecord>()
+  private readonly pendingUnknownInvalidations = new Set<string>()
   private readonly stateSignal = createSignal<Map<string, PluginControlsState>>(new Map())
   readonly states = this.stateSignal[0]
   private readonly setStates = this.stateSignal[1]
@@ -65,11 +67,16 @@ export class PluginControlsCache {
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
     const mutate = async () => {
-      if (this.records.get(record.key) !== record) {
+      if (!this.isActive(record)) {
         throw new Error("Plugin control location is no longer active")
       }
-      const response = await this.api.setPluginActivation(instanceId, { location, pluginId, scope, enabled })
-      if (this.records.get(record.key) !== record) return response
+      const response = await this.api.setPluginActivation(instanceId, {
+        location: record.location,
+        pluginId,
+        scope,
+        enabled,
+      })
+      if (!this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
       // Fence any passive read that started before the mutation became durable.
       record.generation += 1
       record.snapshot = response.snapshot
@@ -98,17 +105,35 @@ export class PluginControlsCache {
   }
 
   private invalidate(instanceId: string, location?: PluginControlLocation): void {
-    const locationKey = location ? cacheKey(instanceId, location) : undefined
-    for (const record of this.records.values()) {
-      if (record.instanceId !== instanceId || (locationKey && record.key !== locationKey)) continue
-      record.generation += 1
-      record.stale = true
-      this.publish(record)
+    if (!location) {
+      for (const record of new Set(this.records.values())) {
+        if (record.instanceId !== instanceId) continue
+        record.generation += 1
+        record.stale = true
+        this.publish(record)
+      }
+      return
     }
+    const key = cacheKey(instanceId, location)
+    const target = this.records.get(key)
+    if (!target) {
+      // Unknown directories match nothing immediately. Remember the canonical
+      // key so a WSL alias learned later can still fence its first snapshot.
+      this.pendingUnknownInvalidations.add(key)
+      while (this.pendingUnknownInvalidations.size > 200) {
+        const oldest = this.pendingUnknownInvalidations.values().next().value
+        if (oldest === undefined) break
+        this.pendingUnknownInvalidations.delete(oldest)
+      }
+      return
+    }
+    target.generation += 1
+    target.stale = true
+    this.publish(target)
   }
 
   private invalidateSiblingLocations(current: CacheRecord): void {
-    for (const record of this.records.values()) {
+    for (const record of new Set(this.records.values())) {
       if (record === current || record.instanceId !== current.instanceId) continue
       record.generation += 1
       record.stale = true
@@ -118,11 +143,16 @@ export class PluginControlsCache {
 
   clearInstance(instanceId: string): void {
     let changed = false
-    for (const [key, record] of this.records) {
+    for (const record of new Set(this.records.values())) {
       if (record.instanceId !== instanceId) continue
       record.generation += 1
-      this.records.delete(key)
+      for (const key of record.keys) {
+        if (this.records.get(key) === record) this.records.delete(key)
+      }
       changed = true
+    }
+    for (const key of [...this.pendingUnknownInvalidations]) {
+      if (key.startsWith(`${JSON.stringify(instanceId)}:`)) this.pendingUnknownInvalidations.delete(key)
     }
     if (!changed) return
     this.setStates((previous) => {
@@ -138,13 +168,14 @@ export class PluginControlsCache {
     const key = cacheKey(instanceId, location)
     const existing = this.records.get(key)
     if (existing) {
-      existing.location = { ...location }
+      if (!existing.canonicalLocation) existing.location = { ...location }
       return existing
     }
     const record: CacheRecord = {
-      key,
+      keys: new Set([key]),
       instanceId,
       location: { ...location },
+      canonicalLocation: false,
       generation: 0,
       loading: false,
       refreshing: false,
@@ -169,16 +200,17 @@ export class PluginControlsCache {
     this.publish(record)
     const promise = this.api.getPluginControls(record.instanceId, record.location)
       .then((snapshot) => {
-        if (this.records.get(record.key) !== record || generation !== record.generation) return
+        if (!this.isActive(record) || generation !== record.generation) return
+        if (!this.adoptCanonicalLocation(record, snapshot.location)) return
         record.snapshot = snapshot
         record.error = undefined
       })
       .catch((error) => {
-        if (this.records.get(record.key) !== record || generation !== record.generation) return
+        if (!this.isActive(record) || generation !== record.generation) return
         record.error = error
       })
       .finally(() => {
-        if (this.records.get(record.key) !== record || record.inFlight !== promise) return
+        if (!this.isActive(record) || record.inFlight !== promise) return
         record.inFlight = undefined
         record.loading = false
         record.refreshing = false
@@ -195,7 +227,7 @@ export class PluginControlsCache {
   }
 
   private publish(record: CacheRecord): void {
-    if (this.records.get(record.key) !== record) return
+    if (!this.isActive(record)) return
     const state: PluginControlsState = {
       snapshot: record.snapshot,
       loading: record.loading,
@@ -205,9 +237,59 @@ export class PluginControlsCache {
     }
     this.setStates((previous) => {
       const next = new Map(previous)
-      next.set(record.key, state)
+      for (const key of record.keys) {
+        if (this.records.get(key) === record) next.set(key, state)
+      }
       return next
     })
+  }
+
+  private isActive(record: CacheRecord): boolean {
+    return [...record.keys].some((key) => this.records.get(key) === record)
+  }
+
+  private adoptCanonicalLocation(
+    record: CacheRecord,
+    location: PluginControlLocation,
+    preferIncoming = false,
+  ): boolean {
+    const canonicalKey = cacheKey(record.instanceId, location)
+    const existing = this.records.get(canonicalKey)
+    if (existing && existing !== record) {
+      if (preferIncoming || !existing.snapshot) {
+        existing.generation += 1
+        for (const key of existing.keys) {
+          if (this.records.get(key) !== existing) continue
+          this.records.set(key, record)
+          record.keys.add(key)
+        }
+      } else {
+        record.generation += 1
+        for (const key of record.keys) {
+          if (this.records.get(key) !== record) continue
+          this.records.set(key, existing)
+          existing.keys.add(key)
+        }
+        this.publish(existing)
+        return false
+      }
+    }
+    this.records.set(canonicalKey, record)
+    record.keys.add(canonicalKey)
+    record.location = { ...location }
+    record.canonicalLocation = true
+    if (this.pendingUnknownInvalidations.delete(canonicalKey)) {
+      if (preferIncoming) return true
+      // A canonical event arrived before the WSL alias was learned. Discard
+      // this stale snapshot and schedule a trailing refresh instead of
+      // publishing pre-event data as current.
+      record.generation += 1
+      record.stale = true
+      record.trailing = true
+      this.publish(record)
+      return false
+    }
+    return true
   }
 }
 
