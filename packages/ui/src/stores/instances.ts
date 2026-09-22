@@ -905,11 +905,11 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Session hydration can outlive a failed forced worktree read. Observe the
   // rejection immediately while retaining it for metadata-dependent callers.
   void workspaceMetadata.catch((error) => log.warn("Failed to hydrate workspace metadata", { instanceId, error }))
-  // Publish the root directory page without waiting for checkout discovery.
+  // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
-  const sessions = projectMetadata.then(async () => {
+  const sessions = Promise.resolve().then(async () => {
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })

@@ -133,7 +133,9 @@ async function restoreTabs(context: RestoreContext): Promise<void> {
       if (!isCurrentBinding()) return
       // Once its tab is bound, a usable workspace survives transient session
       // errors/timeouts. Creation rollback no longer owns this project.
-      if (requestId) await releaseRestoreCreatedInstance(id, requestId)
+      if (requestId) void releaseRestoreCreatedInstance(id, requestId).catch((error) => {
+        log.warn("Failed to release restored workspace creation ownership", { instanceId: id, error })
+      })
       await runAbortable(async (operationSignal) => {
           if (!isCurrentBinding()) return
           // Restore the exact saved session before the potentially expensive
