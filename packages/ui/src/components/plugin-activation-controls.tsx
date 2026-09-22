@@ -178,7 +178,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
 
 function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {
   const scoped = control[scope]
-  return scoped === "default" ? control.effective !== "disabled" : scoped === "enabled"
+  if (scoped !== "default") return scoped === "enabled"
+  return scope === "project" ? scopeChecked(control, "global") : true
 }
 
 function errorMessageKey(error: unknown): string {

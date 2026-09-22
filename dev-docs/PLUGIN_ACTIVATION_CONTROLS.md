@@ -42,6 +42,11 @@ is absent from `plugin.list`, so it can be re-enabled. A plugin hidden only by a
 broad wildcard cannot be named safely unless the runtime or an exact configured
 rule reveals its ID.
 
+A scope without an explicit matching rule inherits predictably in the compact
+switch UI: Global uses OpenCode's enabled baseline, while Project inherits the
+resolved Global state. A Project override therefore never changes the displayed
+Global switch, even though it controls the plugin's final effective state.
+
 Display snapshots are keyed by workspace instance and worktree directory, not
 by session workspace identifiers. Changing sessions inside one worktree reuses
 the same snapshot. The UI requests the first snapshot only while the Plugins

@@ -50,6 +50,19 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.equal(await page.getByText("opencode.provider.demo", { exact: true }).count(), 0)
   assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').first().isDisabled(), false)
 
+  const inherited = page.locator('[data-plugin-id="broken.plugin"]')
+  const inheritedGlobal = inherited.locator('[data-scope="global"] input[type="checkbox"]')
+  const inheritedProject = inherited.locator('[data-scope="project"] input[type="checkbox"]')
+  assert.equal(await inheritedGlobal.isChecked(), true)
+  assert.equal(await inheritedProject.isChecked(), true)
+  await inheritedProject.click()
+  await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => (
+    call.type === "mutation" && call.pluginId === "broken.plugin"
+      && call.scope === "project" && call.enabled === false
+  )))
+  assert.equal(await inheritedGlobal.isChecked(), true, "a Project override must not change the Global switch")
+  assert.equal(await inheritedProject.isChecked(), false)
+
   const sleeping = page.locator('[data-plugin-id="sleeping.plugin"]')
   const globalToggle = sleeping.locator('[data-scope="global"] input[type="checkbox"]')
   const projectToggle = sleeping.locator('[data-scope="project"] input[type="checkbox"]')

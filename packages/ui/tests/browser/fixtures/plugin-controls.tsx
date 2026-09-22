@@ -50,7 +50,7 @@ let snapshot: PluginControlsSnapshot = {
   },
   controls: [
     { id: active.id, runtime: active, effective: "enabled", global: "enabled", project: "default" },
-    { id: failed.id, runtime: failed, effective: "enabled", global: "enabled", project: "default" },
+    { id: failed.id, runtime: failed, effective: "default", global: "default", project: "default" },
     { id: builtin.id, runtime: builtin, effective: "enabled", global: "enabled", project: "default" },
     {
       id: "sleeping.plugin",
