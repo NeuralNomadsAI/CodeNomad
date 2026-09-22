@@ -13,8 +13,8 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
   let app: ElectronApplication | undefined
   try {
     const module = join(sandbox, "menu.cjs")
-    await build({ entryPoints: [fileURLToPath(new URL("../../../electron-app/electron/main/menu.ts", import.meta.url))],
-      outfile: module, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
+    await build({ entryPoints: ["menu", "menu-target"].map(name => fileURLToPath(new URL(`../../../electron-app/electron/main/${name}.ts`, import.meta.url))),
+      outdir: sandbox, outExtension: { ".js": ".cjs" }, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(sandbox, "profile"), CODENOMAD_TEST_MENU_MODULE: module }
     delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({ timeout: 15000, executablePath: process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron"),
@@ -31,9 +31,12 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     assert.ok(native.every((item: any) => item.checked))
     assert.equal(native[3].enabled, false)
     await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.beforeMenu = f.menu() })
+    await app.evaluate(() => (globalThis as any).menuFixture.blur())
     await app.evaluate((_electron, state) => (globalThis as any).menuFixture.set(0, state), makeState("fr", false))
     assert.equal(await app.evaluate(() => { const f = (globalThis as any).menuFixture; return f.beforeMenu === f.menu() }), true, "checkbox-only updates do not replace an open menu")
     assert.ok((await read()).every((item: any) => !item.checked))
+    assert.ok((await read()).slice(0, 3).every((item: any) => item.enabled), "native focus gap must not disable unrelated View controls")
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.workspaceEnabled()), [true, true, true], "File commands use the same retained target")
     await app.evaluate((_electron, state) => (globalThis as any).menuFixture.set(1, state), makeState("en"))
     assert.equal((await read())[0].label, "fr-leftPanel", "background renderer cannot change focused labels")
     await app.evaluate(() => (globalThis as any).menuFixture.focus(1))
@@ -45,6 +48,7 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     assert.deepEqual(delivery.actions, [[delivery.id, "menu:action", "view-right-panel"]])
     await app.evaluate(() => (globalThis as any).menuFixture.focus(null))
     assert.ok((await read()).every((item: any) => !item.enabled))
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.workspaceEnabled()), [false, false, false], "a focused non-local window must not target the background local window")
     await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.focus(0); f.clear(0) })
     assert.ok((await read()).every((item: any) => !item.enabled && !item.checked))
   } finally {

@@ -1,17 +1,17 @@
 use serde::Deserialize;
 use tauri::{
     menu::{CheckMenuItem, Submenu},
-    AppHandle, Manager, Wry,
+    AppHandle, Wry,
 };
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub(crate) struct ItemState {
     label: String,
     checked: bool,
     enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ViewMenuState {
     left_panel: ItemState,
@@ -63,13 +63,7 @@ pub(crate) fn append(app: &AppHandle, menu: &Submenu<Wry>) -> tauri::Result<()> 
     Ok(())
 }
 
-pub(crate) fn update(app: &AppHandle) {
-    let state = crate::local_windows::focused_window(app)
-        .and_then(|window| {
-            app.state::<crate::local_windows::LocalWindows>()
-                .record(window.label())
-        })
-        .and_then(|record| record.view_menu_state);
+pub(crate) fn update(app: &AppHandle, state: Option<&ViewMenuState>) {
     let Some(menu) = app.menu() else { return };
     let Some(view) = menu.get("menu-view") else {
         return;
@@ -82,7 +76,7 @@ pub(crate) fn update(app: &AppHandle) {
         let Some(item) = item.as_check_menuitem() else {
             continue;
         };
-        let value = state.as_ref().map(|state| state.items()[index]);
+        let value = state.map(|state| state.items()[index]);
         if let Some(value) = value {
             let _ = item.set_text(&value.label);
         }
