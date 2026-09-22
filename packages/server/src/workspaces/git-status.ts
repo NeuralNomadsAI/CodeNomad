@@ -1,10 +1,10 @@
-import { spawn } from "child_process"
 import { readFile, realpath } from "fs/promises"
 import path from "path"
 
 import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, WorktreeGitStatusEntry } from "../api-types"
 import type { LogLike } from "./git-worktrees"
 import { normalizeGitWorktreeRelativePath } from "./git-mutations"
+import { runGitProcess } from "./git-process"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
@@ -24,30 +24,19 @@ async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingO
   return result.stdout
 }
 
-function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
-    let stdout = ""
-    let stderr = ""
-
-    child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString()
-    })
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString()
-    })
-    child.once("error", (error) => {
-      resolve({ ok: false, error, stdout, stderr })
-    })
-    child.once("close", (code) => {
-      if (acceptedExitCodes.includes(code ?? 0)) {
-        resolve({ ok: true, stdout })
-      } else {
-        const error = new Error(stderr.trim() || `git ${args.join(" ")} failed with code ${code}`)
-        resolve({ ok: false, error, stdout, stderr })
-      }
-    })
-  })
+async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
+  try {
+    // Preserve the previous streaming reader's unrestricted content size. Process
+    // creation belongs to the worker, including per-untracked-file numstat reads.
+    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity }) }
+  } catch (cause) {
+    const result = cause as Error & { code?: string | number; stdout?: string; stderr?: string }
+    const stdout = result.stdout ?? "", stderr = result.stderr ?? ""
+    if (typeof result.code === "number" && acceptedExitCodes.includes(result.code)) return { ok: true, stdout }
+    const error = typeof result.code === "number"
+      ? new Error(stderr.trim() || `git ${args.join(" ")} failed with code ${result.code}`) : result
+    return { ok: false, error, stdout, stderr }
+  }
 }
 
 function ensureEntry(map: Map<string, WorktreeGitStatusEntry>, path: string): WorktreeGitStatusEntry {

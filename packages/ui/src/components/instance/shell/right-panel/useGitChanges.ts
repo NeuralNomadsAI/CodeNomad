@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
@@ -9,8 +9,10 @@ import { serverApi } from "../../../../lib/api-client"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
+import { backgroundReads } from "../../../../lib/background-read-queue"
 
 type UseGitChangesOptions = {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
   instanceId: string
   rightPanelTab: Accessor<RightPanelTab>
@@ -35,12 +37,24 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
   let gitStatusRequestVersion = 0
   let gitDiffRequestVersion = 0
-  let passiveGitRefreshInFlight = false
+  let passiveGitRefresh: object | null = null
+  let statusController: AbortController | undefined
+  let diffController: AbortController | undefined
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let previousGitChangesActivationKey: string | null = null
   let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+  const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
+  const cancelGitReads = () => {
+    gitStatusRequestVersion += 1
+    gitDiffRequestVersion += 1
+    statusController?.abort()
+    diffController?.abort()
+    passiveGitRefresh = null
+    pendingGitPassiveRefreshOptions = null
+  }
+  onCleanup(cancelGitReads)
 
   const gitLocation = (slug: string) => {
     const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
@@ -176,11 +190,20 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const slug = options.worktreeSlug()
     const client = getRootClient(options.instanceId)
     const requestVersion = ++gitStatusRequestVersion
+    statusController?.abort()
+    const controller = statusController = new AbortController()
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const sdkStatusPromise = client.vcs.status({ location: gitLocation(slug) }).then((result) => result.data)
-      const detailList = await serverApi.fetchWorktreeGitStatus(options.instanceId, slug)
+      const location = gitLocation(slug)
+      const sdkStatusPromise = backgroundReads.run(controller.signal, () =>
+        client.vcs.status({ location }).then((result) => result.data),
+        "visible",
+      ).catch(() => null)
+      const detailList = await backgroundReads.run(controller.signal, () =>
+        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal),
+        "visible",
+      )
       if (requestVersion !== gitStatusRequestVersion) return
       if (slug !== options.worktreeSlug()) return
 
@@ -206,6 +229,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
   async function openGitFile(itemId: string) {
     const requestVersion = ++gitDiffRequestVersion
+    diffController?.abort()
+    const controller = diffController = new AbortController()
     setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
     clearSelectedGitDiff()
@@ -222,11 +247,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
 
     try {
-      const diff = await serverApi.fetchWorktreeGitDiff(options.instanceId, options.worktreeSlug(), {
+      const slug = options.worktreeSlug()
+      const diff = await backgroundReads.run(controller.signal, () => serverApi.fetchWorktreeGitDiff(options.instanceId, slug, {
         path: item.path,
         originalPath: item.originalPath ?? null,
         scope: item.section,
-      })
+      }, controller.signal), "visible")
       if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
         setGitSelectedError(options.t("instanceShell.gitChanges.binaryViewer"))
@@ -244,8 +270,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const passiveRefreshGitStatus = async (optionsArg?: { forceReloadSelectedDiff?: boolean }) => {
-    if (options.rightPanelTab() !== "git-changes") return
-    if (passiveGitRefreshInFlight) {
+    if (!gitActive()) return
+    if (passiveGitRefresh) {
       pendingGitPassiveRefreshOptions = {
         forceReloadSelectedDiff:
           pendingGitPassiveRefreshOptions?.forceReloadSelectedDiff || optionsArg?.forceReloadSelectedDiff || false,
@@ -254,7 +280,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
     if (gitCommitSubmitting()) return
 
-    passiveGitRefreshInFlight = true
+    const refresh = passiveGitRefresh = {}
     const refreshSelectionId = gitSelectedItemId()
     const previousSelection = describeGitSelection(gitSelectedItemId())
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
@@ -264,6 +290,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
     try {
       await loadGitStatus(true)
+      if (passiveGitRefresh !== refresh || !gitActive()) return
       if (gitSelectedItemId() !== refreshSelectionId) return
       const nextSelection = resolveValidGitSelection(previousSelection)
       setGitSelectedItemId(nextSelection)
@@ -284,7 +311,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
         await openGitFile(nextSelection)
       }
     } finally {
-      passiveGitRefreshInFlight = false
+      if (passiveGitRefresh !== refresh) return
+      passiveGitRefresh = null
       if (pendingGitPassiveRefreshOptions) {
         const nextOptions = pendingGitPassiveRefreshOptions
         pendingGitPassiveRefreshOptions = null
@@ -392,12 +420,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     options.promptInputApi()?.insertComment(`Git Diff: File: ${item.path} : ${startLine}-${endLine}`)
   }
 
-  createEffect(() => {
-    options.worktreeSlug()
-    gitStatusRequestVersion += 1
-    gitDiffRequestVersion += 1
-    passiveGitRefreshInFlight = false
-    pendingGitPassiveRefreshOptions = null
+  createEffect(on(options.worktreeSlug, () => {
+    cancelGitReads()
     setGitStatusEntries(null)
     setGitStatusError(null)
     setGitStatusLoading(false)
@@ -407,10 +431,10 @@ export function useGitChanges(options: UseGitChangesOptions) {
     clearSelectedGitDiff()
     setGitCommitMessage("")
     setGitCommitSubmitting(false)
-  })
+  }))
 
   createEffect(() => {
-    if (options.rightPanelTab() !== "git-changes") return
+    if (!gitActive()) return
     const items = gitListItems()
     if (gitStatusEntries() === null) return
     if (items.length === 0) return
@@ -420,23 +444,25 @@ export function useGitChanges(options: UseGitChangesOptions) {
     void openGitFile(next)
   })
 
-  createEffect(() => {
-    const activationKey = options.rightPanelTab() === "git-changes" ? `${options.instanceId}:${options.worktreeSlug()}` : null
+  createEffect(on(() => gitActive() ? `${options.instanceId}:${options.worktreeSlug()}` : null, (activationKey) => {
     if (!activationKey) {
       previousGitChangesActivationKey = null
+      cancelGitReads()
+      setGitStatusLoading(false)
+      setGitSelectedLoading(false)
       return
     }
     if (previousGitChangesActivationKey === activationKey) return
     previousGitChangesActivationKey = activationKey
     void passiveRefreshGitStatus()
-  })
+  }))
 
   const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {
     const version = filesystemInvalidationVersion(options.instanceId)
     if (version === seenFilesystemInvalidation) return
     seenFilesystemInvalidation = version
-    if (options.rightPanelTab() === "git-changes") filesystemRefresh.trigger()
+    if (gitActive()) filesystemRefresh.trigger()
     else setGitStatusEntries(null)
   })
   onCleanup(() => filesystemRefresh.cancel())

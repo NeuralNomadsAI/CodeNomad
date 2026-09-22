@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "foreground", "foreground-user", "foreground-existing"] as const) {
+for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "foreground", "foreground-user", "foreground-existing", "foreground-git"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {
   const page = await browser.newPage()
@@ -83,6 +83,7 @@ test(`${host} restores the active project and saved session identity before hydr
         projects.push(body)
       } else body = projects
     } else if (foreground && (path.endsWith("/creation/release") || path.endsWith("/worktrees")
+      || path.endsWith("/git-status") || path.endsWith("/vcs/status")
       || (mode === "foreground-existing" && path.endsWith("/api/session"))
       || /\/api\/(location|agent|provider|model|command|shell|session\/active)$/.test(path))) {
       blocked.push(path)
@@ -108,7 +109,7 @@ test(`${host} restores the active project and saved session identity before hydr
     await route.fulfill({ json: body })
   })
   try {
-    await page.goto(`${url}${foreground ? "?foreground" : ""}`)
+    await page.goto(`${url}${foreground ? `?${mode}` : ""}`)
     const selected = page.getByRole("tab", { name: "D:/second", exact: true })
     await selected.waitFor()
     assert.equal(await selected.getAttribute("aria-selected"), "true", "project selection must not wait for its conversation requests")

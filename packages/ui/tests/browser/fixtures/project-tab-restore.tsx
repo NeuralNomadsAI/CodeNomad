@@ -11,6 +11,15 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { useGitChanges } from "../../../src/components/instance/shell/right-panel/useGitChanges"
+
+function GitPanel(props: { instanceId: string }) {
+  const git = useGitChanges({ instanceId: props.instanceId, t: key => key,
+    isActive: () => activeInstanceId() === props.instanceId, rightPanelTab: () => "git-changes",
+    worktreeSlug: () => "root", isPhoneLayout: () => false, promptInputApi: () => null, closeGitList() {},
+  })
+  return <span data-git-loading={git.gitStatusLoading()} />
+}
 
 const SessionView = location.search.includes("foreground")
   ? (await import("../../../src/components/session/session-view")).default : undefined
@@ -31,7 +40,9 @@ function Fixture() {
       aria-selected={activeAppTabId() === tab.id}
       data-session-selection={tab.kind === "instance" ? activeSessionId().get(tab.instance.id) : undefined}
       onClick={() => selectAppTab(tab.id)}
-    >{tab.kind === "instance" ? tab.instance.folder : tab.sidecarTab.sidecarId}</button>}</For>
+     >{tab.kind === "instance" ? tab.instance.folder : tab.sidecarTab.sidecarId}
+       {location.search.includes("git") && tab.kind === "instance" ? <GitPanel instanceId={tab.instance.id} /> : null}
+     </button>}</For>
     <Show when={SessionView}>{View => <ConfigProvider><I18nProvider><ThemeProvider>
       <Show keyed when={activeInstanceId()}>{id => <Show when={sessions().get(id)?.has("saved-session")}>
         {View()({ instanceId: id, instanceFolder: `D:/${id}`, sessionId: "saved-session",

@@ -806,6 +806,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
           <RightPanel
+            isActive={() => props.isActiveInstance !== false}
             t={t}
             instanceId={props.instance.id}
             instance={props.instance}
@@ -834,6 +835,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
       >
         <RightPanel
+          isActive={() => props.isActiveInstance !== false && rightOpen()}
           t={t}
           instanceId={props.instance.id}
           instance={props.instance}

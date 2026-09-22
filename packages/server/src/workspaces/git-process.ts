@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads"
 
-interface GitRequest { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv; timeout?: number }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number }
+interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
 // Even asynchronous execFile spends synchronous time creating a Windows process.
@@ -16,7 +17,7 @@ function workerMain() {
       const request = queue.shift()!
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
-        encoding: "utf8", windowsHide: true, maxBuffer: 1024 * 1024,
+        encoding: "utf8", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
         env: request.env, timeout: request.timeout,
       }, (error, stdout, stderr) => {
         parentPort!.postMessage({ id: request.id, stdout, stderr,
@@ -53,7 +54,7 @@ function getWorker(): Worker {
     if (response.error) task.reject(Object.assign(new Error(response.error.message), {
       code: response.error.code, stdout: response.stdout, stderr: response.stderr,
     }))
-    else task.resolve(response.stdout.replace(/\r?\n$/, ""))
+    else task.resolve(response.stdout)
     if (pending.size === 0) created.unref()
   })
   created.unref()
@@ -61,13 +62,18 @@ function getWorker(): Worker {
 }
 
 export function runWorktreeGit(directory: string, args: string[], timeout?: number): Promise<string> {
+  return runGitProcess(directory, args, { timeout }).then(stdout => stdout.replace(/\r?\n$/, ""))
+}
+
+// Content/diff readers need exact bytes decoded as UTF-8, including the final newline.
+export function runGitProcess(directory: string, args: string[], options: GitProcessOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const current = getWorker()
     const id = ++sequence
     pending.set(id, { resolve, reject })
     current.ref()
     try {
-      current.postMessage({ id, directory, args, env: { ...process.env }, timeout } satisfies GitRequest)
+      current.postMessage({ id, directory, args, env: { ...process.env }, ...options } satisfies GitRequest)
     } catch (error) {
       pending.delete(id)
       if (pending.size === 0) current.unref()
