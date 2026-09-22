@@ -1,5 +1,5 @@
 import type { Preferences, VisibilityPreference } from "../stores/preferences"
-import { getConfigurableToolEntries, OTHER_TOOL_NAME, resolveToolVisibility, THINKING_EXPANSION_PRESETS } from "./tool-call/tool-presentation"
+import { getConfigurableToolEntries, getRegisteredToolEntries, OTHER_TOOL_NAME, resolveToolVisibility, THINKING_EXPANSION_PRESETS } from "./tool-call/tool-presentation"
 
 export type TranscriptVisibilityRow =
   | { kind: "thinking"; key: "thinking"; label: string }
@@ -48,8 +48,9 @@ export function transcriptVisibilityPatch(current: Preferences, row: TranscriptV
     showUsageMetrics: mode !== "hidden",
     usageMetricsExpansion: mode === "hidden" ? current.usageMetricsExpansion : mode,
   }
-  // Preserve every effective preset value before switching to per-type overrides.
-  const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+  // Preserve every effective preset value before switching to per-type overrides,
+  // including tools that are registered but no longer shown in the settings list.
+  const tools = Object.fromEntries(getRegisteredToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
   if (row.kind === "tool") tools[row.key] = mode
   const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : thinkingExpansion(current)
   return {

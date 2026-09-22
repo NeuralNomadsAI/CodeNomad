@@ -172,6 +172,38 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("forwards side generation for an owned busy session without mutating its environment", async () => {
+    const { app, manager, sessionGets, requestCount } = await harness("/repo/worktree", { owned: { type: "running" } })
+    manager.getSessionEnvironment = async () => { throw new Error("Side generation must not replace the session environment") }
+    const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/generate",
+      payload: { prompt: "Explain the current approach" } })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(sessionGets, ["owned"])
+    assert.deepEqual(response.json().body, { prompt: "Explain the current approach" })
+    assert.equal(response.json().url, "/api/session/owned/generate")
+    assert.equal(requestCount(), 1)
+    // Only the reviewed session-scoped route is opened, never generic generation.
+    const generic = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/generate", payload: { prompt: "test" } })
+    assert.equal(generic.statusCode, 403)
+    assert.equal(requestCount(), 1)
+  })
+
+  it("rejects side generation for a foreign session and during worktree deletion", async () => {
+    const { app, requestCount, worktreeDeletionFence } = await harness("/repo/worktree", {}, { foreign: "/other" })
+    const foreign = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/foreign/generate", payload: { prompt: "test" } })
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(requestCount(), 0)
+    let release!: () => void
+    const deletion = worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], () => (
+      new Promise<void>(resolve => { release = resolve })
+    ))
+    try {
+      const deleting = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/generate", payload: { prompt: "test" } })
+      assert.equal(deleting.statusCode, 409)
+      assert.equal(requestCount(), 0)
+    } finally { release(); await deletion }
+  })
+
   it("authorizes transcript reads without resolving the mutation checkout identity", async () => {
     const { app, manager, sessionGets } = await harness()
     manager.getWorktreeIdentityForPath = async () => { throw new Error("Unexpected Git mutation identity read") }

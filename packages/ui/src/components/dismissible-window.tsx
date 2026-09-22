@@ -12,6 +12,7 @@ export default function DismissibleWindow(props: {
   class: string
   inline?: boolean
   initialFocus?: () => HTMLElement | undefined
+  returnFocus?: () => HTMLElement | undefined
   onKeyDown?: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent>
   children: JSX.Element
 }) {
@@ -40,6 +41,11 @@ export default function DismissibleWindow(props: {
         // focus is left on the body or in the window being dismissed.
         const active = document.activeElement
         if (active && active !== document.body && !document.getElementById(props.id)?.contains(active)) return
+        const returnTarget = props.returnFocus?.()
+        if (returnTarget?.getClientRects().length) {
+          returnTarget.focus({ preventScroll: true })
+          return
+        }
         const trigger = Array.from(document.querySelectorAll<HTMLElement>("[aria-controls]"))
           .find(element => element.getAttribute("aria-controls") === props.id && element.getClientRects().length > 0)
         trigger?.focus({ preventScroll: true })

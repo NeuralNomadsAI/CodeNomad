@@ -5,6 +5,12 @@ import type { HistoryScope } from "./history-store"
 import type { OutlineCheckpoint, OutlineEntry, OutlineResult } from "./navigation-contract"
 import { ownedSession } from "./navigation-scope"
 
+function boundedToolName(value: unknown): string {
+  if (typeof value !== "string") return ""
+  const truncated = value.slice(0, 256)
+  return /[\uD800-\uDBFF]$/.test(truncated) ? truncated.slice(0, -1) : truncated
+}
+
 // Checkpoint boundaries survive deletion: removing an early row must not shift
 // every later chunk. Only changed chunks need technical-part JSON projection.
 export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
@@ -27,6 +33,11 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const project = db.prepare(`SELECT id,type,seq,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool') ELSE 0 END AS tools,
+      CASE WHEN type='assistant' THEN coalesce((SELECT substr(CASE
+          WHEN json_type(value,'$.name')='text' THEN json_extract(value,'$.name')
+          WHEN json_type(value,'$.tool')='text' THEN json_extract(value,'$.tool') END,1,256)
+        FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool'
+        AND (json_type(value,'$.name')='text' OR json_type(value,'$.tool')='text') LIMIT 1),'') ELSE '' END AS tool_name,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
@@ -48,8 +59,10 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
         || chunkEnd >= maximum
       if (changed) {
         for (const row of project.iterate(...params, after, chunkEnd)) {
+          const tools = Number(row.tools)
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
-            tools: Number(row.tools), reasoning: Number(row.reasoning) })
+            tools, reasoning: Number(row.reasoning),
+            ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}) })
           if (entries.length % 128 === 0) await yieldTurn(undefined, { signal })
         }
       }

@@ -176,6 +176,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-aside-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   tests:
     needs: authorize
@@ -226,7 +228,9 @@ jobs:
       - name: Test Electron client state
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh
-        run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
+        run: |
+          npm run test:native --workspace @neuralnomads/codenomad-electron-app
+          node --import tsx --test packages/electron-app/electron/main/view-menu.test.ts
 
       - name: Test changed runnable UI behavior
         run: >-
@@ -234,12 +238,15 @@ jobs:
           packages/ui/src/components/browser-frame-security.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
+          packages/ui/src/components/session-outline-projection.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
           packages/ui/src/components/prompt-input/height-state.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
+          packages/ui/src/components/tool-call/tool-presentation.test.ts
+          packages/ui/src/components/transcript-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/components/virtual-follow-measurements.test.ts
@@ -280,6 +287,7 @@ jobs:
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
+          packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-fork.test.ts
           packages/ui/src/stores/workspace-session-scope.test.ts
@@ -295,10 +303,17 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
+          packages/ui/src/components/tool-call/diff-payload.test.ts
+          packages/ui/src/components/tool-call/renderers/edit.test.ts
+          packages/ui/src/components/tool-call/renderers/task-title.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/sdk-manager.test.ts
+          packages/ui/src/lib/background-read-queue.test.ts
+          packages/ui/src/lib/prioritized-read.test.ts
+          packages/ui/src/stores/instance-startup-priority.test.ts
+          packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
@@ -312,7 +327,9 @@ jobs:
           packages/ui/src/stores/session-pruning-projection.test.ts
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
+          packages/ui/src/stores/session-usage-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts

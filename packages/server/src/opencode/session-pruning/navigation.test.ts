@@ -125,11 +125,19 @@ test("demand excerpts preserve Markdown, bound tool output and enforce ownership
   try {
     db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
       { type: "text", text: "**Rich** [link](https://example.org)\n\n" + "text ".repeat(2000) },
-      { type: "tool", name: "shell", state: { content: [{ type: "text", text: "output".repeat(2000) }] } },
+      { type: "tool", tool: "shell", state: { content: [{ type: "text", text: "output".repeat(2000) }] } },
     ] }), id(1))
     const index = await readSessionOutline(db, scope, undefined, signal())
     if (index.status !== "outline") assert.fail("Expected index")
     assert.equal(index.entries[1].tools, 1)
+    assert.equal(index.entries[1].toolName, "shell")
+    const unicodeName = "🔧".repeat(256)
+    db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
+      { type: "tool", name: unicodeName, state: {} },
+    ] }), id(2))
+    const unicodeIndex = await readSessionOutline(db, scope, undefined, signal())
+    if (unicodeIndex.status !== "outline") assert.fail("Expected Unicode index")
+    assert.equal(unicodeIndex.entries[2].toolName, "🔧".repeat(128), "tool metadata must satisfy its UTF-16 RPC bound")
     const previews = await readOutlinePreviews(db, scope, [id(1), "foreign"], signal())
     if (previews.status !== "previews") assert.fail("Expected previews")
     assert.equal(previews.entries.length, 1)
@@ -162,12 +170,14 @@ test("persisted checkpoints reconcile offline edits, pruning, deletions and appe
     assert.equal(delta.checkpoints.filter(checkpoint => !checkpoint.changed).length, 1)
     assert(!delta.entries.some(entry => entry.id === id(250)))
     assert.equal(delta.entries.find(entry => entry.id === id(260))?.tools, 1)
+    assert.equal(delta.entries.find(entry => entry.id === id(260))?.toolName, "read")
     // Pruning uses a conditional data update, without changing native timestamps.
     db.prepare("UPDATE session_message SET data=? WHERE id=?").run('{"content":[]}', id(260))
     const pruned = await readSessionOutline(db, scope, undefined, signal(), -1,
       delta.checkpoints.map(({ changed: _, ...checkpoint }) => checkpoint))
     if (pruned.status !== "outline") assert.fail("Expected prune delta")
     assert.equal(pruned.entries.find(entry => entry.id === id(260))?.tools, 0)
+    assert.equal(pruned.entries.find(entry => entry.id === id(260))?.toolName, undefined)
     assert.equal(db.isTransaction, false)
   } finally { db.close() }
 })

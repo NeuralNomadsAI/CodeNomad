@@ -11,7 +11,8 @@ import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktre
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
-import { instances, reconcilePendingSessionIndicators, waitForInstanceReady } from "./instances"
+import { activeInstanceId, instances, reconcilePendingSessionIndicators, waitForInstanceReady } from "./instances"
+import { prioritizedRead } from "../lib/prioritized-read"
 import { preferences, setAgentModelPreference } from "./preferences"
 import {
   activeSessionId,
@@ -57,6 +58,7 @@ import {
   getSessionHasMore,
   getSessionNextCursor,
   getSessionListIds,
+  sessionInfoByInstance,
 } from "./session-state"
 import { deleteSessionAttachments } from "./attachments"
 import { DEFAULT_MODEL_OUTPUT_LIMIT, getActiveCatalogLocation, getDefaultModel, isModelValid } from "./session-models"
@@ -305,9 +307,16 @@ async function fetchV2Sessions(
     : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
   if (scopedProject) delete listOptions.directory
 
-  const response = await client.session.list(
+  const read = () => client.session.list(
     buildProjectSessionListOptions(listOptions),
     signal ? { signal } : undefined,
+  )
+  // The first visible directory page is foreground work. Full inventories and
+  // pages from other projects must not queue ahead of the saved transcript.
+  const response = await prioritizedRead(
+    () => options.parentID === null && activeInstanceId() === instanceId,
+    signal ?? new AbortController().signal,
+    read,
   )
 
   return {
@@ -455,6 +464,8 @@ async function hydrateRestoredSessionChainAttempt(
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const isRequestCurrent = () => generationCurrent() && isCurrent()
+  const foreground = () => activeInstanceId() === instanceId
+    && requestedIds.some(id => id && (id === activeSessionId().get(instanceId) || id === activeParentSessionId().get(instanceId)))
   let pending = requestedIds.filter((id): id is string => Boolean(id) && id !== "info")
   const visited = new Set<string>()
   while (pending.length > 0) {
@@ -470,9 +481,12 @@ async function hydrateRestoredSessionChainAttempt(
       if (!session) {
         try {
           signal?.throwIfAborted()
-          const apiSession = await client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
+          const read = () => isRequestCurrent()
+            ? client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
+            : Promise.resolve(null)
+          const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
           signal?.throwIfAborted()
-          if (!isRequestCurrent()) return null
+          if (!apiSession || !isRequestCurrent()) return null
           setSessions((prev) => {
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
             const next = new Map(prev)
@@ -517,6 +531,7 @@ async function ensureV2ParentChainsLoaded(
 async function fetchSessions(instanceId: string, options?: {
   reset?: boolean
   strictStatus?: boolean
+  projectMetadata?: Promise<void>
   registerInvalidation?: (invalidate: () => void) => void
   signal?: AbortSignal
 }): Promise<void> {
@@ -562,8 +577,7 @@ async function fetchSessions(instanceId: string, options?: {
       return
     }
     const rootApiSessions = getV2SessionItems(response)
-    const hasProjectInventory = Boolean(getInstanceMetadata(instanceId)?.project?.id)
-    if (hasProjectInventory) {
+    {
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
       setSessions((prev) => {
         const next = new Map(prev)
@@ -592,6 +606,14 @@ async function fetchSessions(instanceId: string, options?: {
         response.nextCursor,
       )
     }
+    // Directory rows need neither project identity nor checkout discovery.
+    // Only the complete family reconciliation depends on that metadata.
+    await options?.projectMetadata
+    if (!isCurrent()) {
+      if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
+      return
+    }
+    const hasProjectInventory = Boolean(getInstanceMetadata(instanceId)?.project?.id)
     let inventory: SDKSession[] = []
     let inventoryComplete = false
     try {
@@ -1460,7 +1482,10 @@ async function loadMessages(
   if (!planned) return
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
-  if (alreadyLoaded && !force) return
+  if (alreadyLoaded && !force) {
+    if (!sessionInfoByInstance().get(instanceId)?.has(sessionId)) updateSessionInfo(instanceId, sessionId)
+    return
+  }
 
   const previousError = getSessionMessagesLoadError(instanceId, sessionId)
   if (previousError && !force) return

@@ -28,6 +28,19 @@ The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse whi
 preserving session IDs and complete history. See the
 [transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
 
+### Side questions (`/btw`)
+
+The composer-owned command calls native `session.generate({ sessionID, prompt })`
+through the ownership-checked session proxy. It does not use `session.command`,
+create a fork, replace session environment, or add transcript/inbox records.
+The native API returns one text answer; there is no client-side context assembly
+or tool loop. Closing/cancelling the ephemeral window aborts that request only.
+`scripts/test-session-aside-native.mjs` uses a private daemon and local provider
+to verify context reuse, unchanged idle history and generation during an active
+main turn. It passes on 2.0.7 (technical minimum), 2.0.11 and 2.0.12, and runs in
+the minimum/latest-stable CI matrix. These targeted results do not change the
+global minimum, dependency pins or recommended release-tested version.
+
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
 

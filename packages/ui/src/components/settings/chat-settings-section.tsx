@@ -1,5 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { createMemo, For, type Component } from "solid-js"
+import { Dynamic } from "solid-js/web"
 import { ChevronDown } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import {
@@ -13,6 +14,7 @@ import {
   OTHER_TOOL_NAME,
   THINKING_EXPANSION_PRESETS,
 } from "../tool-call/tool-presentation"
+import { getMessageContentIcon } from "../message-content-icons"
 import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows, type TranscriptVisibilityRow as VisibilityRow } from "../transcript-visibility"
 
 const toolExpansionPresetOptions: ToolCallExpansionPreset[] = ["minimal", "balanced", "detailed", "everything"]
@@ -154,7 +156,10 @@ export const ChatSettingsSection: Component = () => {
               const selected = createMemo(() => selectedVisibilityOption(rowMode(row)))
               return (
                 <div class="settings-expansion-row" role="row">
-                  <div class="settings-expansion-row-label" role="cell"><code>{row.label}</code></div>
+                  <div class="settings-expansion-row-label flex items-center gap-2" role="cell">
+                    <Dynamic component={getMessageContentIcon(row.key)} class="w-4 h-4 shrink-0 text-secondary" aria-hidden="true" />
+                    <code>{row.label}</code>
+                  </div>
                   <div class="settings-expansion-row-control" role="cell">
                     <Select<SelectOption>
                       value={selected()}

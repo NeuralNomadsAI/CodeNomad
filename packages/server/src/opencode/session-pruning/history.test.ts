@@ -51,6 +51,23 @@ test("counts and searches beyond 200 messages without returning transcripts", as
   } finally { db.close() }
 })
 
+test("searches edit diffs stored in tool metadata", async () => {
+  const db = fixture(0)
+  try {
+    const edit = (metadata: Record<string, unknown>) => ({ content: [{ type: "tool", name: "edit", state: {
+      status: "completed", input: { path: "src/a.ts", oldString: "1", newString: "2" }, metadata,
+      content: [{ type: "text", text: "Edited src/a.ts (1 replacement)" }] } }], time: { created: 1, completed: 2 } })
+    db.prepare("INSERT INTO session_message VALUES ('v2','s','assistant',1,?)").run(JSON.stringify(edit({
+      files: [{ file: "src/a.ts", patch: "@@ -1 +1 @@\n-const a = 1\n+const a = patchneedle", additions: 1, deletions: 1, status: "modified" }],
+    })))
+    db.prepare("INSERT INTO session_message VALUES ('v1','s','assistant',2,?)").run(JSON.stringify(edit({ diff: "-old\n+legacyneedle" })))
+    const hits = (query: string, value: Record<string, unknown> = {}) => all(db, scope, { purpose: "search", query, ...value }).then(pages => pages.flatMap(p => p.hits))
+    assert.deepEqual((await hits("patchneedle")).map(hit => [hit.messageID, hit.kind]), [["v2", "tool"]])
+    assert.deepEqual((await hits("legacyneedle")).map(hit => hit.messageID), ["v1"])
+    assert.equal((await hits("patchneedle", { includeTechnical: false })).length, 0)
+  } finally { db.close() }
+})
+
 test("includes native text messages, nested directories and historical global sessions, excluding sibling paths and other identities", async () => {
   const db = fixture(0)
   try {

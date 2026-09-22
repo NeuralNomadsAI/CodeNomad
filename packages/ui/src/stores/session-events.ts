@@ -54,6 +54,7 @@ import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
@@ -113,6 +114,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
         session.cost = event.data.cost as unknown as number
         session.tokens = event.data.tokens as Session["tokens"]
       })
+      updateSessionInfo(instanceId, event.data.sessionID)
       return
     case "session.moved":
       handleSessionMoved(instanceId, event.data)

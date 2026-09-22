@@ -24,6 +24,7 @@ const messageType = z.enum(["user", "assistant", "system", "synthetic", "skill",
 export const outlineEntrySchema = z.object({
   id, seq: z.number().int().nonnegative(), type: messageType,
   tools: z.number().int().nonnegative(), reasoning: z.number().int().nonnegative(),
+  toolName: z.string().max(256).optional(),
 }).strict()
 export type OutlineEntry = z.infer<typeof outlineEntrySchema>
 export const outlineResultSchema = z.union([pruningBlockedSchema, z.object({

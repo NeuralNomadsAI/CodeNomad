@@ -6,17 +6,35 @@ export const [openCodeSetupStatus, setOpenCodeSetupStatus] = createSignal<OpenCo
 export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
+export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
+export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
+export const [openCodeSetupChecking, setOpenCodeSetupChecking] = createSignal(false)
+export const [openCodeSetupFeedback, setOpenCodeSetupFeedback] = createSignal<"checked" | "reloaded">()
 let generation = 0
 let notifiedGeneration = -1
 let pending: Promise<void> | undefined
-let resume: (() => Promise<unknown>) | undefined
+const [resume, setResume] = createSignal<(() => Promise<unknown>)>()
+export const canContinueOpenCodeSetup = () => Boolean(resume())
+
+export function isOpenCodeConnected(status = openCodeSetupStatus()): boolean {
+  return status?.serviceState === "ready" || status?.serviceState === "restart_available"
+}
+
+export async function continueOpenCodeSetup() {
+  if (!isOpenCodeConnected() || openCodeSetupBusy()) return
+  const retry = resume()
+  setResume(undefined)
+  setOpenCodeSetupOpen(false)
+  await retry?.()
+}
 
 export function needsOpenCodeSetup(status = openCodeSetupStatus()): boolean {
   return status?.state === "missing" || status?.state === "update_required" || status?.serviceState === "restart_required" || status?.serviceState === "incompatible"
 }
 
 export function openOpenCodeSetup(retry?: () => Promise<unknown>) {
-  if (retry) resume = retry
+  if (retry) setResume(() => retry)
+  setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupOpen(true)
   void refreshOpenCodeSetup()
 }
@@ -33,28 +51,34 @@ export function invalidateOpenCodeSetup() {
   // Keep the selected folder while the user chooses a different executable.
   // Its callback resolves the current settings again; old mutations stay fenced.
   setOpenCodeSetupStatus(undefined)
+  setOpenCodeSetupFeedback(undefined)
   void refreshOpenCodeSetup()
 }
 
-export function refreshOpenCodeSetup(afterMutation = false): Promise<void> {
+export function refreshOpenCodeSetup(afterMutation = false, announce = false): Promise<void> {
   if (openCodeSetupBusy() && !afterMutation) return Promise.resolve()
   if (pending) return pending
   const epoch = generation
+  setOpenCodeSetupChecking(true)
+  if (announce) setOpenCodeSetupFeedback(undefined)
   const request = serverApi.fetchOpenCodeUpdateStatus().then(status => {
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     setOpenCodeSetupError(false)
+    if (announce) setOpenCodeSetupFeedback("checked")
   }).catch(() => { if (epoch === generation) setOpenCodeSetupError(true) })
-    .finally(() => { if (pending === request) pending = undefined })
+    .finally(() => { if (pending === request) { pending = undefined; setOpenCodeSetupChecking(false) } })
   pending = request
   return request
 }
 
-export async function runOpenCodeSetup(action: "install" | "start" | "restart" | "reload") {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
   setOpenCodeSetupBusy(true)
+  setOpenCodeSetupAction(action)
+  setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupError(false)
   try {
     if (action === "install") await serverApi.updateOpenCode()
@@ -68,15 +92,17 @@ export async function runOpenCodeSetup(action: "install" | "start" | "restart" |
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
-      const retry = resume
-      resume = undefined
-      if (status.serviceState === "ready") setOpenCodeSetupOpen(false)
+      const retry = resume()
+      setResume(undefined)
+      if (action === "reload") setOpenCodeSetupFeedback("reloaded")
+      if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
     }
   } catch {
     if (epoch === generation) { await refreshOpenCodeSetup(true); setOpenCodeSetupError(true) }
   } finally {
     setOpenCodeSetupBusy(false)
+    setOpenCodeSetupAction(undefined)
     if (epoch !== generation) void refreshOpenCodeSetup()
   }
 }

@@ -19,6 +19,14 @@ function excerpt(text: string, query: string): string | undefined {
   return text.slice(start, start + 320)
 }
 
+// Edit-style tools keep their diff in metadata rather than the text content:
+// `metadata.diff` in OpenCode 1.x and `metadata.files[].patch` in 2.x.
+function diffTexts(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== "object") return []
+  const { diff, files } = metadata as { diff?: unknown; files?: unknown }
+  return [diff, ...(Array.isArray(files) ? files.map((file: { patch?: unknown } | null) => file?.patch) : [])].filter((text): text is string => typeof text === "string")
+}
+
 function findHit(content: unknown, query: string, includeTechnical: boolean): Pick<HistoryHit, "partIndex" | "kind" | "excerpt"> | undefined {
   if (!Array.isArray(content)) return
   for (let partIndex = 0; partIndex < content.length; partIndex++) {
@@ -30,7 +38,7 @@ function findHit(content: unknown, query: string, includeTechnical: boolean): Pi
     // opaque provider continuation state. No regexp supplied by the caller.
     const texts: string[] = kind === "tool"
       ? [part.tool, part.name, JSON.stringify(part.input ?? part.state?.input), part.state?.error, ...(Array.isArray(part.state?.content)
-        ? part.state.content.filter((p: any) => p.type === "text").map((p: any) => p.text) : [])]
+        ? part.state.content.filter((p: any) => p.type === "text").map((p: any) => p.text) : []), ...diffTexts(part.state?.metadata)]
       : [part.text]
     for (const text of texts) {
       if (typeof text !== "string") continue
