@@ -72,6 +72,11 @@ rendering must not remount existing shells or restart their Git readers on each 
 Visible Git panels precede queued bulk scans within the same two-request secondary
 budget, so inventory/permission fan-out cannot leave an opened panel waiting behind
 every restored checkout. Deactivation removes queued panel reads.
+The optional SDK status read propagates cancellation into the transport and has a
+dispatch-time deadline. Explicit refresh/mutation continuations retain their panel
+generation and worktree identity; late results cannot reset another draft or launch
+hidden-panel diffs. The server also bounds untracked-numstat submission and admits
+worktree authority commands ahead of pending display commands in the Git worker.
 
 Project identity and worktree discovery start independently. The root-directory
 session page can publish before project identity or checkout discovery finishes; complete project-family

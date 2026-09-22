@@ -140,9 +140,12 @@ async function getUntrackedFileNumstat(workspaceFolder: string, relativePath: st
 }
 
 async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>, workspaceFolder: string) {
-  const pending = Array.from(map.values())
-    .filter((entry) => entry.unstagedStatus === "untracked")
-    .map(async (entry) => {
+  const entries = Array.from(map.values()).filter((entry) => entry.unstagedStatus === "untracked")
+  const pending = entries.values()
+  // Bound submission as well as execution: a large untracked directory must not
+  // fill the shared worker mailbox ahead of worktree authorization requests.
+  await Promise.all(Array.from({ length: Math.min(2, entries.length) }, async () => {
+    for (const entry of pending) {
       try {
         const stats = await getUntrackedFileNumstat(workspaceFolder, entry.path)
         entry.unstagedAdditions = stats.additions
@@ -151,8 +154,8 @@ async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>,
         entry.unstagedAdditions = 0
         entry.unstagedDeletions = 0
       }
-    })
-  await Promise.all(pending)
+    }
+  }))
 }
 
 function applyNumstatOutput(

@@ -97,3 +97,62 @@ test("queued hidden-project Git reads are cancelled before dispatch", async () =
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+for (const mode of ["deadline", "deactivate"] as const) test(`SDK status releases its real transport and slot on ${mode}`, async () => {
+  const page = await browser.newPage()
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  try {
+    await setup(page)
+    await page.waitForFunction(() => document.querySelector('[data-project="first"] [data-diff]')?.textContent === "new\n")
+    await page.route("**/api/vcs/status*", async route => { await blocked; await route.fulfill({ json: [] }).catch(() => {}) })
+    const requested = page.waitForRequest(r => r.url().includes("/api/vcs/status"))
+    const aborted = page.waitForEvent("requestfailed", { predicate: r => r.url().includes("/api/vcs/status"), timeout: 10000 })
+    await page.evaluate(() => { (window as any).refresh = (window as any).fixture.panels.first.refreshGitStatus() })
+    await requested
+    if (mode === "deactivate") await page.evaluate(() => (window as any).fixture.deactivate())
+    await aborted
+    await page.evaluate(() => (window as any).refresh)
+    // Both slots must be reusable while the obsolete upstream remains blocked.
+    await page.evaluate(() => { const f = (window as any).fixture; f.add("second"); f.select("second") })
+    await page.waitForFunction(() => document.querySelector('[data-project="second"] [data-diff]')?.textContent === "new\n")
+  } finally { release(); await page.close() }
+})
+
+test("explicit refresh cannot launch a new diff after deactivation aborts its status", async () => {
+  const page = await browser.newPage()
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  try {
+    const { requests } = await setup(page)
+    await page.waitForFunction(() => document.querySelector('[data-project="first"] [data-diff]')?.textContent === "new\n")
+    const diffs = requests.filter(path => path.endsWith("/git-diff")).length
+    await page.route("**/git-status", async route => { await blocked; await route.fulfill({ json: [] }).catch(() => {}) })
+    const requested = page.waitForRequest(r => r.url().endsWith("/git-status"))
+    await page.evaluate(() => { (window as any).refresh = (window as any).fixture.panels.first.refreshGitStatus() })
+    await requested
+    await page.evaluate(() => (window as any).fixture.deactivate())
+    await page.evaluate(() => (window as any).refresh)
+    assert.equal(requests.filter(path => path.endsWith("/git-diff")).length, diffs)
+  } finally { release(); await page.close() }
+})
+
+test("a late commit cannot clear a new worktree draft or refresh its Git selection", async () => {
+  const page = await browser.newPage()
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  try {
+    const { requests } = await setup(page)
+    await page.waitForFunction(() => document.querySelector('[data-project="first"] [data-diff]')?.textContent === "new\n")
+    const diffs = requests.filter(path => path.endsWith("/git-diff")).length
+    await page.route("**/git-commit", async route => { await blocked; await route.fulfill({ json: { ok: true } }) })
+    const requested = page.waitForRequest(r => r.url().endsWith("/git-commit"))
+    await page.evaluate(() => { const f = (window as any).fixture; f.panels.first.setGitCommitMessage("old draft"); (window as any).commit = f.panels.first.submitGitCommit() })
+    assert.ok((await requested).url().includes("/root/"))
+    await page.evaluate(() => { const f = (window as any).fixture; f.worktree.first("other"); f.panels.first.setGitCommitMessage("new draft") })
+    release()
+    await page.evaluate(() => (window as any).commit)
+    assert.equal(await page.getByRole("textbox", { name: "Commit first", exact: true }).inputValue(), "new draft")
+    assert.equal(requests.filter(path => path.endsWith("/git-diff")).length, diffs)
+  } finally { release(); await page.close() }
+})

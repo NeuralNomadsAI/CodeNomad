@@ -1,4 +1,4 @@
-import { For, onCleanup } from "solid-js"
+import { createSignal, For, onCleanup } from "solid-js"
 import { render } from "solid-js/web"
 import { addInstance, updateInstance } from "../../../src/stores/instances"
 import { activeAppTabId, appTabs, selectAppTab, type InstanceAppTab } from "../../../src/stores/app-tabs"
@@ -9,6 +9,8 @@ import { invalidateFilesystemCaches } from "../../../src/lib/filesystem-events"
 import { backgroundReads } from "../../../src/lib/background-read-queue"
 
 const mounts: Record<string, number> = {}, disposals: Record<string, number> = {}
+const panels: Record<string, ReturnType<typeof useGitChanges>> = {}
+const worktree: Record<string, (slug: string) => void> = {}
 function add(id: string) {
   addInstance({ id, folder: `D:/${id}`, projectName: id, port: 1, pid: 1, status: "ready", client: getRootClient(id), proxyPath: `/workspaces/${id}/instance` })
   attachInstanceTabMembership(id)
@@ -19,10 +21,13 @@ function Panel(props: { tab: InstanceAppTab }) {
   const id = props.tab.instance.id
   mounts[id] = (mounts[id] ?? 0) + 1
   onCleanup(() => { disposals[id] = (disposals[id] ?? 0) + 1 })
+  const [slug, setSlug] = createSignal("root")
+  worktree[id] = setSlug
   const git = useGitChanges({ instanceId: id, t: key => key,
     isActive: () => activeAppTabId() === props.tab.id, rightPanelTab: () => "git-changes",
-    worktreeSlug: () => "root", isPhoneLayout: () => false, promptInputApi: () => null, closeGitList() {},
+    worktreeSlug: slug, isPhoneLayout: () => false, promptInputApi: () => null, closeGitList() {},
   })
+  panels[id] = git
   return <section data-project={id} data-loading={git.gitStatusLoading()}>
     <span data-name>{props.tab.instance.projectName}</span>
     <input aria-label={`Commit ${id}`} value={git.gitCommitMessage()} onInput={e => git.setGitCommitMessage(e.currentTarget.value)} />
@@ -32,8 +37,9 @@ function Panel(props: { tab: InstanceAppTab }) {
 }
 const controllers: AbortController[] = []
 ;(window as any).fixture = {
-  mounts, disposals, add, update: (id: string, projectName: string) => updateInstance(id, { projectName }),
+  mounts, disposals, panels, worktree, add, update: (id: string, projectName: string) => updateInstance(id, { projectName }),
   select: (id: string) => selectAppTab(`instance:${id}`), close: detachInstanceTabMembership,
+  deactivate: () => selectAppTab(null),
   invalidate: invalidateFilesystemCaches,
   occupy: () => [0, 1].map(() => {
     const controller = new AbortController(); controllers.push(controller)

@@ -8,7 +8,7 @@ import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
-import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
+import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 
 type UseGitChangesOptions = {
@@ -40,6 +40,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let passiveGitRefresh: object | null = null
   let statusController: AbortController | undefined
   let diffController: AbortController | undefined
+  let lifecycle = 0
+  let disposed = false
+  let commitOperation: object | null = null
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let previousGitChangesActivationKey: string | null = null
   let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
@@ -47,6 +50,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
   const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
   const cancelGitReads = () => {
+    lifecycle += 1
     gitStatusRequestVersion += 1
     gitDiffRequestVersion += 1
     statusController?.abort()
@@ -54,7 +58,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     passiveGitRefresh = null
     pendingGitPassiveRefreshOptions = null
   }
-  onCleanup(cancelGitReads)
+  onCleanup(() => { disposed = true; cancelGitReads() })
+  const captureGitContext = () => {
+    const generation = lifecycle, slug = options.worktreeSlug()
+    return { slug, current: () => !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() }
+  }
 
   const gitLocation = (slug: string) => {
     const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
@@ -186,48 +194,47 @@ export function useGitChanges(options: UseGitChangesOptions) {
   })
 
   const loadGitStatus = async (force = false) => {
-    if (!force && gitStatusEntries() !== null) return
+    if (disposed || !gitActive()) return false
+    if (!force && gitStatusEntries() !== null) return true
     const slug = options.worktreeSlug()
     const client = getRootClient(options.instanceId)
     const requestVersion = ++gitStatusRequestVersion
     statusController?.abort()
     const controller = statusController = new AbortController()
+    const sdkController = new AbortController()
+    const abortSdk = () => sdkController.abort()
+    controller.signal.addEventListener("abort", abortSdk, { once: true })
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
       const location = gitLocation(slug)
-      const sdkStatusPromise = backgroundReads.run(controller.signal, () =>
-        client.vcs.status({ location }).then((result) => result.data),
-        "visible",
-      ).catch(() => null)
+      const sdkStatusPromise = backgroundReads.run(sdkController.signal, async () => {
+        const timeout = setTimeout(abortSdk, 1500)
+        try { return (await client.vcs.status({ location }, { signal: sdkController.signal })).data }
+        finally { clearTimeout(timeout) }
+      }, "visible").catch(() => null)
       const detailList = await backgroundReads.run(controller.signal, () =>
         serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal),
         "visible",
       )
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
-
-      const sdkResult = await Promise.race([
-        sdkStatusPromise.then((value) => ({ kind: "fulfilled" as const, value })),
-        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 1500)),
-      ]).catch(() => null)
-
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return
-      const sdkList = sdkResult && sdkResult.kind === "fulfilled" ? sdkResult.value : null
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      const sdkList = await sdkStatusPromise
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
       setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
+      return true
     } catch (error) {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
-      setGitStatusEntries([])
+      return false
     } finally {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
-      setGitStatusLoading(false)
+      abortSdk()
+      controller.signal.removeEventListener("abort", abortSdk)
+      if (requestVersion === gitStatusRequestVersion && slug === options.worktreeSlug()) setGitStatusLoading(false)
     }
   }
 
   async function openGitFile(itemId: string) {
+    if (disposed || !gitActive()) return
     const requestVersion = ++gitDiffRequestVersion
     diffController?.abort()
     const controller = diffController = new AbortController()
@@ -289,7 +296,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
       (gitSelectedBefore() !== null || gitSelectedAfter() !== null || gitSelectedError() !== null)
 
     try {
-      await loadGitStatus(true)
+      if (!await loadGitStatus(true)) return
       if (passiveGitRefresh !== refresh || !gitActive()) return
       if (gitSelectedItemId() !== refreshSelectionId) return
       const nextSelection = resolveValidGitSelection(previousSelection)
@@ -322,6 +329,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
+    const context = captureGitContext()
+    if (!context.current()) return
     const currentSelection = describeGitSelection(gitSelectedItemId())
     const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
     const selectedIds = gitBulkSelectedItemIds()
@@ -331,12 +340,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
     try {
       if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(options.instanceId, options.worktreeSlug(), { paths: targetPaths })
+        await serverApi.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       } else {
-        await serverApi.unstageWorktreeGitPaths(options.instanceId, options.worktreeSlug(), { paths: targetPaths })
+        await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       }
 
-      await loadGitStatus(true)
+      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      if (!await loadGitStatus(true) || !context.current()) return
       clearGitBulkSelection()
       const nextSelection = resolveValidGitSelection(fallbackSelection)
       setGitSelectedItemId(nextSelection)
@@ -346,6 +356,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         clearSelectedGitDiff()
       }
     } catch (error) {
+      if (!context.current()) return
       showToastNotification({
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
@@ -374,14 +385,19 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const submitGitCommit = async () => {
+    const context = captureGitContext()
+    if (!context.current()) return
     const message = gitCommitMessage().trim()
     if (!message || gitCommitSubmitting()) return
 
     setGitCommitSubmitting(true)
+    const operation = commitOperation = {}
+    const draft = gitCommitMessage()
     try {
-      await serverApi.commitWorktreeGitChanges(options.instanceId, options.worktreeSlug(), { message })
-      setGitCommitMessage("")
-      await loadGitStatus(true)
+      await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
+      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      if (gitCommitMessage() === draft) setGitCommitMessage("")
+      if (!await loadGitStatus(true) || !context.current()) return
       const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
       setGitSelectedItemId(nextSelection)
       if (nextSelection) {
@@ -389,22 +405,25 @@ export function useGitChanges(options: UseGitChangesOptions) {
       } else {
         clearSelectedGitDiff()
       }
+      if (!context.current()) return
       showToastNotification({
         message: options.t("instanceShell.gitChanges.commit.success"),
         variant: "success",
       })
     } catch (error) {
+      if (!context.current()) return
       showToastNotification({
         message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.commit.error"),
         variant: "error",
       })
     } finally {
-      setGitCommitSubmitting(false)
+      if (!disposed && commitOperation === operation) { commitOperation = null; setGitCommitSubmitting(false) }
     }
   }
 
   const refreshGitStatus = async () => {
-    await loadGitStatus(true)
+    const context = captureGitContext()
+    if (!await loadGitStatus(true) || !context.current()) return
     const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
     setGitSelectedItemId(selected)
     if (selected) {
@@ -430,6 +449,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitSelectedLoading(false)
     clearSelectedGitDiff()
     setGitCommitMessage("")
+    commitOperation = null
     setGitCommitSubmitting(false)
   }))
 

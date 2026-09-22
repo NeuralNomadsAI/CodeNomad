@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads"
 
-interface GitProcessOptions { timeout?: number; maxBuffer?: number }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background" }
 interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
@@ -11,10 +11,11 @@ function workerMain() {
   const { parentPort } = require("node:worker_threads") as typeof import("node:worker_threads")
   const { execFile } = require("node:child_process") as typeof import("node:child_process")
   const queue: GitRequest[] = []
+  const foreground: GitRequest[] = []
   let running = 0
   const scheduler = { pump() {
-    while (running < 2 && queue.length) {
-      const request = queue.shift()!
+    while (running < 2 && (foreground.length || queue.length)) {
+      const request = (foreground.shift() ?? queue.shift())!
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
         encoding: "utf8", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
@@ -28,7 +29,11 @@ function workerMain() {
       })
     }
   } }
-  parentPort!.on("message", (request: GitRequest) => { queue.push(request); scheduler.pump() })
+  parentPort!.on("message", (request: GitRequest) => {
+    const target = request.priority === "foreground" ? foreground : queue
+    target.push(request)
+    scheduler.pump()
+  })
 }
 
 let worker: Worker | undefined
@@ -62,7 +67,8 @@ function getWorker(): Worker {
 }
 
 export function runWorktreeGit(directory: string, args: string[], timeout?: number): Promise<string> {
-  return runGitProcess(directory, args, { timeout }).then(stdout => stdout.replace(/\r?\n$/, ""))
+  // Ownership and inventory reads must not wait behind an entire display batch.
+  return runGitProcess(directory, args, { timeout, priority: "foreground" }).then(stdout => stdout.replace(/\r?\n$/, ""))
 }
 
 // Content/diff readers need exact bytes decoded as UTF-8, including the final newline.
