@@ -4,11 +4,36 @@ import fs from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { syncBuiltinESMExports } from "node:module"
 import path from "node:path"
+import { execFileSync } from "node:child_process"
 import { describe, it } from "node:test"
 
-import { getWorktreeGitStatus, invalidateWorktreeGitStatus } from "./git-status"
+import { getWorktreeGitDiff, getWorktreeGitStatus, invalidateWorktreeGitStatus } from "./git-status"
 
 describe("worktree git status singleflight", () => {
+  it("reads real Git status and large UTF-8 blobs through the worker without losing final newlines", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "codenomad-git-content-"))
+    const git = (...args: string[]) => execFileSync("git", ["-C", directory, ...args], { stdio: "pipe" })
+    try {
+      git("init")
+      git("config", "user.name", "Fixture")
+      git("config", "user.email", "fixture@example.test")
+      git("config", "core.autocrlf", "false")
+      const before = "é漢字 — content\n".repeat(100_000)
+      await fs.writeFile(path.join(directory, "large.txt"), before)
+      git("add", ".")
+      git("commit", "-m", "fixture")
+      await fs.writeFile(path.join(directory, "large.txt"), before + "changed\n")
+      await fs.writeFile(path.join(directory, "untracked.txt"), "one\ntwo\n")
+      const status = await getWorktreeGitStatus({ workspaceFolder: directory })
+      assert.equal(status.find(entry => entry.path === "untracked.txt")?.unstagedAdditions, 2,
+        "git diff --no-index exit 1 is a successful numstat result")
+      const diff = await getWorktreeGitDiff({ workspaceFolder: directory, path: "large.txt", scope: "unstaged" })
+      assert.equal(diff.before, before)
+      assert.equal(diff.after, before + "changed\n")
+      await assert.rejects(getWorktreeGitStatus({ workspaceFolder: path.join(directory, "missing") }))
+      assert.equal((await getWorktreeGitStatus({ workspaceFolder: directory })).length, 2)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
   it("coalesces concurrent requests and runs again after settlement", async (t) => {
     const directory = await mkdtemp(path.join(tmpdir(), "codenomad-git-status-"))
     let calls = 0

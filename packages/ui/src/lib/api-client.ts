@@ -400,18 +400,20 @@ export const serverApi = {
       },
     )
   },
-  fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
+  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+      { signal },
     )
   },
-  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest): Promise<WorktreeGitDiffResponse> {
+  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
     const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
     if (requestPayload.originalPath) {
       params.set("originalPath", requestPayload.originalPath)
     }
     return request<WorktreeGitDiffResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+      { signal },
     )
   },
   stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {

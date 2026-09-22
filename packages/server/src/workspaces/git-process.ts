@@ -1,6 +1,7 @@
 import { Worker } from "node:worker_threads"
 
-interface GitRequest { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv; timeout?: number }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background" }
+interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
 // Even asynchronous execFile spends synchronous time creating a Windows process.
@@ -10,13 +11,14 @@ function workerMain() {
   const { parentPort } = require("node:worker_threads") as typeof import("node:worker_threads")
   const { execFile } = require("node:child_process") as typeof import("node:child_process")
   const queue: GitRequest[] = []
+  const foreground: GitRequest[] = []
   let running = 0
   const scheduler = { pump() {
-    while (running < 2 && queue.length) {
-      const request = queue.shift()!
+    while (running < 2 && (foreground.length || queue.length)) {
+      const request = (foreground.shift() ?? queue.shift())!
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
-        encoding: "utf8", windowsHide: true, maxBuffer: 1024 * 1024,
+        encoding: "utf8", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
         env: request.env, timeout: request.timeout,
       }, (error, stdout, stderr) => {
         parentPort!.postMessage({ id: request.id, stdout, stderr,
@@ -27,7 +29,11 @@ function workerMain() {
       })
     }
   } }
-  parentPort!.on("message", (request: GitRequest) => { queue.push(request); scheduler.pump() })
+  parentPort!.on("message", (request: GitRequest) => {
+    const target = request.priority === "foreground" ? foreground : queue
+    target.push(request)
+    scheduler.pump()
+  })
 }
 
 let worker: Worker | undefined
@@ -53,7 +59,7 @@ function getWorker(): Worker {
     if (response.error) task.reject(Object.assign(new Error(response.error.message), {
       code: response.error.code, stdout: response.stdout, stderr: response.stderr,
     }))
-    else task.resolve(response.stdout.replace(/\r?\n$/, ""))
+    else task.resolve(response.stdout)
     if (pending.size === 0) created.unref()
   })
   created.unref()
@@ -61,13 +67,19 @@ function getWorker(): Worker {
 }
 
 export function runWorktreeGit(directory: string, args: string[], timeout?: number): Promise<string> {
+  // Ownership and inventory reads must not wait behind an entire display batch.
+  return runGitProcess(directory, args, { timeout, priority: "foreground" }).then(stdout => stdout.replace(/\r?\n$/, ""))
+}
+
+// Content/diff readers need exact bytes decoded as UTF-8, including the final newline.
+export function runGitProcess(directory: string, args: string[], options: GitProcessOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const current = getWorker()
     const id = ++sequence
     pending.set(id, { resolve, reject })
     current.ref()
     try {
-      current.postMessage({ id, directory, args, env: { ...process.env }, timeout } satisfies GitRequest)
+      current.postMessage({ id, directory, args, env: { ...process.env }, ...options } satisfies GitRequest)
     } catch (error) {
       pending.delete(id)
       if (pending.size === 0) current.unref()

@@ -37,6 +37,7 @@ const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 
 interface CoreRightPanelRuntimeOptions {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
   instanceId: string
   instance: Instance
@@ -130,6 +131,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const gitChangesBranchLabel = createMemo(() => gitChangesWorktree()?.branch?.trim() || null)
   const gitScopeKey = createMemo(() => `${options.instanceId}:git:${worktreeSlugForViewer()}`)
   const git = useGitChanges({
+    isActive: options.isActive,
     t: options.t,
     instanceId: options.instanceId,
     rightPanelTab: options.rightPanelTab,

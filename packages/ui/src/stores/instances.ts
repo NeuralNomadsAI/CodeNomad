@@ -568,7 +568,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     destroyOpenCodeData(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,

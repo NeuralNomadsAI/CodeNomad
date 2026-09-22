@@ -75,6 +75,7 @@ const SortableRightPanelTab: Component<SortableRightPanelTabProps> = (props) => 
 }
 
 interface RightPanelProps {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
 
   instanceId: string
@@ -194,9 +195,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const rightPanelPluginRuntime = loadRightPanelPluginManifests(
     [
       createCoreRightPanelRuntime({
+        isActive: props.isActive,
         t: props.t,
         instanceId: props.instanceId,
-        instance: props.instance,
+        get instance() { return props.instance },
         activeSessionId: props.activeSessionId,
         activeSession: props.activeSession,
         latestTodoState: props.latestTodoState,

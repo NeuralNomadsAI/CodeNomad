@@ -297,6 +297,7 @@ async function fetchV2Sessions(
   instanceId: string,
   options: V2SessionListOptions,
   signal?: AbortSignal,
+  visiblePage = false,
 ): Promise<ProjectSessionListResponse> {
   const client = getRootClient(instanceId)
   const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
@@ -311,10 +312,10 @@ async function fetchV2Sessions(
     buildProjectSessionListOptions(listOptions),
     signal ? { signal } : undefined,
   )
-  // The first visible directory page is foreground work. Full inventories and
-  // pages from other projects must not queue ahead of the saved transcript.
+  // Publish the visible directory/project page before secondary scans, while
+  // historical cursor traversal continues within the shared background budget.
   const response = await prioritizedRead(
-    () => options.parentID === null && activeInstanceId() === instanceId,
+    () => (visiblePage || options.parentID === null) && activeInstanceId() === instanceId,
     signal ?? new AbortController().signal,
     read,
   )
@@ -334,6 +335,7 @@ async function fetchCompleteSessionInventory(
   instanceId: string,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  publishFirstPage?: (sessions: SDKSession[]) => void,
 ): Promise<SDKSession[]> {
   const project = getInstanceMetadata(instanceId)?.project?.id
   if (!project) return []
@@ -346,7 +348,16 @@ async function fetchCompleteSessionInventory(
   for (const scope of scopes) {
     const seenCursors = new Set<string>()
     let pageCount = 1
-    let response = await fetchV2Sessions(instanceId, scope, signal)
+    let response = await fetchV2Sessions(instanceId, scope, signal, Boolean(scope.project))
+    if (scope.project && publishFirstPage) {
+      await ensureWorktreesLoaded(instanceId)
+      if (!isCurrent()) return []
+      signal?.throwIfAborted()
+      if (getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+      // This is additive only. Absence/deletion is authoritative only after the
+      // complete inventory; partial families still require verified membership.
+      publishFirstPage(selectWorkspaceSessionFamilies(response.data, directory ?? "", getWorktrees(instanceId)))
+    }
     while (true) {
       if (!isCurrent()) return []
       for (const session of response.data) inventory.set(session.id, session)
@@ -577,12 +588,12 @@ async function fetchSessions(instanceId: string, options?: {
       return
     }
     const rootApiSessions = getV2SessionItems(response)
-    {
+    const publishPartialPage = (page: SDKSession[]) => {
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
       setSessions((prev) => {
         const next = new Map(prev)
         const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-        for (const apiSession of rootApiSessions) {
+        for (const apiSession of page) {
           const existingSession = existingSessions.get(apiSession.id)
           const fetched = withActiveSessionState(instanceId, apiSession, existingSession, null)
           const merged = mergeFetchedSessionRuntimeState(
@@ -591,7 +602,15 @@ async function fetchSessions(instanceId: string, options?: {
             instanceSessions.get(apiSession.id),
             deletedSessionIds.has(apiSession.id),
           )
-          if (merged) instanceSessions.set(apiSession.id, merged)
+          if (merged) {
+            // Rows introduced by this request belong to its reconciliation
+            // baseline, not to the concurrent SSE/local-creation exception.
+            if (!instanceSessions.has(apiSession.id)) {
+              existingSessions.set(apiSession.id, merged)
+              if (merged.parentId === null) existingCatalogIds.add(apiSession.id)
+            }
+            instanceSessions.set(apiSession.id, merged)
+          }
         }
         next.set(instanceId, instanceSessions)
         return next
@@ -600,12 +619,13 @@ async function fetchSessions(instanceId: string, options?: {
       // existing worktree rows until the project inventory can reconcile them.
       setSessionPage(
         instanceId,
-        rootApiSessions.filter((session) => !session.parentID && !deletedSessionIds.has(session.id)).map((session) => session.id),
+        page.filter((session) => !session.parentID && !deletedSessionIds.has(session.id)).map((session) => session.id),
         Boolean(response.nextCursor),
         false,
         response.nextCursor,
       )
     }
+    publishPartialPage(rootApiSessions)
     // Directory rows need neither project identity nor checkout discovery.
     // Only the complete family reconciliation depends on that metadata.
     await options?.projectMetadata
@@ -617,7 +637,7 @@ async function fetchSessions(instanceId: string, options?: {
     let inventory: SDKSession[] = []
     let inventoryComplete = false
     try {
-      inventory = await fetchCompleteSessionInventory(instanceId, options?.signal, isCurrent)
+      inventory = await fetchCompleteSessionInventory(instanceId, options?.signal, isCurrent, publishPartialPage)
       inventoryComplete = hasProjectInventory
     } catch (error) {
       if (options?.signal?.aborted) throw error
