@@ -71,11 +71,15 @@ export function applyLocationContext(url: URL, method: string, body: unknown, he
     // Credential mutations are global; context must not create location scope.
     return body
   }
-  if (/^\/api\/(?:experimental\/)?session\/[^/]+\//.test(url.pathname)) {
-    // A specific session's sub-routes carry authority in the session identity,
-    // already ownership-checked by the proxy via session.get. These native
-    // routes accept no location slot, so an ambient location header must not
-    // fail them here (for example instructions entries on every send).
+  const sessionRoute = url.pathname.replace(/\/+$/, "").match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/.*)?$/)
+  if (sessionRoute && sessionRoute[1] !== "active" && sessionRoute[1] !== "import") {
+    // A specific session's routes carry authority in the session identity,
+    // already ownership-checked by the proxy via session.get (which excludes
+    // the active/import pseudo-identities the same way). These native routes
+    // accept no location slot, so an ambient location header must not fail
+    // them here (for example instructions entries on every send). This check
+    // stays after the move/create/import/form/list handlers above, which do
+    // validate their own location slots.
     return body
   }
   const directory = url.searchParams.get("location[directory]")

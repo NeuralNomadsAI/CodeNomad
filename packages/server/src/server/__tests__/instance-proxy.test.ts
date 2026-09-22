@@ -252,6 +252,14 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 3)
   })
 
+  it("rejects instruction entries for sessions belonging to another workspace", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, { session: "/other" })
+    const response = await app.inject({ method: "DELETE",
+      url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries/codenomad.voice-mode" })
+    assert.equal(response.statusCode, 403)
+    assert.equal(requestCount(), 0)
+  })
+
   it("filters the project list and its sandboxes to the workspace", async () => {
     const { app, requestCount } = await harness()
     const response = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/project" })
