@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.11**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.14**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -40,6 +40,38 @@ to verify context reuse, unchanged idle history and generation during an active
 main turn. It passes on 2.0.7 (technical minimum), 2.0.11 and 2.0.12, and runs in
 the minimum/latest-stable CI matrix. These targeted results do not change the
 global minimum, dependency pins or recommended release-tested version.
+
+### Current stable qualification (2026-09-23)
+
+The qualification baseline includes merged #751 (`0a31a8b3`). Server/UI client
+and bundled-plugin dependencies are aligned at **2.0.14**, together with the
+recommended/tested version. The technical minimum remains **2.0.7**. Newer
+runtime labels continue through authenticated contract recognition; this update
+does not widen the proxy allowlist or retry mutations under another contract.
+
+The 2.0.11-to-2.0.14 client contract adds `ConnectionCredentialInfo.method`
+(`key` or `oauth`). Historical migration assertions retain full comparison of
+the old connection fields and separately validate that the synthetic key
+credential remains a key when the runtime exposes that metadata. They do not
+discard unknown fields or relax session/history preservation checks.
+
+With the 2.0.14 dependencies, isolated Windows fixtures pass native migrations
+from 2.0.3 and beta-19271 to both 2.0.7 and 2.0.14, preserving complete history,
+forks, pending inbox state and provider configuration. The same native suite
+passes against both 2.0.7 and 2.0.14: discovery/automation, plugin provisioning/heartbeats, proxy and
+ownership checks, worktrees, Forms/permissions, 241-message history queries,
+1,501-message outline/window parity, pruning/concurrency/restart, per-send
+environment, inclusive forks and idle/busy side questions. All storage and
+daemons are synthetic and isolated. Detailed logs and remaining platform
+qualification belong in the qualification PR/CI, not a separate version report.
+
+The previous #751 compatibility failures on Linux, Windows and macOS all stop
+at the same additive credential-metadata assertion. Local Windows migration
+coverage now completes; fresh Linux/macOS confirmation remains a CI gate.
+The separate system-message browser fixture still has two search timeouts:
+it mocks HTTP APIs with `{}` and does not provide the current bounded history
+query contract. Those tests use synthetic browser data, not a 2.0.14 daemon;
+they are not native-runtime qualification evidence.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.

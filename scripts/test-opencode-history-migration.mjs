@@ -188,7 +188,17 @@ try {
     assert.equal(settled.state.status, action === "reply" ? "answered" : "cancelled")
   }
   assert.ok(JSON.stringify(await client.model.list({ location: { directory: repo } })).includes("Historical fixture model"))
-  assert.deepEqual((await client.integration.get({ integrationID: "openai", location: { directory: repo } })).data.connections, providerConnections)
+  const restoredConnections = (await client.integration.get({ integrationID: "openai", location: { directory: repo } })).data.connections
+  // New runtimes expose how a stored credential was obtained. The seed creates
+  // a key credential; preserve all historical fields and validate the additive
+  // metadata separately so older seed/target runtimes remain meaningful controls.
+  const historicalConnections = connections => connections.map(connection => {
+    if (connection.type !== "credential") return connection
+    const { method, ...historical } = connection
+    if (method !== undefined) assert.equal(method, "key", "the fixture's key credential must not become OAuth")
+    return historical
+  })
+  assert.deepEqual(historicalConnections(restoredConnections), historicalConnections(providerConnections))
   assert.equal(await readFile(configFile, "utf8"), providerConfig)
   console.log("PASS global/session Forms match same-version native restart durability; fresh Forms settle and historical provider/model configuration remains intact")
   for (const original of snapshots) {
