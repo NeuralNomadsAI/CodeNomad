@@ -15,13 +15,13 @@ it("reserves foreground capacity while different workspaces queue secondary read
   const first = createInstanceFetch("http://localhost/workspaces/first/instance/")
   const second = createInstanceFetch("http://localhost/workspaces/second/instance/")
   try {
-    const scans = [first("http://localhost/api/project"), second("http://localhost/api/session/active")]
+    const scans = [first("http://localhost/workspaces/first/instance/api/project"), second("http://localhost/workspaces/second/instance/api/session/active")]
     const controller = new AbortController()
-    const cancelled = assert.rejects(first("http://localhost/api/project", { signal: controller.signal }), /Abort/)
+    const cancelled = assert.rejects(first("http://localhost/workspaces/first/instance/api/project", { signal: controller.signal }), /Abort/)
     controller.abort()
-    const trailing = second("http://localhost/api/project")
-    await first("http://localhost/api/session/selected/message?limit=200&order=desc")
-    const model = first("http://localhost/api/model")
+    const trailing = second("http://localhost/workspaces/second/instance/api/project")
+    await first("http://localhost/workspaces/first/instance/api/session/selected/message?limit=200&order=desc")
+    const model = first("http://localhost/workspaces/first/instance/api/model")
     assert.equal(dispatched.length, 3)
     assert.ok(dispatched.some(url => /selected\/message/.test(url)))
     assert.ok(!dispatched.some(url => /\/model$/.test(url)), "model catalogues share the secondary budget")

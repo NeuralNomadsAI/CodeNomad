@@ -68,10 +68,7 @@ try {
   registerInstanceProxyRoutes(app, { workspaceManager: manager, logger, worktreeDeletionFence: new WorktreeDeletionFence() })
   await app.listen({ host: "127.0.0.1", port: 0 })
   const baseUrl = `http://127.0.0.1:${app.server.address().port}/workspaces/${workspace.id}/instance/`
-  const proxy = OpenCode.make({ baseUrl, fetch: (input, init) => {
-    const request = new URL(input instanceof Request ? input.url : input)
-    return fetch(new URL(request.pathname.replace(/^\/+/, "") + request.search, baseUrl), init)
-  } })
+  const proxy = OpenCode.make({ baseUrl })
   const a = await proxy.session.create({ location: { directory: project } })
   const b = await proxy.session.create({ location: { directory: project } })
   const probe = async (client, session, label, command) => {
