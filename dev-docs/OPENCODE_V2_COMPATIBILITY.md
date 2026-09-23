@@ -110,8 +110,11 @@ their 2.0.7/2.0.15 native cases, then fail because the merge-ref workflow invoke
 the newer blank-session fixture absent from the checked-out PR head. Integrating
 `dev` brings that fixture into the branch; its native checks pass locally on both
 runtimes with the 2.0.15 client. The separate Windows pruning/UI CI process exits
-without an exception diagnostic and remains a CI gate. Detailed results belong
-in #752 rather than being inferred from other passing platforms.
+without an exception diagnostic. A local Node 24.20.0 run also exits abruptly,
+but the subsequent instrumented run passes the complete native/UI suite. Keep
+startup phase diagnostics for a recurrence; this passing rerun does not establish
+the cause or a fix for the intermittent exit. Detailed results and remaining CI
+gates belong in #752 rather than being inferred from other passing platforms.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
