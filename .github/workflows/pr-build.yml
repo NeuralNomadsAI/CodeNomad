@@ -178,6 +178,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-aside-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   tests:
     needs: authorize
@@ -333,6 +335,7 @@ jobs:
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
+          packages/ui/src/stores/blank-session-cleanup.test.ts
           packages/ui/src/stores/session-status.test.ts
           packages/ui/src/stores/worktree-ready.test.ts
           packages/ui/src/stores/worktrees-delete.test.ts

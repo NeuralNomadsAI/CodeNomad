@@ -12,6 +12,8 @@ import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import { applySessionPendingState } from "./session-pending-state"
+import { cleanupBlankSession } from "./blank-session-cleanup"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import {
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -1112,22 +1114,10 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
-async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
-  const created = session.time?.created || 0
-  const updated = session.time?.updated || 0
-  const hasChildren = getChildSessions(instanceId, session.id).length > 0
-  const isFreshSession = created === updated && !hasChildren
-
-  // Common short-circuit: fresh sessions without children
-  if (!fetchIfNeeded) {
-    return isFreshSession
-  }
-
-  // For a more thorough deep clean, we need to look at actual messages
-
+async function isDeepCleanupCandidate(session: Session, instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
-    return isFreshSession
+    return false
   }
   let messages: any[] = []
   try {
@@ -1135,7 +1125,7 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     messages = (await client.message.list({ sessionID: session.id })).data
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
-    return isFreshSession
+    return false
   }
 
   // Specific logic by session type
@@ -1169,9 +1159,37 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
 }
 
 
-async function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+const automaticCleanupRequests = new Map<string, {
+  client: unknown
+  generation: number
+  promise: Promise<void>
+}>()
+
+function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+  if (fetchIfNeeded) return runSessionCleanup(instanceId, excludeSessionId, true)
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const pending = automaticCleanupRequests.get(instanceId)
+  if (pending?.client === client && pending?.generation === generation) return pending.promise
+
+  // One bounded sweep per connection. Later creations are outside the captured
+  // candidate set; they do not enqueue another full historical scan.
+  const request = { client, generation, promise: Promise.resolve() }
+  request.promise = runSessionCleanup(instanceId, excludeSessionId, false).finally(() => {
+    if (automaticCleanupRequests.get(instanceId) === request) automaticCleanupRequests.delete(instanceId)
+  })
+  automaticCleanupRequests.set(instanceId, request)
+  return request.promise
+}
+
+async function runSessionCleanup(instanceId: string, excludeSessionId: string | undefined, fetchIfNeeded: boolean): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const candidates = Array.from(instanceSessions)
+  const current = () => instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation
 
   if (fetchIfNeeded) {
     const confirmed = await showConfirmDialog(
@@ -1187,31 +1205,34 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
     if (!confirmed) return
   }
 
-  const cleanupPromises = Array.from(instanceSessions)
-    .filter(([sessionId]) => sessionId !== excludeSessionId)
-    .map(async ([sessionId, session]) => {
-      const isBlank = await isBlankSession(session, instanceId, fetchIfNeeded)
-      if (!isBlank) return false
-
-      await deleteSession(instanceId, sessionId).catch((error: Error) => {
-        log.error(`Failed to delete blank session ${sessionId}`, error)
-      })
-      return true
-    })
-
-  if (cleanupPromises.length > 0) {
-    log.info(`Cleaning up ${cleanupPromises.length} blank sessions`)
-    const deletionResults = await Promise.all(cleanupPromises)
-    const deletedCount = deletionResults.filter(Boolean).length
-
-    if (deletedCount > 0) {
-      showToastNotification({
-        message: deletedCount === 1
-          ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
-          : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
-        variant: "info"
-      })
+  // Bound native checks instead of fanning out one read per historical session.
+  // Snapshot candidates so a concurrently created session is not swept up.
+  let deletedCount = 0
+  for (const [sessionId, session] of candidates) {
+    if (!current()) break
+    if (sessionId === excludeSessionId) continue
+    if (sessions().get(instanceId)?.get(sessionId) !== session) continue
+    if (!fetchIfNeeded) {
+      if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
+      continue
     }
+    if (!await isDeepCleanupCandidate(session, instanceId)) continue
+    if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
+    try {
+      await deleteSession(instanceId, sessionId)
+      deletedCount++
+    } catch (error) {
+      log.error(`Failed to deep clean session ${sessionId}`, error)
+    }
+  }
+
+  if (deletedCount > 0) {
+    showToastNotification({
+      message: deletedCount === 1
+        ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
+        : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
+      variant: "info"
+    })
   }
 }
 
@@ -1298,7 +1319,6 @@ export {
   isSessionMessagesLoading,
   getSessionMessagesLoadError,
   getSessionInfo,
-  isBlankSession,
   cleanupBlankSessions,
   SESSION_PAGE_SIZE,
   sessionPagination,
