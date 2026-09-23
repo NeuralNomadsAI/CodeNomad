@@ -42,7 +42,7 @@ describe("shared transcript visibility controls", () => {
       assert.equal(transcriptVisibility(after, item), transcriptVisibility(before, item), item.key)
     }
   })
-  it("keeps overrides for registered tools that are hidden from the settings list", () => {
+  it("routes retired tools through Other even with conflicting saved overrides", () => {
     const before = current()
     before.toolCallExpansionDefaults = {
       preset: "custom",
@@ -52,10 +52,18 @@ describe("shared transcript visibility controls", () => {
     assert.ok(!rows.some((item) => item.key === "apply_patch" || item.key === "todowrite"))
     const after = { ...before, ...transcriptVisibilityPatch(before, row("read"), "expanded") }
     assert.equal(after.toolCallExpansionDefaults.tools.read, "expanded")
-    assert.equal(after.toolCallExpansionDefaults.tools.apply_patch, "hidden")
-    assert.equal(after.toolCallExpansionDefaults.tools.todowrite, "expanded")
-    assert.equal(transcriptVisibility(after, { kind: "tool", key: "apply_patch", label: "" }), "hidden")
-    assert.equal(transcriptVisibility(after, { kind: "tool", key: "todowrite", label: "" }), "expanded")
+    assert.equal(after.toolCallExpansionDefaults.tools.apply_patch, undefined)
+    assert.equal(after.toolCallExpansionDefaults.tools.todowrite, undefined)
+    for (const mode of ["hidden", "collapsed", "expanded"] as const) {
+      const customized = { ...before, ...transcriptVisibilityPatch(before, row("other"), mode) }
+      for (const key of ["apply_patch", "todowrite", "todoread"]) {
+        const historical = { kind: "tool" as const, key, label: "" }
+        assert.equal(transcriptVisibility(before, historical), "collapsed", key)
+        assert.equal(transcriptVisibility(after, historical), "collapsed", key)
+        assert.equal(transcriptVisibility(customized, historical), mode, key)
+      }
+      assert.equal(transcriptVisibility(customized, row("read")), "collapsed")
+    }
   })
   it("supports all three tool modes", () => {
     for (const mode of ["hidden", "collapsed", "expanded"] as const) {

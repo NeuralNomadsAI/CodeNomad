@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "फाइल बचत गर्न असफल भयो",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo मोड",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "हालको सत्रको लागि अनुमति अनुरोधहरू स्वतः स्वीकृत गर्दछ। तपाईंले चलिरहेका उपकरणहरूलाई विश्वास गर्दा मात्र यसलाई प्रयोग गर्नुहोस्।",
-  "instanceShell.rightPanel.sections.plan": "योजना",
-  "instanceShell.rightPanel.sections.plan.tooltip": "यस सत्रको लागि एजेन्टको मार्गचित्र।",
+  "instanceShell.rightPanel.sections.tokens": "टोकनहरू",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "यस सत्र र यसका उपसत्रहरूको टोकन प्रयोग र लागत।",
   "instanceShell.rightPanel.sections.backgroundProcesses": "पृष्ठभूमि शेलहरू",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "सक्रिय कार्यस्थान वा worktree का OpenCode पृष्ठभूमि शेलहरू।",
   "instanceShell.backgroundProcesses.loading": "पृष्ठभूमि शेलहरू लोड हुँदैछन्...",
@@ -244,8 +244,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Sanitized मेटाउने त्रुटि प्रतिलिपि गरियो",
   "instanceShell.worktree.delete.error.copyFailure": "मेटाउने त्रुटि प्रतिलिपि गर्न असफल भयो",
 
-  "instanceShell.plan.noSessionSelected": "योजना हेर्न सत्र चयन गर्नुहोस्।",
-  "instanceShell.plan.empty": "अझै केहि योजना गरिएको छैन।",
 
   "instanceShell.yoloMode.noSessionSelected": "Yolo मोड कन्फिगर गर्न सत्र चयन गर्नुहोस्।",
   "instanceShell.yoloMode.title": "Yolo मोड",
