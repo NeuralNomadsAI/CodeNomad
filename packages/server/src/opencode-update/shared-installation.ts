@@ -54,6 +54,16 @@ function npmLauncher(command: string, prefix: string, platform: NodeJS.Platform)
   } catch { return undefined }
 }
 
+function retiredPosixAlias(command: string, prefix: string, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") return false
+  const relative = npmPackage(prefix, platform)?.bin?.[path.basename(command)]
+  if (typeof relative !== "string" || !/^\.\/bin\/[^/\\]+\.cjs$/.test(relative)) return false
+  try {
+    const target = path.resolve(path.dirname(npmExecutable(prefix, platform)), "..", relative)
+    return realpathSync(command) === realpathSync(target)
+  } catch { return false }
+}
+
 function npmCommand(prefix: string, platform: NodeJS.Platform): { command: string; binary: string } | undefined {
   const directory = npmCommandDirectory(prefix, platform)
   for (const name of ["opencode2", "opencode"]) {
@@ -78,8 +88,9 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
       try {
         if (!statSync(candidate).isFile()) continue
         accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK)
-        if (inNpmBin && npmPackage(prefix, platform) && (platform !== "win32" || extension === ".cmd")) {
-          if (!npmLauncher(candidate, prefix, platform)) continue
+        if (inNpmBin && npmPackage(prefix, platform)) {
+          if (platform === "win32" && extension === ".cmd" && !npmLauncher(candidate, prefix, platform)) continue
+          if (retiredPosixAlias(candidate, prefix, platform)) continue
         }
         return candidate
       } catch { /* Continue in PATH order. */ }

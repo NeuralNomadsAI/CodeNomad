@@ -153,17 +153,17 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
     const prefix = path.join(home, "npm")
     const directory = npmCommandDirectory(prefix)
     await npmFixture(prefix, "2.0.3")
-    const standalone = path.join(directory, process.platform === "win32" ? "opencode2.exe" : "opencode")
+    const standalone = path.join(directory, process.platform === "win32" ? "opencode2.exe" : "opencode2")
     if (process.platform === "win32") await writeFile(standalone, "standalone")
     else {
       await rm(standalone, { force: true })
       await writeFile(standalone, "standalone", { mode: 0o755 })
+      await symlink(npmExecutable(prefix), path.join(directory, "opencode"))
     }
     const host = { home, env: { PATH: directory } }
-    if (process.platform === "win32") {
-      assert.equal(resolveDefaultInstallation(host).path, standalone)
-      assert.equal(sharedInstallPrefix(host), undefined)
-    } else {
+    assert.equal(resolveDefaultInstallation(host).path, standalone)
+    assert.equal(sharedInstallPrefix(host), undefined)
+    if (process.platform !== "win32") {
       const sibling = path.join(prefix, "sibling")
       await mkdir(sibling)
       const unrelated = path.join(sibling, "opencode2")
