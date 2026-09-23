@@ -7,10 +7,12 @@ import { removeInstance, waitForInstanceInitialSessionHydration } from "./instan
 import { getSessionListIds, sessions } from "./session-state"
 import { refreshSessionCatalog } from "./session-api"
 
-it("publishes root sessions while checkout discovery is blocked, and defers supplemental metadata", async () => {
+it("publishes root sessions before project metadata and checkout discovery, then reconciles verified families", async () => {
   const id = "startup-slow-checkouts"
   let release!: (value: any) => void
   const checkouts = new Promise<any>(resolve => { release = resolve })
+  let releaseProject!: (value: any) => void
+  const project = new Promise<any>(resolve => { releaseProject = resolve })
   let supplemental = 0
   let catalogReads = 0
   const root = { id: "root", title: "root", projectID: "project", location: { directory: "/repo" },
@@ -18,7 +20,7 @@ it("publishes root sessions while checkout discovery is blocked, and defers supp
   const linked = { ...root, id: "linked", location: { directory: "/linked" } }
   const foreign = { ...root, id: "foreign", location: { directory: "/clone" } }
   const client: any = {
-    location: { get: async () => ({ directory: "/repo", project: { id: "project" } }) },
+    location: { get: () => project },
     session: { active: async () => ({}), list: async (input: any) => ({ data: input.project ? [root, linked, foreign] : [root], cursor: {} }) },
     project: { list: async () => { supplemental++; return [] } },
     mcp: { list: async () => ({ location: { directory: "/repo" }, data: [] }) },
@@ -41,7 +43,11 @@ it("publishes root sessions while checkout discovery is blocked, and defers supp
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.deepEqual(getSessionListIds(id), ["root"])
     assert.equal(supplemental, 0)
-    assert.equal(catalogReads, 0)
+    assert.equal(catalogReads, 1)
+    assert.equal(sessions().get(id)?.has("linked"), false)
+    releaseProject({ directory: "/repo", project: { id: "project" } })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(getSessionListIds(id), ["root"])
     assert.equal(sessions().get(id)?.has("linked"), false)
     release({ isGitRepo: true, worktrees: [
       { slug: "root", directory: "/repo", kind: "root" },
@@ -54,6 +60,7 @@ it("publishes root sessions while checkout discovery is blocked, and defers supp
     assert.equal(supplemental, 1)
     assert.equal(catalogReads, 1)
   } finally {
+    releaseProject({ directory: "/repo", project: { id: "project" } })
     release({ isGitRepo: false, worktrees: [] })
     sdkManager.createClient = oldCreate
     serverApi.fetchWorktrees = oldWorktrees

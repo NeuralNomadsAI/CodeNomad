@@ -1,6 +1,7 @@
 import { batch, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
+import OpenCodeSetup from "./opencode-setup"
 import { SettingsScreen } from "./settings-screen"
 import {
   getNativePreferencesRequest,
@@ -153,6 +154,7 @@ export const PreferencesWindow: Component = () => {
         onClose={() => close(false)}
       />
       <AlertDialog />
+      <OpenCodeSetup automatic={false} />
       <Toaster
         position="top-right"
         gutter={16}

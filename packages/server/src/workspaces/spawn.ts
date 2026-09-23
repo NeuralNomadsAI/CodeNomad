@@ -8,7 +8,6 @@ import { isOpenCodeServiceCommandUnavailable, isOpenCodeServiceHelp } from "./op
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
-const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 
@@ -194,6 +193,7 @@ export function probeBinaryVersion(
   version?: string
   reported?: string
   error?: string
+  missing?: boolean
 } {
   if (!binaryPath) {
     return { valid: false, error: "Missing binary path" }
@@ -210,7 +210,7 @@ export function probeBinaryVersion(
 
 function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
   if (result.error) {
-    return { valid: false, error: result.error.message }
+    return { valid: false, error: result.error.message, ...((result.error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) }
   }
 
   if (result.status !== 0) {
@@ -236,9 +236,15 @@ function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof pro
     return { valid: true }
   }
 
-  const versionMatch = reported.match(VERSION_REGEX)
-  const version = versionMatch?.[1]
+  // Strip only presentation prefixes. Preserve custom labels and +build metadata:
+  // truncating them into a stable version would enable unintended auto-upgrades.
+  const version = reported.replace(/^opencode(?:2)?\s+/i, "").replace(/^v(?=\d+\.)/i, "")
   return { valid: true, version, reported }
+}
+
+export async function probeBinaryVersionAsync(binaryPath: string): Promise<ReturnType<typeof probeBinaryVersion>> {
+  try { return parseBinaryVersion(await executeAsyncBinaryProbe(buildSpawnSpec(binaryPath, ["--version"]), 5_000)) }
+  catch (error) { return { valid: false, error: error instanceof Error ? error.message : String(error) } }
 }
 
 export async function probeOpenCodeBinary(

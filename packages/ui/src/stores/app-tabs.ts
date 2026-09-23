@@ -64,19 +64,22 @@ function rememberTabOrder(tabId: string) {
   setTabOrder((prev) => (prev.includes(tabId) ? prev : [...prev, tabId]))
 }
 
-const appTabs = createMemo<AppTabRecord[]>(() => {
+const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
+  // Solid's <For> keys by object identity. Metadata refreshes and opening another
+  // project must not remount every shell (and restart their Git/status reads).
+  const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))
-      .map((instance) => ({
+      .map((instance) => previousById.get(getInstanceAppTabId(instance.id)) ?? ({
         id: getInstanceAppTabId(instance.id),
         kind: "instance" as const,
-        instance,
+        get instance() { return instances().get(instance.id) ?? instance },
       })),
-    ...sidecarTabs().map((sidecarTab) => ({
+    ...sidecarTabs().map((sidecarTab) => previousById.get(getSidecarAppTabId(sidecarTab.token)) ?? ({
       id: getSidecarAppTabId(sidecarTab.token),
       kind: "sidecar" as const,
-      sidecarTab,
+      get sidecarTab() { return sidecarTabs().find((tab) => tab.token === sidecarTab.token) ?? sidecarTab },
     })),
   ]
 

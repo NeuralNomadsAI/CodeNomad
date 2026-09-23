@@ -8,18 +8,21 @@ import pino from "pino"
 
 // Called only by the explicit, isolated native fixture (never service discovery).
 export async function testPruningUI({ client, baseUrl, root, location, generate, busy, connection }) {
+  console.log("Native pruning UI: loading browser and server dependencies")
   const uiRoot = fileURLToPath(new URL("../packages/ui/", import.meta.url))
   const requireUI = createRequire(path.join(uiRoot, "package.json"))
   const { chromium } = requireUI("playwright")
   const { createServer } = await import("vite")
   const { default: solid } = await import("vite-plugin-solid")
   const { default: Fastify } = await import("fastify")
+  console.log("Native pruning UI: loading production routes")
   const { registerSessionPruningRoutes } = await tsImport("../packages/server/src/server/routes/session-pruning.ts", import.meta.url)
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
   const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const endpoint = connection?.endpoint ?? { url: baseUrl, auth: { type: "basic", username: "opencode", password: "isolated-pruning-fixture" } }
+  console.log("Native pruning UI: creating isolated broker")
   if (!connection) rememberRuntime(endpoint, { ...await client.server.info(), discovery: "info" })
   const runtimeFetch = connection?.fetch ?? createRuntimeFetch(endpoint)
   const owns = candidate => path.resolve(candidate) === path.resolve(location.directory)
@@ -29,6 +32,8 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     ...(connection ? { getSharedServiceConnection: async () => connection } : {}),
     getInstanceAuthorizationHeader: () => `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
     getServiceDirectory: () => location.directory,
+    getServiceLocation: () => location,
+    getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => client,
     getSessionEnvironment: async () => {
       const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
@@ -58,6 +63,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     finally { reply.raw.end() }
   })
   await broker.listen({ host: "127.0.0.1", port: 0 })
+  console.log("Native pruning UI: creating Vite server")
   const server = await createServer({
     configFile: false, root: uiRoot, logLevel: "error", plugins: [solid(), {
       name: "native-pruning-fixture",
@@ -71,10 +77,12 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: {
       "/workspaces/pruning-ui/instance": { target: `http://127.0.0.1:${broker.server.address().port}` },
       "/api/workspaces/pruning-ui/session-pruning": { target: `http://127.0.0.1:${broker.server.address().port}` },
+      "/api/workspaces/pruning-ui/session-history": { target: `http://127.0.0.1:${broker.server.address().port}` },
       "/fixture-events": { target: `http://127.0.0.1:${broker.server.address().port}` },
     } },
   })
   let browser, page
+  console.log("Native pruning UI: starting browser scenario")
   const pageErrors = []
   try {
     await server.listen()

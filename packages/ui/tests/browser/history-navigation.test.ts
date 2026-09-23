@@ -1,0 +1,642 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { DatabaseSync } from "node:sqlite"
+import { chromium, type Browser, type Page } from "playwright"
+import { createServer, type ViteDevServer } from "vite"
+import solid from "vite-plugin-solid"
+import { readNavigationWindow, readSessionOutline } from "../../../server/src/opencode/session-pruning/navigation-store"
+import { readOutlinePreviews } from "../../../server/src/opencode/session-pruning/outline-preview"
+import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./fixtures/history-navigation-data"
+
+let server: ViteDevServer, browser: Browser, url: string
+before(async () => {
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    plugins: [solid(), { name: "navigation-fixture", configureServer(server) {
+      server.middlewares.use("/fixture", async (_req, res) => {
+        res.setHeader("Content-Type", "text/html")
+        res.end(await server.transformIndexHtml("/fixture", '<html><body><div id="root" style="display:flex;width:1100px;height:740px"></div><script type="module" src="/tests/browser/fixtures/history-navigation.tsx"></script></body></html>'))
+      })
+    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  await server.listen()
+  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined,
+    ignoreDefaultArgs: ["--hide-scrollbars"], args: ["--disable-features=OverlayScrollbar"] })
+})
+after(async () => { await browser?.close(); await server?.close() })
+
+async function fixture(mixed = false, pausePreviews = false, holdMessages = false) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  const databaseDirectory = await mkdtemp(path.join(os.tmpdir(), "codenomad-outline-browser-"))
+  const databasePath = path.join(databaseDirectory, "history.sqlite")
+  const db = new DatabaseSync(databasePath)
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE session_v2(id TEXT,directory TEXT,project_id TEXT,workspace_id TEXT,revert TEXT);
+    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,data TEXT,time_updated INTEGER DEFAULT 0);
+    CREATE UNIQUE INDEX seq_idx ON session_message(session_id,seq);
+    INSERT INTO session_v2 VALUES ('s','/fixture','p',NULL,NULL);`)
+  const insert = db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s',?,?,?)")
+  for (let index = 0; index < 1500; index++) {
+    const { id, type, ...data } = (mixed ? mixedNavigationMessage : navigationMessage)(index)
+    insert.run(id, type, index, JSON.stringify(data))
+  }
+  if (mixed) {
+    for (const [index, name] of [[6, "read"], [11, "glob"]] as const) {
+      const { id, type: _, ...data } = mixedNavigationMessage(index)
+      data.content.find((part: any) => part.type === "tool").name = name
+      db.prepare("UPDATE session_message SET data=? WHERE id=?").run(JSON.stringify(data), id)
+    }
+  }
+  for (let index = 0; index < 6; index++) {
+    db.prepare("INSERT INTO session_v2 VALUES (?,'/fixture','p',NULL,NULL)").run(`cached-${index}`)
+    db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,?,'user',0,?)").run(`cached-message-${index}`, `cached-${index}`, JSON.stringify({ text: "Cached index" }))
+  }
+  const errors: string[] = [], windows: any[] = []
+  const outlines: Array<number | undefined> = []
+  const previewRequests: string[][] = []
+  const outlineReplies: any[] = []
+  let resumeOutline!: () => void
+  const outlineGate = new Promise<void>(resolve => { resumeOutline = resolve })
+  const reads = new Set<Promise<unknown>>()
+  let indexGate: Promise<void> | undefined, releaseIndex: (() => void) | undefined
+  let hold: { messageID: string; release: () => void; promise: Promise<void> } | undefined
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", async route => {
+    const request = route.request(), method = request.url().split("/").at(-1)
+    if (!request.url().includes("/session-history/") || !["outline", "outlinePreview", "window"].includes(method!)) {
+      return route.fulfill({ contentType: "application/json", body: "{}" })
+    }
+    const input = request.postDataJSON()
+    if (method === 'outline') {
+      outlines.push(input.cursor?.after ?? input.after)
+    }
+    if (method === 'outlinePreview') {
+      previewRequests.push(input.messageIDs)
+      if (pausePreviews) await outlineGate
+    }
+    const scope = { directory: "/fixture", projectID: "p", sessionID: input.sessionID }
+    // Production opens an independent read-only connection for every RPC.
+    // Sharing one handle falsely nests yielding index/window transactions.
+    const reader = new DatabaseSync(databasePath, { readOnly: true })
+    const read = method === "window"
+      ? readNavigationWindow(reader, scope, input.target, new AbortController().signal)
+      : method === "outlinePreview" ? readOutlinePreviews(reader, scope, input.messageIDs, new AbortController().signal)
+        : readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known)
+    reads.add(read)
+    const response = await read.finally(() => { reads.delete(read); reader.close() })
+    if (method === "outline") { outlineReplies.push(response); await indexGate }
+    if (method === "window") {
+      windows.push(input.target)
+      if (input.target.messageID === hold?.messageID) await hold!.promise
+    }
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
+  })
+  await page.goto(url + `?${mixed ? "mixed&" : ""}${holdMessages ? "holdMessages" : ""}`)
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+  if (!holdMessages) await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
+  return { page, windows, errors, outlines, outlineReplies, previewRequests, resumeOutline,
+    holdIndex: () => { indexGate = new Promise<void>(resolve => { releaseIndex = resolve }); return () => { releaseIndex?.(); indexGate = undefined } },
+    offlineEdit: () => {
+      db.prepare("DELETE FROM session_message WHERE id=?").run(navigationMessageId(250))
+      db.prepare("UPDATE session_message SET type='assistant',data=?,time_updated=1 WHERE id=?").run(
+        JSON.stringify({ content: [{ type: 'text', text: 'Updated' }, { type: 'tool', name: 'read' }] }), navigationMessageId(260))
+      const { id, type, ...data } = navigationMessage(1500)
+      insert.run(id, type, 1500, JSON.stringify(data))
+    },
+    hold: (index: number) => {
+      let release!: () => void
+      const promise = new Promise<void>(done => { release = done })
+      hold = { messageID: navigationMessageId(index), release, promise }
+      return release
+    },
+    close: async () => { hold?.release(); releaseIndex?.(); resumeOutline(); await page.close(); await Promise.allSettled(reads); db.close(); await rm(databaseDirectory, { recursive: true, force: true }) },
+  }
+}
+
+async function clickTimeline(page: Page, index: number, checkReaderPosition = false) {
+  await page.locator('.message-timeline').hover()
+  await page.locator(".message-timeline").evaluate((element, index) => {
+    element.scrollTop = element.scrollHeight * index / 1500
+  }, index)
+  if (checkReaderPosition) {
+    // Let the prior selection's 120ms reveal expire while the reader is
+    // browsing elsewhere. It must not reclaim the rail or animate the target.
+    await page.waitForTimeout(250)
+    const target = await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).boundingBox()
+    const rail = await page.locator(".message-timeline").boundingBox()
+    assert(target && rail && target.y >= rail.y && target.y < rail.y + rail.height, "reader's destination remains visible before clicking")
+  }
+  await page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(index)}"]`).click()
+}
+const snapshot = (page: Page) => page.evaluate(() => (window as any).fixture.snapshot())
+
+for (const evict of [false, true]) test(`missing saved anchor recovers once on session return (${evict ? 'evicted' : 'resident'})`, async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(evict => {
+      ;(window as any).fixture.switchAway()
+      ;(window as any).fixture.missingSavedAnchor(evict)
+      ;(window as any).fixture.return()
+    }, evict)
+    await f.page.waitForFunction(() => {
+      const s = (window as any).fixture.snapshot()
+      return s.scroll?.atBottom && s.scroll?.anchorKey !== 'msg_removed' && s.ids.includes((window as any).fixture.id(1499))
+    })
+    assert.equal(f.windows.filter(w => w.messageID === 'msg_removed').length, 1)
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.waitForTimeout(400)
+    assert.equal(f.windows.filter(w => w.messageID === 'msg_removed').length, 1, 'dead anchor must be retired, including saved window cursor')
+    assert.equal(await f.page.getByRole('button', { name: /^(Reload messages|Recharger les messages)$/ }).count(), 0)
+  } finally { await f.close() }
+})
+
+test("restoration ownership conflicts retain the saved passage instead of falling back", async () => {
+  const f = await fixture()
+  try {
+    let conflicts = 0
+    await f.page.route('**/session-history/window', route => { conflicts++; return route.fulfill({ json: { status: 'blocked', reason: 'conflict' } }) })
+    await f.page.evaluate(() => {
+      ;(window as any).fixture.switchAway()
+      ;(window as any).fixture.missingSavedAnchor(false)
+      ;(window as any).fixture.return()
+    })
+    await f.page.getByRole('button', { name: /^(Reload messages|Recharger les messages)$/ }).first().waitFor()
+    assert.equal(conflicts, 1, JSON.stringify({ snapshot: await snapshot(f.page), windows: f.windows, errors: f.errors }))
+    const failed = await snapshot(f.page)
+    assert.equal(failed.scroll.anchorKey, 'msg_removed', 'conflict must preserve the reading destination')
+    assert.equal(failed.scroll.atBottom, false, 'only a confirmed missing anchor may reset to latest')
+    await f.page.waitForTimeout(300)
+    assert.equal((await snapshot(f.page)).nativeLists, failed.nativeLists, 'conflict must not start a retry loop')
+  } finally { await f.close() }
+})
+
+test("index and exact scrollbar precede transcript and previews, and survive session returns", async () => {
+  const f = await fixture(false, true, true)
+  try {
+    const rail = f.page.locator('.message-timeline')
+    const height = await rail.evaluate(element => element.scrollHeight)
+    assert.equal((await snapshot(f.page)).ids.length, 0, 'index must not wait for transcript hydration')
+    assert.equal(await f.page.locator('.history-navigation-status').count(), 0, 'no outline countdown')
+    await rail.hover()
+    await rail.evaluate(element => { element.scrollTop = element.scrollHeight / 6 })
+    await rail.locator('[data-message-id="msg_00250"]').hover()
+    await f.page.waitForTimeout(350)
+    assert.equal(await f.page.getByRole('tooltip').count(), 0, 'unloaded preview has no empty popup')
+    f.resumeOutline()
+    await f.page.getByRole('tooltip').waitFor()
+    assert.equal(await rail.evaluate(element => element.scrollHeight), height, 'preview arrival cannot resize the scrollbar')
+    await f.page.evaluate(() => (window as any).fixture.releaseMessages())
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
+    const hydratedScans = f.outlines.length
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    assert.equal(f.outlines.length, hydratedScans, `return reuses the structural index: ${JSON.stringify(f.outlines)}`)
+    const count = f.outlines.length
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    await f.page.waitForTimeout(400)
+    assert.equal(f.outlines.length, count, 'completed unchanged outline is immediately reusable on return')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+async function assertPassageAtTop(page: Page, index: number) {
+  await page.waitForFunction(id => {
+    const stream = document.querySelector('.message-stream')!
+    const row = stream.querySelector(`[data-virtual-follow-key="${id}"]`)
+    return row && Math.abs(row.getBoundingClientRect().top - stream.getBoundingClientRect().top) < 2
+  }, navigationMessageId(index))
+  await page.waitForTimeout(500)
+  const offset = await page.locator(`[data-virtual-follow-key="${navigationMessageId(index)}"]`).evaluate(row =>
+    row.getBoundingClientRect().top - document.querySelector('.message-stream')!.getBoundingClientRect().top)
+  assert(Math.abs(offset) < 2, `selected passage ${index} moved by ${offset}px`)
+}
+
+test("indexes survive more than four session visits and live refresh reads only the tail", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.visitIndexes())
+    const count = f.outlines.length
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    await f.page.waitForTimeout(250)
+    assert.equal(f.outlines.length, count, 'six other indexes must not evict the original')
+    await f.page.evaluate(() => {
+      ;(window as any).fixture.stream('A new message')
+      ;(window as any).fixture.status('working')
+    })
+    await f.page.waitForFunction(() => document.querySelector('.message-timeline')?.getAttribute('data-segment-count') === '1501')
+    await f.page.waitForTimeout(200)
+    assert.equal(f.outlineReplies.at(-1).entries.length, 476, 'refresh only returns the last changed checkpoint')
+    assert.equal(f.outlineReplies.at(-1).checkpoints.filter((checkpoint: any) => !checkpoint.changed).length, 2)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("restored partition index paints before revalidation and applies offline changes by checkpoint", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.saveIndexes())
+    f.offlineEdit()
+    const release = f.holdIndex()
+    await f.page.reload()
+    await f.page.waitForFunction(() => Boolean((window as any).fixture))
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    assert((await f.page.evaluate(() => (window as any).fixture.index())).entries.some((entry: any) => entry.id === 'msg_00250'),
+      'saved geometry is visible while native verification is blocked')
+    release()
+    await f.page.waitForFunction(() => {
+      const entries = (window as any).fixture.index()?.entries ?? []
+      return !entries.some((entry: any) => entry.id === 'msg_00250') && entries.some((entry: any) => entry.id === 'msg_01500')
+    })
+    const response = f.outlineReplies.at(-1)
+    assert.equal(response.entries.length, 988, 'only changed ranges travel back to the renderer')
+    assert.equal(response.checkpoints.filter((checkpoint: any) => !checkpoint.changed).length, 1)
+    assert.equal(response.entries.find((entry: any) => entry.id === 'msg_00260').tools, 1)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("restored index from another project is not displayed", async () => {
+  const f = await fixture()
+  try {
+    await f.page.evaluate(() => (window as any).fixture.saveIndexes('foreign'))
+    const release = f.holdIndex()
+    await f.page.reload()
+    await f.page.waitForFunction(() => Boolean((window as any).fixture))
+    assert.equal(await f.page.locator('.message-timeline[data-segment-count="1500"]').count(), 0)
+    release()
+    await f.page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("global timeline jumps over 1200 messages in one bounded window and restores the selected passage", async () => {
+  const f = await fixture()
+  try {
+    const before = await snapshot(f.page)
+    assert.equal(before.ids.length, 200)
+    assert.equal(before.ids[0], navigationMessageId(1300))
+    await clickTimeline(f.page, 250)
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_00250"))
+    await f.page.locator('.message-stream [data-message-id="msg_00250"]').first().waitFor()
+    await assertPassageAtTop(f.page, 250)
+    const jumped = await snapshot(f.page)
+    assert.equal(f.windows.length, 1)
+    assert.equal(jumped.nativeLists, before.nativeLists, "jump does not replay native pages")
+    assert.equal(jumped.ids.length, 200)
+    assert.equal(jumped.window.kind, "history")
+    assert.deepEqual(jumped.model, before.model)
+    await f.page.evaluate(() => (window as any).fixture.reload())
+    await assertPassageAtTop(f.page, 250)
+    const restored = await snapshot(f.page)
+    assert.deepEqual(restored.ids, jumped.ids)
+    assert.equal(f.windows.length, 2)
+    const marker = await f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]').elementHandle()
+    assert(marker)
+    await f.page.evaluate(() => (window as any).fixture.stream("Live response while reading the old passage"))
+    assert.deepEqual((await snapshot(f.page)).ids, jumped.ids, "native streaming does not replace the historical window")
+    assert(await marker.evaluate(element => element.isConnected), "streaming retains the historical marker's DOM identity")
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    await f.page.evaluate(() => (window as any).fixture.return())
+    await f.page.locator(".message-stream").waitFor()
+    await assertPassageAtTop(f.page, 250)
+    assert((await snapshot(f.page)).ids.includes(navigationMessageId(250)))
+    assert.deepEqual(f.errors, [])
+    const captures = path.join(os.tmpdir(), "opencode"); await mkdir(captures, { recursive: true })
+    await f.page.screenshot({ path: path.join(captures, "history-navigation.png") })
+  } finally { await f.close() }
+})
+
+test("latest timeline intent supersedes a slow far jump, including a resident destination", async () => {
+  const f = await fixture()
+  try {
+    const release = f.hold(250)
+    await clickTimeline(f.page, 250)
+    await f.page.locator(".history-navigation-status").waitFor()
+    await clickTimeline(f.page, 1450, true)
+    await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
+    release()
+    await f.page.waitForTimeout(150)
+    const state = await snapshot(f.page)
+    assert(state.ids.includes(navigationMessageId(1450)))
+    assert(!state.ids.includes(navigationMessageId(250)))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("resident streaming keeps a distant timeline marker mounted", async () => {
+  const f = await fixture()
+  try {
+    await f.page.locator(".message-timeline").hover()
+    await f.page.locator(".message-timeline").evaluate(element => { element.scrollTop = element.scrollHeight * 250 / 1500 })
+    const marker = f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]')
+    await marker.waitFor()
+    const retained = await marker.evaluate(element => {
+      ;(window as any).fixture.stream("A new resident response while browsing old timeline markers")
+      return element.isConnected
+    })
+    assert(retained, "a resident content update must not remount an unchanged distant click target")
+    assert((await snapshot(f.page)).ids.includes("msg_streaming"), "the resident transcript did receive the streamed message")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("timeline previews render bounded Markdown for historical and resident messages", async () => {
+  const f = await fixture(true)
+  try {
+    const before = await snapshot(f.page)
+    const rail = f.page.locator('.message-timeline')
+    for (const index of [252, 1452]) {
+      await rail.hover()
+      await rail.evaluate((element, index) => { element.scrollTop = element.scrollHeight * index / 1500 }, index)
+      const marker = rail.locator(`[data-message-id="${navigationMessageId(index)}"]`).first()
+      await marker.hover()
+      const preview = f.page.getByRole('tooltip')
+      await preview.waitFor()
+      const geometry = await preview.evaluate(element => {
+        const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
+        return { width: rect.width, height: rect.height, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+          background: style.backgroundColor, border: style.borderTopWidth, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+          text: element.textContent, richCards: element.querySelectorAll('.message-preview,.message-item-base').length,
+          bold: element.querySelector('strong')?.textContent }
+      })
+      assert(geometry.width <= 361 && geometry.width >= 300, JSON.stringify(geometry))
+      assert(geometry.left >= 15 && geometry.top >= 15 && geometry.right <= 1185 && geometry.bottom <= 785, JSON.stringify(geometry))
+      assert(geometry.height <= 420, 'rich excerpts remain viewport bounded')
+      assert.notEqual(geometry.background, 'rgba(0, 0, 0, 0)')
+      assert.equal(geometry.border, '1px')
+      assert.equal(geometry.scrollWidth, geometry.clientWidth)
+      assert.equal(geometry.richCards, 0)
+      assert.equal(geometry.bold, 'formatting')
+      assert(geometry.text?.includes(`Passage ${index}`))
+      await marker.focus()
+      await marker.press('Escape')
+      await preview.waitFor({ state: 'detached' })
+    }
+    assert.equal(f.windows.length, 0, 'hover never requests a transcript window')
+    assert.equal((await snapshot(f.page)).nativeLists, before.nativeLists, 'hover never fetches a native message')
+    assert(f.previewRequests.every(ids => ids.length <= 12), 'excerpt fetches are bounded batches')
+    assert(new Set(f.previewRequests.flat()).size < 400, 'preview requests follow the viewed area, not the full history')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("mixed timeline keeps an exact scrollbar extent throughout manual browsing and hidden tools", async () => {
+  const f = await fixture(true)
+  try {
+    const rail = f.page.locator('.message-timeline')
+    await f.page.evaluate(() => (window as any).fixture.tools(true))
+    await rail.evaluate(element => { element.scrollTop = 0 })
+    for (const [index, icon] of [[1, "terminal"], [6, "book-open"], [11, "search"]] as const) {
+      const historicalTool = rail.locator(`.message-timeline-tool[data-message-id="${navigationMessageId(index)}"]`)
+      await historicalTool.waitFor()
+      assert.equal(await historicalTool.locator(`svg.lucide-${icon}`).count(), 1,
+        `indexed tool ${index} keeps its ${icon} icon without loading the historical message`)
+      assert.equal(await historicalTool.locator("svg.lucide-layout-grid").count(), 0)
+    }
+    for (const tools of [true, false]) {
+      await f.page.evaluate(tools => (window as any).fixture.tools(tools), tools)
+      await rail.hover()
+      await f.page.waitForTimeout(400)
+      const heights: number[] = []
+      for (const fraction of [0, 0.25, 0.75, 0.5, 1, 0]) {
+        await rail.evaluate((element, fraction) => { element.scrollTop = (element.scrollHeight - element.clientHeight) * fraction }, fraction)
+        await f.page.waitForTimeout(200)
+        heights.push(await rail.evaluate(element => element.scrollHeight))
+      }
+      assert(Math.max(...heights) - Math.min(...heights) <= 1, `scrollbar extent changes while browsing (tools=${tools}): ${heights}`)
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("mixed transcript lands on the clicked message after distant jumps and retains it during streaming", async () => {
+  const f = await fixture(true)
+  try {
+    for (const index of [250, 900, 100, 1450]) {
+      await clickTimeline(f.page, index)
+      await assertPassageAtTop(f.page, index)
+      await f.page.evaluate(() => (window as any).fixture.stream('Another token. '))
+      await assertPassageAtTop(f.page, index)
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+async function dragNativeThumb(page: Page, selector: string, fraction: number) {
+  await page.locator(selector).hover()
+  await page.evaluate(() => new Promise(requestAnimationFrame))
+  const geometry = await page.locator(selector).evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    const inset = element.offsetWidth - element.clientWidth
+    const track = element.clientHeight - inset * 2
+    const height = Math.max(18, track * element.clientHeight / element.scrollHeight)
+    const travel = track - height
+    const ratio = element.scrollTop / (element.scrollHeight - element.clientHeight)
+    return { x: rect.right - inset / 2, top: rect.top + inset, height, travel,
+      y: ratio > 0.99 ? rect.bottom - 16 : ratio < 0.01 ? rect.top + 16 : rect.top + inset + height / 2 + travel * ratio }
+  })
+  await page.mouse.move(geometry.x, geometry.y)
+  await page.mouse.down()
+  await page.waitForTimeout(750)
+  await page.mouse.move(geometry.x, geometry.top + geometry.height / 2 + geometry.travel * fraction, { steps: 12 })
+  await page.mouse.up()
+}
+
+test("native transcript thumb remains under reader control after a held press", async () => {
+  const f = await fixture(true)
+  try {
+    await f.page.waitForTimeout(500)
+    await dragNativeThumb(f.page, '.message-stream', 0.5)
+    await f.page.waitForTimeout(500)
+    const ratio = await f.page.locator('.message-stream').evaluate(element => element.scrollTop / (element.scrollHeight - element.clientHeight))
+    assert(ratio > 0.2 && ratio < 0.8, `native thumb snapped away from middle: ${ratio}`)
+    const before = await f.page.locator('.message-stream').evaluate(element => {
+      const top = element.getBoundingClientRect().top
+      const row = Array.from(element.querySelectorAll<HTMLElement>('[data-virtual-follow-key]')).find(row => {
+        const rect = row.getBoundingClientRect()
+        return rect.top <= top && rect.bottom > top
+      })!
+      return { key: row.dataset.virtualFollowKey, offset: row.getBoundingClientRect().top - top }
+    })
+    await f.page.evaluate(() => (window as any).fixture.stream('Streaming during manual scrollbar reading.'))
+    await f.page.waitForTimeout(400)
+    const after = await f.page.locator(`[data-virtual-follow-key="${before.key}"]`).evaluate(element =>
+      element.getBoundingClientRect().top - document.querySelector('.message-stream')!.getBoundingClientRect().top)
+    assert(Math.abs(before.offset - after) < 2, `streaming displaced visible passage: ${before.offset} -> ${after}`)
+  } finally { await f.close() }
+})
+
+test("wheel at a stationary historical boundary opens the adjacent window", async () => {
+  const f = await fixture(true)
+  try {
+    await clickTimeline(f.page, 250)
+    await assertPassageAtTop(f.page, 250)
+    const before = await snapshot(f.page)
+    await f.page.locator('.message-stream[tabindex]').evaluate(element => { element.scrollTop = 0 })
+    await f.page.waitForTimeout(500)
+    const stream = await f.page.locator('.message-stream[tabindex]').boundingBox()
+    assert(stream)
+    await f.page.mouse.move(stream.x + 25, stream.y + 25)
+    await f.page.mouse.wheel(0, -200)
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 4000 })
+    await assertPassageAtTop(f.page, 170)
+    const older = await snapshot(f.page)
+    await f.page.locator('.message-stream[tabindex]').evaluate(element => { element.scrollTop = element.scrollHeight })
+    await f.page.waitForTimeout(500)
+    await f.page.mouse.wheel(0, 200)
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.at(-1) !== id, older.ids.at(-1), { timeout: 4000 })
+    assert((await snapshot(f.page)).ids.includes(older.ids.at(-2)), 'newer window retains the boundary passage')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("first/latest controls remain available at local boundaries and land at actual global ends", async () => {
+  const f = await fixture(true)
+  try {
+    await clickTimeline(f.page, 250)
+    await assertPassageAtTop(f.page, 250)
+    const stream = f.page.locator('.message-stream[tabindex]')
+    await stream.evaluate(element => { element.scrollTop = element.scrollHeight })
+    await f.page.waitForTimeout(500)
+    await f.page.getByRole('button', { name: /Scroll to latest message|Aller au dernier message/ }).click()
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().window.kind === 'latest')
+    await f.page.waitForTimeout(400)
+    assert(await stream.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2))
+    await f.page.getByRole('button', { name: /Scroll to first message|Aller au premier message/ }).click()
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids[0] === 'msg_00000')
+    await assertPassageAtTop(f.page, 0)
+    const selected = f.page.locator('.message-timeline [aria-current="true"]')
+    await selected.waitFor()
+    assert.equal(await selected.getAttribute('data-message-id'), 'msg_00000')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("keyboard scrolling owns the timeline without paging the transcript", async () => {
+  const f = await fixture(true)
+  try {
+    const rail = f.page.locator('.message-timeline')
+    await rail.focus()
+    await rail.press('Home')
+    await f.page.waitForTimeout(400)
+    assert.equal(await rail.evaluate(element => element.scrollTop), 0)
+    await rail.press('End')
+    await f.page.waitForTimeout(400)
+    assert(await rail.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2))
+    assert.equal(f.windows.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("timeline uses the standard scrollbar and only rectangle width changes in RTL and fractional zoom", async () => {
+  const f = await fixture()
+  try {
+    const rail = f.page.locator(".message-timeline")
+    for (const direction of ["ltr", "rtl"]) for (const zoom of [1, 1.25]) {
+      await f.page.evaluate(({ direction, zoom }) => { document.documentElement.dir = direction; document.body.style.zoom = String(zoom) }, { direction, zoom })
+      const measure = () => rail.evaluate(element => {
+        const style = getComputedStyle(element)
+        return { width: element.clientWidth, gutter: element.offsetWidth - element.clientWidth, scrollbar: style.scrollbarWidth,
+          segment: element.querySelector(".message-timeline-segment[data-message-id]")!.getBoundingClientRect().width,
+          height: element.querySelector(".message-timeline-segment[data-message-id]")!.getBoundingClientRect().height,
+          icon: element.querySelector(".message-timeline-icon")!.getBoundingClientRect().width }
+      })
+      const normal = await measure()
+      assert.notEqual(normal.scrollbar, "none")
+      const standard = await f.page.locator('.message-stream[tabindex]').evaluate(element => ({
+        gutter: element.offsetWidth - element.clientWidth, scrollbar: getComputedStyle(element).scrollbarWidth,
+      }))
+      assert.equal(normal.gutter, standard.gutter)
+      assert.equal(normal.scrollbar, standard.scrollbar)
+      await rail.hover()
+      const hover = await measure()
+      assert.equal(hover.width, normal.width)
+      assert.equal(hover.segment, normal.segment)
+      assert.equal(hover.height, normal.height)
+      assert.equal(hover.icon, normal.icon)
+      await rail.locator("button[data-message-id]").first().focus()
+      assert.equal((await measure()).width, normal.width)
+      await rail.evaluate(element => { element.style.scrollbarGutter = "auto"; element.style.setProperty("scrollbar-width", "none", "important") })
+      const withoutGutter = await measure()
+      assert(withoutGutter.segment > normal.segment, "only the surrounding rectangle gives up width to the gutter")
+      assert.equal(withoutGutter.icon, normal.icon, "icons never scale to fit the narrower rail")
+      assert.equal(withoutGutter.height, normal.height, "vertical geometry does not scale with width")
+      await rail.evaluate(element => { element.style.removeProperty("scrollbar-gutter"); element.style.removeProperty("scrollbar-width") })
+    }
+  } finally { await f.close() }
+})
+
+test("native timeline thumb follows the pointer without moving the transcript or snapping back during streaming", async () => {
+  const f = await fixture(true)
+  try {
+    const before = await snapshot(f.page)
+    await dragNativeThumb(f.page, '.message-timeline', 0.5)
+    await f.page.waitForTimeout(400)
+    const read = () => f.page.locator('.message-timeline').evaluate(element => ({
+      top: element.scrollTop, extent: element.scrollHeight,
+      ratio: element.scrollTop / (element.scrollHeight - element.clientHeight),
+    }))
+    const middle = await read()
+    assert(Math.abs(middle.ratio - 0.5) < 0.02, JSON.stringify(middle))
+    await f.page.evaluate(() => (window as any).fixture.stream('Live token while browsing the rail.'))
+    await f.page.waitForTimeout(400)
+    assert(Math.abs((await read()).top - middle.top) < 2, 'new transcript content must not reclaim the rail')
+    assert.equal((await snapshot(f.page)).window.kind, before.window.kind)
+    assert.equal(f.windows.length, 0, 'dragging the rail must not page the transcript')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("a newer distant destination wins and a hidden session rejects a pending jump", async () => {
+  const f = await fixture()
+  try {
+    const release = f.hold(250)
+    await clickTimeline(f.page, 250)
+    await f.page.locator(".history-navigation-status").waitFor()
+    await clickTimeline(f.page, 900)
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_00900"))
+    release()
+    await f.page.locator(".history-navigation-status").waitFor({ state: "hidden" })
+    assert.equal(f.windows.length, 2)
+    assert(!(await snapshot(f.page)).ids.includes(navigationMessageId(250)))
+    const releaseHidden = f.hold(100)
+    await clickTimeline(f.page, 100)
+    await f.page.locator(".history-navigation-status").waitFor()
+    await f.page.evaluate(() => (window as any).fixture.switchAway())
+    releaseHidden()
+    await f.page.waitForTimeout(150)
+    assert((await snapshot(f.page)).ids.includes(navigationMessageId(900)))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("current-session search clicks and keyboard next use direct distant windows", async () => {
+  const f = await fixture()
+  try {
+    await f.page.route("**/session-history/query", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      status: "page", scanned: 1500, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+      hits: [250, 900].map(index => ({ sessionID: "s", messageID: navigationMessageId(index), role: "user", partIndex: 0,
+        kind: "text", excerpt: `Search result ${index}` })),
+    }) }))
+    const initial = await snapshot(f.page)
+    await f.page.evaluate(() => (window as any).fixture.openSearch())
+    await f.page.getByRole("searchbox").fill("Passage")
+    await f.page.locator(".history-search-result").first().click()
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_00250"))
+    await f.page.getByRole("searchbox").press("Enter")
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_00900"))
+    assert.deepEqual(f.windows.map(target => target.messageID), [navigationMessageId(250), navigationMessageId(900)])
+    assert.equal((await snapshot(f.page)).nativeLists, initial.nativeLists)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})

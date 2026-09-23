@@ -9,8 +9,8 @@ import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
-import { normalizeRuntimeEvent } from "../opencode/compatibility/events"
 import { locationRequestOptions } from "../opencode/compatibility/location"
+import { assertSupportedOpenCode } from "../opencode/runtime-support"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -18,6 +18,7 @@ const CONNECTION_RECHECK_INTERVAL_MS = 30_000
 export interface OpenCodeServiceLifecycle {
   discover: (deadlineAt?: number) => Promise<Endpoint | undefined>
   ensure: (deadlineAt?: number) => Promise<Endpoint>
+  restart?: (deadlineAt?: number) => Promise<Endpoint>
 }
 
 export type OpenCodeSharedServiceOptions = {
@@ -148,6 +149,7 @@ export class OpenCodeSharedService {
 
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     return this.connectService(options, deadlineAt).then(async connection => {
+      if (await connection.profile() !== "modern") throw new Error("Unsupported OpenCode runtime contract")
       const prepare = this.serviceOptions?.prepareDesktopPlugins
       if (!prepare) return connection
       connection.assertCurrent()
@@ -224,6 +226,10 @@ export class OpenCodeSharedService {
   }
 
   private createConnection(endpoint: Endpoint, generation: number): ServiceConnection {
+    const runtime = runtimeIdentity(endpoint)
+    // Real CLI lifecycles attach authenticated metadata. Admission precedes
+    // client construction and plugin provisioning for proxy and direct callers.
+    if (runtime) assertSupportedOpenCode(runtime.version)
     const wildcard = new URL(endpoint.url).hostname === "0.0.0.0"
     const url = assertLoopbackServiceUrl(endpoint.url)
     if (wildcard) {
@@ -289,7 +295,7 @@ export class OpenCodeSharedService {
     try {
       for await (const event of events) {
         connection.assertCurrent()
-        yield normalizeRuntimeEvent(event)
+        yield event
       }
     } finally {
       this.invalidateConnection(connection)

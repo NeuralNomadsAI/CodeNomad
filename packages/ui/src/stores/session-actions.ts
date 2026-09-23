@@ -6,6 +6,8 @@ import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
+import { planSessionTechnicalPartDeletion, executeSessionTechnicalPartDeletion } from "./session-history"
+export type { SessionTechnicalPartDeletionPlan } from "./session-history"
 import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
 import type { ClientPart } from "../types/message"
 
@@ -652,56 +654,6 @@ async function deleteTechnicalPartGroup(
   for (const [messageId, partIds] of byMessage) {
     await deleteMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
   }
-}
-
-export interface SessionTechnicalPartDeletionPlan {
-  instanceId: string
-  sessionId: string
-  toolCount: number
-  reasoningCount: number
-  messageIds: string[]
-}
-
-async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string): Promise<SessionTechnicalPartDeletionPlan> {
-  const client = getRootClient(instanceId)
-  const messageIds: string[] = []
-  const seenCursors = new Set<string>()
-  let cursor: string | undefined
-  let toolCount = 0
-  let reasoningCount = 0
-
-  for (;;) {
-    const response = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: "asc" }) })
-    for (const message of response.data) {
-      if (message.type !== "assistant" || !message.time.completed) continue
-      const tools = message.content.filter((part) => part.type === "tool").length
-      const reasoning = message.content.filter((part) => part.type === "reasoning").length
-      if (tools + reasoning === 0) continue
-      toolCount += tools
-      reasoningCount += reasoning
-      messageIds.push(message.id)
-    }
-
-    const next = response.cursor?.next ?? undefined
-    if (!next) break
-    if (seenCursors.has(next)) throw new Error("Repeated message cursor")
-    seenCursors.add(next)
-    cursor = next
-  }
-
-  return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
-}
-
-async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<string[]> {
-  const failures: string[] = []
-  for (const messageId of plan.messageIds) {
-    try {
-      await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error))
-    }
-  }
-  return failures
 }
 
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {

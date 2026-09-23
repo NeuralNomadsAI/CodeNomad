@@ -138,6 +138,10 @@ jobs:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [minimum, latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -150,11 +154,16 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
-      - name: Qualify the pinned client against the latest stable runtime
+      - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
-          npm install --prefix $sandbox '@opencode/cli@latest' --ignore-scripts --no-audit --no-fund
+          $version = '${{ matrix.runtime }}'
+          if ($version -eq 'minimum') {
+            $version = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          npm install --prefix $sandbox "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $cli = Join-Path $sandbox 'node_modules/@opencode/cli-windows-x64/bin/opencode.exe'
           & $cli --version
@@ -166,6 +175,10 @@ jobs:
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node scripts/test-session-aside-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   tests:
@@ -217,7 +230,9 @@ jobs:
       - name: Test Electron client state
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh
-        run: npm run test:native --workspace @neuralnomads/codenomad-electron-app
+        run: |
+          npm run test:native --workspace @neuralnomads/codenomad-electron-app
+          node --import tsx --test packages/electron-app/electron/main/view-menu.test.ts
 
       - name: Test changed runnable UI behavior
         run: >-
@@ -225,12 +240,15 @@ jobs:
           packages/ui/src/components/browser-frame-security.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
+          packages/ui/src/components/session-outline-projection.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
           packages/ui/src/components/prompt-input/height-state.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts
           packages/ui/src/components/settings/info-settings-diagnostics.test.ts
+          packages/ui/src/components/tool-call/tool-presentation.test.ts
+          packages/ui/src/components/transcript-visibility.test.ts
           packages/ui/src/components/unified-picker-path.test.ts
           packages/ui/src/components/virtual-follow-behavior.test.ts
           packages/ui/src/components/virtual-follow-measurements.test.ts
@@ -271,6 +289,7 @@ jobs:
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
+          packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
           packages/ui/src/stores/session-fork.test.ts
           packages/ui/src/stores/workspace-session-scope.test.ts
@@ -286,10 +305,17 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
+          packages/ui/src/components/tool-call/diff-payload.test.ts
+          packages/ui/src/components/tool-call/renderers/edit.test.ts
+          packages/ui/src/components/tool-call/renderers/task-title.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/sdk-manager.test.ts
+          packages/ui/src/lib/background-read-queue.test.ts
+          packages/ui/src/lib/prioritized-read.test.ts
+          packages/ui/src/stores/instance-startup-priority.test.ts
+          packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
@@ -303,10 +329,14 @@ jobs:
           packages/ui/src/stores/session-pruning-projection.test.ts
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
+          packages/ui/src/stores/session-usage-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
+          packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
+          packages/ui/src/stores/blank-session-cleanup.test.ts
           packages/ui/src/stores/session-status.test.ts
           packages/ui/src/stores/worktree-ready.test.ts
           packages/ui/src/stores/worktrees-delete.test.ts
@@ -394,11 +424,51 @@ jobs:
           packages/server/src/workspaces/__tests__/spawn.test.ts
           packages/server/src/workspaces/__tests__/binary-probe.test.ts
           packages/server/src/workspaces/session-environment.test.ts
+          packages/server/src/workspaces/git-requirement.test.ts
           packages/server/src/server/__tests__/session-environment.test.ts
           "packages/server/src/workspaces/*opencode*.test.ts"
           packages/server/src/server/routes/binary-validation.test.ts
           "packages/server/src/opencode-update/*.test.ts"
           packages/ui/src/lib/launch-errors.test.ts
+
+      - name: Test first installation without system Node
+        timeout-minutes: 10
+        run: node scripts/test-opencode-install-native.mjs
+
+      - name: Test migration failure guards
+        run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
+
+      - name: Certify native migration and Git-degraded conversations at the minimum and latest stable
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
+          $arch = node -p "process.arch"
+          $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
+          $seeds = @(
+            @{ scope = '@opencode'; version = '2.0.3'; command = 'opencode' },
+            @{ scope = '@opencode-ai'; version = '0.0.0-beta-19271'; command = 'opencode2' }
+          )
+          $oldClis = foreach ($entry in $seeds) {
+            $seed = Join-Path $env:RUNNER_TEMP "opencode-migration-seed-$($entry.version)"
+            npm install --prefix $seed "$($entry.scope)/cli@$($entry.version)" --ignore-scripts --no-audit --no-fund | Out-Host
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Join-Path $seed "node_modules/$($entry.scope)/cli-$platform-$arch/bin/$($entry.command)$extension"
+          }
+          $minimum = node --import tsx --input-type=module -e "import { MINIMUM_OPENCODE_VERSION } from './packages/server/src/opencode/runtime-support.ts'; console.log(MINIMUM_OPENCODE_VERSION)"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($version in @($minimum, 'latest')) {
+            $target = Join-Path $env:RUNNER_TEMP "opencode-migration-$version"
+            npm install --prefix $target "@opencode/cli@$version" --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $cli = Join-Path $target "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+            foreach ($oldCli in $oldClis) {
+              node scripts/test-opencode-history-migration.mjs $oldCli $cli
+              if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            }
+            node scripts/test-git-degraded-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
 
   # Exercise the window persistence regressions on the architecture reported in
   # #676, independently of the Linux server gate. Packaging alone cannot test them.

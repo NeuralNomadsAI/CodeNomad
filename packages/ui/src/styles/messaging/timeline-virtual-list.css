@@ -1,0 +1,18 @@
+.timeline-virtual-content {
+  flex: none;
+  position: relative;
+  width: 100%;
+  overflow-anchor: none;
+}
+
+.timeline-virtual-row {
+  position: absolute;
+  inset-inline: 0;
+}
+
+.timeline-measure {
+  position: absolute;
+  width: 1px;
+  visibility: hidden;
+  pointer-events: none;
+}

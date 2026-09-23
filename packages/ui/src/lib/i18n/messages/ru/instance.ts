@@ -265,7 +265,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Добавить",
   "opencodeBinarySelector.actions.browse": "Выбрать бинарник…",
   "opencodeBinarySelector.actions.removeTitle": "Удалить бинарник",
-  "opencodeBinarySelector.badge.systemPath": "Использовать бинарник из системного PATH",
+  "opencodeBinarySelector.badge.systemPath": "Сначала PATH, затем пользовательская установка; старая копия CodeNomad — резерв",
   "opencodeBinarySelector.status.checkingVersions": "Проверка версий…",
   "opencodeBinarySelector.status.checking": "Проверка…",
   "opencodeBinarySelector.dialog.title": "Выберите бинарник OpenCode",
@@ -273,6 +273,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "Неверный бинарник OpenCode",
   "opencodeBinarySelector.validation.v2Required": "Для CodeNomad требуется OpenCode V2. Установите и выберите бинарный файл opencode2.",
   "opencodeBinarySelector.validation.alreadyValidating": "Проверка уже выполняется",
-  "opencodeBinarySelector.display.systemPath": "{name} (системный PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (автоматически)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

@@ -8,7 +8,7 @@ type WorktreeSource = { loadWorktrees: (refresh?: boolean) => Promise<WorktreeDe
 type WorktreeCacheEntry = {
   expiresAt: number
   refreshedOnMiss: boolean
-  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string }>
+  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string; directoryOnly?: boolean }>
   resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
 }
 
@@ -51,6 +51,7 @@ async function getCachedWorktrees(
           directory: wt.directory,
           normalizedDirectory: await normalizeDirectoryPath(wt.directory),
           worktreeDirectory: await normalizeDirectoryPath(wt.registeredDirectory ?? wt.directory),
+          directoryOnly: wt.directoryOnly,
         })),
       ),
       resolvedDirectories: new Map(),
@@ -185,7 +186,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   const target = await resolveDirectoryPath(params.directory)
   if (!target) return null
   const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
-    .filter((worktree) => isPathWithinWorktree(worktree.normalizedDirectory, target))
+    .filter((worktree) => worktree.directoryOnly ? worktree.normalizedDirectory === target : isPathWithinWorktree(worktree.normalizedDirectory, target))
     .sort((left, right) => right.normalizedDirectory.length - left.normalizedDirectory.length)[0]
   let entry = await getCachedWorktrees(params)
   if (entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!

@@ -1,4 +1,5 @@
 import type { SettingsService } from "./service"
+import { resolveDefaultInstallation } from "../opencode-update/shared-installation"
 
 export interface OpenCodeBinaryEntry {
   path: string
@@ -11,6 +12,7 @@ export interface ResolvedBinary {
   path: string
   label: string
   version?: string
+  source?: "path" | "user" | "legacy"
 }
 
 function prettyLabel(p: string): string {
@@ -33,7 +35,7 @@ function readDefaultBinaryPath(settings: SettingsService): string | undefined {
 }
 
 export class BinaryResolver {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(private readonly settings: SettingsService, private readonly resolveInstallation = resolveDefaultInstallation) {}
 
   list(): OpenCodeBinaryEntry[] {
     return readUiBinaries(this.settings)
@@ -42,13 +44,16 @@ export class BinaryResolver {
   resolveDefault(): ResolvedBinary {
     const binaries = this.list()
     const configuredDefault = readDefaultBinaryPath(this.settings)
-    const path = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
+    const selected = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
+    const installation = selected === "opencode2" ? this.resolveInstallation() : undefined
+    const path = installation?.path ?? selected
 
     const entry = binaries.find((b) => b.path === path)
     return {
       path,
       label: entry?.label ?? prettyLabel(path),
       version: entry?.version,
+      ...(installation ? { source: installation.source } : {}),
     }
   }
 }

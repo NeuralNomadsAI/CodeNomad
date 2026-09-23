@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { normalizeRuntimeEvent } from "../../../server/src/opencode/compatibility/events.ts"
+import type { OpenCodeEvent } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
@@ -53,7 +53,7 @@ function fixture(instanceId: string) {
   let sequence = 0
   const emit = (type: string, data: Record<string, unknown>) => {
     const created = ++sequence
-    const event = normalizeRuntimeEvent({ id: `evt_${created}`, type, created, data, location: { directory: "/fixture" } } as any)
+    const event = { id: `evt_${created}`, type, created, data, location: { directory: "/fixture" } } as OpenCodeEvent
     handleInstanceInvalidation(instanceId, event)
     handleNativeSessionEvent(instanceId, event)
   }
