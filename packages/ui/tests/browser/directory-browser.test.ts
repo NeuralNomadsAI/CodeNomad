@@ -89,6 +89,21 @@ before(async () => {
 
 after(async () => { await browser?.close(); await server?.close() })
 
+for (const mode of ["directories", "files"] as const) {
+  test(`parent is offered once in the address, not repeated in the folder list (${mode})`, async () => {
+    const page = await browser.newPage()
+    const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, `initialPath=/ws/start&mode=${mode}`)
+    try {
+      assert.equal(await page.getByRole("button", { name: "Up one level" }).count(), 0)
+      await field(page).focus()
+      assert.deepEqual(await options(page).allTextContents(), ["Dossier parent"])
+      await options(page).first().click()
+      await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
+      assert.equal(await page.getByRole("button", { name: "Up one level" }).count(), 0)
+    } finally { assert.deepEqual(errors, []); await page.close() }
+  })
+}
+
 test("restricted browser offers parent and loaded children without the server-root shortcut", async () => {
   const page = await browser.newPage()
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")

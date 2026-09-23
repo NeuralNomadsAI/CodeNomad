@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -70,10 +70,6 @@ function getAbsolutePathFromMetadata(metadata: FileSystemListingMetadata | null)
   }
   return metadata.displayPath
 }
-
-type FolderRow =
-  | { type: "up"; path: string }
-  | { type: "entry"; entry: FileSystemEntry }
 
 const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) => {
   const { t } = useI18n()
@@ -261,34 +257,14 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     }
   }
 
-  const folderRows = createMemo<FolderRow[]>(() => {
-    const rows: FolderRow[] = []
-    const metadata = currentMetadata()
-    if (metadata?.parentPath) {
-      rows.push({ type: "up", path: metadata.parentPath })
-    }
+  const folderRows = createMemo<FileSystemEntry[]>(() => {
     const key = currentPathKey()
-    if (!key) {
-      return rows
-    }
-    const children = directoryChildren().get(key) ?? []
-    for (const entry of children) {
-      rows.push({ type: "entry", entry })
-    }
-    return rows
+    return key ? directoryChildren().get(key) ?? [] : []
   })
 
   function handleNavigateTo(path: string) {
     setPathInputDirty(false)
     void navigateTo(path)
-  }
-
-  function handleNavigateUp() {
-    const parent = currentMetadata()?.parentPath
-    if (parent) {
-      setPathInputDirty(false)
-      void navigateTo(parent)
-    }
   }
 
   const currentAbsolutePath = createMemo(() => {
@@ -522,21 +498,15 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                 >
                   <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto directory-browser-list" role="listbox">
                     <For each={folderRows()}>
-                      {(item) => {
-                        const isEntry = item.type === "entry"
-                        const isFolder = isEntry && item.entry.type === "directory"
-                        const isSelectable = isEntry && (props.mode === "files" ? item.entry.type === "file" : item.entry.type === "directory")
-                        const label = isEntry ? item.entry.name || item.entry.path : t("directoryBrowser.upOneLevel")
+                      {(entry) => {
+                        const isFolder = entry.type === "directory"
+                        const isSelectable = props.mode === "files" ? entry.type === "file" : isFolder
                         const navigate = () => {
-                          if (!isEntry) {
-                            handleNavigateUp()
+                          if (isFolder) {
+                            handleNavigateTo(entry.path)
                             return
                           }
-                          if (item.entry.type === "directory") {
-                            handleNavigateTo(item.entry.path)
-                            return
-                          }
-                          handleEntrySelect(item.entry)
+                          handleEntrySelect(entry)
                         }
                         return (
                           <div class="panel-list-item" role="option">
@@ -544,15 +514,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                               <button type="button" class="directory-browser-row-main" onClick={navigate}>
                                 <div class="directory-browser-row-icon">
                                   <Show when={!isFolder} fallback={<FolderIcon class="w-4 h-4" />}>
-                                    <Show when={isEntry} fallback={<ArrowUpLeft class="w-4 h-4" />}>
-                                      <FileIcon class="w-4 h-4" />
-                                    </Show>
+                                    <FileIcon class="w-4 h-4" />
                                   </Show>
                                 </div>
                                 <div class="directory-browser-row-text">
-                                  <span class="directory-browser-row-name">{label}</span>
+                                  <span class="directory-browser-row-name">{entry.name || entry.path}</span>
                                 </div>
-                                <Show when={isFolder && isEntry && isPathLoading(item.entry.path)}>
+                                <Show when={isFolder && isPathLoading(entry.path)}>
                                   <Loader2 class="directory-browser-row-spinner animate-spin" />
                                 </Show>
                               </button>
@@ -562,7 +530,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                   class="selector-button selector-button-secondary directory-browser-select"
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    if (isEntry) handleEntrySelect(item.entry)
+                                     handleEntrySelect(entry)
                                   }}
                                 >
                                   {t("directoryBrowser.select")}
