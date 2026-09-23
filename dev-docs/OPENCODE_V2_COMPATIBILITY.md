@@ -67,7 +67,8 @@ qualification belong in the qualification PR/CI, not a separate version report.
 
 The previous #751 compatibility failures on Linux, Windows and macOS all stop
 at the same additive credential-metadata assertion. Local Windows migration
-coverage now completes; fresh Linux/macOS confirmation remains a CI gate.
+coverage completed; the subsequent 2.0.15 qualification also confirms the
+corrected migrations on Linux, Windows and macOS in CI.
 The separate system-message browser fixture still has two search timeouts:
 it mocks HTTP APIs with `{}` and does not provide the current bounded history
 query contract. Those tests use synthetic browser data, not a 2.0.14 daemon;
@@ -103,7 +104,14 @@ environment, forks and idle/busy side questions), plus all four historical
 migrations from 2.0.3/beta-19271 to minimum/current. The environment fixture's
 duplicate prefix workaround was removed too; its initial 403 was reproduced on
 both runtimes and the corrected real-manager/native-shell cases pass on both.
-Detailed unit/browser/build evidence and cross-platform CI gates remain in #752.
+CI run `35848468936` confirms historical migrations on Linux, Windows and macOS,
+plus native pruning/UI on Linux and macOS. Both Windows runtime suites complete
+their 2.0.7/2.0.15 native cases, then fail because the merge-ref workflow invokes
+the newer blank-session fixture absent from the checked-out PR head. Integrating
+`dev` brings that fixture into the branch; its native checks pass locally on both
+runtimes with the 2.0.15 client. The separate Windows pruning/UI CI process exits
+without an exception diagnostic and remains a CI gate. Detailed results belong
+in #752 rather than being inferred from other passing platforms.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
