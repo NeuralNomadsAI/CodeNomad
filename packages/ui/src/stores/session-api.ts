@@ -25,7 +25,6 @@ import {
   cancelSessionGenerationAdmissions,
   markSessionDeletedAuthoritative,
   getAuthoritativelyDeletedSessionIdsForInstance,
-  isBlankSession,
   messagesLoaded,
   getSessionMessagesLoadError,
   providers,
@@ -1094,7 +1093,11 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     })
 
     if (preferences().autoCleanupBlankSessions) {
-      await cleanupBlankSessions(instanceId, session.id)
+      // Candidate capture is synchronous, but cleanup must not delay activation
+      // or the first send while unloaded historical sessions are checked.
+      void cleanupBlankSessions(instanceId, session.id).catch(error => {
+        log.warn("Automatic blank-session cleanup failed", error)
+      })
     }
 
     return session
