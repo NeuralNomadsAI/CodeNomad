@@ -50,8 +50,8 @@ recovery state. Stale responses cannot overwrite a changed executable or a
 completed action. Only a pending folder open may resume; prompts are not replayed.
 
 Automatic selection now follows PATH order (`opencode2`, then `opencode` within
-each directory), then the conventional user npm installation, then the old private
-CodeNomad installation as a migration fallback. An explicit executable retains
+each directory), then the conventional user npm installation. The retired private
+CodeNomad installation is never a fallback. An explicit supported executable retains
 priority. Both setup and binary validation use the same discovery. The UI shows
 the effective path and source; “automatic” replaces the misleading “system PATH”
 label. Recovery puts diagnosis and installation before executable selection;
@@ -88,14 +88,12 @@ PATH changes apply on the server host. No system Node or administrator rights ar
 needed for the conventional user prefix. Installer execution remains bounded to
 five minutes and 1 MiB output.
 
-Migration remains available when a private copy is already current. PATH registration
-failure leaves the installed package discoverable, and retry can repair PATH without
-reinstalling. Neither migration nor command repair downgrades a newer shared version.
-Old version directories and selection receipts are read-only fallbacks and are never
-removed by installation. After choosing/verifying the common executable and checking
-that no process uses the private copy, the user may remove only
-`~/.local/share/codenomad/opencode`; `~/.local/share/opencode` is native user data
-and must not be confused with this installation directory.
+PATH registration failure leaves the installed package discoverable, and retry can
+repair PATH without reinstalling or downgrading a newer shared version. The retired
+`~/.local/share/codenomad/opencode` executable tree and selection receipts are ignored;
+saved private selections resolve through current discovery, and validation/launch
+reject that tree. No migration or automatic deletion is performed. Native user data
+under `~/.local/share/opencode` is unrelated and remains owned by OpenCode.
 
 An exclusive `.codenomad-opencode-install.lock` in the npm prefix serializes
 CodeNomad backends; the version is re-probed under that lock. A competing backend

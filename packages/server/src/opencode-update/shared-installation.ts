@@ -1,7 +1,8 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { bundledNpm, executeInstaller, readManagedExecutable } from "./managed-installation"
+import { bundledNpm, executeInstaller } from "./npm-runtime"
+import { isRetiredInstallation } from "./retired-installation"
 import { registerUserPath } from "./user-path"
 import { probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
@@ -93,6 +94,7 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
       const candidate = path.join(directory, `${name}${extension}`)
       try {
         if (!statSync(candidate).isFile()) continue
+        if (isRetiredInstallation(candidate)) continue
         accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK)
         if (inNpmBin && npmPackage(prefix, platform)) {
           if (retiredNpmAlias(candidate, prefix, platform)) continue
@@ -103,15 +105,13 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
   }
 }
 
-export function resolveDefaultInstallation(host: InstallationHost = {}): { path: string; source?: "path" | "user" | "legacy" } {
+export function resolveDefaultInstallation(host: InstallationHost = {}): { path: string; source?: "path" | "user" } {
   const command = findPathOpenCode(host)
   if (command) return { path: command, source: "path" }
   const prefix = userNpmPrefix(host)
   const binary = npmCommand(prefix, host.platform ?? process.platform)?.binary ?? npmExecutable(prefix, host.platform)
-  if (existsSync(binary)) return { path: binary, source: "user" }
-  // Migration fallback only: never override an installation shared through PATH.
-  const legacy = readManagedExecutable(path.join(host.home ?? os.homedir(), ".local", "share", "codenomad", "opencode"))
-  return legacy ? { path: legacy, source: "legacy" } : { path: "opencode2" }
+  if (existsSync(binary) && !isRetiredInstallation(binary)) return { path: binary, source: "user" }
+  return { path: "opencode2" }
 }
 
 /** Only a verified npm installation may be updated via npm. Homebrew/curl and
@@ -119,6 +119,7 @@ export function resolveDefaultInstallation(host: InstallationHost = {}): { path:
 export function sharedInstallPrefix(host: InstallationHost = {}): string | undefined {
   const platform = host.platform ?? process.platform
   const userPrefix = userNpmPrefix(host)
+  if (isRetiredInstallation(userPrefix)) return undefined
   const command = findPathOpenCode(host) ?? findPathOpenCode({ ...host,
     env: { PATH: npmCommandDirectory(userPrefix, platform), PATHEXT: ".EXE;.CMD;.BAT" } })
   if (!command) return userPrefix
