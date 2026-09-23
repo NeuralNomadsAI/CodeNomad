@@ -1,10 +1,11 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, FolderRoot, Home, Loader2, RotateCcw, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
+import DirectoryBrowserAddress, { type DirectoryDestination } from "./directory-browser-address"
 
 function normalizePathKey(input?: string | null) {
   if (!input || input === "." || input === "./") {
@@ -87,12 +88,16 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const [currentPathKey, setCurrentPathKey] = createSignal<string | null>(null)
   const [currentMetadata, setCurrentMetadata] = createSignal<FileSystemListingMetadata | null>(null)
   const [initialAbsolutePath, setInitialAbsolutePath] = createSignal("")
+  const [addressOpen, setAddressOpen] = createSignal(false)
 
   const metadataCache = new Map<string, FileSystemListingMetadata>()
   const inFlightRequests = new Map<string, Promise<FileSystemListingMetadata>>()
   let latestNavigationId = 0
+  let openingGeneration = 0
 
   function resetState() {
+    ++openingGeneration
+    ++latestNavigationId
     setRootPath("")
     setDirectoryChildren(new Map<string, FileSystemEntry[]>())
     setLoadingPaths(new Set<string>())
@@ -101,6 +106,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     setPathInput("")
     setPathInputDirty(false)
     setInitialAbsolutePath("")
+    setAddressOpen(false)
     metadataCache.clear()
     inFlightRequests.clear()
     setError(null)
@@ -111,7 +117,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       return
     }
     resetState()
-    void initialize()
+    void initialize(openingGeneration)
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -126,12 +132,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     })
   })
 
-  async function initialize() {
+  async function initialize(generation: number) {
     setLoading(true)
     try {
       const startPath = props.initialPath?.trim()
       if (startPath) {
         const metadata = await navigateTo(startPath)
+        if (generation !== openingGeneration || !props.open) return
         if (metadata) {
           // Capture the canonical absolute path actually opened so the Initial Path
           // shortcut targets exactly where the dialog started (the server resolves
@@ -144,9 +151,9 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
         // Do NOT set initialAbsolutePath, so no broken Initial Path shortcut remains.
         setError(null)
       }
-      await navigateTo(undefined)
+      if (generation === openingGeneration && props.open) await navigateTo(undefined)
     } finally {
-      setLoading(false)
+      if (generation === openingGeneration && props.open) setLoading(false)
     }
   }
 
@@ -158,6 +165,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   }
 
   async function loadDirectory(targetPath?: string): Promise<FileSystemListingMetadata> {
+    const generation = openingGeneration
     const key = targetPath ? normalizePathKey(targetPath) : undefined
     if (key) {
       const cached = metadataCache.get(key)
@@ -180,6 +188,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       }
 
       const response = await serverApi.listFileSystem(targetPath, { includeFiles: props.mode === "files" })
+      if (generation !== openingGeneration || !props.open) return response.metadata
       const canonicalKey = normalizePathKey(response.metadata.currentPath)
       const entries = response.entries
         .filter((entry) => props.mode === "files" || entry.type === "directory")
@@ -210,7 +219,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       return response.metadata
     })()
       .catch((err) => {
-        if (key) {
+        if (key && generation === openingGeneration) {
           setLoadingPaths((prev) => {
             const next = new Set(prev)
             next.delete(key)
@@ -220,7 +229,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
         throw err
       })
       .finally(() => {
-        if (key) {
+        if (key && inFlightRequests.get(key) === request) {
           inFlightRequests.delete(key)
         }
       })
@@ -237,13 +246,13 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
     setError(null)
     try {
       const metadata = await loadDirectory(path)
-      if (navigationId !== latestNavigationId) {
+      if (navigationId !== latestNavigationId || !props.open) {
         return null
       }
       applyMetadata(metadata)
       return metadata
     } catch (err) {
-      if (navigationId !== latestNavigationId) {
+      if (navigationId !== latestNavigationId || !props.open) {
         return null
       }
       const message = err instanceof Error ? err.message : t("directoryBrowser.load.errorFallback")
@@ -296,55 +305,53 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   const canSelectCurrent = createMemo(() => Boolean(currentAbsolutePath()))
   const canSubmitPath = createMemo(() => pathInput().trim().length > 0)
 
-  type ShortcutIcon = "root" | "home" | "initial"
-  type ShortcutLabelKey =
-    | "directoryBrowser.goToRoot"
-    | "directoryBrowser.goToHome"
-    | "directoryBrowser.goToInitial"
-  interface DirectoryShortcut {
-    id: ShortcutIcon
-    target: string
-    labelKey: ShortcutLabelKey
-  }
-
-  // Build the conditional navigation shortcuts (workspace root / user home / initial path)
-  // and dedupe by their canonical absolute target so identical destinations are not shown twice.
-  const shortcutButtons = createMemo<DirectoryShortcut[]>(() => {
+  const destinations = createMemo<DirectoryDestination[]>(() => {
     const meta = currentMetadata()
-    if (!meta) {
-      return []
-    }
-    const shortcuts: DirectoryShortcut[] = []
-    // The resolved root (CLI_WORKSPACE_ROOT -> --root -> cwd) is valid in both modes,
-    // so the start-directory shortcut is shown whenever rootPath is present.
-    if (meta.rootPath) {
-      shortcuts.push({ id: "root", target: meta.rootPath, labelKey: "directoryBrowser.goToRoot" })
-    }
-    if (
-      meta.scope === "unrestricted" &&
-      meta.homePath &&
-      normalizePathKey(meta.homePath) !== normalizePathKey(meta.rootPath)
-    ) {
-      shortcuts.push({ id: "home", target: meta.homePath, labelKey: "directoryBrowser.goToHome" })
+    if (!meta) return []
+    const current = currentAbsolutePath()
+    const result: DirectoryDestination[] = []
+    const seen = new Set([normalizePathKey(current)])
+    const add = (destination: DirectoryDestination) => {
+      const key = normalizePathKey(destination.target)
+      if (seen.has(key)) return
+      seen.add(key)
+      result.push(destination)
     }
     const initial = initialAbsolutePath()
     if (initial) {
-      shortcuts.push({ id: "initial", target: initial, labelKey: "directoryBrowser.goToInitial" })
+      const name = initial.split(/[\\/]/).filter(Boolean).at(-1) ?? initial
+      add({ target: initial, label: t("directoryBrowser.goToInitial", { name }), kind: "initial" })
     }
-    const seen = new Set<string>()
-    const result: DirectoryShortcut[] = []
-    for (const shortcut of shortcuts) {
-      const key = normalizePathKey(shortcut.target)
-      if (!key || seen.has(key)) {
-        continue
-      }
-      seen.add(key)
-      result.push(shortcut)
+    if (meta.scope === "unrestricted" && meta.homePath) {
+      add({ target: meta.homePath, label: t("directoryBrowser.goToHome"), kind: "home" })
+    }
+    if (meta.parentPath) {
+      const parent = meta.pathKind === "relative" ? resolveAbsolutePath(meta.rootPath, meta.parentPath) : meta.parentPath
+      add({ target: parent, label: t("directoryBrowser.goToParent"), kind: "parent" })
+    }
+    // Use the already loaded listing; typing never starts a speculative filesystem request.
+    const input = pathInput().trim().replace(/\\/g, "/")
+    const normalizedCurrent = current.replace(/\\/g, "/")
+    const base = normalizedCurrent.replace(/\/$/, "")
+    const filter = input === normalizedCurrent ? ""
+      : input.startsWith(`${base}/`) ? input.slice(base.length + 1)
+      : !input.includes("/") && !input.includes(":") ? input : null
+    if (!filter || filter.includes("/")) return result
+    for (const entry of directoryChildren().get(currentPathKey() ?? "") ?? []) {
+      if (entry.type !== "directory" || !entry.name.toLocaleLowerCase().startsWith(filter.toLocaleLowerCase())) continue
+      add({ target: entry.absolutePath ?? (isAbsolutePathLike(entry.path) ? entry.path : resolveAbsolutePath(meta.rootPath, entry.path)), label: entry.name, kind: "folder" })
     }
     return result
   })
 
+  function chooseDestination(destination: DirectoryDestination) {
+    setAddressOpen(false)
+    setPathInputDirty(false)
+    void navigateTo(destination.target)
+  }
+
   async function handlePathSubmit() {
+    setAddressOpen(false)
     const target = pathInput().trim()
     if (!target) {
       return
@@ -458,60 +465,18 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
 
             <div class="panel-body directory-browser-body">
               <Show when={rootPath()}>
-                <div class="directory-browser-current">
+                <div class={`directory-browser-current ${props.mode === "files" ? "directory-browser-current--files" : ""}`}>
                   <span class="directory-browser-current-label">{t("directoryBrowser.currentFolder")}</span>
-                  <input
-                    type="text"
+                  <DirectoryBrowserAddress
                     value={pathInput()}
-                    onInput={(event) => {
-                      setPathInput(event.currentTarget.value)
-                      setPathInputDirty(true)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault()
-                        void handlePathSubmit()
-                      }
-                    }}
-                    spellcheck={false}
-                    placeholder={t("directoryBrowser.currentFolder.inputPlaceholder")}
-                    aria-label={t("directoryBrowser.currentFolder.inputAriaLabel")}
-                    class="selector-input directory-browser-current-path"
+                    destinations={destinations()}
+                    open={addressOpen() && !creatingFolder()}
+                    onOpenChange={setAddressOpen}
+                    onInput={(value) => { setPathInput(value); setPathInputDirty(true) }}
+                    onReset={() => { setPathInputDirty(false); setPathInput(currentAbsolutePath()) }}
+                    onSubmit={() => void handlePathSubmit()}
+                    onChoose={chooseDestination}
                   />
-                  <Show when={shortcutButtons().length > 0}>
-                    <div class="directory-browser-shortcuts">
-                      <For each={shortcutButtons()}>
-                        {(shortcut) => {
-                          const atTarget = createMemo(() => {
-                            const current = currentAbsolutePath()
-                            return Boolean(current) && normalizePathKey(current) === normalizePathKey(shortcut.target)
-                          })
-                          const disabled = createMemo(() => atTarget() || creatingFolder())
-                          return (
-                            <button
-                              type="button"
-                              class="selector-button selector-button-ghost directory-browser-shortcut"
-                              disabled={disabled()}
-                              onClick={() => {
-                                setPathInputDirty(false)
-                                void navigateTo(shortcut.target)
-                              }}
-                              title={t(shortcut.labelKey)}
-                              aria-label={t(shortcut.labelKey)}
-                            >
-                              {shortcut.id === "root" ? (
-                                <FolderRoot class="w-4 h-4" />
-                              ) : shortcut.id === "home" ? (
-                                <Home class="w-4 h-4" />
-                              ) : (
-                                <RotateCcw class="w-4 h-4" />
-                              )}
-                            </button>
-                          )
-                        }}
-                      </For>
-                    </div>
-                  </Show>
                   <Show when={props.mode !== "files"}>
                     <button
                       type="button"

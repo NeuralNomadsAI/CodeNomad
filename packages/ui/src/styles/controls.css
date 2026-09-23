@@ -13,6 +13,7 @@
 @import "./components/selector.css";
 @import "./components/env-vars.css";
 @import "./components/directory-browser.css";
+@import "./components/directory-browser-address.css";
 @import "./components/remote-access.css";
 @import "./components/permission-notification.css";
 @import "./components/form-request.css";
