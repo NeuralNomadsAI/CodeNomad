@@ -48,5 +48,5 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     try { await serverApi.createWorkspace({ path: "/fixture" }) }
     catch (error) { void showAlertDialog(String(error)) }
   },
-  upstream401: () => createInstanceFetch(`${location.origin}/workspaces/fixture/instance/`)("http://native/api/session"),
+  upstream401: () => createInstanceFetch(`${location.origin}/workspaces/fixture/instance/`)(`${location.origin}/workspaces/fixture/instance/api/session`),
 }

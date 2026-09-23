@@ -97,6 +97,14 @@ pre-forward exception. Updating only the CLI cannot replace the client bundled
 with CodeNomad. Keep #750 open until a reproducing desktop send verifies its
 specific failure; synthetic qualification is not that reproduction.
 
+With the 2.0.15 pins, Windows qualification passes the native suites on both
+2.0.7 and 2.0.15 (automation/discovery, proxy/ownership/worktrees, history/pruning,
+environment, forks and idle/busy side questions), plus all four historical
+migrations from 2.0.3/beta-19271 to minimum/current. The environment fixture's
+duplicate prefix workaround was removed too; its initial 403 was reproduced on
+both runtimes and the corrected real-manager/native-shell cases pass on both.
+Detailed unit/browser/build evidence and cross-platform CI gates remain in #752.
+
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
 
