@@ -334,6 +334,7 @@ jobs:
           packages/ui/src/stores/session-usage-contract.test.ts
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
+          packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/blank-session-cleanup.test.ts
           packages/ui/src/stores/session-status.test.ts
@@ -423,6 +424,7 @@ jobs:
           packages/server/src/workspaces/__tests__/spawn.test.ts
           packages/server/src/workspaces/__tests__/binary-probe.test.ts
           packages/server/src/workspaces/session-environment.test.ts
+          packages/server/src/workspaces/git-requirement.test.ts
           packages/server/src/server/__tests__/session-environment.test.ts
           "packages/server/src/workspaces/*opencode*.test.ts"
           packages/server/src/server/routes/binary-validation.test.ts
@@ -436,7 +438,7 @@ jobs:
       - name: Test migration failure guards
         run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
 
-      - name: Certify native history migration at the minimum and latest stable
+      - name: Certify native migration and Git-degraded conversations at the minimum and latest stable
         timeout-minutes: 20
         shell: pwsh
         run: |
@@ -464,6 +466,8 @@ jobs:
               node scripts/test-opencode-history-migration.mjs $oldCli $cli
               if ($LASTEXITCODE) { exit $LASTEXITCODE }
             }
+            node scripts/test-git-degraded-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
 
   # Exercise the window persistence regressions on the architecture reported in

@@ -7,7 +7,7 @@ import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
 import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHistoryAnchorError } from "./history-window"
-import { ensureWorktreesLoaded, getGitRepoStatus, getWorktrees } from "./worktrees"
+import { ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
@@ -340,19 +340,26 @@ async function fetchCompleteSessionInventory(
   if (!project) return []
   const inventory = new Map<string, SDKSession>()
   const directory = instances().get(instanceId)?.folder
-  const scopes: V2SessionListOptions[] = [{ project, order: "desc" }]
+  await ensureWorktreesLoaded(instanceId)
+  if (!isCurrent()) return []
+  signal?.throwIfAborted()
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  if (!directoryOnly && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  const scopes: V2SessionListOptions[] = [directoryOnly
+    ? { directory: directoryOnly.serviceDirectory ?? directoryOnly.directory, order: "desc" }
+    : { project, order: "desc" }]
   // V1 sessions can remain in the global project after migration while sharing this directory.
-  if (project !== "global" && directory) scopes.push({ directory, order: "desc" })
+  if (!directoryOnly && project !== "global" && directory) scopes.push({ directory, order: "desc" })
 
   for (const scope of scopes) {
     const seenCursors = new Set<string>()
     let pageCount = 1
-    let response = await fetchV2Sessions(instanceId, scope, signal, Boolean(scope.project))
-    if (scope.project && publishFirstPage) {
+    let response = await fetchV2Sessions(instanceId, scope, signal, Boolean(scope.project || directoryOnly))
+    if ((scope.project || directoryOnly) && publishFirstPage) {
       await ensureWorktreesLoaded(instanceId)
       if (!isCurrent()) return []
       signal?.throwIfAborted()
-      if (getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+      if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
       // This is additive only. Absence/deletion is authoritative only after the
       // complete inventory; partial families still require verified membership.
       publishFirstPage(selectWorkspaceSessionFamilies(response.data, directory ?? "", getWorktrees(instanceId)))
@@ -370,7 +377,7 @@ async function fetchCompleteSessionInventory(
   await ensureWorktreesLoaded(instanceId)
   if (!isCurrent()) return []
   signal?.throwIfAborted()
-  if (getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
+  if (!getDirectoryOnlyWorktree(instanceId) && getGitRepoStatus(instanceId) === null) throw new Error(tGlobal("sessionList.loadError.detail"))
   return selectWorkspaceSessionFamilies(Array.from(inventory.values()), directory ?? "", getWorktrees(instanceId))
 }
 
@@ -389,7 +396,7 @@ function getDisconnectedCapturedSessionIds(
       seen.add(currentId)
       const session = current.get(currentId)
       if (!session) break
-      if (session.parentId === null) {
+      if (validRootIds.has(session.id) || session.parentId === null) {
         valid = validRootIds.has(session.id)
         break
       }
@@ -515,7 +522,9 @@ async function hydrateRestoredSessionChainAttempt(
           return null
         }
       }
-      return session?.parentId ?? null
+      // In directory-only mode ancestors outside the inventory are not session
+      // authority. Keep native parent metadata; local display roots are derived.
+      return getDirectoryOnlyWorktree(instanceId) ? null : session?.parentId ?? null
     }))
     pending = parents.filter((id): id is string => Boolean(id))
   }
@@ -528,6 +537,7 @@ async function ensureV2ParentChainsLoaded(
   isCurrent: () => boolean = () => true,
 ): Promise<void> {
   if (!isCurrent()) return
+  if (getDirectoryOnlyWorktree(instanceId)) return
   const currentSessions = sessions().get(instanceId) ?? new Map<string, Session>()
   const loaded = new Map<string, SDKSession | Session>(currentSessions)
   for (const session of apiSessions) loaded.set(session.id, session)
@@ -682,7 +692,10 @@ async function fetchSessions(instanceId: string, options?: {
 
     if (inventoryComplete || (!hasProjectInventory && response.complete)) {
       const authoritativeSessions = inventoryComplete ? apiSessions : rootApiSessions
-      const fetchedRootIds = new Set(authoritativeSessions.filter((session) => !session.parentID).map((session) => session.id))
+      const fetchedRootIds = new Set(authoritativeSessions.flatMap((session) => {
+        const root = getSessionRoot(instanceId, session.id)
+        return root ? [root.id] : []
+      }))
       const concurrentRootIds = new Set(Array.from(sessions().get(instanceId)?.values() ?? [])
         .filter((session) => !existingSessions.has(session.id) && session.parentId === null)
         .map((session) => session.id))

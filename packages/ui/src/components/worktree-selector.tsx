@@ -12,6 +12,7 @@ import {
   getParentSessionId,
   getPendingWorktreeSlug,
   getGitRepoStatus,
+  getDirectoryOnlyWorktree,
   getWorktreeSlugForParentSession,
   getWorktrees,
   reloadWorktrees,
@@ -148,7 +149,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const movingSlug = createMemo(() => getPendingWorktreeSlug(props.instanceId, parentId()))
 
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
-  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
+  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false || Boolean(getDirectoryOnlyWorktree(props.instanceId)))
   const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable() || Boolean(movingSlug()))
   let listbox: HTMLUListElement | undefined
 

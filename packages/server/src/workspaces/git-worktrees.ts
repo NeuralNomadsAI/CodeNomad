@@ -2,6 +2,7 @@ import path from "node:path"
 import { readFile, realpath, stat } from "node:fs/promises"
 import { readGitCommonDirectory } from "./git-common-directory"
 import { runWorktreeGit as git } from "./git-process"
+import { GitRequiredError } from "./git-requirement"
 
 export interface LogLike {
   debug?: (obj: any, msg?: string) => void
@@ -12,7 +13,7 @@ export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise
   try {
     return { repoRoot: await git(folder, ["rev-parse", "--show-toplevel"]), isGitRepo: true }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Git is not installed or not available in PATH")
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new GitRequiredError(error)
     logger?.debug?.({ folder, err: error }, "Folder is not a Git repository; using workspace folder as root")
     return { repoRoot: folder, isGitRepo: false }
   }
