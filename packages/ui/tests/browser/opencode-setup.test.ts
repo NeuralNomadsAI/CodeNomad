@@ -47,6 +47,10 @@ test("missing installation and incompatible daemon expose different actions; res
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.open())
+    const installBounds = await page.getByRole("button", { name: "Install and start OpenCode" }).boundingBox()
+    const selectorBounds = await page.locator(".selector-input").boundingBox()
+    assert.ok(installBounds && selectorBounds && installBounds.y < selectorBounds.y, "recovery presents diagnosis and installation before executable selection")
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-setup-missing.png"), fullPage: true })
     await page.getByRole("button", { name: "Install and start OpenCode" }).click()
     await page.getByRole("button", { name: "Restart shared service" }).waitFor()
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-setup-restart.png") })
@@ -426,5 +430,46 @@ test("settings distinguish manual updates and failed registry checks from an up-
     await page.getByText("Could not read the installed OpenCode version.", { exact: true }).waitFor()
     assert.equal(await page.getByText("OpenCode is up to date.", { exact: true }).count(), 0)
     assert.equal(await page.getByText("OpenCode 2.0.11 is available.", { exact: true }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("private migration is available at the current version and installation conflicts retain explicit retry", async () => {
+  const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
+  let migrated = false, attempts = 0, connects = 0
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/storage/binaries/validate")) return route.fulfill({ json: { valid: true, version: "2.0.14" } })
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      if (++attempts === 1) return route.fulfill({ status: 409, json: { error: "installation_in_use" } })
+      migrated = true
+      return route.fulfill({ json: { success: true, version: "2.0.15" } })
+    }
+    if (request.url().endsWith("/api/opencode/service")) {
+      assert.equal(request.postDataJSON().restart, false)
+      connects++
+    }
+    return route.fulfill({ json: { state: "ready", currentVersion: "2.0.15", latestVersion: "2.0.15",
+      updateAvailable: false, canUpgrade: !migrated, needsSharedInstallation: !migrated,
+      installationSource: migrated ? "path" : "legacy", binaryPath: migrated ? "C:/Users/fixture/AppData/Roaming/npm/opencode2.cmd" : "C:/Users/fixture/.local/share/codenomad/opencode/2.0.15/node_modules/@opencode/cli/bin/opencode.exe",
+      minimumVersion: "2.0.7", recommendedVersion: "2.0.11", versionAssessment: "untested", target: "host",
+      serviceState: "ready", daemonVersion: "2.0.15", canRestart: false } })
+  })
+  try {
+    await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const install = page.getByRole("button", { name: "Installer pour l’utilisateur et configurer le PATH", exact: true })
+    await install.waitFor()
+    await page.getByText(/Ancienne installation privée de CodeNomad/).waitFor()
+    assert.match(await page.locator(".selector-badge-version").innerText(), /2\.0\.15/, "selector uses the current effective version rather than its old validation cache")
+    assert.equal(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-shared-migration-fr.png"), fullPage: true })
+    await install.click()
+    await page.getByRole("alert").filter({ hasText: /L’exécutable OpenCode est utilisé/ }).waitFor()
+    assert.equal(connects, 0)
+    await install.click()
+    await page.getByText("Exécutable trouvé dans le PATH du serveur.", { exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'))
+    assert.equal(connects, 1)
+    assert.equal(await install.count(), 0)
+    assert.equal(await page.getByRole("alert").count(), 0)
   } finally { await page.close() }
 })

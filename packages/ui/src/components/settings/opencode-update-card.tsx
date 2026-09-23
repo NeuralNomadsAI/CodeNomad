@@ -12,7 +12,7 @@ export const OpenCodeUpdateCard: Component = () => {
       <p class="settings-card-subtitle">{t("settings.opencode.setup.description")}</p>
     </div><span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span></div>
     <div class="settings-card-body">
-      <OpenCodeSetupPanel showExecutable={false} />
+      <OpenCodeSetupPanel />
     </div>
   </section>
 }

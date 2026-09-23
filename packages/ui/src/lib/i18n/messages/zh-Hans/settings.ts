@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "另一个安装进程持有 OpenCode 安装锁。请在其完成后重试。如果安装已中断，请在服务器日志中查看锁的位置。",
+  "settings.opencode.setup.installation_in_use": "OpenCode 可执行文件正在使用或不可写。更新已在更改安装之前推迟。请在文件可用后重试。",
+  "settings.opencode.setup.source.path": "已在服务器 PATH 中找到可执行文件。",
+  "settings.opencode.setup.source.user": "已在当前 PATH 之外找到用户 npm 安装。",
+  "settings.opencode.setup.source.legacy": "CodeNomad 的旧版私有安装。未找到共享安装。",
+  "settings.opencode.setup.sharedInstall": "为用户安装并配置 PATH",
+  "settings.opencode.setup.sharedInstallDescription": "使用与其他客户端共享的标准 npm 安装。安装后请打开新终端。旧版私有副本将保留。",
   "settings.opencode.update.available": "OpenCode {version} 已可用。",
   "settings.opencode.setup.manage": "管理 OpenCode…",
   "settings.opencode.setup.connected": "OpenCode 已连接。",

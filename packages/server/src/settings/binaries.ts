@@ -1,5 +1,5 @@
 import type { SettingsService } from "./service"
-import { readManagedExecutable } from "../opencode-update/managed-installation"
+import { resolveDefaultInstallation } from "../opencode-update/shared-installation"
 
 export interface OpenCodeBinaryEntry {
   path: string
@@ -12,6 +12,7 @@ export interface ResolvedBinary {
   path: string
   label: string
   version?: string
+  source?: "path" | "user" | "legacy"
 }
 
 function prettyLabel(p: string): string {
@@ -34,7 +35,7 @@ function readDefaultBinaryPath(settings: SettingsService): string | undefined {
 }
 
 export class BinaryResolver {
-  constructor(private readonly settings: SettingsService) {}
+  constructor(private readonly settings: SettingsService, private readonly resolveInstallation = resolveDefaultInstallation) {}
 
   list(): OpenCodeBinaryEntry[] {
     return readUiBinaries(this.settings)
@@ -44,13 +45,15 @@ export class BinaryResolver {
     const binaries = this.list()
     const configuredDefault = readDefaultBinaryPath(this.settings)
     const selected = !configuredDefault || configuredDefault === "opencode" ? "opencode2" : configuredDefault
-    const path = selected === "opencode2" ? readManagedExecutable() ?? selected : selected
+    const installation = selected === "opencode2" ? this.resolveInstallation() : undefined
+    const path = installation?.path ?? selected
 
     const entry = binaries.find((b) => b.path === path)
     return {
       path,
       label: entry?.label ?? prettyLabel(path),
       version: entry?.version,
+      ...(installation ? { source: installation.source } : {}),
     }
   }
 }

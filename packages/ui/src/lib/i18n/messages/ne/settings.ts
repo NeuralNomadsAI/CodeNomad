@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "अर्को स्थापनाले OpenCode स्थापना लक लिएको छ। सकिएपछि फेरि प्रयास गर्नुहोस्। बीचमै रोकिएको भए लकको स्थान सर्भर लगमा हेर्नुहोस्।",
+  "settings.opencode.setup.installation_in_use": "OpenCode कार्यान्वयनयोग्य फाइल प्रयोगमा छ वा लेख्न मिल्दैन। स्थापना परिवर्तन गर्नुअघि अद्यावधिक स्थगित गरियो। फाइल उपलब्ध भएपछि फेरि प्रयास गर्नुहोस्।",
+  "settings.opencode.setup.source.path": "सर्भरको PATH मा कार्यान्वयनयोग्य फाइल भेटियो।",
+  "settings.opencode.setup.source.user": "हालको PATH बाहिर प्रयोगकर्ताको npm स्थापना भेटियो।",
+  "settings.opencode.setup.source.legacy": "CodeNomad को पुरानो निजी स्थापना। साझा स्थापना भेटिएन।",
+  "settings.opencode.setup.sharedInstall": "प्रयोगकर्ताका लागि स्थापना गरी PATH मिलाउनुहोस्",
+  "settings.opencode.setup.sharedInstallDescription": "अन्य क्लाइन्टसँग साझा हुने मानक npm स्थापना प्रयोग गर्छ। स्थापनापछि नयाँ टर्मिनल खोल्नुहोस्। पुराना निजी प्रतिलिपिहरू सुरक्षित रहन्छन्।",
   "settings.opencode.update.available": "OpenCode {version} उपलब्ध छ।",
   "settings.opencode.setup.manage": "OpenCode व्यवस्थापन गर्नुहोस्…",
   "settings.opencode.setup.connected": "OpenCode जडान भएको छ।",

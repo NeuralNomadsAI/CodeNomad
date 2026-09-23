@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import type { Logger } from "../../logger"
 import { OpenCodeUpdateError, type OpenCodeUpdateService } from "../../opencode-update/service"
 import { z } from "zod"
+import { InstallationBusyError } from "../../opencode-update/installation-lock"
 
 interface RouteDeps {
   service: OpenCodeUpdateService
@@ -15,6 +16,7 @@ function statusCode(error: OpenCodeUpdateError): number {
 }
 
 function requestError(error: unknown, fallback: string): { status: number; code: string } {
+  if (error instanceof InstallationBusyError) return { status: 409, code: error.code }
   if (error instanceof OpenCodeUpdateError) return { status: statusCode(error), code: error.code }
   return { status: 500, code: fallback }
 }

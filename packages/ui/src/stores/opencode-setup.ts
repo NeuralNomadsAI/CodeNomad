@@ -6,6 +6,7 @@ export const [openCodeSetupStatus, setOpenCodeSetupStatus] = createSignal<OpenCo
 export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
+export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<"installation_busy" | "installation_in_use">()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
 export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
 export const [openCodeSetupChecking, setOpenCodeSetupChecking] = createSignal(false)
@@ -65,6 +66,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     setOpenCodeSetupError(false)
+    setOpenCodeInstallationError(undefined)
     if (announce) setOpenCodeSetupFeedback("checked")
   }).catch(() => { if (epoch === generation) setOpenCodeSetupError(true) })
     .finally(() => { if (pending === request) { pending = undefined; setOpenCodeSetupChecking(false) } })
@@ -80,6 +82,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
   setOpenCodeSetupAction(action)
   setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupError(false)
+  setOpenCodeInstallationError(undefined)
   try {
     if (action === "install") await serverApi.updateOpenCode()
     if (epoch !== generation) return
@@ -98,8 +101,15 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
     }
-  } catch {
-    if (epoch === generation) { await refreshOpenCodeSetup(true); setOpenCodeSetupError(true) }
+  } catch (error) {
+    if (epoch === generation) {
+      await refreshOpenCodeSetup(true)
+      if (epoch !== generation) return
+      setOpenCodeSetupError(true)
+      if (error instanceof Error && (error.message === "installation_busy" || error.message === "installation_in_use")) {
+        setOpenCodeInstallationError(error.message)
+      }
+    }
   } finally {
     setOpenCodeSetupBusy(false)
     setOpenCodeSetupAction(undefined)
