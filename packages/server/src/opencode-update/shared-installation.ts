@@ -31,6 +31,32 @@ export function npmExecutable(prefix: string, platform = process.platform): stri
   return path.join(prefix, ...(platform === "win32" ? [] : ["lib"]), "node_modules", "@opencode", "cli", "bin", "opencode.exe")
 }
 
+function npmPackage(prefix: string, platform: NodeJS.Platform) {
+  try {
+    const file = path.join(path.dirname(npmExecutable(prefix, platform)), "..", "package.json")
+    const manifest = JSON.parse(readFileSync(file, "utf8")) as { name?: string; bin?: Record<string, string> }
+    return manifest.name === "@opencode/cli" ? manifest : undefined
+  } catch { return undefined }
+}
+
+function npmCommand(prefix: string, platform: NodeJS.Platform): { command: string; binary: string } | undefined {
+  const manifest = npmPackage(prefix, platform)
+  if (!manifest?.bin) return undefined
+  const directory = npmCommandDirectory(prefix, platform)
+  const packageRoot = path.join(path.dirname(npmExecutable(prefix, platform)), "..")
+  for (const name of ["opencode2", "opencode"]) {
+    const relative = manifest.bin[name]
+    if (typeof relative !== "string" || !/^\.\/bin\/[^/\\]+\.exe$/.test(relative)) continue
+    const binary = path.resolve(packageRoot, relative)
+    const command = path.join(directory, platform === "win32" ? `${name}.cmd` : name)
+    try {
+      if (!statSync(binary).isFile()) continue
+      const resolved = platform === "win32" ? buildSpawnSpec(command, [], { platform }).command : realpathSync(command)
+      if (realpathSync(resolved) === realpathSync(binary)) return { command, binary }
+    } catch { /* Invalid or missing launcher; try the other official name. */ }
+  }
+}
+
 export function findPathOpenCode(host: InstallationHost = {}): string | undefined {
   const env = host.env ?? process.env
   const platform = host.platform ?? process.platform
@@ -39,6 +65,12 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
   for (const entry of (env[key ?? "PATH"] || "").split(platform === "win32" ? ";" : ":")) {
     const directory = entry.replace(/^"|"$/g, "")
     if (!directory || !path.isAbsolute(directory)) continue
+    const prefix = platform === "win32" ? directory : path.dirname(directory)
+    if (npmPackage(prefix, platform)) {
+      const published = npmCommand(prefix, platform)
+      if (published) return published.command
+      continue
+    }
     for (const name of ["opencode2", "opencode"]) for (const extension of extensions) {
       const candidate = path.join(directory, `${name}${extension}`)
       try {
@@ -53,7 +85,8 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
 export function resolveDefaultInstallation(host: InstallationHost = {}): { path: string; source?: "path" | "user" | "legacy" } {
   const command = findPathOpenCode(host)
   if (command) return { path: command, source: "path" }
-  const binary = npmExecutable(userNpmPrefix(host), host.platform)
+  const prefix = userNpmPrefix(host)
+  const binary = npmCommand(prefix, host.platform ?? process.platform)?.binary ?? npmExecutable(prefix, host.platform)
   if (existsSync(binary)) return { path: binary, source: "user" }
   // Migration fallback only: never override an installation shared through PATH.
   const legacy = readManagedExecutable(path.join(host.home ?? os.homedir(), ".local", "share", "codenomad", "opencode"))
@@ -69,12 +102,10 @@ export function sharedInstallPrefix(host: InstallationHost = {}): string | undef
     env: { PATH: npmCommandDirectory(userPrefix, platform), PATHEXT: ".EXE;.CMD;.BAT" } })
   if (!command) return userPrefix
   const prefix = platform === "win32" ? path.dirname(command) : path.dirname(path.dirname(command))
-  const binary = npmExecutable(prefix, platform)
   try {
-    const manifest = JSON.parse(readFileSync(path.join(path.dirname(binary), "..", "package.json"), "utf8"))
-    if (manifest.name !== "@opencode/cli") return undefined
-    const resolved = platform === "win32" ? buildSpawnSpec(command, [], { platform, env: host.env }).command : realpathSync(command)
-    if (realpathSync(resolved) !== realpathSync(binary)) return undefined
+    const published = npmCommand(prefix, platform)
+    if (!published) return undefined
+    if (realpathSync(command) !== realpathSync(published.command)) return undefined
     accessSync(prefix, constants.W_OK)
     return prefix
   } catch { return undefined }
@@ -97,15 +128,16 @@ export async function installSharedOpenCode(version: string, options: Installati
   const binary = npmExecutable(prefix, platform)
   const probe = options.probe ?? probeBinaryVersionAsync
   return withInstallationLock(prefix, async () => {
-    const existing = await probe(binary)
-    if (existing.valid && (!existing.version || !/^\d+\.\d+\.\d+$/.test(existing.version))) {
+    const oldBinary = npmCommand(prefix, platform)?.binary ?? binary
+    const existing = await probe(oldBinary)
+    if (existing.valid && (!existing.version || !/^(?:\d+\.\d+\.\d+|0\.0\.0-beta-\d+)$/.test(existing.version))) {
       throw new Error("Cannot replace an unverified OpenCode version automatically")
     }
-    const target = existing.valid && existing.version && compareVersionStrings(existing.version, version) > 0 ? existing.version : version
+    const target = existing.valid && existing.version && /^\d+\.\d+\.\d+$/.test(existing.version) && compareVersionStrings(existing.version, version) > 0 ? existing.version : version
     const directory = npmCommandDirectory(prefix, platform)
     const commandHost = { ...options, env: { PATH: directory, PATHEXT: ".EXE;.CMD;.BAT" } }
-    if (!existing.valid || existing.version !== target || !findPathOpenCode(commandHost)) {
-      await assertExecutableWritable(binary, platform)
+    if (!existing.valid || existing.version !== target || !npmCommand(prefix, platform) || oldBinary !== binary) {
+      await assertExecutableWritable(oldBinary, platform)
       const env = { ...(options.env ?? process.env) }
       const key = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
       env[key] = `${path.dirname(node)}${platform === "win32" ? ";" : ":"}${env[key] || ""}`

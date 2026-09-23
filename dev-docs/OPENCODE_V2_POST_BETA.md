@@ -57,6 +57,11 @@ the effective path and source; “automatic” replaces the misleading “system
 label. Recovery puts diagnosis and installation before executable selection;
 Preferences keeps executable selection first, inline actions, collapsed version
 details/troubleshooting and logs last.
+Official npm packages from the beta and 2.0.0 transition advertised different
+launcher targets: discovery checks their published `bin` map and real launcher
+target, choosing `opencode` when `opencode2` is only the retired `.cjs` alias.
+Known historical beta versions can migrate to a stable target without treating
+their version label as an unrecognized custom build.
 
 Default host installation uses bundled Node/npm to run a standard global npm
 installation of `@opencode/cli`. Existing writable npm installations on PATH are

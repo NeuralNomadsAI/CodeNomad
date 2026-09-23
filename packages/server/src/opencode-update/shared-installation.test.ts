@@ -13,7 +13,7 @@ async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
   await mkdir(path.dirname(binary), { recursive: true })
   await writeFile(binary, version, { mode: 0o755 })
-  await writeFile(path.join(path.dirname(binary), "..", "package.json"), JSON.stringify({ name: "@opencode/cli" }))
+  await writeFile(path.join(path.dirname(binary), "..", "package.json"), JSON.stringify({ name: "@opencode/cli", bin: { opencode2: "./bin/opencode.exe" } }))
   const bin = npmCommandDirectory(prefix)
   await mkdir(bin, { recursive: true })
   const command = path.join(bin, process.platform === "win32" ? "opencode2.cmd" : "opencode2")
@@ -112,6 +112,27 @@ test("standalone opencode commands and custom npm prefixes are discovered withou
     host.env.PATH = home
     assert.equal(resolveDefaultInstallation(host).path, command)
     assert.equal(sharedInstallPrefix(host), undefined)
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("historical npm launchers select the real executable and allow stable migration", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-history-"))
+  try {
+    for (const [version, name, oldBinary] of [["0.0.0-beta-19275", "opencode2", "opencode2.exe"], ["2.0.0", "opencode", "opencode.exe"]]) {
+      const prefix = path.join(home, version)
+      const binary = path.join(prefix, "node_modules", "@opencode", "cli", "bin", oldBinary)
+      await mkdir(path.dirname(binary), { recursive: true })
+      await writeFile(binary, version)
+      await writeFile(path.join(path.dirname(binary), "..", "package.json"), JSON.stringify({ name: "@opencode/cli", bin: {
+        opencode2: name === "opencode2" ? `./bin/${oldBinary}` : "./bin/opencode2.cjs", opencode: "./bin/opencode.exe",
+      } }))
+      const command = path.join(prefix, `${name}.cmd`)
+      await writeFile(command, `@echo off\r\n"%~dp0\\node_modules\\@opencode\\cli\\bin\\${oldBinary}" %*\r\n`)
+      if (name === "opencode") await writeFile(path.join(prefix, "opencode2.cmd"), "@echo off\r\nexit /b 1\r\n")
+      const host = { home, env: { PATH: prefix, APPDATA: home } }
+      assert.equal(resolveDefaultInstallation(host).path, command)
+      assert.equal(sharedInstallPrefix(host), prefix)
+    }
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
