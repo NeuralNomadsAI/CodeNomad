@@ -131,7 +131,10 @@ test("historical npm launchers select the real executable and allow stable migra
       const command = path.join(directory, process.platform === "win32" ? `${name}.cmd` : name)
       if (process.platform === "win32") {
         await writeFile(command, `@echo off\r\n"%~dp0\\node_modules\\@opencode\\cli\\bin\\${oldBinary}" %*\r\n`)
-        if (name === "opencode") await writeFile(path.join(directory, "opencode2.cmd"), "@echo off\r\nexit /b 1\r\n")
+        if (name === "opencode") {
+          await writeFile(path.join(path.dirname(binary), "opencode2.cjs"), "retired")
+          await writeFile(path.join(directory, "opencode2.cmd"), '@echo off\r\nnode "%~dp0\\node_modules\\@opencode\\cli\\bin\\opencode2.cjs" %*\r\n')
+        }
       } else {
         await symlink(binary, command)
         if (name === "opencode") {
@@ -171,6 +174,26 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
       assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling } }).path, unrelated)
       assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling } }), undefined)
     }
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("custom Windows command wrapper in an npm prefix wins over the package alias", async () => {
+  if (process.platform !== "win32") return
+  const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-wrapper-"))
+  try {
+    const prefix = path.join(home, "npm")
+    await npmFixture(prefix, "2.0.3")
+    await writeFile(path.join(path.dirname(npmExecutable(prefix)), "..", "package.json"), JSON.stringify({
+      name: "@opencode/cli", bin: { opencode2: "./bin/opencode.exe", opencode: "./bin/opencode.exe" },
+    }))
+    await writeFile(path.join(prefix, "opencode.cmd"), '@echo off\r\n"%~dp0\\node_modules\\@opencode\\cli\\bin\\opencode.exe" %*\r\n')
+    const standalone = path.join(home, "standalone.exe")
+    await writeFile(standalone, "standalone")
+    const command = path.join(prefix, "opencode2.cmd")
+    await writeFile(command, `@echo off\r\n"${standalone}" %*\r\n`)
+    const host = { home, env: { PATH: prefix } }
+    assert.equal(resolveDefaultInstallation(host).path, command)
+    assert.equal(sharedInstallPrefix(host), undefined)
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

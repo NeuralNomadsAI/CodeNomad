@@ -54,12 +54,18 @@ function npmLauncher(command: string, prefix: string, platform: NodeJS.Platform)
   } catch { return undefined }
 }
 
-function retiredPosixAlias(command: string, prefix: string, platform: NodeJS.Platform): boolean {
-  if (platform === "win32") return false
-  const relative = npmPackage(prefix, platform)?.bin?.[path.basename(command)]
+function retiredNpmAlias(command: string, prefix: string, platform: NodeJS.Platform): boolean {
+  const name = platform === "win32" ? path.basename(command).replace(/\.cmd$/i, "") : path.basename(command)
+  const relative = npmPackage(prefix, platform)?.bin?.[name]
   if (typeof relative !== "string" || !/^\.\/bin\/[^/\\]+\.cjs$/.test(relative)) return false
   try {
     const target = path.resolve(path.dirname(npmExecutable(prefix, platform)), "..", relative)
+    if (platform === "win32") {
+      const script = readFileSync(command, "utf8")
+      if (script.length > 64 * 1024) return false
+      const escaped = path.basename(target).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      return statSync(target).isFile() && new RegExp(`["'](?:%dp0%|%~dp0)[\\\\/]node_modules[\\\\/]@opencode[\\\\/]cli[\\\\/]bin[\\\\/]${escaped}["']\\s+%\\*`, "i").test(script)
+    }
     return realpathSync(command) === realpathSync(target)
   } catch { return false }
 }
@@ -89,8 +95,7 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
         if (!statSync(candidate).isFile()) continue
         accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK)
         if (inNpmBin && npmPackage(prefix, platform)) {
-          if (platform === "win32" && extension === ".cmd" && !npmLauncher(candidate, prefix, platform)) continue
-          if (retiredPosixAlias(candidate, prefix, platform)) continue
+          if (retiredNpmAlias(candidate, prefix, platform)) continue
         }
         return candidate
       } catch { /* Continue in PATH order. */ }

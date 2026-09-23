@@ -68,7 +68,10 @@ user-managed. On POSIX, only the prefix's actual `bin` directory is treated as
 an npm command directory, not a neighboring folder. A standalone executable
 replacing a POSIX npm symlink is still selected in PATH order and remains
 user-managed; only an actual symlink to the package's retired `.cjs` alias is
-skipped in favor of the working `opencode` command.
+skipped in favor of the working `opencode` command. On Windows, the same
+retired alias is skipped only when the npm `.cmd` script positively invokes
+the package's `.cjs` target; a customized `.cmd` wrapper keeps PATH priority
+and cannot be overwritten through the automatic npm updater.
 
 Default host installation uses bundled Node/npm to run a standard global npm
 installation of `@opencode/cli`. Existing writable npm installations on PATH are
