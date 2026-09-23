@@ -22,7 +22,7 @@ async function npmFixture(prefix: string, version: string) {
   return command
 }
 
-test("PATH wins over newer private copies; existing user npm and private installations remain migration fallbacks", async () => {
+test("private copies and their receipts are ignored; PATH wins over the user npm installation", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-"))
   const env = { PATH: "", APPDATA: path.join(home, "AppData") }
   const host = { home, env }
@@ -31,7 +31,9 @@ test("PATH wins over newer private copies; existing user npm and private install
     const legacy = path.join(root, "2.0.99/node_modules/@opencode/cli/bin/opencode.exe")
     await mkdir(path.dirname(legacy), { recursive: true }); await writeFile(legacy, "legacy")
     await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.0.99"), "")
-    assert.deepEqual(resolveDefaultInstallation(host), { path: legacy, source: "legacy" })
+    await writeFile(path.join(root, "current"), "2.0.99")
+    assert.deepEqual(resolveDefaultInstallation(host), { path: "opencode2" })
+    assert.equal(sharedInstallPrefix(host), userNpmPrefix(host))
     const prefix = userNpmPrefix(host)
     await npmFixture(prefix, "2.0.11")
     assert.deepEqual(resolveDefaultInstallation(host), { path: npmExecutable(prefix), source: "user" })

@@ -265,7 +265,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "追加",
   "opencodeBinarySelector.actions.browse": "バイナリを参照…",
   "opencodeBinarySelector.actions.removeTitle": "バイナリを削除",
-  "opencodeBinarySelector.badge.systemPath": "PATH、ユーザーインストールの順で優先。旧 CodeNomad コピーは予備として使用",
+  "opencodeBinarySelector.badge.systemPath": "PATH、ユーザーの npm インストールの順で優先",
   "opencodeBinarySelector.status.checkingVersions": "バージョンを確認中…",
   "opencodeBinarySelector.status.checking": "確認中…",
   "opencodeBinarySelector.dialog.title": "OpenCode バイナリを選択",

@@ -9,7 +9,8 @@ import { assertSupportedOpenCode, isBelowOpenCodeMinimum, MINIMUM_OPENCODE_VERSI
 import { contractProfile, runtimeIdentity } from "../opencode/compatibility/runtime"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import type { Endpoint } from "@opencode/client/service"
-import { bundledNpm } from "./managed-installation"
+import { bundledNpm } from "./npm-runtime"
+import { isRetiredInstallation } from "./retired-installation"
 import { installSharedOpenCode, sharedInstallPrefix } from "./shared-installation"
 import { InstallationBusyError } from "./installation-lock"
 import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
@@ -306,7 +307,7 @@ export function createOpenCodeUpdateService(
     resolveLatestVersion: resolveLatestOpenCodeVersion,
     canUpgradeBinary: binary => {
       const configured = settings.getOwner("config", "server").opencodeBinary
-      return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2") && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix())
+      return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured))) && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix())
     },
     upgradeBinary: async (_binary, version) => {
       await installSharedOpenCode(version)
@@ -324,5 +325,5 @@ function comparableVersion(version: string): boolean {
 }
 
 function needsSharedInstallation(binary: ResolvedBinary): boolean {
-  return binary.source === "legacy" || binary.source === "user"
+  return binary.source === "user"
 }

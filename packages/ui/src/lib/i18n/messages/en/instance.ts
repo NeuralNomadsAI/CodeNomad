@@ -264,7 +264,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Add",
   "opencodeBinarySelector.actions.browse": "Browse for Binary…",
   "opencodeBinarySelector.actions.removeTitle": "Remove binary",
-  "opencodeBinarySelector.badge.systemPath": "Prefer PATH, then the user installation; legacy CodeNomad copy as fallback",
+  "opencodeBinarySelector.badge.systemPath": "Prefer PATH, then the user npm installation",
   "opencodeBinarySelector.status.checkingVersions": "Checking versions…",
   "opencodeBinarySelector.status.checking": "Checking…",
   "opencodeBinarySelector.dialog.title": "Select OpenCode Binary",

@@ -7,7 +7,7 @@ import os from "node:os"
 import { execFileSync, spawn } from "node:child_process"
 import { once } from "node:events"
 import { tsImport } from "tsx/esm/api"
-const { bundledNpm } = await tsImport("../packages/server/src/opencode-update/managed-installation.ts", import.meta.url)
+const { bundledNpm } = await tsImport("../packages/server/src/opencode-update/npm-runtime.ts", import.meta.url)
 const { installSharedOpenCode, resolveDefaultInstallation, findPathOpenCode } = await tsImport("../packages/server/src/opencode-update/shared-installation.ts", import.meta.url)
 const { registerUserPath } = await tsImport("../packages/server/src/opencode-update/user-path.ts", import.meta.url)
 const { MINIMUM_OPENCODE_VERSION } = await tsImport("../packages/server/src/opencode/runtime-support.ts", import.meta.url)

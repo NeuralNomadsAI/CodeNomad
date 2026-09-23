@@ -433,7 +433,7 @@ test("settings distinguish manual updates and failed registry checks from an up-
   } finally { await page.close() }
 })
 
-test("private migration is available at the current version and installation conflicts retain explicit retry", async () => {
+test("user npm PATH repair is available at the current version and installation conflicts retain explicit retry", async () => {
   const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
   let migrated = false, attempts = 0, connects = 0
   await page.route("**/api/**", route => {
@@ -450,7 +450,7 @@ test("private migration is available at the current version and installation con
     }
     return route.fulfill({ json: { state: "ready", currentVersion: "2.0.15", latestVersion: "2.0.15",
       updateAvailable: false, canUpgrade: !migrated, needsSharedInstallation: !migrated,
-      installationSource: migrated ? "path" : "legacy", binaryPath: migrated ? "C:/Users/fixture/AppData/Roaming/npm/opencode2.cmd" : "C:/Users/fixture/.local/share/codenomad/opencode/2.0.15/node_modules/@opencode/cli/bin/opencode.exe",
+      installationSource: migrated ? "path" : "user", binaryPath: migrated ? "C:/Users/fixture/AppData/Roaming/npm/opencode2.cmd" : "C:/Users/fixture/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe",
       minimumVersion: "2.0.7", recommendedVersion: "2.0.11", versionAssessment: "untested", target: "host",
       serviceState: "ready", daemonVersion: "2.0.15", canRestart: false } })
   })
@@ -458,10 +458,10 @@ test("private migration is available at the current version and installation con
     await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
     const install = page.getByRole("button", { name: "Installer pour l’utilisateur et configurer le PATH", exact: true })
     await install.waitFor()
-    await page.getByText(/Ancienne installation privée de CodeNomad/).waitFor()
+    await page.getByText("Installation npm utilisateur trouvée hors du PATH actuel.", { exact: true }).waitFor()
     assert.match(await page.locator(".selector-badge-version").innerText(), /2\.0\.15/, "selector uses the current effective version rather than its old validation cache")
     assert.equal(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth), true)
-    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-shared-migration-fr.png"), fullPage: true })
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-shared-path-repair-fr.png"), fullPage: true })
     await install.click()
     await page.getByRole("alert").filter({ hasText: /L’exécutable OpenCode est utilisé/ }).waitFor()
     assert.equal(connects, 0)
