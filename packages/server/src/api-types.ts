@@ -101,6 +101,8 @@ export interface WorktreeDescriptor {
   serviceRoot?: string
   /** Exact path registered in Git's worktree inventory. */
   registeredDirectory?: string
+  /** Degraded mode: only this exact physical directory authorizes sessions. */
+  directoryOnly?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -111,6 +113,8 @@ export interface WorktreeDescriptor {
 }
 
 export interface WorktreeListResponse {
+  /** False means directory-only degraded mode; repository membership is unknown. */
+  gitAvailable?: boolean
   worktrees: WorktreeDescriptor[]
   /** Default creation parent in the OpenCode service namespace. */
   defaultDirectory?: string

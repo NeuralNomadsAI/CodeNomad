@@ -14,6 +14,24 @@ function session(id: string, directory: string, parentID?: string): SessionInfo 
 const location = { get: async ({ location }: { location: { directory: string } }) => location }
 
 describe("evacuateWorktreeSessions", () => {
+  it("drains overlapping directory-only identities across Git availability transitions", async () => {
+    for (const [active, deleted] of [["/repo/nested", "/repo"], ["/repo", "/repo/nested"]]) {
+      const fence = new WorktreeDeletionFence()
+      const release = fence.enter([active])!
+      let removed = false
+      const deletion = fence.run(deleted, [deleted], async () => { removed = true })
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(removed, false)
+      assert.equal(fence.enter([active]), undefined)
+      assert.equal(fence.isBlocked(active), true)
+      const releaseSibling = fence.enter(["/repo-other"])
+      assert.ok(releaseSibling)
+      releaseSibling()
+      release()
+      await deletion
+      assert.equal(removed, true)
+    }
+  })
   it("serializes deletion attempts for the same worktree", async () => {
     const fence = new WorktreeDeletionFence()
     let release!: () => void

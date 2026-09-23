@@ -29,6 +29,7 @@ import {
 } from "./session-tree"
 
 export type { SessionThread } from "./session-tree"
+import { getDirectoryOnlyWorktree } from "./worktrees"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -885,7 +886,7 @@ function getSessions(instanceId: string): Session[] {
 
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === null)
+  return allSessions.filter((s) => getSessionRoot(instanceId, s.id)?.id === s.id)
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
@@ -909,12 +910,14 @@ function getSessionFamily(instanceId: string, parentId: string): Session[] {
 function getSessionRoot(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return null
-  return getSessionRootFromMap(instanceSessions, sessionId)
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return getSessionRootFromMap(instanceSessions, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
 }
 
 function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
   const instanceSessions = sessions().get(instanceId)
-  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds) : []
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
