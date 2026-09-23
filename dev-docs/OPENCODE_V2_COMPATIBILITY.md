@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.14**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.15**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -41,11 +41,11 @@ main turn. It passes on 2.0.7 (technical minimum), 2.0.11 and 2.0.12, and runs i
 the minimum/latest-stable CI matrix. These targeted results do not change the
 global minimum, dependency pins or recommended release-tested version.
 
-### Current stable qualification (2026-09-23)
+### 2.0.14 qualification baseline (2026-09-23)
 
 The qualification baseline includes merged #751 (`0a31a8b3`). Server/UI client
-and bundled-plugin dependencies are aligned at **2.0.14**, together with the
-recommended/tested version. The technical minimum remains **2.0.7**. Newer
+and bundled-plugin dependencies were aligned at **2.0.14**, together with the
+then-recommended/tested version. The technical minimum remains **2.0.7**. Newer
 runtime labels continue through authenticated contract recognition; this update
 does not widen the proxy allowlist or retry mutations under another contract.
 
@@ -72,6 +72,30 @@ The separate system-message browser fixture still has two search timeouts:
 it mocks HTTP APIs with `{}` and does not provide the current bounded history
 query contract. Those tests use synthetic browser data, not a 2.0.14 daemon;
 they are not native-runtime qualification evidence.
+
+### Current stable target: 2.0.15
+
+Server/UI client, bundled plugin and recommendation advance together to **2.0.15**;
+the technical minimum stays **2.0.7**. The upstream client now preserves a
+`baseUrl` path prefix ([#50428](https://github.com/anomalyco/opencode/pull/50428)).
+CodeNomad removes its former prefix-repair workaround: the generated URL passes
+through unchanged, while scheduling classifies the API path relative to the
+proxy prefix. A regression using the real generated client reproduced duplicate
+proxy prefixes before this correction and verifies exact DELETE/PUT instruction
+paths afterward, including deployments with an additional base path.
+
+Declared native API errors are now `Error` instances retaining `_tag`/data
+([#50788](https://github.com/anomalyco/opencode/pull/50788)); existing error
+classification remains applicable. Undeclared HTTP 500 responses still surface
+as `UnexpectedStatus`. Additive contracts include project `time.active`, session
+metadata updates and their event; these do not add new proxy routes or minimum
+runtime requirements. Runtime changes also cover media/provider handling,
+Code Mode expression support and Windows CLI update/uninstall coordination.
+
+These changes do **not** establish a fix for #750's remaining CodeNomad
+pre-forward exception. Updating only the CLI cannot replace the client bundled
+with CodeNomad. Keep #750 open until a reproducing desktop send verifies its
+specific failure; synthetic qualification is not that reproduction.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.

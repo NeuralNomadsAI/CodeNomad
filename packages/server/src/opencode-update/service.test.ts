@@ -255,29 +255,29 @@ test("beta version comparison remains numeric", () => {
   assert.equal(compareOpenCodeVersionStrings("0.0.0-beta-10000", "0.0.0-beta-9999") > 0, true)
 })
 
-test("2.0.7 through 2.0.13 remain usable; recommendation only offers an optional update", async () => {
-  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11", "2.0.12", "2.0.13", "2.0.14"]) {
+test("2.0.7 through 2.0.14 remain usable; recommendation only offers an optional update", async () => {
+  for (const version of ["2.0.7", "2.0.8", "2.0.9", "2.0.10", "2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
-      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.0.14",
+      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.0.15",
       lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
     }))
     const status = await service.start()
     assert.equal(status.minimumVersion, "2.0.7")
-    assert.equal(status.recommendedVersion, "2.0.14")
+    assert.equal(status.recommendedVersion, "2.0.15")
     assert.equal(status.state, "ready")
     assert.equal(status.serviceState, "ready")
-    assert.equal(status.versionAssessment, version === "2.0.14" ? "tested" : "untested", "only the current recommendation is release-qualified")
+    assert.equal(status.versionAssessment, version === "2.0.15" ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
-    assert.equal(status.canUpgrade, version !== "2.0.14")
+    assert.equal(status.canUpgrade, version !== "2.0.15")
     assert.equal(status.canRestart, false)
   }
 })
 
 test("a current daemon remains usable through an older selected discovery CLI", async () => {
   const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
-  rememberRuntime(endpoint, { version: "2.0.14", pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.0.15", pid: 123, discovery: "info" })
   const service = new OpenCodeUpdateService(deps({
     probeBinary: () => ({ valid: true, version: "2.0.3" }),
     lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),

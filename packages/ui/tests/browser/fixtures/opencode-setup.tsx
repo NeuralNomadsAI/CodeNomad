@@ -23,6 +23,6 @@ await setThemePreference(params.get("theme") === "dark" ? "dark" : "light")
 ;(window as any).fixture = {
   open: () => openOpenCodeSetup(async () => { resumed++ }), resumed: () => resumed,
   selectedBinary: () => serverSettings().opencodeBinary,
-  unsupported: () => createInstanceFetch(`${location.origin}/workspaces/w/instance/`)(`${location.origin}/api/session/s/prompt`,
+  unsupported: () => createInstanceFetch(`${location.origin}/workspaces/w/instance/`)(`${location.origin}/workspaces/w/instance/api/session/s/prompt`,
     { method: "POST", body: "{}" }).then(response => response.status),
 }
