@@ -120,18 +120,56 @@ test("historical npm launchers select the real executable and allow stable migra
   try {
     for (const [version, name, oldBinary] of [["0.0.0-beta-19275", "opencode2", "opencode2.exe"], ["2.0.0", "opencode", "opencode.exe"]]) {
       const prefix = path.join(home, version)
-      const binary = path.join(prefix, "node_modules", "@opencode", "cli", "bin", oldBinary)
+      const binary = path.join(path.dirname(npmExecutable(prefix)), oldBinary)
       await mkdir(path.dirname(binary), { recursive: true })
-      await writeFile(binary, version)
+      await writeFile(binary, version, { mode: 0o755 })
       await writeFile(path.join(path.dirname(binary), "..", "package.json"), JSON.stringify({ name: "@opencode/cli", bin: {
         opencode2: name === "opencode2" ? `./bin/${oldBinary}` : "./bin/opencode2.cjs", opencode: "./bin/opencode.exe",
       } }))
-      const command = path.join(prefix, `${name}.cmd`)
-      await writeFile(command, `@echo off\r\n"%~dp0\\node_modules\\@opencode\\cli\\bin\\${oldBinary}" %*\r\n`)
-      if (name === "opencode") await writeFile(path.join(prefix, "opencode2.cmd"), "@echo off\r\nexit /b 1\r\n")
-      const host = { home, env: { PATH: prefix, APPDATA: home } }
+      const directory = npmCommandDirectory(prefix)
+      await mkdir(directory, { recursive: true })
+      const command = path.join(directory, process.platform === "win32" ? `${name}.cmd` : name)
+      if (process.platform === "win32") {
+        await writeFile(command, `@echo off\r\n"%~dp0\\node_modules\\@opencode\\cli\\bin\\${oldBinary}" %*\r\n`)
+        if (name === "opencode") await writeFile(path.join(directory, "opencode2.cmd"), "@echo off\r\nexit /b 1\r\n")
+      } else {
+        await symlink(binary, command)
+        if (name === "opencode") {
+          const retired = path.join(path.dirname(binary), "opencode2.cjs")
+          await writeFile(retired, "retired", { mode: 0o755 })
+          await symlink(retired, path.join(directory, "opencode2"))
+        }
+      }
+      const host = { home, env: { PATH: directory, APPDATA: home } }
       assert.equal(resolveDefaultInstallation(host).path, command)
       assert.equal(sharedInstallPrefix(host), prefix)
+    }
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("PATH executable precedence wins over npm shims in the same prefix", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-precedence-"))
+  try {
+    const prefix = path.join(home, "npm")
+    const directory = npmCommandDirectory(prefix)
+    await npmFixture(prefix, "2.0.3")
+    const standalone = path.join(directory, process.platform === "win32" ? "opencode2.exe" : "opencode")
+    if (process.platform === "win32") await writeFile(standalone, "standalone")
+    else {
+      await rm(standalone, { force: true })
+      await writeFile(standalone, "standalone", { mode: 0o755 })
+    }
+    const host = { home, env: { PATH: directory } }
+    if (process.platform === "win32") {
+      assert.equal(resolveDefaultInstallation(host).path, standalone)
+      assert.equal(sharedInstallPrefix(host), undefined)
+    } else {
+      const sibling = path.join(prefix, "sibling")
+      await mkdir(sibling)
+      const unrelated = path.join(sibling, "opencode2")
+      await writeFile(unrelated, "standalone", { mode: 0o755 })
+      assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling } }).path, unrelated)
+      assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling } }), undefined)
     }
   } finally { await rm(home, { recursive: true, force: true }) }
 })

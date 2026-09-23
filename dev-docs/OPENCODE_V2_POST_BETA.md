@@ -62,6 +62,10 @@ launcher targets: discovery checks their published `bin` map and real launcher
 target, choosing `opencode` when `opencode2` is only the retired `.cjs` alias.
 Known historical beta versions can migrate to a stable target without treating
 their version label as an unrecognized custom build.
+Discovery preserves terminal PATH/PATHEXT ordering even when a standalone
+executable shares the npm command directory; such an executable remains
+user-managed. On POSIX, only the prefix's actual `bin` directory is treated as
+an npm command directory, not a neighboring folder.
 
 Default host installation uses bundled Node/npm to run a standard global npm
 installation of `@opencode/cli`. Existing writable npm installations on PATH are

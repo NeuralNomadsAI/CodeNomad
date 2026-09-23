@@ -39,21 +39,27 @@ function npmPackage(prefix: string, platform: NodeJS.Platform) {
   } catch { return undefined }
 }
 
-function npmCommand(prefix: string, platform: NodeJS.Platform): { command: string; binary: string } | undefined {
+function npmLauncher(command: string, prefix: string, platform: NodeJS.Platform): string | undefined {
   const manifest = npmPackage(prefix, platform)
   if (!manifest?.bin) return undefined
-  const directory = npmCommandDirectory(prefix, platform)
+  const name = path.basename(command).replace(platform === "win32" ? /\.cmd$/i : /$^/, "")
+  const relative = manifest.bin[name]
+  if (typeof relative !== "string" || !/^\.\/bin\/[^/\\]+\.exe$/.test(relative)) return undefined
   const packageRoot = path.join(path.dirname(npmExecutable(prefix, platform)), "..")
+  const binary = path.resolve(packageRoot, relative)
+  try {
+    if (!statSync(binary).isFile()) return undefined
+    const resolved = platform === "win32" ? buildSpawnSpec(command, [], { platform }).command : realpathSync(command)
+    return realpathSync(resolved) === realpathSync(binary) ? binary : undefined
+  } catch { return undefined }
+}
+
+function npmCommand(prefix: string, platform: NodeJS.Platform): { command: string; binary: string } | undefined {
+  const directory = npmCommandDirectory(prefix, platform)
   for (const name of ["opencode2", "opencode"]) {
-    const relative = manifest.bin[name]
-    if (typeof relative !== "string" || !/^\.\/bin\/[^/\\]+\.exe$/.test(relative)) continue
-    const binary = path.resolve(packageRoot, relative)
     const command = path.join(directory, platform === "win32" ? `${name}.cmd` : name)
-    try {
-      if (!statSync(binary).isFile()) continue
-      const resolved = platform === "win32" ? buildSpawnSpec(command, [], { platform }).command : realpathSync(command)
-      if (realpathSync(resolved) === realpathSync(binary)) return { command, binary }
-    } catch { /* Invalid or missing launcher; try the other official name. */ }
+    const binary = npmLauncher(command, prefix, platform)
+    if (binary) return { command, binary }
   }
 }
 
@@ -66,16 +72,15 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
     const directory = entry.replace(/^"|"$/g, "")
     if (!directory || !path.isAbsolute(directory)) continue
     const prefix = platform === "win32" ? directory : path.dirname(directory)
-    if (npmPackage(prefix, platform)) {
-      const published = npmCommand(prefix, platform)
-      if (published) return published.command
-      continue
-    }
+    const inNpmBin = path.resolve(directory) === path.resolve(npmCommandDirectory(prefix, platform))
     for (const name of ["opencode2", "opencode"]) for (const extension of extensions) {
       const candidate = path.join(directory, `${name}${extension}`)
       try {
         if (!statSync(candidate).isFile()) continue
         accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK)
+        if (inNpmBin && npmPackage(prefix, platform) && (platform !== "win32" || extension === ".cmd")) {
+          if (!npmLauncher(candidate, prefix, platform)) continue
+        }
         return candidate
       } catch { /* Continue in PATH order. */ }
     }
@@ -103,9 +108,7 @@ export function sharedInstallPrefix(host: InstallationHost = {}): string | undef
   if (!command) return userPrefix
   const prefix = platform === "win32" ? path.dirname(command) : path.dirname(path.dirname(command))
   try {
-    const published = npmCommand(prefix, platform)
-    if (!published) return undefined
-    if (realpathSync(command) !== realpathSync(published.command)) return undefined
+    if (!npmLauncher(command, prefix, platform)) return undefined
     accessSync(prefix, constants.W_OK)
     return prefix
   } catch { return undefined }
