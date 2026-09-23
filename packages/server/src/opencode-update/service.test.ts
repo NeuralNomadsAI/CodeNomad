@@ -76,6 +76,28 @@ test("installation re-resolves the executable and rejects false success", async 
   await assert.rejects(wrong.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "upgrade_verification_failed")
 })
 
+test("legacy migration and PATH repair remain available without an update and never downgrade", async () => {
+  for (const source of ["legacy", "user"] as const) {
+    let migrated = false, installs = 0
+    const service = new OpenCodeUpdateService(deps({
+      resolveBinary: () => ({ path: migrated ? "common" : source, label: "OpenCode", source: migrated ? "path" : source }),
+      probeBinary: () => ({ valid: true, version: "2.0.15" }),
+      resolveLatestVersion: async () => "2.0.14",
+      upgradeBinary: async (_binary, target) => {
+        assert.equal(target, "2.0.15")
+        installs++; migrated = true
+        return { success: true, version: target }
+      },
+    }))
+    assert.equal((await service.getStatus()).canUpgrade, true)
+    assert.equal((await service.getStatus()).needsSharedInstallation, true)
+    await service.upgrade()
+    assert.equal(installs, 1)
+    assert.equal((await service.getStatus()).needsSharedInstallation, false)
+    assert.equal((await service.getStatus()).canUpgrade, false)
+  }
+})
+
 test("coalesces overlapping installations and never downgrades a newer version", async () => {
   let upgrades = 0
   let version = "2.0.6"

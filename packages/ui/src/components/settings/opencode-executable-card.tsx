@@ -1,7 +1,7 @@
 import { Terminal } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
-import { openCodeSetupBusy } from "../../stores/opencode-setup"
+import { openCodeSetupBusy, openCodeSetupStatus } from "../../stores/opencode-setup"
 import OpenCodeBinarySelector from "../opencode-binary-selector"
 
 export function OpenCodeExecutableCard() {
@@ -19,6 +19,7 @@ export function OpenCodeExecutableCard() {
       <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
     </div>
     <OpenCodeBinarySelector selectedBinary={serverSettings().opencodeBinary || "opencode2"}
+      defaultVersion={openCodeSetupStatus()?.installationSource ? openCodeSetupStatus()?.currentVersion ?? undefined : undefined}
       onBinaryChange={updateLastUsedBinary} disabled={openCodeSetupBusy()} isVisible />
   </div>
 }

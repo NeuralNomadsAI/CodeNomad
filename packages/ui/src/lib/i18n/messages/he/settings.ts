@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "התקנה אחרת מחזיקה בנעילת ההתקנה של OpenCode. יש לנסות שוב לאחר סיומה. אם היא נקטעה, מיקום הנעילה מופיע ביומן השרת.",
+  "settings.opencode.setup.installation_in_use": "קובץ ההפעלה של OpenCode נמצא בשימוש או אינו ניתן לכתיבה. העדכון נדחה לפני שינוי ההתקנה. יש לנסות שוב כשהקובץ זמין.",
+  "settings.opencode.setup.source.path": "קובץ ההפעלה נמצא ב-PATH של השרת.",
+  "settings.opencode.setup.source.user": "נמצאה התקנת npm של המשתמש מחוץ ל-PATH הנוכחי.",
+  "settings.opencode.setup.source.legacy": "התקנה פרטית ישנה של CodeNomad. לא נמצאה התקנה משותפת.",
+  "settings.opencode.setup.sharedInstall": "התקנה עבור המשתמש והגדרת PATH",
+  "settings.opencode.setup.sharedInstallDescription": "משתמש בהתקנת npm רגילה המשותפת ללקוחות אחרים. יש לפתוח מסוף חדש לאחר ההתקנה. העותקים הפרטיים הישנים נשמרים.",
   "settings.opencode.update.available": "OpenCode {version} זמין.",
   "settings.opencode.setup.manage": "ניהול OpenCode…",
   "settings.opencode.setup.connected": "OpenCode מחובר.",

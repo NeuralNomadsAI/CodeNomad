@@ -9,7 +9,9 @@ import { assertSupportedOpenCode, isBelowOpenCodeMinimum, MINIMUM_OPENCODE_VERSI
 import { contractProfile, runtimeIdentity } from "../opencode/compatibility/runtime"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import type { Endpoint } from "@opencode/client/service"
-import { bundledNpm, installManagedOpenCode } from "./managed-installation"
+import { bundledNpm } from "./managed-installation"
+import { installSharedOpenCode, sharedInstallPrefix } from "./shared-installation"
+import { InstallationBusyError } from "./installation-lock"
 import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
 import { parseWslUncPath } from "../workspaces/spawn"
 
@@ -69,9 +71,10 @@ export class OpenCodeUpdateService {
       ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
     const status: OpenCodeUpdateStatus = {
       currentVersion, latestVersion, updateAvailable,
-      canUpgrade: !invalid && Boolean(updateAvailable) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
+      canUpgrade: !invalid && Boolean(updateAvailable || needsSharedInstallation(binary)) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
       minimumVersion: MINIMUM_OPENCODE_VERSION, recommendedVersion: RECOMMENDED_OPENCODE_VERSION,
       versionAssessment: "untested", state, binaryPath: binary.path,
+      installationSource: binary.source, needsSharedInstallation: needsSharedInstallation(binary),
       target: parseWslUncPath(binary.path) ? "wsl" : "host", canRestart: false,
       ...(!latestVersion ? { checkError: "update_check_failed" as const } : {}),
     }
@@ -201,24 +204,25 @@ export class OpenCodeUpdateService {
       throw new OpenCodeUpdateError("unsupported_binary", "Cannot order this custom OpenCode version for an automatic update")
     }
 
-    if (currentVersion && compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0) {
+    if (currentVersion && compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0 && !needsSharedInstallation(binary)) {
       return { success: true, version: currentVersion }
     }
 
     if (!this.deps.canUpgradeBinary(binary)) {
       throw new OpenCodeUpdateError(
         "unsupported_binary",
-        "Automatic updates are only available for the managed opencode2 command",
+        "Automatic updates require the default command and a writable npm installation",
       )
     }
 
     try {
-      const result = await this.deps.upgradeBinary(binary, latestVersion)
+      const targetVersion = currentVersion && compareOpenCodeVersionStrings(currentVersion, latestVersion) > 0 ? currentVersion : latestVersion
+      const result = await this.deps.upgradeBinary(binary, targetVersion)
       if (!result.success) {
         throw new OpenCodeUpdateError("upgrade_failed", result.error)
       }
       const installedVersion = await this.readCurrentVersion(this.deps.resolveBinary().path)
-      if (isBelowOpenCodeMinimum(installedVersion) || !/^\d+\.\d+\.\d+$/.test(installedVersion) || compareOpenCodeVersionStrings(installedVersion, latestVersion) < 0) {
+      if (isBelowOpenCodeMinimum(installedVersion) || !/^\d+\.\d+\.\d+$/.test(installedVersion) || compareOpenCodeVersionStrings(installedVersion, targetVersion) < 0) {
         throw new OpenCodeUpdateError(
           "upgrade_verification_failed",
           `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
@@ -226,7 +230,7 @@ export class OpenCodeUpdateService {
       }
       return { success: true, version: installedVersion }
     } catch (error) {
-      if (error instanceof OpenCodeUpdateError) throw error
+      if (error instanceof OpenCodeUpdateError || error instanceof InstallationBusyError) throw error
       throw new OpenCodeUpdateError(
         "upgrade_failed",
         error instanceof Error ? error.message : "OpenCode upgrade failed",
@@ -300,12 +304,12 @@ export function createOpenCodeUpdateService(
     },
     probeBinary: probeBinaryVersionAsync,
     resolveLatestVersion: resolveLatestOpenCodeVersion,
-    canUpgradeBinary: () => {
+    canUpgradeBinary: binary => {
       const configured = settings.getOwner("config", "server").opencodeBinary
-      return (!configured || configured === "opencode" || configured === "opencode2") && Boolean(bundledNpm())
+      return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2") && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix())
     },
     upgradeBinary: async (_binary, version) => {
-      await installManagedOpenCode(version)
+      await installSharedOpenCode(version)
       return { success: true, version }
     },
     lifecycle: binary => workspaceManager.setupServiceOptions(binary.path).then(options => options.lifecycle),
@@ -317,4 +321,8 @@ export function createOpenCodeUpdateService(
 
 function comparableVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(version) || /^0\.0\.0-beta-\d+$/.test(version)
+}
+
+function needsSharedInstallation(binary: ResolvedBinary): boolean {
+  return binary.source === "legacy" || binary.source === "user"
 }

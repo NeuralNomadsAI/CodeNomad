@@ -39,7 +39,7 @@ describe that earlier diff, not approval of its scope or the current correction.
 
 ## Setup and recovery
 
-The global setup dialog and Preferences reuse `OpenCodeUpdateCard` and its store.
+The global setup dialog and Preferences reuse `OpenCodeSetupPanel` and its store.
 This is an implementation reuse choice, not a user requirement that all failures
 have the same screen. Missing installations, known incompatibility and optional
 updates expose different actions. Installed/running/minimum/recommended versions
@@ -49,21 +49,65 @@ Connection changes, foreground entry and unsupported proxy responses refresh
 recovery state. Stale responses cannot overwrite a changed executable or a
 completed action. Only a pending folder open may resume; prompts are not replayed.
 
-Default host installations use bundled Node and the npm distributed in its pinned
-official archive. Previously the packaging script retained only the Node binary
-and discarded npm; the archive itself already contained npm. Both hosts now include npm's complete
-dependency/license closure. npm installs an exact policy-compatible release into
-a staging directory under `~/.local/share/codenomad/opencode`, verifies the real
-executable, then publishes a versioned installation and an immutable version
-receipt. The highest published version wins; old `current` markers remain readable.
-The old unused global npm/pnpm/bun/yarn installer and legacy-package removal path
-are deleted. If npm is unavailable beside the server runtime, automatic installation
-is not advertised. No administrator rights, system Node, global npm install or application-resource
-writes are required. Execution is bounded to five minutes and 1 MiB output.
-Installation failures retain the previous selection. Concurrent requests coalesce;
-another backend's same-version installation is accepted only after verification.
-Exclusive receipt creation is idempotent on Windows; a slower old-version install
-cannot downgrade the selection published by another backend.
+Automatic selection now follows PATH order (`opencode2`, then `opencode` within
+each directory), then the conventional user npm installation, then the old private
+CodeNomad installation as a migration fallback. An explicit executable retains
+priority. Both setup and binary validation use the same discovery. The UI shows
+the effective path and source; “automatic” replaces the misleading “system PATH”
+label. Recovery puts diagnosis and installation before executable selection;
+Preferences keeps executable selection first, inline actions, collapsed version
+details/troubleshooting and logs last.
+Official npm packages from the beta and 2.0.0 transition advertised different
+launcher targets: discovery checks their published `bin` map and real launcher
+target, choosing `opencode` when `opencode2` is only the retired `.cjs` alias.
+Known historical beta versions can migrate to a stable target without treating
+their version label as an unrecognized custom build.
+Discovery preserves terminal PATH/PATHEXT ordering even when a standalone
+executable shares the npm command directory; such an executable remains
+user-managed. On POSIX, only the prefix's actual `bin` directory is treated as
+an npm command directory, not a neighboring folder. A standalone executable
+replacing a POSIX npm symlink is still selected in PATH order and remains
+user-managed; only an actual symlink to the package's retired `.cjs` alias is
+skipped in favor of the working `opencode` command. On Windows, the same
+retired alias is skipped only when the npm `.cmd` script positively invokes
+the package's `.cjs` target; a customized `.cmd` wrapper keeps PATH priority
+and cannot be overwritten through the automatic npm updater.
+
+Default host installation uses bundled Node/npm to run a standard global npm
+installation of `@opencode/cli`. Existing writable npm installations on PATH are
+reused after verifying their manifest and launcher identity; standalone/curl,
+Homebrew and custom installations remain user-managed. With no PATH installation,
+the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit
+absolute `NPM_CONFIG_PREFIX`. Existing npm prefixes on PATH are retained. npm
+publishes the normal terminal commands; CodeNomad verifies the executable version
+and launcher before registering the command directory. Windows registration preserves
+the HKCU Path value's type and unexpanded variables and broadcasts the environment
+change. Bash, zsh, sh and fish profiles receive idempotent entries. A new terminal
+is needed; the backend's own PATH is updated immediately. Remote installation and
+PATH changes apply on the server host. No system Node or administrator rights are
+needed for the conventional user prefix. Installer execution remains bounded to
+five minutes and 1 MiB output.
+
+Migration remains available when a private copy is already current. PATH registration
+failure leaves the installed package discoverable, and retry can repair PATH without
+reinstalling. Neither migration nor command repair downgrades a newer shared version.
+Old version directories and selection receipts are read-only fallbacks and are never
+removed by installation. After choosing/verifying the common executable and checking
+that no process uses the private copy, the user may remove only
+`~/.local/share/codenomad/opencode`; `~/.local/share/opencode` is native user data
+and must not be confused with this installation directory.
+
+An exclusive `.codenomad-opencode-install.lock` in the npm prefix serializes
+CodeNomad backends; the version is re-probed under that lock. A competing backend
+gets a retryable conflict. A lock left after a crash is deliberately not stolen
+by time/PID heuristics: npm may outlive its backend. The server log gives the lock
+path; remove it only after confirming the installer has exited. External package
+managers do not participate in this lock. Windows checks the executable for write
+access before npm can retire the old package; a mapped or non-writable executable
+defers the update with localized feedback and leaves the package intact. CodeNomad
+never stops the shared daemon to complete an installation. Standard npm's own
+failure semantics apply after this preflight; this is not the old immutable,
+versioned private-package publication scheme.
 
 Explicit custom binaries remain selected. WSL and custom installations receive
 execution-host instructions rather than a Windows-side Linux installation.

@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Une autre installation détient le verrou d’installation d’OpenCode. Réessayez après sa fin. Si elle a été interrompue, le journal du serveur indique l’emplacement du verrou.",
+  "settings.opencode.setup.installation_in_use": "L’exécutable OpenCode est utilisé ou non modifiable. La mise à jour a été différée avant toute modification de l’installation. Réessayez lorsque l’exécutable sera disponible.",
+  "settings.opencode.setup.source.path": "Exécutable trouvé dans le PATH du serveur.",
+  "settings.opencode.setup.source.user": "Installation npm utilisateur trouvée hors du PATH actuel.",
+  "settings.opencode.setup.source.legacy": "Ancienne installation privée de CodeNomad. Aucune installation commune trouvée.",
+  "settings.opencode.setup.sharedInstall": "Installer pour l’utilisateur et configurer le PATH",
+  "settings.opencode.setup.sharedInstallDescription": "Utilise une installation npm standard partagée avec les autres clients. Ouvrez un nouveau terminal après l’installation. Les anciennes copies privées sont conservées.",
   "settings.opencode.update.available": "OpenCode {version} est disponible.",
   "settings.opencode.setup.manage": "Gérer OpenCode…",
   "settings.opencode.setup.connected": "OpenCode est connecté.",
