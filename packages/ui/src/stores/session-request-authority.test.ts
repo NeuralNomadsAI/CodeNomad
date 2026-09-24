@@ -11,7 +11,7 @@ import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProvider
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, getOpenCodeMessageRevision, projectOpenCodeMessages } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, projectOpenCodeMessages } from "./opencode-data.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   agents,
@@ -1336,6 +1336,46 @@ describe("session request authority", () => {
       }
     }
   })
+
+  for (const mutation of ["cancel", "revert"] as const) {
+    it(`rejects pre-${mutation} history after idle disposes the reducer`, async () => {
+      const instanceId = `stale-${mutation}-idle-page`, sessionId = "session"
+      const { client, cleanup } = setup(instanceId)
+      const stale = deferred<any>()
+      let oldestCalls = 0
+      client.message = { list: (input: any) => {
+        if (input.order !== "asc") return Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } })
+        oldestCalls += 1
+        return oldestCalls === 1 ? stale.promise : Promise.resolve({ data: [apiMessage("survivor")], cursor: { next: "newer" } })
+      } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      try {
+        await loadMessages(instanceId, sessionId)
+        const request = loadOldestMessageWindow(instanceId, sessionId)
+        assert.equal(oldestCalls, 1)
+        const reducer = applyOpenCodeDataEvent(instanceId, "/work", mutation === "cancel"
+          ? { id: "mutation", type: "session.inbox.cancelled", created: 2, data: { sessionID: sessionId, inboxID: "deleted" } } as any
+          : { id: "mutation", type: "session.revert.committed", created: 2, data: { sessionID: sessionId, to: "deleted" } } as any)
+        const revision = getOpenCodeMutationRevision(instanceId, sessionId)
+        const idle = { id: "idle", type: "session.idle", created: 3, data: { sessionID: sessionId } } as any
+        const data = applyOpenCodeDataEvent(instanceId, "/work", idle)
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        finishOpenCodeDataEvent(instanceId, idle)
+        assert.equal(getOpenCodeMutationRevision(instanceId, sessionId), revision)
+        const next = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "next", type: "permission.replied", created: 4, data: { sessionID: sessionId, requestID: "missing" },
+        } as any)
+        assert.notEqual(next, reducer, "the request fence survives actual reducer replacement")
+        stale.resolve({ data: [apiMessage("deleted")], cursor: { next: "newer" } })
+        assert.equal(await request, false)
+        const store = messageStoreBus.getOrCreate(instanceId)
+        assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest"])
+        assert.equal(store.getMessage("deleted"), undefined)
+        assert.equal(await loadOldestMessageWindow(instanceId, sessionId), true)
+        assert.deepEqual(store.getSessionMessageIds(sessionId), ["survivor"])
+      } finally { stale.resolve({ data: [], cursor: {} }); destroyOpenCodeData(instanceId); cleanup() }
+    })
+  }
 
   it("rejects a stale page after more than 200 cancellations without tombstones", async () => {
     const instanceId = "many-cancellation-fence", sessionId = "session"
