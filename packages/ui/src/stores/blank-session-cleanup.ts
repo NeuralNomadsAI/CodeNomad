@@ -6,6 +6,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeM
 import { getRootClient } from "./opencode-client"
 import { deleteSession } from "./session-api"
 import { getChildSessions, getSessionDraftPrompt, loading, sessions } from "./session-state"
+import { isSessionPinned, type Session } from "../types/session"
 
 // A timestamp or an empty resident transcript is never proof of an empty native
 // session. Keep this destructive admission separate from the explicit deep-clean
@@ -26,6 +27,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
     && store.getSessionRevision(sessionId) === revision
     && session.status === "idle"
+    && !isSessionPinned(session)
     && !session.pendingPermission && !session.pendingForm
     && !session.generationRecovery && session.generationAdmissionToken === undefined
     && !session.revert && !session.fork
@@ -46,7 +48,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     const info = await client.session.get({ sessionID: sessionId })
     if (!current() || info.id !== sessionId || !info.projectID
       || info.projectID !== session.projectID || info.location.directory !== session.location.directory
-      || info.revert || info.fork) return false
+      || info.revert || info.fork || isSessionPinned(info as unknown as Session)) return false
     const [inbox, children, active] = await Promise.all([
       client.session.inbox.list({ sessionID: sessionId }),
       client.session.list({ parentID: sessionId, project: info.projectID, limit: 1 }),

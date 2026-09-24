@@ -99,6 +99,13 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
       withSession(instanceId, event.data.sessionID, (session) => { session.title = event.data.title })
       return
+    case "session.metadata.updated":
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+      withSession(instanceId, event.data.sessionID, (session) => {
+        session.metadata = { ...(session.metadata ?? {}), ...(event.data.metadata ?? {}) } as Session["metadata"]
+      })
+      updateSessionInfo(instanceId, event.data.sessionID)
+      return
     case "session.agent.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
       withSession(instanceId, event.data.sessionID, (session) => { session.agent = event.data.agent })

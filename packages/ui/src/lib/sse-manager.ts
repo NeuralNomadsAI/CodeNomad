@@ -7,6 +7,7 @@ import type {
   SessionDeleted,
   SessionExecutionFailed,
   SessionIdle,
+  SessionMetadataUpdated,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
@@ -58,6 +59,7 @@ type SSEEvent =
   | SessionCompactionEnded
   | SessionExecutionFailed
   | SessionIdle
+  | SessionMetadataUpdated
   | SessionRevertStaged
   | SessionRevertCleared
   | SessionRevertCommitted

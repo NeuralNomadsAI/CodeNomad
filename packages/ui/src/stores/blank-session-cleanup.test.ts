@@ -119,6 +119,7 @@ describe("automatic blank-session cleanup", () => {
     { status: "working" }, { status: "compacting" }, { pendingPermission: true }, { pendingForm: true },
     { generationRecovery: "interrupted" }, { revert: { messageID: "hidden" } },
     { fork: { sessionID: "source", boundary: { type: "end" } } },
+    { metadata: { pinned: true } },
   ] as Partial<Session>[]) {
     it(`preserves sessions with protected state ${JSON.stringify(overrides)}`, async () => {
       const { removed, reads } = setup(overrides)
@@ -144,7 +145,7 @@ describe("automatic blank-session cleanup", () => {
 
   for (const kind of ["messages", "session", "inbox", "children", "active", "delete"] as const) {
     it(`does not report cleanup success on ${kind} failure`, async () => {
-      const { client } = setup()
+      const { client, removed } = setup()
       const fail = async () => { throw new Error("unavailable") }
       if (kind === "messages") client.message.list = fail
       if (kind === "session") client.session.get = fail
@@ -153,9 +154,19 @@ describe("automatic blank-session cleanup", () => {
       if (kind === "active") client.session.active = fail
       if (kind === "delete") client.session.remove = fail
       assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
-      assert.ok(sessions().get(instanceId)?.has(sessionId))
+      assert.deepEqual(removed, [])
     })
   }
+
+  it("preserves sessions where remote daemon metadata reports pinned: true", async () => {
+    const { client, removed } = setup()
+    client.session.get = async () => ({
+      ...session(),
+      metadata: { pinned: true },
+    })
+    assert.equal(await cleanupBlankSession(instanceId, sessionId), false)
+    assert.deepEqual(removed, [])
+  })
 
   for (const page of [{}, { data: null }, { data: [], cursor: { next: "more" } }]) {
     it(`does not treat an unconfirmed message page as empty: ${JSON.stringify(page)}`, async () => {

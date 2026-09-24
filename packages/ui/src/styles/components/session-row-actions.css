@@ -80,6 +80,11 @@
   flex-shrink: 0;
 }
 
+.session-pinned-badge {
+  color: var(--accent-primary);
+  border-radius: 0;
+}
+
 @media (pointer: coarse) {
   .session-item-inline-actions .session-item-close,
   .session-item-overflow-actions .action-overflow-trigger {
