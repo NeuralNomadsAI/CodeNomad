@@ -1659,13 +1659,16 @@ async function loadMessages(
       const boundary = session.revert.messageID
       const seen = new Set<string>()
       while (response.data.length > 0 && response.data.every((message) => message.id >= boundary)) {
-        const cursor = response.cursor?.next
+        // Saved-window refill normalizes to ascending order; raw native seek
+        // pages retain the descending order encoded in their older cursor.
+        const cursor = responseAscending ? response.cursor?.previous : response.cursor?.next
         if (!cursor) break
         if (seen.has(cursor) || seen.size >= MESSAGE_CURSOR_SEEK_LIMIT) {
           throw new Error(tGlobal("messageSection.loadError.detail"))
         }
         seen.add(cursor)
         response = await client.message.list({ sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, cursor }, { signal })
+        responseAscending = false
         if (!isCurrent()) return false
       }
     }

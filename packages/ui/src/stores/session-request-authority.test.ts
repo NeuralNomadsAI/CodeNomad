@@ -270,6 +270,95 @@ describe("session request authority", () => {
     } finally { cleanup() }
   })
 
+  it("reopens a saved latest snapshot past multiple undone pages in chronological order", async () => {
+    const instanceId = "revert-saved-latest-pages", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const revert = { messageID: "msg_0200" }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, { ...session(instanceId, sessionId), revert }]])))
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.setScrollSnapshot(sessionId, "message-stream", { scrollTop: 0, atBottom: true, windowIsLatest: true })
+    const requests: Array<string | undefined> = []
+    client.message = { list: async ({ cursor }: { cursor?: string }) => {
+      requests.push(cursor)
+      if (!cursor) return {
+        data: Array.from({ length: 200 }, (_, index) => apiMessage(`msg_${String(600 - index).padStart(4, "0")}`)),
+        cursor: { next: "hidden" },
+      }
+      if (cursor === "hidden") return {
+        data: [apiMessage("msg_0400"), apiMessage("msg_0300")],
+        cursor: { previous: "newest", next: "visible" },
+      }
+      if (cursor === "visible") return {
+        data: [apiMessage("msg_0200"), apiMessage("msg_0199"), apiMessage("msg_0198")],
+        cursor: { previous: "hidden", next: "older" },
+      }
+      if (cursor === "older") return { data: [apiMessage("msg_0197"), apiMessage("msg_0196")], cursor: {} }
+      throw new Error(`Unexpected cursor: ${cursor}`)
+    } }
+    try {
+      assert.equal(await loadMessages(instanceId, sessionId), true)
+      assert.deepEqual(requests, [undefined, "hidden", "visible"])
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_0198", "msg_0199"])
+      assert.deepEqual(store.getSessionRevert(sessionId), revert)
+      assert.equal(store.getMessage("msg_0200"), undefined)
+      assert.equal(isLatestMessageWindow(instanceId, sessionId), true)
+      assert.equal(store.getMessageWindow(sessionId)?.olderCursor, "older")
+      assert.equal(store.getScrollSnapshot(sessionId, "message-stream")?.atBottom, true)
+      assert.equal(await loadMoreMessages(instanceId, sessionId), true)
+      assert.deepEqual(requests, [undefined, "hidden", "visible", "older"])
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_0196", "msg_0197"])
+    } finally { cleanup() }
+  })
+
+  for (const outcome of ["failure", "abort"] as const) {
+    it(`preserves the prior window on saved latest undo-tail seek ${outcome}`, async () => {
+      const instanceId = `revert-saved-seek-${outcome}`, sessionId = "session"
+      const { client, cleanup } = setup(instanceId)
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
+        ...session(instanceId, sessionId), revert: { messageID: "msg_0200" },
+      }]])))
+      client.message = { list: async () => ({ data: [apiMessage("msg_0199"), apiMessage("msg_0198")], cursor: {} }) }
+      const controller = new AbortController()
+      const seek = deferred<any>()
+      const requests: Array<string | undefined> = []
+      try {
+        await loadMessages(instanceId, sessionId)
+        const store = messageStoreBus.getOrCreate(instanceId)
+        const window = store.getMessageWindow(sessionId)
+        const snapshot = store.getScrollSnapshot(sessionId, "message-stream")
+        client.message.list = async ({ cursor }: { cursor?: string }, options: { signal: AbortSignal }) => {
+          requests.push(cursor)
+          assert.equal(options.signal.aborted, false)
+          if (cursor) {
+            assert.equal(cursor, "visible")
+            if (outcome === "failure") throw new Error("undo-tail seek failed")
+            return seek.promise
+          }
+          return {
+            data: Array.from({ length: 200 }, (_, index) => apiMessage(`msg_${String(400 - index).padStart(4, "0")}`)),
+            cursor: { next: "visible" },
+          }
+        }
+        const request = loadMessages(instanceId, sessionId, { force: true, signal: controller.signal })
+        if (outcome === "failure") {
+          await assert.rejects(request, /undo-tail seek failed/)
+          assert.match(getSessionMessagesLoadError(instanceId, sessionId)!, /undo-tail seek failed/)
+        } else {
+          await new Promise<void>(resolve => setImmediate(resolve))
+          controller.abort()
+          seek.resolve({ data: [apiMessage("msg_0197")], cursor: {} })
+          assert.equal(await request, false)
+          assert.equal(getSessionMessagesLoadError(instanceId, sessionId), undefined)
+        }
+        assert.deepEqual(requests, [undefined, "visible"])
+        assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_0198", "msg_0199"])
+        assert.equal(store.getMessageWindow(sessionId), window)
+        assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), snapshot)
+        assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), false)
+      } finally { controller.abort(); seek.resolve({ data: [], cursor: {} }); cleanup() }
+    })
+  }
+
   it("retains undo authority when seeking past the entire staged transcript reaches an empty page", async () => {
     const instanceId = "revert-entire-transcript", sessionId = "session"
     const { client, cleanup } = setup(instanceId)

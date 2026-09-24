@@ -1,8 +1,7 @@
-import { createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
 import {
   reconcileSessionTranscriptBudget,
   setSessionTranscriptVisible,
-  touchSessionTranscript,
 } from "../../../stores/session-transcript-memory"
 
 type SessionCacheOptions = {
@@ -17,22 +16,24 @@ type SessionCacheState = {
 }
 
 export function useSessionCache(options: SessionCacheOptions): SessionCacheState {
-  const cachedSessionIds = createMemo(() => {
+  const visibleSessionId = createMemo(() => {
     const instanceSessions = options.instanceSessions()
     const activeId = options.activeSessionId()
-    if (!options.isActiveInstance() || !activeId || activeId === "info" || !instanceSessions.has(activeId)) return []
-    return [activeId]
+    if (!options.isActiveInstance() || !activeId || activeId === "info" || !instanceSessions.has(activeId)) return null
+    return activeId
+  })
+  const cachedSessionIds = createMemo(() => {
+    const sessionId = visibleSessionId()
+    return sessionId ? [sessionId] : []
   })
 
-  createEffect(() => {
-    const instanceId = options.instanceId()
-    const [sessionId] = cachedSessionIds()
+  // Enforcement reads session/loading state. Those reads must not become
+  // visibility dependencies and briefly unpin an unchanged visible identity.
+  createEffect(on([options.instanceId, visibleSessionId], ([instanceId, sessionId]) => {
     if (!sessionId) return
     setSessionTranscriptVisible(instanceId, sessionId, true)
-    touchSessionTranscript(instanceId, sessionId)
-    reconcileSessionTranscriptBudget()
     onCleanup(() => setSessionTranscriptVisible(instanceId, sessionId, false))
-  })
+  }))
 
   onCleanup(() => {
     reconcileSessionTranscriptBudget()

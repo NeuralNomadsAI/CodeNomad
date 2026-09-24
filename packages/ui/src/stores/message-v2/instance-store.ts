@@ -1739,17 +1739,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
-      setState("messages", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      // Store setters merge returned objects: omitted keys still retain their
+      // payloads. Delete through produce before retiring byte accounting.
+      setState("messages", produce((draft) => {
+        messageIds.forEach((id) => delete draft[id])
+      }))
 
-      setState("messageInfoVersion", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      setState("messageInfoVersion", produce((draft) => {
+        messageIds.forEach((id) => delete draft[id])
+      }))
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
 
@@ -1758,43 +1756,33 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         for (const id in draft) if (draft[id]?.some((entry) => entry.sessionId === sessionId)) delete draft[id]
       }))
 
-      setState("permissions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      const belongsToSession = (entry: PermissionEntry) => entry.permission.sessionID === sessionId
+        || Boolean(entry.messageId && messageIdSet.has(entry.messageId))
+      setState("permissions", produce((draft) => {
+        draft.queue = draft.queue.filter((entry) => !belongsToSession(entry))
+        draft.active = draft.queue[0] ?? null
+        for (const messageId of Object.keys(draft.byMessage)) {
+          const entries = draft.byMessage[messageId]
+          for (const partId of Object.keys(entries)) {
+            if (messageIdSet.has(messageId) || belongsToSession(entries[partId])) delete entries[partId]
+          }
+          if (Object.keys(entries).length === 0) delete draft.byMessage[messageId]
+        }
+      }))
 
-      setState("usage", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
-
-      setState("sessionRevisions", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
-
-      setState("lastAssistantMessageIds", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
+      setState("usage", produce((draft) => { delete draft[sessionId] }))
+      setState("sessionRevisions", produce((draft) => { delete draft[sessionId] }))
+      setState("lastAssistantMessageIds", produce((draft) => { delete draft[sessionId] }))
 
       if (!options?.preserveScroll) {
-        setState("scrollState", (prev) => {
-          const next = { ...prev }
+        setState("scrollState", produce((draft) => {
           const prefix = `${sessionId}:`
-          Object.keys(next).forEach((key) => {
+          Object.keys(draft).forEach((key) => {
             if (key.startsWith(prefix)) {
-              delete next[key]
+              delete draft[key]
             }
           })
-          return next
-        })
+        }))
       }
 
       setState("sessions", sessionId, (current) => {
@@ -1802,11 +1790,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return { ...current, messageIds: [] }
       })
 
-      setState("sessions", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
+      setState("sessions", produce((draft) => { delete draft[sessionId] }))
 
       setState("sessionOrder", (ids) => ids.filter((id) => id !== sessionId))
     })
