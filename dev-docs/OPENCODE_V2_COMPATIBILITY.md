@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.15**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.16**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -74,7 +74,7 @@ it mocks HTTP APIs with `{}` and does not provide the current bounded history
 query contract. Those tests use synthetic browser data, not a 2.0.14 daemon;
 they are not native-runtime qualification evidence.
 
-### Current stable target: 2.0.15
+### 2.0.15 qualification baseline
 
 Server/UI client, bundled plugin and recommendation advance together to **2.0.15**;
 the technical minimum stays **2.0.7**. The upstream client now preserves a
@@ -115,6 +115,29 @@ but the subsequent instrumented run passes the complete native/UI suite. Keep
 startup phase diagnostics for a recurrence; this passing rerun does not establish
 the cause or a fix for the intermittent exit. Detailed results and remaining CI
 gates belong in #752 rather than being inferred from other passing platforms.
+
+### Current stable target: 2.0.16
+
+Server/UI client, bundled plugin and recommendation advance together to **2.0.16**;
+the evidence-based minimum remains **2.0.7**. Comparing the tagged
+`packages/protocol/openapi.json` documents for 2.0.15 and 2.0.16 finds identical
+paths and component schemas. Published client declarations differ only in the
+optional `ClientError` detail; plugin declarations are unchanged.
+
+Client failures now include status/content-type/cause detail in `message`
+([#50929](https://github.com/anomalyco/opencode/pull/50929)). Structured `reason`,
+`cause`, and declared native error fields remain available. Generated-client
+regressions exercise the real proxy adapter and error formatter for HTTP 500,
+wrong content type and transport errors, retaining one prefixed request with
+credentials and no mutation replay. The 2.0.15 URL correction remains required.
+
+The release also adds MCP resource tools and Code Mode operations, provider/media
+fixes and runtime read/subagent improvements. These are upstream runtime changes;
+this qualification does not expose additional proxy APIs or introduce new media,
+provider-authentication or transcript UI workflows. The shared npm native-upgrade
+boundary stays at 2.0.15; installer activation remains separate from daemon restart.
+Record completed native, migration, browser and build evidence in the qualification
+PR/CI; do not treat unchanged wire types as proof of runtime behavior.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
