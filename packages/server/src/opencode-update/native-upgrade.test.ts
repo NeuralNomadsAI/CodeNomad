@@ -12,7 +12,7 @@ test("native upgrade scopes bundled npm and prefix and cleans its shim on succes
     const env = { Path: "/original", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
     const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix: "/verified prefix",
       node: "/bundled node/node", npm: "/bundled npm/npm-cli.js", env, platform,
-      execute: async (file, args, childEnv, cwd) => {
+      execute: async (file, args, childEnv, execution) => {
         assert.equal(file, "/verified/opencode.exe")
         assert.deepEqual(args, ["upgrade", "2.0.16", "--method", "npm"])
         assert.equal(childEnv.npm_config_prefix, "/verified prefix")
@@ -22,7 +22,8 @@ test("native upgrade scopes bundled npm and prefix and cleans its shim on succes
         assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, "/bundled node/node")
         assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
         const directory = childEnv.Path!.split(platform === "win32" ? ";" : ":/bundled")[0]
-        assert.equal(cwd, directory)
+        assert.equal(execution?.cwd, directory)
+        assert.equal(execution?.timeout, 360_000)
         shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
         assert.match(await readFile(shim, "utf8"), /CODENOMAD_UPGRADE_NODE/)
         if (fail) throw new Error("native failure")

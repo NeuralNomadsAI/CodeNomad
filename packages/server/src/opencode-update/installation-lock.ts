@@ -7,6 +7,13 @@ export class InstallationBusyError extends Error {
   }
 }
 
+/** Forced termination of the supervisor does not establish npm child exit. */
+export class InstallationInterruptedError extends InstallationBusyError {
+  constructor() {
+    super("installation_busy", "OpenCode installer was interrupted; verify its child processes have exited before removing the installation lock")
+  }
+}
+
 /** Serializes CodeNomad backends sharing a standard npm prefix. Never steal a
  * lock on a timeout: an orphaned npm child can outlive its backend. After a crash,
  * remove the lock only after checking that the installer has exited. */
@@ -17,12 +24,17 @@ export async function withInstallationLock<T>(prefix: string, install: () => Pro
     if (error.code === "EEXIST") throw new InstallationBusyError("installation_busy", `OpenCode installation lock exists: ${lock}`)
     throw error
   })
+  let retain = false
   try {
     await handle.writeFile(JSON.stringify({ pid: process.pid, started: new Date().toISOString() }))
     return await install()
+  } catch (error) {
+    retain = error instanceof InstallationInterruptedError
+    if (retain) (error as Error).message += `: ${lock}`
+    throw error
   } finally {
     await handle.close()
-    await rm(lock)
+    if (!retain) await rm(lock)
   }
 }
 

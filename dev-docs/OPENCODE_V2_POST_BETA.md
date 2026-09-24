@@ -85,8 +85,9 @@ the HKCU Path value's type and unexpanded variables and broadcasts the environme
 change. Bash, zsh, sh and fish profiles receive idempotent entries. A new terminal
 is needed; the backend's own PATH is updated immediately. Remote installation and
 PATH changes apply on the server host. No system Node or administrator rights are
-needed for the conventional user prefix. Installer execution remains bounded to
-five minutes and 1 MiB output.
+needed for the conventional user prefix. Direct npm execution is bounded to five
+minutes and 1 MiB output; the native supervisor gets six minutes so native npm's
+own five-minute deadline can finish cleanup before outer cancellation.
 
 PATH registration failure leaves the installed package discoverable, and retry can
 repair PATH without reinstalling or downgrading a newer shared version. The retired
@@ -108,6 +109,12 @@ temporary npm command adapter supplies bundled Node/npm and pins the verified pr
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
 Native failure is surfaced without replaying the mutation through direct npm.
+If the outer supervisor is terminated by timeout, signal or output limit, descendant
+exit cannot be established: retain the prefix lock and temporary npm adapter rather
+than allowing a competing installation. The server error includes the lock path;
+manual recovery must first verify installer processes have exited. Temporary cleanup
+never masks the execution error. Bounded subprocess regressions cover a surviving
+npm-like child, retry fencing and output-limit termination.
 First installation, older CLI migration and same-version launcher repair still use
 direct bundled npm with the Windows write preflight. This updater boundary does not
 change the minimum supported runtime. Both paths verify version and launcher after

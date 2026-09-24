@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { executeInstaller } from "./npm-runtime"
+import { InstallationInterruptedError } from "./installation-lock"
 
 /** Let OpenCode retain its running Windows image while using our bundled npm
  * and the already verified shared prefix, not an unrelated system installation. */
@@ -16,6 +17,7 @@ export async function upgradeSharedOpenCode(options: {
   execute?: typeof executeInstaller
 }): Promise<void> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-upgrade-"))
+  let retain = false
   try {
     const windows = options.platform === "win32"
     const shim = windows
@@ -39,8 +41,15 @@ export async function upgradeSharedOpenCode(options: {
       npm_config_fund: "false",
     })
     // Windows searches cwd before PATH for npm.cmd. Own that directory too.
-    await (options.execute ?? executeInstaller)(options.binary, ["upgrade", options.version, "--method", "npm"], env, directory)
+    // Give native npm's five-minute deadline time to finish its own cleanup.
+    await (options.execute ?? executeInstaller)(options.binary, ["upgrade", options.version, "--method", "npm"], env,
+      { cwd: directory, timeout: 360_000 })
+  } catch (error) {
+    retain = error instanceof InstallationInterruptedError
+    throw error
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    // A surviving installer may still use this cwd/shim. Preserve it together
+    // with the prefix lock after interruption. Cleanup must not mask the error.
+    if (!retain) await rm(directory, { recursive: true, force: true }).catch(() => {})
   }
 }
