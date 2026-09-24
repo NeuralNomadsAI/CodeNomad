@@ -35,6 +35,7 @@ function getSpeechErrorMessage(error: unknown, fallback: string): string {
 
 export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/speech/capabilities", async () => deps.speechService.getCapabilities())
+  app.get("/api/speech/live/capabilities", async () => deps.speechService.getLiveCapabilities())
 
   app.post("/api/speech/transcribe", async (request, reply) => {
     try {

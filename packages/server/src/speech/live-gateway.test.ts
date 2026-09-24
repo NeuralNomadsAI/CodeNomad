@@ -99,4 +99,39 @@ describe("LiveGateway", () => {
       }
     }
   })
+
+  it("redacts sensitive query parameter secrets from debug logs", () => {
+    const loggedMessages: Array<{ obj: any; msg?: string }> = []
+    const recordingLogger: Logger = {
+      child: () => recordingLogger,
+      info: (obj: any, msg?: string) => loggedMessages.push({ obj, msg }),
+      warn: (obj: any, msg?: string) => loggedMessages.push({ obj, msg }),
+      error: (obj: any, msg?: string) => loggedMessages.push({ obj, msg }),
+      debug: (obj: any, msg?: string) => loggedMessages.push({ obj, msg }),
+    } as unknown as Logger
+
+    const authManager = {
+      getSessionFromHeaders: () => ({ username: "test", sessionId: "s1" }),
+    } as unknown as AuthManager
+
+    const secretKey = "super-secret-gemini-key-12345"
+    const settings = createMockSettings({ speech: { live: { geminiApiKey: secretKey } } })
+    const gateway = new LiveGateway({ authManager, settings, logger: recordingLogger })
+
+    const req = {
+      headers: { upgrade: "websocket", connection: "Upgrade" },
+      url: "/api/speech/live/ws?provider=gemini",
+    } as unknown as http.IncomingMessage
+
+    const socket = new PassThrough()
+    gateway.handleUpgrade(req, socket as any, Buffer.alloc(0))
+
+    for (const record of loggedMessages) {
+      const serialized = JSON.stringify(record)
+      assert.ok(
+        !serialized.includes(secretKey),
+        `Found secret key in logged record: ${serialized}`
+      )
+    }
+  })
 })

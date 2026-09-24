@@ -12,7 +12,24 @@ import {
   executeLiveVoiceTool,
   type LiveVoiceToolContext,
 } from "./live-voice-tools"
+import { serverApi } from "../lib/api-client"
 import { CODENOMAD_API_BASE } from "../lib/api-base"
+import type { SpeechLiveCapabilitiesResponse } from "../../../server/src/api-types"
+
+let cachedLiveCapabilities: SpeechLiveCapabilitiesResponse | null = null
+
+export async function getOrFetchLiveCapabilities(): Promise<SpeechLiveCapabilitiesResponse | null> {
+  if (cachedLiveCapabilities) return cachedLiveCapabilities
+  if (typeof window === "undefined" || !window.location?.host) return null
+  try {
+    const caps = await serverApi.fetchSpeechLiveCapabilities()
+    cachedLiveCapabilities = caps
+    return caps
+  } catch (err) {
+    console.warn("Failed to fetch live speech capabilities:", err)
+    return null
+  }
+}
 
 export type LiveVoiceProvider = "gemini" | "openai"
 
@@ -50,6 +67,7 @@ export const [analyserNode, setAnalyserNode] = createSignal<AnalyserNode | null>
 export const [audioContext, setAudioContext] = createSignal<AudioContext | null>(null)
 
 // Non-reactive internal session references
+let currentConnectionGeneration = 0
 let activeWebSocket: WebSocket | null = null
 let activeMediaStream: MediaStream | null = null
 let activeMicSource: MediaStreamAudioSourceNode | null = null
@@ -530,10 +548,28 @@ async function handleOpenAIMessage(data: Record<string, unknown>): Promise<void>
  */
 export async function connect(options?: LiveVoiceConnectOptions): Promise<void> {
   disconnect()
+  const generation = currentConnectionGeneration
 
-  const provider = options?.provider || activeProvider()
+  const capabilities = await getOrFetchLiveCapabilities()
+  if (generation !== currentConnectionGeneration) return
+
+  const configuredProvider = capabilities?.provider || "gemini"
+  const provider = (options?.provider || (activeProvider() ? activeProvider() : configuredProvider)) as LiveVoiceProvider
   setActiveProvider(provider)
-  currentConnectOptions = options || null
+
+  const providerCaps = capabilities?.providers?.[provider]
+  const resolvedModel = options?.model || (capabilities?.provider === provider ? capabilities?.model : providerCaps?.defaultModel)
+  const resolvedVoice = options?.voice || (capabilities?.provider === provider ? capabilities?.voice : providerCaps?.defaultVoice)
+  const resolvedSystemInstruction = options?.systemInstruction || (capabilities?.provider === provider ? capabilities?.systemPrompt : undefined)
+
+  const mergedOptions: LiveVoiceConnectOptions = {
+    ...options,
+    provider,
+    model: resolvedModel,
+    voice: resolvedVoice,
+    systemInstruction: resolvedSystemInstruction,
+  }
+  currentConnectOptions = mergedOptions
   setConnectionState("connecting")
 
   try {
@@ -549,11 +585,20 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
     if (ctx.state === "suspended") {
       await ctx.resume()
     }
+    if (generation !== currentConnectionGeneration) {
+      void ctx.close()
+      return
+    }
+
     activeAudioContext = ctx
     setAudioContext(ctx)
 
     // 2. Load and register audio worklet processors
     await loadAudioWorkletModules(ctx)
+    if (generation !== currentConnectionGeneration) {
+      void ctx.close()
+      return
+    }
 
     // 3. Request user microphone input
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -564,6 +609,11 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
         channelCount: 1,
       },
     })
+    if (generation !== currentConnectionGeneration) {
+      stopTracks(stream)
+      void ctx.close()
+      return
+    }
     activeMediaStream = stream
 
     // Apply existing mute state to tracks
@@ -613,6 +663,7 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
 
     // 6. Hook recorder output to WebSocket
     recorderNode.port.onmessage = (event: MessageEvent) => {
+      if (generation !== currentConnectionGeneration) return
       const data = event.data as { type?: string; pcm?: ArrayBuffer; rms?: number } | undefined
       if (data?.type === "DATA" && data.pcm) {
         if (isMuted() || !activeWebSocket || activeWebSocket.readyState !== WebSocket.OPEN) {
@@ -655,6 +706,10 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
 
     // 7. Setup WebSocket event lifecycle
     ws.onopen = () => {
+      if (generation !== currentConnectionGeneration) {
+        ws.close()
+        return
+      }
       setConnectionState("listening")
 
       if (provider === "gemini") {
@@ -715,10 +770,21 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
       resetDeadmanTimer()
     }
 
-    ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = async (event: MessageEvent) => {
+      if (generation !== currentConnectionGeneration) return
       resetDeadmanTimer()
       try {
-        const parsed = JSON.parse(event.data as string) as Record<string, unknown>
+        let textPayload = ""
+        if (typeof event.data === "string") {
+          textPayload = event.data
+        } else if (event.data instanceof Blob) {
+          textPayload = await event.data.text()
+        } else if (event.data instanceof ArrayBuffer) {
+          textPayload = new TextDecoder().decode(event.data)
+        }
+        if (generation !== currentConnectionGeneration || !textPayload) return
+
+        const parsed = JSON.parse(textPayload) as Record<string, unknown>
         if (provider === "gemini") {
           void handleGeminiMessage(parsed)
         } else if (provider === "openai") {
@@ -751,6 +817,7 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
  * Disconnects the active live voice session and releases all hardware resources.
  */
 export function disconnect(): void {
+  currentConnectionGeneration++
   clearSpeakingTimeout()
 
   if (activeWebSocket) {

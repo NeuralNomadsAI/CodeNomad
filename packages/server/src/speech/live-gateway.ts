@@ -86,6 +86,15 @@ export class LiveGateway {
     socket.destroy()
   }
 
+  private sanitizePathForLogging(urlPath: string): string {
+    try {
+      const dummyUrl = new URL(urlPath, "https://dummy.local")
+      return dummyUrl.pathname
+    } catch {
+      return urlPath.split("?")[0] || ""
+    }
+  }
+
   private proxyUpstream(
     request: IncomingMessage,
     clientSocket: Socket,
@@ -95,7 +104,7 @@ export class LiveGateway {
     const { host, port, path, headers } = upstreamOptions
     const startTime = Date.now()
 
-    this.logger.debug({ host, port, path }, "Connecting to live upstream")
+    this.logger.debug({ host, port, path: this.sanitizePathForLogging(path) }, "Connecting to live upstream")
 
     let upstreamSocket: tls.TLSSocket
     try {

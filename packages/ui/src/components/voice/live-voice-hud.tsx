@@ -87,7 +87,11 @@ export function LiveVoiceHud(props: LiveVoiceHudProps) {
     } else {
       liveVoiceSession.setActiveProvider(newProvider as LiveVoiceProvider)
       if (liveVoiceSession.connectionState() !== "disconnected") {
-        void liveVoiceSession.connect({ provider: newProvider as LiveVoiceProvider })
+        void liveVoiceSession.connect({
+          provider: newProvider as LiveVoiceProvider,
+          instanceId: props.instanceId,
+          sessionId: props.sessionId,
+        })
       }
     }
   }
@@ -115,19 +119,26 @@ export function LiveVoiceHud(props: LiveVoiceHudProps) {
     props.onClose()
   }
 
+  let lastOpenState = false
   createEffect(() => {
-    if (
-      props.open &&
-      props.status === undefined &&
-      liveVoiceSession.connectionState() === "disconnected"
-    ) {
+    const isOpen = props.open
+    const wasOpen = lastOpenState
+    lastOpenState = isOpen
+
+    if (isOpen && !wasOpen && props.status === undefined) {
       void liveVoiceSession
         .connect({
           provider: (resolvedProvider() === "openai" ? "openai" : "gemini") as LiveVoiceProvider,
+          instanceId: props.instanceId,
+          sessionId: props.sessionId,
         })
         .catch((err) => {
           console.error("Failed to connect live voice session:", err)
         })
+    } else if (!isOpen && wasOpen && props.status === undefined) {
+      if (liveVoiceSession.connectionState() !== "disconnected") {
+        liveVoiceSession.disconnect()
+      }
     }
   })
 
