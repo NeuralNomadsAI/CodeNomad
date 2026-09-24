@@ -21,20 +21,10 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
+import { serializeSessionAction } from "./session-action-queue"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
-const sessionAdmissions = new Map<string, Promise<unknown>>()
-
-function serializeSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
-  const key = `${instanceId}:${sessionId}`
-  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(action)
-  const settled = run.finally(() => {
-    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
-  })
-  sessionAdmissions.set(key, settled)
-  return settled
-}
 
 function admitSessionAction<T>(
   instanceId: string,

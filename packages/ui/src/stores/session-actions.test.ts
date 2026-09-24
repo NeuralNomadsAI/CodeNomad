@@ -699,6 +699,7 @@ describe("native session selection persistence", () => {
         await pending
       }
       seed({ session: {
+        get: async () => ({ model: { providerID: "provider", id: nativeModel } }),
         instructions: { entry: { put: () => hold("instructions"), remove: async () => {} } },
         switchAgent: () => hold("agent"),
         switchModel: async ({ model }: any) => {
