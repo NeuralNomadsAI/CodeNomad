@@ -56,3 +56,19 @@ the fixture resolve one local Tao implementation. Windows PR CI runs both contro
 Local validation reproduced all five original deadlocks and passed all five
 patched cases. This deterministic test covers message reentry, not a manual
 sleep/resume or RDP endurance run.
+
+### Independent IME lock boundary
+
+The initial five scenarios alone cannot protect the IME lock: the patched
+keyboard pre-peek can consume the sent focus message before the IME callback.
+The runner therefore also builds a temporary copy of the actual vendored Tao
+with a probe message at the start of the IME callback. The fixture queues focus
+only at that probe, after keyboard processing finishes, and returns without
+pumping messages. The actual IME peek must complete the nested focus callback.
+The checked-in crate and application build contain no probe or test hook.
+
+A mandatory mutation control moves only `more_ime_char_coming` back under the
+real `window_state` mutex in that temporary copy, leaving the keyboard fix
+intact. The IME-boundary scenario must pass with the upstream ordering and hit
+the watchdog with the mutated ordering. Source anchors must match exactly once,
+so upstream changes require explicitly revisiting this instrumentation.

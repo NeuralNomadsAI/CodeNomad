@@ -29,6 +29,10 @@ mod windows_fixture {
     };
 
     static ARMED: AtomicBool = AtomicBool::new(false);
+    static IME_BOUNDARY: AtomicBool = AtomicBool::new(false);
+    // Emitted only by the runner's temporary instrumented Tao copy, after the
+    // keyboard callback has completed and before the IME callback takes locks.
+    const IME_PROBE: u32 = WM_APP + 0x434;
     static INSIDE_OUTER: AtomicBool = AtomicBool::new(false);
     static REENTRIES: AtomicU32 = AtomicU32::new(0);
     static SENDER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
@@ -43,6 +47,9 @@ mod windows_fixture {
     ) -> LRESULT {
         if INSIDE_OUTER.load(Ordering::SeqCst) && msg == WM_SETFOCUS {
             REENTRIES.fetch_add(1, Ordering::SeqCst);
+        }
+        if msg == IME_PROBE && IME_BOUNDARY.swap(false, Ordering::SeqCst) {
+            ARMED.store(true, Ordering::SeqCst);
         }
         if ARMED.swap(false, Ordering::SeqCst) {
             INSIDE_OUTER.store(true, Ordering::SeqCst);
@@ -71,6 +78,11 @@ mod windows_fixture {
                 thread::sleep(Duration::from_millis(1));
             }
             println!("nested focus queued before Tao input processing");
+            if msg == IME_PROBE {
+                // Return to the real IME callback without pumping this message.
+                // Its next PeekMessageW must dispatch the queued focus request.
+                return 0;
+            }
             let result = DefSubclassProc(hwnd, msg, wparam, lparam);
             INSIDE_OUTER.store(false, Ordering::SeqCst);
             result
@@ -99,7 +111,7 @@ mod windows_fixture {
             "keyup" => (WM_KEYUP, 0x41, 0xc01e0001u32 as isize),
             "char" => (WM_CHAR, 0x61, 0x001e0001),
             "syschar" => (WM_SYSCHAR, 0x61, 0x201e0001),
-            "ime" => (WM_CHAR, 0x3042, 0x00000001),
+            "ime" | "ime-boundary" => (WM_CHAR, 0x3042, 0x00000001),
             _ => panic!("unknown case"),
         };
         unsafe {
@@ -121,12 +133,17 @@ mod windows_fixture {
                 let mut queued = std::mem::zeroed();
                 assert_ne!(PeekMessageW(&mut queued, hwnd, msg, msg, PM_REMOVE), 0);
             }
-            if case == "ime" {
+            if case == "ime" || case == "ime-boundary" {
                 SendMessageW(hwnd, WM_IME_STARTCOMPOSITION, 0, 0);
                 SendMessageW(hwnd, WM_IME_ENDCOMPOSITION, 0, 0);
             }
-            ARMED.store(true, Ordering::SeqCst);
+            if case == "ime-boundary" {
+                IME_BOUNDARY.store(true, Ordering::SeqCst);
+            } else {
+                ARMED.store(true, Ordering::SeqCst);
+            }
             SendMessageW(hwnd, msg, key, data);
+            INSIDE_OUTER.store(false, Ordering::SeqCst);
             SENDER
                 .lock()
                 .unwrap()

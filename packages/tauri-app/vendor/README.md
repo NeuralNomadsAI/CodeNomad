@@ -22,6 +22,9 @@ replace non-reentrant mutexes with recursive locks or silently drop nested input
 The Windows native regression uses a hidden Tao window and cross-thread sent
 focus messages. Its bounded watchdog fails against the original published crate
 and passes with this backport. It never opens CodeNomad profiles or OpenCode.
+The runner additionally instruments a temporary crate copy at the IME callback
+boundary and proves that moving only the IME peek back under its mutex fails.
+No instrumentation or mutation is applied to this checked-in crate.
 
 Remove this override when the supported Tauri dependency range can resolve a
 published Tao release containing the fix; run the same regression first. Merely
