@@ -274,9 +274,15 @@ export class PluginControlsCache {
   ): boolean {
     const canonicalKey = cacheKey(record.instanceId, location)
     const existing = this.records.get(canonicalKey)
+    let invalidatedAlias = false
     if (existing && existing !== record) {
       if (preferIncoming || !existing.snapshot) {
+        // The canonical record may have consumed an event before this alias
+        // was known. Its refresh clears stale at dispatch, so retain the
+        // generation as well as queued demand before orphaning that read.
+        invalidatedAlias = !preferIncoming && (existing.generation > 0 || existing.stale || existing.trailing)
         existing.generation += 1
+        existing.inFlightController?.abort()
         for (const key of existing.keys) {
           if (this.records.get(key) !== existing) continue
           this.records.set(key, record)
@@ -284,6 +290,7 @@ export class PluginControlsCache {
         }
       } else {
         record.generation += 1
+        record.inFlightController?.abort()
         for (const key of record.keys) {
           if (this.records.get(key) !== record) continue
           this.records.set(key, existing)
@@ -297,11 +304,11 @@ export class PluginControlsCache {
     record.keys.add(canonicalKey)
     record.location = { ...location }
     record.canonicalLocation = true
-    if (this.pendingUnknownInvalidations.delete(canonicalKey)) {
+    if (this.pendingUnknownInvalidations.delete(canonicalKey) || invalidatedAlias) {
       if (preferIncoming) return true
-      // A canonical event arrived before the WSL alias was learned. Discard
-      // this stale snapshot and schedule a trailing refresh instead of
-      // publishing pre-event data as current.
+      // A canonical event/demand arrived before the WSL alias was learned.
+      // Discard this snapshot and retain one trailing refresh, including when
+      // the canonical key already had an in-flight record of its own.
       record.generation += 1
       record.stale = true
       record.trailing = true

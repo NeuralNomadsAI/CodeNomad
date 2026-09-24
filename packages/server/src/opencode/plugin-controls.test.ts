@@ -357,6 +357,117 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["{env:PLUGIN_RULE}", "known"])
   })
 
+  it("persists the requested rule when a raw replacement or deletion has overtaken daemon normalization", async () => {
+    for (const rawPlugins of [["known"], [], ["known", "-known"]]) {
+      const fixture = createFixture({
+        globalPlugins: rawPlugins,
+        reportedGlobalPlugins: ["-known"],
+        runtime: [activePlugin("known", "known-package")],
+      })
+
+      const response = await fixture.controls.mutate("workspace", {
+        location: fixture.location, pluginId: "known", scope: "global", enabled: false,
+      })
+
+      assert.equal(response.changed, true, "divergent raw documents cannot prove a no-op")
+      assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.global, "disabled")
+      assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [...rawPlugins, "-known"])
+    }
+  })
+
+  it("retains no-op detection for an aligned document and a concrete pending rule", async () => {
+    for (const reportedGlobalPlugins of [["-known"], []]) {
+      const fixture = createFixture({
+        globalPlugins: ["-known"], reportedGlobalPlugins,
+        runtime: [activePlugin("known", "known-package")],
+      })
+      const before = fs.readFileSync(fixture.globalFile, "utf8")
+
+      const response = await fixture.controls.mutate("workspace", {
+        location: fixture.location, pluginId: "known", scope: "global", enabled: false,
+      })
+
+      assert.equal(response.changed, false)
+      assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
+    }
+  })
+
+  it("creates a location-local Project layer above inherited .opencode rules without editing the direct or ancestor file", async () => {
+    for (const trailingVirtualRule of [false, true]) {
+      const root = temporaryDirectory()
+      const globalDirectory = path.join(root, "global")
+      const projectDirectory = path.join(root, "project")
+      const ancestorDirectory = path.join(root, ".opencode")
+      const directFile = path.join(projectDirectory, "opencode.jsonc")
+      const ancestorFile = path.join(ancestorDirectory, "opencode.jsonc")
+      const targetFile = path.join(projectDirectory, ".opencode", "opencode.jsonc")
+      for (const directory of [globalDirectory, projectDirectory, ancestorDirectory]) fs.mkdirSync(directory)
+      if (trailingVirtualRule) fs.mkdirSync(path.dirname(targetFile))
+      fs.writeFileSync(directFile, `{ "plugins": [], "model": "unchanged" }\n`)
+      fs.writeFileSync(ancestorFile, `{ "plugins": ["-known"] }\n`)
+      const directBefore = fs.readFileSync(directFile, "utf8")
+      const ancestorBefore = fs.readFileSync(ancestorFile, "utf8")
+      const entries = [
+        { type: "directory", path: globalDirectory },
+        { type: "document", path: directFile, info: { plugins: [] } },
+        { type: "document", path: ancestorFile, info: { plugins: ["-known"] } },
+        { type: "directory", path: ancestorDirectory },
+        ...(trailingVirtualRule ? [{ type: "directory", path: path.dirname(targetFile) }] : []),
+        ...(trailingVirtualRule ? [{ type: "document", info: { plugins: ["-known"] } }] : []),
+      ]
+      const controls = new PluginControls({
+        workspaceManager: fakeManager({ entries, runtime: [activePlugin("known", "known-package")] }) as any,
+        worktreeDeletionFence: openFence(), logger: logger(),
+      })
+
+      const before = await controls.read("workspace", { directory: projectDirectory })
+      assert.deepEqual(before.targets.find((target) => target.scope === "project"), { scope: "project", path: targetFile, exists: false })
+      assert.equal(fs.existsSync(targetFile), false, "display reads do not create the fallback")
+      const response = await controls.mutate("workspace", {
+        location: { directory: projectDirectory }, pluginId: "known", scope: "project", enabled: true,
+      })
+
+      assert.equal(response.changed, true)
+      assert.equal(response.target.path, targetFile)
+      const control = response.snapshot.controls.find((entry) => entry.id === "known")!
+      assert.equal(control.project, "enabled")
+      assert.equal(control.effective, trailingVirtualRule ? "disabled" : "enabled")
+      assert.deepEqual((parse(fs.readFileSync(targetFile, "utf8")) as any).plugins, ["known"])
+      assert.equal(fs.readFileSync(directFile, "utf8"), directBefore)
+      assert.equal(fs.readFileSync(ancestorFile, "utf8"), ancestorBefore)
+    }
+  })
+
+  it("makes Project unavailable when its higher-precedence fallback aliases an ancestor configuration", async () => {
+    const root = temporaryDirectory()
+    const globalDirectory = path.join(root, "global")
+    const projectDirectory = path.join(root, "project")
+    const ancestorDirectory = path.join(root, ".opencode")
+    const ancestorFile = path.join(ancestorDirectory, "opencode.jsonc")
+    for (const directory of [globalDirectory, projectDirectory, ancestorDirectory]) fs.mkdirSync(directory)
+    fs.writeFileSync(ancestorFile, `{ "plugins": ["-known"] }\n`)
+    fs.symlinkSync(ancestorDirectory, path.join(projectDirectory, ".opencode"), process.platform === "win32" ? "junction" : "dir")
+    const controls = new PluginControls({
+      workspaceManager: fakeManager({
+        entries: [
+          { type: "directory", path: globalDirectory },
+          { type: "document", path: ancestorFile, info: { plugins: ["-known"] } },
+          { type: "directory", path: ancestorDirectory },
+        ],
+        runtime: [activePlugin("known", "known-package")],
+      }) as any,
+      worktreeDeletionFence: openFence(), logger: logger(),
+    })
+    const before = fs.readFileSync(ancestorFile, "utf8")
+
+    const snapshot = await controls.read("workspace", { directory: projectDirectory })
+    assert.deepEqual(snapshot.targets.map((target) => target.scope), ["global"])
+    await assert.rejects(controls.mutate("workspace", {
+      location: { directory: projectDirectory }, pluginId: "known", scope: "project", enabled: true,
+    }), (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable")
+    assert.equal(fs.readFileSync(ancestorFile, "utf8"), before)
+  })
+
   it("never treats a concrete pending rule as the normalized form of a placeholder", async () => {
     const fixture = createFixture({
       globalPlugins: ["{env:PLUGIN_RULE}", "-known", "known"],

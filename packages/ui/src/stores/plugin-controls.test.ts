@@ -158,6 +158,81 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "fresh")
   })
 
+  it("preserves an existing canonical record's invalidation and trailing demand when a host alias resolves first", async () => {
+    const hostResponse = deferred<PluginControlsSnapshot>()
+    const nativeResponse = deferred<PluginControlsSnapshot>()
+    const fresh = deferred<PluginControlsSnapshot>()
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    const signals: Array<AbortSignal | undefined> = []
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, _location, signal) => {
+        signals.push(signal)
+        return [hostResponse, nativeResponse, fresh][reads++].promise
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+
+    const hostLoad = cache.load("instance", hostLocation)
+    const nativeLoad = cache.load("instance", serviceLocation)
+    cache.invalidateLocation("instance", serviceLocation)
+    cache.load("instance", serviceLocation)
+    cache.load("instance", serviceLocation, { force: true })
+    hostResponse.resolve({ ...snapshot("pre-event-host"), location: serviceLocation })
+    await hostLoad
+    await tick()
+
+    assert.equal(reads, 3, "one canonical reconciliation survives the merge")
+    assert.equal(signals[1]?.aborted, true, "the orphaned native read is cancelled")
+    assert.equal(cache.state("instance", hostLocation).snapshot, undefined)
+    assert.equal(cache.state("instance", serviceLocation).snapshot, undefined)
+    nativeResponse.resolve({ ...snapshot("pre-event-native"), location: serviceLocation })
+    await nativeLoad
+    fresh.resolve({ ...snapshot("post-event"), location: serviceLocation })
+    await tick()
+
+    assert.equal(reads, 3)
+    for (const location of [hostLocation, serviceLocation]) {
+      assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "post-event")
+      assert.equal(cache.state("instance", location).stale, false)
+    }
+  })
+
+  it("retains canonical invalidation after its replacement read has already consumed stale", async () => {
+    const hostResponse = deferred<PluginControlsSnapshot>()
+    const oldNativeResponse = deferred<PluginControlsSnapshot>()
+    const nativeRefresh = deferred<PluginControlsSnapshot>()
+    const mergedRefresh = deferred<PluginControlsSnapshot>()
+    const hostLocation = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const serviceLocation = { directory: "/srv/repo" }
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => [hostResponse, oldNativeResponse, nativeRefresh, mergedRefresh][reads++].promise,
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const hostLoad = cache.load("instance", hostLocation)
+    const nativeLoad = cache.load("instance", serviceLocation)
+    cache.invalidateLocation("instance", serviceLocation)
+    cache.load("instance", serviceLocation)
+    oldNativeResponse.resolve({ ...snapshot("old-native"), location: serviceLocation })
+    await nativeLoad
+    await tick()
+    assert.equal(reads, 3)
+    assert.equal(cache.state("instance", serviceLocation).stale, false, "replacement dispatch consumed the stale flag")
+
+    hostResponse.resolve({ ...snapshot("old-host"), location: serviceLocation })
+    await hostLoad
+    await tick()
+    assert.equal(cache.state("instance", serviceLocation).snapshot, undefined)
+    assert.equal(reads, 4, "the canonical generation still fences the older alias")
+    nativeRefresh.resolve({ ...snapshot("orphan"), location: serviceLocation })
+    mergedRefresh.resolve({ ...snapshot("fresh"), location: serviceLocation })
+    await tick()
+    assert.equal(cache.state("instance", hostLocation).snapshot?.controls[0]?.id, "fresh")
+    assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "fresh")
+  })
+
   it("matches nothing when an event names a directory that was never loaded", async () => {
     let reads = 0
     const cache = new PluginControlsCache({

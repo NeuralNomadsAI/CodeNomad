@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { mkdir } from "node:fs/promises"
+import { join } from "node:path"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -42,6 +44,10 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 0, "a hidden plugin section must not load")
   await page.evaluate(() => (window as any).fixture.show())
   await page.getByText("acme.reviewer", { exact: true }).waitFor()
+  if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {
+    await mkdir(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, { recursive: true })
+    await page.screenshot({ path: join(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, "plugins-initial.png"), fullPage: true })
+  }
   assert.equal(await page.locator(".plugin-control-row").count(), 3)
   assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 6)
   assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Project"])
@@ -139,6 +145,12 @@ test("V2 plugin controls disable Project when it resolves to the Global document
   assert.equal(await row.locator('[data-scope="global"] input[type="checkbox"]').isDisabled(), false)
   assert.equal(await row.locator('[data-scope="project"] input[type="checkbox"]').isDisabled(), true)
   assert.equal(await page.locator(".plugin-controls-notice").count(), 1)
+  const noticeId = await page.locator(".plugin-controls-notice").getAttribute("id")
+  assert.ok(noticeId)
+  const projectDescription = await row.locator('[data-scope="project"] input').getAttribute("aria-describedby")
+  assert.ok(projectDescription?.split(" ").includes(noticeId))
+  assert.equal(await page.evaluate((ids) => ids!.split(" ").every(id => Boolean(document.getElementById(id))), projectDescription), true)
+  assert.ok(!(await row.locator('[data-scope="global"] input').getAttribute("aria-describedby"))?.split(" ").includes(noticeId))
 
   const mutationsBefore = await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length)
   await row.locator('[data-scope="project"] input[type="checkbox"]').click({ force: true })
@@ -156,3 +168,96 @@ test("V2 plugin controls disable Project when it resolves to the Global document
   assert.deepEqual(errors, [])
   await page.close()
 })
+
+test("plugin rows retain focus through passive refresh and guarded pending mutations", async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
+  await page.goto(url)
+  await page.evaluate(() => (window as any).fixture.show())
+  const input = page.locator('[data-plugin-id="acme.reviewer"] [data-scope="global"] input')
+  await input.waitFor()
+  await input.focus()
+  const original = await input.elementHandle()
+  await page.evaluate(() => (window as any).fixture.eventBurst())
+  assert.equal(await original!.evaluate((node) => node.isConnected && node === document.activeElement), true)
+
+  await page.evaluate(() => (window as any).fixture.holdMutation())
+  await input.press("Space")
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-busy") === "true")
+  assert.equal(await input.isChecked(), true, "pending state retains the authoritative value")
+  await input.press("Space")
+  assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length), 1)
+  assert.equal(await input.isChecked(), true, "blocked repeat activation must not visually toggle")
+  await input.click({ force: true })
+  assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length), 1)
+  assert.equal(await input.isChecked(), true, "blocked pointer activation must not visually toggle")
+  await page.evaluate(() => (window as any).fixture.releaseMutation())
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-busy") === "false")
+  assert.equal(await original!.evaluate((node) => node.isConnected && node === document.activeElement), true)
+  assert.equal(await input.isChecked(), false)
+  await input.press("Tab")
+  assert.equal(await page.locator('[data-plugin-id="acme.reviewer"] [data-scope="project"] input').evaluate((node) => node === document.activeElement), true)
+  await input.focus()
+  await page.evaluate(() => { (window as any).fixture.holdMutation(); (window as any).fixture.failMutation() })
+  await input.press("Space")
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-busy") === "true")
+  await page.evaluate(() => (window as any).fixture.releaseMutation())
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-busy") === "false")
+  assert.equal(await original!.evaluate((node) => node.isConnected && node === document.activeElement), true)
+  assert.equal(await input.isChecked(), false, "failed mutation retains the authoritative value")
+  await page.close()
+})
+
+test("narrow keyboard and touch layouts expose complete plugin names, sources and errors", async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 1200 }, hasTouch: true })
+  await page.goto(url)
+  const details = await page.evaluate(() => {
+    const fixture = (window as any).fixture
+    fixture.setNarrow()
+    const details = fixture.setLongDetails()
+    fixture.show()
+    return details
+  })
+  const row = page.locator(`[data-plugin-id="${details.id}"]`)
+  await row.waitFor()
+  for (const direction of ["ltr", "rtl"]) {
+    await page.evaluate((locale) => (window as any).fixture.setLocale(locale), direction === "rtl" ? "he" : "fr")
+    await page.locator(".plugin-control-scope-label").filter({ hasText: direction === "rtl" ? "פרויקט" : "Projet" }).waitFor()
+    await page.evaluate((dir) => { document.documentElement.dir = dir }, direction)
+    await row.locator(".plugin-control-name").tap()
+    await row.locator("input").first().focus()
+    assert.ok((await row.locator(".plugin-control-sub").textContent())?.includes(details.source))
+    assert.ok((await page.locator('[data-plugin-id="broken.plugin"] .plugin-control-sub').textContent())?.includes(details.error))
+    const clipped = await page.locator(".plugin-control-name, .plugin-control-sub, .plugin-control-sub > span:last-child, .plugin-controls-footer > div").evaluateAll((nodes) => nodes.filter((node) => node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1).map((node) => node.textContent))
+    assert.deepEqual(clipped, [], `full text remains readable in ${direction}`)
+    assert.equal(await page.locator("main").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true)
+    if (direction === "ltr") assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Projet"])
+    if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {
+      await mkdir(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, { recursive: true })
+      await page.screenshot({ path: join(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, `plugins-narrow-${direction}.png`), fullPage: true })
+    }
+  }
+  await page.close()
+})
+
+for (const fail of [false, true]) {
+  test(`disposed plugin surfaces suppress late mutation feedback, failure=${fail}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
+    await page.goto(url)
+    await page.evaluate((fail) => {
+      const fixture = (window as any).fixture
+      fixture.show()
+      fixture.holdMutation()
+      if (fail) fixture.failMutation()
+    }, fail)
+    const input = page.locator('[data-plugin-id="acme.reviewer"] [data-scope="project"] input')
+    await input.click()
+    await page.waitForFunction(() => document.querySelector('input[aria-busy="true"]'))
+    await page.evaluate(() => (window as any).fixture.unmount())
+    assert.equal(await page.locator(".plugin-controls").count(), 0)
+    await page.evaluate(() => (window as any).fixture.releaseMutation())
+    // Flush the deferred response and its async presentation continuation.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.toastHistory()), [])
+    await page.close()
+  })
+}

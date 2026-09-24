@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Component } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import Switch from "@suid/material/Switch"
 import type {
@@ -29,6 +29,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const { t } = useI18n()
   const [pending, setPending] = createSignal<Set<string>>(new Set())
   const headingId = `plugin-controls-${createUniqueId()}`
+  const noticeId = `${headingId}-notice`
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
   const projectLabelId = `plugin-controls-${createUniqueId()}-project`
   const directory = createMemo(() => props.location.directory)
@@ -44,9 +45,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const controls = createMemo(() => (
     snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
   ))
+  const controlsById = createMemo(() => new Map(controls().map((control) => [control.id, control])))
+  const controlIds = createMemo(() => [...controlsById().keys()])
   let currentIdentity: string | undefined
   let demandedIdentity: string | undefined
   let locationGeneration = 0
+  // The admitted write may finish after a project tab or visibility wrapper
+  // disposes this surface. Only its live owner may publish presentation feedback.
+  onCleanup(() => { locationGeneration += 1 })
 
   createEffect(() => {
     const instanceId = props.instanceId
@@ -85,7 +91,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     setPendingPlugin(scope, control.id, true)
     try {
       const response = await pluginControlsCache.mutate(props.instanceId, requestLocation(), control.id, scope, enabled)
-      if (requestGeneration !== locationGeneration) return
+      if (requestGeneration !== locationGeneration || props.active === false) return
       const base = t(response.changed
         ? "instanceServiceStatus.plugins.toast.ruleSaved"
         : "instanceServiceStatus.plugins.toast.ruleUnchanged", {
@@ -98,7 +104,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       })
     } catch (error) {
       log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
-      if (requestGeneration === locationGeneration) {
+      if (requestGeneration === locationGeneration && props.active !== false) {
         showToastNotification({
           variant: "error",
           message: t(errorMessageKey(error), { name: control.id, scope: scopeLabel(scope) }),
@@ -118,38 +124,16 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t("instanceServiceStatus.plugins.source.sdk")
   }
 
-  const renderControl = (control: PluginActivationControl) => {
-    const failed = () => control.runtime?.state.status === "failed"
-    const failureMessage = () => failed()
-      ? (control.runtime?.state.status === "failed" ? control.runtime.state.error : undefined)
-      : undefined
-    const overridden = () => control.project !== "default"
-    const statusText = (): string | undefined => {
-      if (failed()) return `${t("instanceServiceStatus.plugins.runtime.failed")}${failureMessage() ? ` — ${failureMessage()}` : ""}`
-      if (overridden()) return t("instanceServiceStatus.plugins.globalOverridden")
-      return undefined
+  const renderControl = (pluginId: string) => {
+    // Key rows by ID, but read every displayed value from the current snapshot.
+    // Passive refreshes must not replace the focused row's DOM.
+    const control = createMemo(() => controlsById().get(pluginId))
+    const failed = () => control()?.runtime?.state.status === "failed"
+    const failureMessage = () => {
+      const state = control()?.runtime?.state
+      return state?.status === "failed" ? state.error : undefined
     }
-    const targetPath = (): string | undefined => control.controllingRule?.path
-      ?? snapshot()?.targets.find((candidate) => candidate.scope === (control.project !== "default" ? "project" : "global"))?.path
-    const nameTitle = () => {
-      const target = targetPath()
-      const status = statusText()
-      if (status) return target ? bidi(`${control.id} — ${status} — ${target}`) : bidi(`${control.id} — ${status}`)
-      return target
-        ? bidi(`${control.id} — ${t("instanceServiceStatus.plugins.target.existing", { path: target })}`)
-        : control.id
-    }
-    const detailTitle = () => {
-      const target = control.controllingRule?.path
-        ?? snapshot()?.targets.find((candidate) => candidate.scope === (control.project !== "default" ? "project" : "global"))?.path
-      const status = statusText()
-      // A truncated status line must keep its full text reachable: prefer the
-      // status over the rule target instead of repeating the target twice.
-      if (status) return target ? bidi(`${status} — ${target}`) : status
-      return target
-        ? bidi(`${control.id} — ${t("instanceServiceStatus.plugins.target.existing", { path: target })}`)
-        : control.id
-    }
+    const overridden = () => Boolean(control() && control()?.project !== "default")
     const isAvailable = (scope: PluginControlScope): boolean =>
       snapshot()?.targets.some((target) => target.scope === scope) === true
     const scopeReason = (scope: PluginControlScope): string => isAvailable(scope)
@@ -158,9 +142,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         ? t("instanceServiceStatus.plugins.scope.unavailable")
         : t(`instanceServiceStatus.plugins.scope.${scope}.detail`)
     const renderSwitch = (scope: PluginControlScope) => {
-      const checked = () => scopeChecked(control, scope)
+      const checked = () => {
+        const current = control()
+        return current ? scopeChecked(current, scope) : false
+      }
       const available = () => isAvailable(scope)
-      const isPending = () => pending().has(pendingKey(scope, control.id))
+      const isPending = () => pending().has(pendingKey(scope, pluginId))
       const describedBy = () => available()
         ? (scope === "global" ? globalLabelId : projectLabelId)
         : `${scope === "global" ? globalLabelId : projectLabelId} ${noticeId}`
@@ -177,39 +164,46 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         >
           <Switch
             checked={checked()}
-            disabled={isPending() || !available()}
+            disabled={!available()}
             color="success"
             size="small"
             inputProps={{
               "aria-label": bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", {
-                name: `${control.id} — ${scopeLabel(scope)}`,
+                name: `${pluginId} — ${scopeLabel(scope)}`,
               })),
               "aria-describedby": describedBy(),
+              "aria-disabled": isPending() || !available(),
               "aria-busy": isPending(),
             }}
-            onChange={(_, nextChecked) => {
-              if (isPending() || !available()) return
-              void toggle(control, scope, Boolean(nextChecked))
+            onChange={(event, nextChecked) => {
+              const current = control()
+              if (isPending() || !available() || !current) {
+                // SUID restores the controlled checked value before calling us.
+                // Cancel native activation too, while retaining keyboard focus.
+                event.preventDefault()
+                return
+              }
+              void toggle(current, scope, Boolean(nextChecked))
             }}
           />
         </div>
       )
     }
-    const nameId = `${headingId}-name-${control.id}`
+    const nameId = `${headingId}-name-${pluginId}`
     return (
-      <div class="plugin-control-row" data-plugin-id={control.id} role="group" aria-labelledby={nameId}>
+      <div class="plugin-control-row" data-plugin-id={pluginId} role="group" aria-labelledby={nameId}>
         <div class="min-w-0">
-          <span id={nameId} class="plugin-control-name" title={nameTitle()} tabindex="0"><bdi>{control.id}</bdi></span>
-          <div class="plugin-control-sub" title={detailTitle()} tabindex="0">
+          <span id={nameId} class="plugin-control-name"><bdi>{pluginId}</bdi></span>
+          <div class="plugin-control-sub">
             <Show when={failed()} fallback={
               <Show when={overridden()} fallback={
-                <Show when={control.runtime} fallback={
-                  <span>{t(`instanceServiceStatus.plugins.ruleState.${control.effective}`)}</span>
+                <Show when={control()?.runtime} fallback={
+                  <span>{t(`instanceServiceStatus.plugins.ruleState.${control()?.effective ?? "default"}`)}</span>
                 }>
                   {(runtime) => <span>{sourceLabel(runtime().source)}</span>}
                 </Show>
               }>
-                <span class={`status-dot ${control.effective === "enabled" ? "ready" : "stopped"}`} aria-hidden="true" />
+                <span class={`status-dot ${control()?.effective === "enabled" ? "ready" : "stopped"}`} aria-hidden="true" />
                 <span>{t("instanceServiceStatus.plugins.globalOverridden")}</span>
               </Show>
             }>
@@ -282,17 +276,17 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       }>
         <Show when={controls().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
           <div class="plugin-control-list">
-            <For each={controls()}>{renderControl}</For>
+            <For each={controlIds()}>{renderControl}</For>
           </div>
         </Show>
         <div class="plugin-controls-footer">
           <For each={snapshot()?.targets ?? []}>{(target) => {
-            const line = `${scopeLabel(target.scope)} — ${target.exists
+            const line = () => `${scopeLabel(target.scope)} — ${target.exists
               ? t("instanceServiceStatus.plugins.target.existing", { path: target.path })
               : t("instanceServiceStatus.plugins.target.new", { path: target.path })}`
             return (
-              <div class="truncate" title={bidi(line)} tabindex="0">
-                {bidi(line)}
+              <div>
+                {bidi(line())}
               </div>
             )
           }}</For>
@@ -309,9 +303,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t(`instanceServiceStatus.plugins.scope.${value}`)
   }
 
-  function unavailableId(scope: PluginControlScope, pluginId: string): string {
-    return `${headingId}-unavailable-${scope}-${pluginId}`
-  }
 }
 
 function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {

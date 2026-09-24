@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import type { PluginControlsSnapshot } from "../../../../server/src/api-types"
 import { PluginActivationControls } from "../../../src/components/plugin-activation-controls"
@@ -7,13 +7,18 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
+import { getToastHistory } from "../../../src/lib/notifications"
 import "../../../src/index.css"
 
 const instanceId = "plugin-controls-fixture"
 const location = { directory: "/repo" }
 const calls: Array<Record<string, unknown>> = []
 let reads = 0
+let mutationGate: Promise<void> | undefined
+let releaseMutation: (() => void) | undefined
+let failMutation = false
 const [viewActive, setViewActive] = createSignal(false)
+const [mounted, setMounted] = createSignal(true)
 const [workspaceID, setWorkspaceID] = createSignal("session-one")
 
 const active = {
@@ -69,9 +74,12 @@ let snapshot: PluginControlsSnapshot = {
   ],
 }
 
-const uiConfig = { settings: { locale: "en" } }
-serverApi.fetchConfigOwner = async () => uiConfig as any
-serverApi.patchConfigOwner = async (_owner, patch) => Object.assign(uiConfig, patch) as any
+let uiConfig = { settings: { locale: "en" } }
+serverApi.fetchConfigOwner = async () => structuredClone(uiConfig) as any
+serverApi.patchConfigOwner = async (_owner, patch: any) => {
+  uiConfig = { ...uiConfig, ...patch, settings: { ...uiConfig.settings, ...patch.settings } }
+  return structuredClone(uiConfig) as any
+}
 serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.getPluginControls = async (_id, requestedLocation) => {
   reads++
@@ -80,6 +88,11 @@ serverApi.getPluginControls = async (_id, requestedLocation) => {
 }
 serverApi.setPluginActivation = async (_id, request) => {
   calls.push({ type: "mutation", ...request })
+  await mutationGate
+  if (failMutation) {
+    failMutation = false
+    throw new Error("Isolated mutation failure")
+  }
   const state = request.enabled ? "enabled" : "disabled"
   const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
   const control = snapshot.controls.find((entry) => entry.id === request.pluginId)!
@@ -109,11 +122,11 @@ render(() => (
     <I18nProvider>
       <ThemeProvider>
         <main style={{ width: "430px", margin: "24px", padding: "12px", "background-color": "var(--surface-secondary)" }}>
-          <PluginActivationControls
+          <Show when={mounted()}><PluginActivationControls
             instanceId={instanceId}
             location={{ ...location, workspaceID: workspaceID() }}
             active={viewActive()}
-          />
+          /></Show>
         </main>
       </ThemeProvider>
     </I18nProvider>
@@ -127,6 +140,23 @@ await updatePreferences({ locale: "en" })
   isActive: viewActive,
   show: () => setViewActive(true),
   hide: () => setViewActive(false),
+  unmount: () => setMounted(false),
+  toastHistory: () => getToastHistory(),
+  holdMutation: () => { mutationGate = new Promise<void>((resolve) => { releaseMutation = resolve }) },
+  releaseMutation: () => { releaseMutation?.(); mutationGate = undefined },
+  failMutation: () => { failMutation = true },
+  setLocale: (locale: "en" | "fr" | "he") => updatePreferences({ locale }),
+  setLongDetails: () => {
+    const id = "company.integration.identical-prefix.production"
+    const source = "/repo/.opencode/plugins/a-long-distinct-entrypoint/index.ts"
+    const error = "Setup failed: a-long-actionable-diagnostic-ending-with-recovery-instructions"
+    const control = snapshot.controls.find((entry) => entry.id === active.id)!
+    control.id = id
+    control.runtime = { ...active, id, source: { type: "local", path: source } }
+    snapshot.controls.push({ ...control, id: "company.integration.identical-prefix.staging" })
+    snapshot.controls.find((entry) => entry.id === failed.id)!.runtime = { ...failed, state: { ...failed.state, error } }
+    return { id, source, error }
+  },
   setNarrow: () => {
     const main = document.querySelector("main") as HTMLElement | null
     if (main) {

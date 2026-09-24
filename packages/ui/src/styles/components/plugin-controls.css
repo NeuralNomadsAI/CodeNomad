@@ -45,13 +45,19 @@
 .plugin-controls-notice {
   @apply break-words text-[11px];
   color: var(--text-muted);
-  border-left: 2px solid var(--border-base);
-  padding-left: 6px;
+  border-inline-start: 2px solid var(--border-base);
+  padding-inline-start: 6px;
 }
 
 .plugin-controls-footer {
   @apply space-y-0.5 break-words text-[11px];
   color: var(--text-muted);
+}
+
+.plugin-control-name,
+.plugin-control-sub,
+.plugin-controls-footer {
+  overflow-wrap: anywhere;
 }
 
 .plugin-control-list {
@@ -65,7 +71,7 @@
 }
 
 .plugin-control-name {
-  @apply block min-w-0 truncate text-xs font-medium;
+  @apply block min-w-0 text-xs font-medium;
   color: var(--text-primary);
 }
 
@@ -75,7 +81,7 @@
 }
 
 .plugin-control-sub > span:last-child {
-  @apply min-w-0 flex-1 truncate;
+  @apply min-w-0 flex-1;
 }
 
 .plugin-control-sub .status-dot {

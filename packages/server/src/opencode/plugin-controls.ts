@@ -233,7 +233,7 @@ export class PluginControls {
     const fileSystem = distro
       ? createWslPluginControlDocumentFileSystem(distro)
       : hostPluginControlDocumentFileSystem
-    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, fileSystem, Boolean(distro))
+    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro))
     assertCurrentConnection(connection)
     return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem }
   }
@@ -243,6 +243,7 @@ export class PluginControls {
     paths: path.PlatformPath,
     globalDirectory: string,
     projectDirectory: string,
+    entries: readonly ConfigEntry[],
     fileSystem: PluginControlDocumentFileSystem,
     nativeWsl: boolean,
   ): Promise<ResolvedTarget[]> {
@@ -268,12 +269,28 @@ export class PluginControls {
       throw mapDocumentError(error)
     }
     const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length))
-    const projectTarget = selectTarget("project", projectCandidates, inspected.slice(globalCandidates.length))
+    // Every inherited .opencode document follows every direct document. Keep
+    // the write inside this location, creating its higher-precedence layer
+    // when an existing direct file cannot override the inherited rules.
+    const inheritedProjectLayer = entries.some((entry) => {
+      if (entry.type !== "document" || !entry.path) return false
+      const directory = paths.dirname(entry.path)
+      const root = paths.dirname(directory)
+      return paths.basename(directory) === ".opencode" && !samePath(paths, directory, globalDirectory)
+        && !samePath(paths, root, projectDirectory) && containsPath(paths, root, projectDirectory)
+    })
+    const projectInspected = inspected.slice(globalCandidates.length)
+    const projectTarget = inheritedProjectLayer
+      ? selectTarget("project", projectCandidates.slice(2), projectInspected.slice(2))
+      : selectTarget("project", projectCandidates, projectInspected)
     // An opened global config directory can make the direct project candidate
     // resolve to the global document. Never expose two scopes backed by one
     // file: a Project write would otherwise mutate Global configuration.
     return samePath(paths, globalDirectory, projectDirectory)
       || samePath(ioPaths, globalTarget.ioPath, projectTarget.ioPath)
+      // A symlinked fallback must not turn a location-local override into an
+      // edit of the ancestor/shared configuration it was meant to override.
+      || (inheritedProjectLayer && !containsPath(ioPaths, projectIoRoot, projectTarget.ioPath))
       ? [globalTarget]
       : [globalTarget, projectTarget]
   }
@@ -418,7 +435,7 @@ function mutationTargetPlugins(
   const normalized = documents
     .filter((document) => Boolean(document.path && samePath(paths, document.path, servicePath)))
     .at(-1)?.plugins ?? []
-  const noOpSafe = !rawPlugins.some(containsConfigVariable)
+  let noOpSafe = !rawPlugins.some(containsConfigVariable)
   let normalizedIndex = 0
   const pendingRules: string[] = []
   for (const entry of rawPlugins) {
@@ -428,14 +445,23 @@ function mutationTargetPlugins(
     }
     if (normalizedIndex < normalized.length) {
       if (pluginEntriesEqual(entry, normalized[normalizedIndex])) normalizedIndex += 1
+      else noOpSafe = false
       continue
     }
-    if (typeof entry !== "string") continue
+    if (typeof entry !== "string") {
+      noOpSafe = false
+      continue
+    }
     const selector = entry.startsWith("-") ? entry.slice(1) : entry
-    if (!selector || !authorizedIds.some((id) => matchesSelector(selector, id))) continue
+    if (!selector || !authorizedIds.some((id) => matchesSelector(selector, id))) {
+      noOpSafe = false
+      continue
+    }
     pendingRules.push(entry)
   }
-  return { plugins: [...normalized, ...pendingRules], noOpSafe }
+  // Only a completely matched prefix followed by replayed concrete rules can
+  // prove a durable no-op. Deletions/replacements during watcher lag cannot.
+  return { plugins: [...normalized, ...pendingRules], noOpSafe: noOpSafe && normalizedIndex === normalized.length }
 }
 
 function pluginEntriesEqual(left: PluginConfigEntry, right: PluginConfigEntry | undefined): boolean {

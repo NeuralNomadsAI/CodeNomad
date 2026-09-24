@@ -27,7 +27,10 @@ OpenCode connection and an ownership check for the complete native location.
   otherwise `opencode.jsonc` is created there.
 - **Project** uses only the active location directory. The highest existing
   direct or `.opencode` document is selected; otherwise
-  `.opencode/opencode.jsonc` is created.
+  `.opencode/opencode.jsonc` is created. When discovery reports an inherited
+  `.opencode` document, every direct document ranks below it: Project therefore
+  selects an existing active-location `.opencode` document or creates
+  `.opencode/opencode.jsonc` there. It never selects the ancestor as its target.
 
 WSL paths are resolved and mutated through the workspace's selected distro;
 configuration permissions never come from synthetic UNC metadata. No path is
@@ -40,6 +43,10 @@ If the location is the global configuration root, or Global and Project resolve
 through symlinks/junctions to the same physical document, Project is unavailable.
 Its switch remains visible but disabled, and the server rejects a direct Project
 mutation rather than writing the Global document under the wrong scope.
+The higher-precedence Project fallback is also unavailable if its physical
+destination escapes the active location through a symlink/junction; it must not
+edit an ancestor/shared file to implement a location-local override. Missing
+fallback documents are created only by an explicit mutation, not display reads.
 
 Global rules can be overridden by later project rules. The UI presents one
 compact row per user/configured plugin with separate **Global** and **Project**
@@ -68,6 +75,10 @@ surface is visible and expanded. Location-scoped plugin events mark only their
 worktree stale; an event for an unknown directory matches nothing immediately,
 while a canonical event arriving before its WSL alias is learned is retained
 and fences only the snapshot that later adopts that canonical identity.
+If host and canonical reads already have separate in-flight records, merging
+them retains the canonical invalidation generation and coalesced refresh demand.
+An older alias response cannot publish over that event; the orphaned read is
+aborted and one reconciliation read supplies the shared snapshot.
 Configuration events mark the instance's worktrees stale
 because the event does not identify whether the global document changed.
 Hidden surfaces retain their last snapshot without starting background
@@ -130,7 +141,11 @@ used for editing and conflict detection only. During a serialized write burst,
 concrete authorized rules already durable on disk but not yet reflected by the
 daemon are paired positionally and replayed after its normalized document. Raw
 `{env:...}`/`{file:...}` placeholders never consume a later concrete rule or
-enable the no-op shortcut.
+enable the no-op shortcut. A no-op additionally requires the whole normalized
+prefix to match the raw target, followed only by concrete rules included in the
+projection. A raw deletion/replacement or an unprojected entry during watcher
+lag instead appends the requested exact rule; stale daemon state cannot prove
+that the requested state is already durable.
 
 The connection generation is rechecked after discovery, before file preparation,
 and again immediately before the atomic rename. Mutations also enter the active
@@ -151,10 +166,10 @@ runtime state catches up.
 The feature uses only `config.get` and `plugin.list`, which are already consumed
 through CodeNomad's connection-scoped compatibility transport.
 
-The server, UI, and bundled plugin currently pin `2.0.11` together. Its
+The server, UI, and bundled plugin currently pin `2.0.15` together. Its
 declarations provide the location-scoped reads, ordered `ConfigEntry.plugins`,
 and plugin source/state metadata used here. CodeNomad's demonstrated technical
-minimum is `2.0.7`, while `2.0.11` is the separately recommended and tested
+minimum is `2.0.7`, while `2.0.15` is the separately recommended and tested
 target. These activation controls add no higher version requirement. The
 activation write remains a local JSONC rule; no runtime-specific mutation
 endpoint is used.
