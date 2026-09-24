@@ -34,6 +34,27 @@ function sanitizeServerOwner(value: SettingsDoc): SettingsDoc {
     }
   }
 
+  if (isPlainObject(speech.live)) {
+    const live = { ...speech.live } as SettingsDoc
+    const geminiKey = typeof live.geminiApiKey === "string" ? live.geminiApiKey.trim() : ""
+    if (geminiKey) {
+      delete live.geminiApiKey
+      live.hasGeminiApiKey = true
+    } else if (!("hasGeminiApiKey" in live)) {
+      live.hasGeminiApiKey = false
+    }
+
+    const openaiKey = typeof live.openaiApiKey === "string" ? live.openaiApiKey.trim() : ""
+    if (openaiKey) {
+      delete live.openaiApiKey
+      live.hasOpenaiApiKey = true
+    } else if (!("hasOpenaiApiKey" in live)) {
+      live.hasOpenaiApiKey = false
+    }
+
+    speech.live = live
+  }
+
   next.speech = speech
   return next
 }

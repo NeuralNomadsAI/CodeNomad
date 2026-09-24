@@ -286,4 +286,63 @@ describe("SpeechService direction resolution", () => {
       assert.equal(caps.configured, true)
     })
   })
+
+  describe("getLiveCapabilities", () => {
+    it("returns default live capabilities when speech.live is unconfigured", () => {
+      const service = new SpeechService(createMockSettings({ speech: {} }), mockLogger)
+      const liveCaps = service.getLiveCapabilities()
+
+      assert.equal(liveCaps.available, true)
+      assert.equal(liveCaps.configured, false)
+      assert.equal(liveCaps.provider, "gemini")
+      assert.equal(liveCaps.model, "gemini-2.0-flash-exp")
+      assert.equal(liveCaps.voice, "Aoede")
+      assert.equal(liveCaps.providers.gemini.configured, false)
+      assert.equal(liveCaps.providers.openai.configured, false)
+    })
+
+    it("reports gemini configured when geminiApiKey is provided", () => {
+      const service = new SpeechService(
+        createMockSettings({
+          speech: {
+            live: {
+              enabled: true,
+              provider: "gemini",
+              geminiApiKey: "AIzaSyTest",
+            },
+          },
+        }),
+        mockLogger,
+      )
+      const liveCaps = service.getLiveCapabilities()
+
+      assert.equal(liveCaps.configured, true)
+      assert.equal(liveCaps.provider, "gemini")
+      assert.equal(liveCaps.providers.gemini.configured, true)
+      assert.equal(liveCaps.providers.openai.configured, false)
+    })
+
+    it("reports openai configured when openaiApiKey is provided", () => {
+      const service = new SpeechService(
+        createMockSettings({
+          speech: {
+            live: {
+              enabled: true,
+              provider: "openai",
+              openaiApiKey: "sk-test",
+            },
+          },
+        }),
+        mockLogger,
+      )
+      const liveCaps = service.getLiveCapabilities()
+
+      assert.equal(liveCaps.configured, true)
+      assert.equal(liveCaps.provider, "openai")
+      assert.equal(liveCaps.model, "gpt-4o-realtime-preview")
+      assert.equal(liveCaps.voice, "alloy")
+      assert.equal(liveCaps.providers.gemini.configured, false)
+      assert.equal(liveCaps.providers.openai.configured, true)
+    })
+  })
 })

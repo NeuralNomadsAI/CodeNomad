@@ -54,6 +54,42 @@ describe("sanitizeConfigOwner server speech", () => {
     assert.equal((result.speech as any).tts.hasApiKey, false)
   })
 
+  it("sanitizes speech.live API keys", () => {
+    const result = sanitizeConfigOwner("server", {
+      speech: {
+        live: {
+          enabled: true,
+          provider: "gemini",
+          geminiApiKey: "AIzaSySecret",
+          openaiApiKey: "sk-openai-secret",
+        },
+      },
+    })
+    const live = (result.speech as any).live
+    assert.equal(live.geminiApiKey, undefined)
+    assert.equal(live.hasGeminiApiKey, true)
+    assert.equal(live.openaiApiKey, undefined)
+    assert.equal(live.hasOpenaiApiKey, true)
+    assert.equal(live.enabled, true)
+    assert.equal(live.provider, "gemini")
+  })
+
+  it("sets hasGeminiApiKey=false and hasOpenaiApiKey=false when absent in speech.live", () => {
+    const result = sanitizeConfigOwner("server", {
+      speech: {
+        live: {
+          enabled: false,
+          provider: "openai",
+        },
+      },
+    })
+    const live = (result.speech as any).live
+    assert.equal(live.geminiApiKey, undefined)
+    assert.equal(live.hasGeminiApiKey, false)
+    assert.equal(live.openaiApiKey, undefined)
+    assert.equal(live.hasOpenaiApiKey, false)
+  })
+
   it("passes through non-server owners unchanged", () => {
     const result = sanitizeConfigOwner("ui", { foo: "bar" })
     assert.deepEqual(result, { foo: "bar" })

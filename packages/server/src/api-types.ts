@@ -429,6 +429,32 @@ export interface SpeechCapabilitiesResponse {
   ttsBaseUrl?: string
 }
 
+export type LiveVoiceProvider = "gemini" | "openai"
+
+export interface SpeechLiveProviderCapabilities {
+  configured: boolean
+  defaultModel: string
+  defaultVoice: string
+  models: string[]
+  voices: string[]
+}
+
+export interface SpeechLiveCapabilitiesResponse {
+  available: boolean
+  configured: boolean
+  provider: LiveVoiceProvider
+  model: string
+  voice: string
+  systemPrompt?: string
+  providers: Record<LiveVoiceProvider, SpeechLiveProviderCapabilities>
+}
+
+export interface LiveGatewayParams {
+  provider?: LiveVoiceProvider
+  model?: string
+  voice?: string
+}
+
 export interface SpeechTranscriptionResponse {
   text: string
   language?: string
