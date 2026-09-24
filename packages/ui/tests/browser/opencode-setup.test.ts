@@ -352,6 +352,66 @@ const healthyStatus = { state: "ready", currentVersion: "2.0.16", latestVersion:
   recommendedVersion: "2.0.15", binaryPath: "opencode2", target: "host", canUpgrade: false, canRestart: false,
   serviceState: "ready", daemonVersion: "2.0.16" }
 
+test("instance info explicitly confirms a global V2 reload and never calls the retired dispose endpoint", async () => {
+  const page = await browser.newPage()
+  const mutations: Array<{ url: string; body: unknown }> = []
+  let release!: () => void
+  await page.route("**/*", async route => {
+    const request = route.request()
+    if (!request.url().includes("/api/") && !request.url().includes("instance/dispose")) return route.continue()
+    if (request.method() === "POST" && (request.url().endsWith("/api/opencode/service") || request.url().includes("instance/dispose"))) {
+      mutations.push({ url: new URL(request.url()).pathname, body: request.postDataJSON() })
+      await new Promise<void>(resolve => { release = resolve })
+    }
+    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
+  })
+  try {
+    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const reload = page.getByRole("button", { name: "Reload OpenCode configuration", exact: true })
+    await reload.click()
+    const dialog = page.getByRole("dialog")
+    await dialog.getByText(/every loaded location for all connected clients/).waitFor()
+    await dialog.getByText(/cancels pending permissions and forms/).waitFor()
+    assert.equal(mutations.length, 0)
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.equal(mutations.length, 0)
+    await reload.click()
+    await dialog.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await page.getByRole("button", { name: "Reloading OpenCode configuration…", exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Reloading OpenCode configuration…", exact: true }).isDisabled(), true)
+    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
+    assert.ok(release)
+    release()
+    await page.waitForFunction(() => (window as any).fixture.notifications().some((item: any) => item.variant === "success"))
+    assert.deepEqual(mutations, [{ url: "/api/opencode/service", body: { reload: true } }])
+    assert.equal(await page.getByRole("button", { name: "Dispose instance", exact: true }).count(), 0)
+    assert.equal(await reload.isEnabled(), true)
+  } finally { release?.(); await page.close() }
+})
+
+test("instance reload failure reports an error without replaying the mutation and permits explicit retry", async () => {
+  const page = await browser.newPage()
+  let attempts = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && route.request().url().endsWith("/api/opencode/service")) {
+      assert.deepEqual(route.request().postDataJSON(), { reload: true })
+      if (++attempts === 1) return route.fulfill({ status: 502, json: { error: "service_activation_failed" } })
+    }
+    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
+  })
+  try {
+    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    for (const outcome of ["error", "success"]) {
+      await page.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+      await page.getByRole("dialog").getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+      await page.waitForFunction(outcome => (window as any).fixture.notifications()[0]?.variant === outcome, outcome)
+      assert.equal(attempts, outcome === "error" ? 1 : 2)
+    }
+  } finally { await page.close() }
+})
+
 test("Continue rechecks a service stopped after the recovery screen opened and preserves the workspace retry", async () => {
   const page = await browser.newPage()
   let stopped = false, mutations = 0

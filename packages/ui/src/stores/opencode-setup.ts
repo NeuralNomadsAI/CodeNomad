@@ -99,7 +99,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
   return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -125,6 +125,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
       if (action === "reload") setOpenCodeSetupFeedback("reloaded")
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
+      return status
     }
   } catch (error) {
     if (epoch === generation) {
