@@ -17,6 +17,20 @@ const inlineAttachment = (base64: string): Attachment => ({
 })
 
 describe("device file selection", () => {
+  it("releases count and byte reservations after unreadable or oversized actual reads", async () => {
+    const existing = Array.from({ length: 9 }, () => inlineAttachment("AQ=="))
+    const result = await readDeviceFileSelection([file("bad", 1), file("good", 1)], existing, () => true, async f => {
+      if (f.name === "bad") throw new Error("unreadable")
+      return new Uint8Array(1)
+    })
+    assert.deepEqual(result.files.map(f => f.file.name), ["good"])
+    assert.equal(result.overBudgetCount, 0)
+    const maximum = PROMPT_INLINE_FILE_LIMITS.maxFileBytes
+    const actual = await readDeviceFileSelection([file("wrong-size", 1), file("good", maximum)], [], () => true,
+      async f => new Uint8Array(f.name === "wrong-size" ? maximum + 1 : maximum))
+    assert.deepEqual(actual.files.map(f => f.file.name), ["good"])
+    assert.equal(actual.tooLargeCount, 1)
+  })
   it("reads accepted files sequentially and preserves picker order", async () => {
     const calls: string[] = []
     let activeReads = 0
@@ -38,7 +52,7 @@ describe("device file selection", () => {
     assert.equal(peakReads, 1)
     assert.deepEqual(result.files.map(({ file }) => file.name), ["first.txt", "second.txt"])
     assert.deepEqual({ ...result, files: [] }, {
-      files: [], tooLargeCount: 0, overBudgetCount: 0, unreadableCount: 0, stale: false,
+      files: [], rejected: [], tooLargeCount: 0, overBudgetCount: 0, unreadableCount: 0, stale: false,
     })
   })
 

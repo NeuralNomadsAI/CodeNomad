@@ -661,7 +661,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         <PromptInput
           instanceId={props.instanceId}
-          instanceFolder={props.instanceFolder}
+          instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
           compactLayout={props.compactPromptLayout}

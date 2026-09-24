@@ -1,9 +1,19 @@
 # Composer attachment UX harmonization
 
-Status: proposed implementation plan for PR #729. The accompanying merge only
-resolves integration with `dev`; the UX changes below are not implemented yet.
+Status: implemented in PR #729; validation and independent gatekeeper results
+are recorded in the PR. This document retains the interaction contract.
 
 Reference: [review direction](https://github.com/NeuralNomadsAI/CodeNomad/pull/729#issuecomment-5751384618).
+
+Rendered captures: [French, narrow](pr729-attachments-fr-narrow.png) and
+[Hebrew, wide](pr729-attachments-he-wide.png).
+
+The isolated Windows native-picker smoke uses
+`node scripts/test-attachment-picker-desktop.mjs tauri` (or `electron`). It renders
+the source SessionView in an isolated host profile and drives the actual OS dialog
+for selection, cancellation and reselection; it does not connect to OpenCode.
+Tauri requires a built release artifact and discovers its native dynamic CDP port.
+The browser runtime matrix separately simulates local/remote/WSL execution contexts.
 
 ## Goal and interaction contract
 

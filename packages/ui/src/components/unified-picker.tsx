@@ -85,6 +85,7 @@ interface UnifiedPickerProps {
   searchQuery: string
   textareaRef?: HTMLTextAreaElement
   workspaceId: string
+  directory?: string
 }
 
 const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
@@ -131,7 +132,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
  
     inflightWorkspaceId = workspaceId
     inflightSnapshotPromise = serverApi
-      .listWorkspaceFiles(workspaceId)
+      .listWorkspaceFiles(workspaceId, ".", props.directory)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
         setAllFiles(snapshot)
@@ -192,6 +193,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
         signal: controller.signal,
+        directory: props.directory,
       })
       if (!shouldApplyResults(requestId, workspaceId)) {
         return

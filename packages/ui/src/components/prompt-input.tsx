@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, onMount, Show } from "solid-js"
-import { Loader2, Mic, Paperclip, Upload, Volume2, X } from "lucide-solid"
+import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
@@ -13,12 +13,9 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
-import { serverApi } from "../lib/api-client"
 import { preferences } from "../stores/preferences"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
-import { PROMPT_INLINE_FILE_LIMITS, type FileSystemEntry } from "../../../server/src/api-types"
-import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { usePromptState } from "./prompt-input/usePromptState"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
@@ -107,10 +104,8 @@ export default function PromptInput(props: PromptInputProps) {
   const [autoInputHeight, setAutoInputHeight] = createSignal<number | null>(null)
   const [isResizing, setIsResizing] = createSignal(false)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
-  const [isFileBrowserOpen, setIsFileBrowserOpen] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
-  let fileInputRef: HTMLInputElement | undefined
   let wrapperRef: HTMLDivElement | undefined
   let fieldContainerRef: HTMLDivElement | undefined
   let resizeDragState: ResizeDragState | undefined
@@ -239,8 +234,7 @@ export default function PromptInput(props: PromptInputProps) {
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    handleDeviceFileSelection,
-    handleFilePathAttachment,
+    handleUploadFiles,
     syncAttachmentCounters,
     handleExpandTextAttachment,
     handleRemoveAttachment,
@@ -252,6 +246,7 @@ export default function PromptInput(props: PromptInputProps) {
     setPrompt,
     getTextarea: () => textareaRef ?? null,
     disabled: () => Boolean(props.disabled),
+    active: () => props.isActive !== false,
   })
 
   createEffect(() => {
@@ -534,6 +529,12 @@ export default function PromptInput(props: PromptInputProps) {
     const restoredPayload = restoredQueuedPayload
 
     const isShellMode = mode() === "shell"
+    const retainedImageTokens = () => currentAttachments.flatMap(attachment => {
+      if (attachment.source.type !== "file") return []
+      const placeholder = getAttachmentPlaceholder(attachment.display)
+      return placeholder?.kind === "image"
+        ? draftText.match(createAttachmentPlaceholderRegex("image", placeholder.counter)) ?? [] : []
+    })
 
     const asideMatch = !isShellMode && /^\/btw(?:\s+([\s\S]*))?$/.exec(text)
     if (asideMatch) {
@@ -542,12 +543,7 @@ export default function PromptInput(props: PromptInputProps) {
       if (aside.launch(question)) {
         // Pasted text is consumed by the side question; image/file attachments
         // are not sent. Retain image tokens so normal attachment cleanup keeps them.
-        const imageTokens = currentAttachments.flatMap(attachment => {
-          if (attachment.source.type !== "file") return []
-          const placeholder = getAttachmentPlaceholder(attachment.display)
-          return placeholder?.kind === "image"
-            ? draftText.match(createAttachmentPlaceholderRegex("image", placeholder.counter)) ?? [] : []
-        })
+        const imageTokens = retainedImageTokens()
         if (imageTokens.length) setPrompt(imageTokens.join(" "))
         else clearPrompt()
         clearHistoryDraft()
@@ -584,7 +580,8 @@ export default function PromptInput(props: PromptInputProps) {
     const previousInputHeight = inputHeight()
 
     persistPromptInputHeight(null)
-    clearPrompt()
+    if (isKnownSlashCommand && retainedImageTokens().length) setPrompt(retainedImageTokens().join(" "))
+    else clearPrompt()
     clearHistoryDraft()
     setMode("normal")
 
@@ -605,6 +602,7 @@ export default function PromptInput(props: PromptInputProps) {
     clearHistoryDraft()
 
     // Keep attempted prompts recoverable even when execution fails.
+    const retainedDraft = prompt()
     void refreshHistory()
 
     if (!isTouchOnlyPointer()) {
@@ -632,11 +630,12 @@ export default function PromptInput(props: PromptInputProps) {
     } catch (error) {
       log.error("Failed to send message:", error)
       if (inputHeight() === null) persistPromptInputHeight(previousInputHeight)
-      if (!prompt()) {
+      if (prompt() === retainedDraft) {
         setPrompt(draftText)
         restoredQueuedPayload = restoredPayload
-        if (attachments().length === 0) {
-          for (const attachment of currentAttachments) addAttachment(props.instanceId, props.sessionId, attachment)
+        const existingIds = new Set(attachments().map(attachment => attachment.id))
+        for (const attachment of currentAttachments) {
+          if (!existingIds.has(attachment.id)) addAttachment(props.instanceId, props.sessionId, attachment)
         }
       }
       showAlertDialog(t("promptInput.send.errorFallback"), {
@@ -706,53 +705,6 @@ export default function PromptInput(props: PromptInputProps) {
     setIgnoredAtPositions(new Set<number>())
     syncAttachmentCounters("")
     textareaRef?.focus()
-  }
-
-  function handleAttachFiles() {
-    if (props.disabled || isReadingFiles()) return
-    setIsFileBrowserOpen(true)
-  }
-
-  function handleUploadFiles() {
-    if (props.disabled || isReadingFiles()) return
-    fileInputRef?.click()
-  }
-
-  async function handleFileBrowserSelect(path: string, entry?: FileSystemEntry) {
-    if (props.disabled) return
-    if (typeof entry?.size === "number" && entry.size > PROMPT_INLINE_FILE_LIMITS.maxFileBytes) {
-      showAlertDialog(t("promptInput.attachFiles.tooLarge.one"), {
-        title: t("promptInput.attachFiles.skipped.title"),
-        variant: "warning",
-      })
-      textareaRef?.focus()
-      return
-    }
-    try {
-      const filePath = entry?.path ?? path
-      const displayPath = entry?.absolutePath ?? path
-      const response = await serverApi.readFileSystemFile(filePath, { encoding: "base64" })
-      handleFilePathAttachment(displayPath, response.contents, { encoding: response.encoding })
-      setIsFileBrowserOpen(false)
-    } catch (error) {
-      log.error("Failed to attach selected file:", error)
-      showAlertDialog(error instanceof Error ? error.message : String(error), {
-        title: t("promptInput.attachFiles.errorTitle"),
-        variant: "error",
-      })
-    } finally {
-      textareaRef?.focus()
-    }
-  }
-
-  function handleFileInputChange(event: Event) {
-    const input = event.currentTarget as HTMLInputElement
-    if (props.disabled) {
-      input.value = ""
-      return
-    }
-    void handleDeviceFileSelection(Array.from(input.files ?? []))
-    input.value = ""
   }
 
   function insertBlockContent(block: string) {
@@ -933,17 +885,11 @@ export default function PromptInput(props: PromptInputProps) {
     }
     items.push({
       key: "attach",
-      label: t("promptInput.attachFiles.title"),
-      icon: <Paperclip class="h-4 w-4" aria-hidden="true" />,
-      disabled: Boolean(props.disabled) || isReadingFiles(),
-      onSelect: handleAttachFiles,
-    })
-    items.push({
-      key: "upload",
-      label: t("promptInput.attachFiles.upload"),
+      label: t(isReadingFiles() ? "promptInput.attachFiles.reading" : "promptInput.attachFiles.title"),
+      description: t("promptInput.attachFiles.help"),
       icon: isReadingFiles()
         ? <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
-        : <Upload class="h-4 w-4" aria-hidden="true" />,
+        : <Paperclip class="h-4 w-4" aria-hidden="true" />,
       disabled: Boolean(props.disabled) || isReadingFiles(),
       onSelect: handleUploadFiles,
     })
@@ -1006,7 +952,7 @@ export default function PromptInput(props: PromptInputProps) {
           aria-label={t("promptInput.resizeHandle.title")}
           title={t("promptInput.resizeHandle.title")}
         />
-        <Show when={showPicker() && instance()}>
+        <Show when={showPicker() && instance() && props.instanceFolder} keyed>{(directory) =>
           <Suspense fallback={null}>
             <LazyUnifiedPicker
               open={showPicker()}
@@ -1022,9 +968,10 @@ export default function PromptInput(props: PromptInputProps) {
               searchQuery={searchQuery()}
               textareaRef={textareaRef}
               workspaceId={props.instanceId}
+              directory={directory}
             />
           </Suspense>
-        </Show>
+        }</Show>
 
         <div class="prompt-input-main flex flex-1 flex-col">
           <div
@@ -1083,6 +1030,7 @@ export default function PromptInput(props: PromptInputProps) {
                           • <Kbd>{shellHint().key}</Kbd> {shellHint().text}
                         </span>
                         <Show when={mode() !== "shell"}>
+                          <span class="prompt-overlay-text">• <Kbd>@</Kbd> {t("promptInput.hints.projectFiles")}</span>
                           <span class="prompt-overlay-text">
                             • <Kbd>{commandHint().key}</Kbd> {commandHint().text}
                           </span>
@@ -1108,19 +1056,15 @@ export default function PromptInput(props: PromptInputProps) {
           </div>
         </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          aria-label={t("promptInput.attachFiles.upload")}
-          multiple
-          class="sr-only"
-          tabindex="-1"
-          disabled={props.disabled || isReadingFiles()}
-          onChange={handleFileInputChange}
-        />
         <div class="prompt-input-footer">
           <div class="prompt-input-footer-context">{props.footerControls}</div>
           <div class="prompt-input-footer-actions">
+            <Show when={isReadingFiles()}>
+              <span role="status" class="text-xs text-secondary inline-flex items-center gap-1">
+                <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />
+                {t("promptInput.attachFiles.reading")}
+              </span>
+            </Show>
             <div class="prompt-actions-menu">
               <ActionOverflowMenu
                 items={promptActionMenuItems()}
@@ -1166,17 +1110,6 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
 
       <PromptAsideWindow id={asideId} controller={aside} returnFocus={() => textareaRef} />
-      <DirectoryBrowserDialog
-        open={isFileBrowserOpen()}
-        mode="files"
-        title={t("promptInput.attachFiles.dialogTitle")}
-        onClose={() => {
-          setIsFileBrowserOpen(false)
-          textareaRef?.focus()
-        }}
-        onSelect={(path, entry) => void handleFileBrowserSelect(path, entry)}
-        initialPath={props.instanceFolder}
-      />
     </div>
   )
 }

@@ -351,20 +351,22 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
-  listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  listWorkspaceFiles(id: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
+    if (directory) params.set("directory", directory)
     return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
   },
   searchWorkspaceFiles(
     id: string,
     query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal },
+    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
   ): Promise<WorkspaceFileSearchResponse> {
     const trimmed = query.trim()
     if (!trimmed) {
       return Promise.resolve([])
     }
     const params = new URLSearchParams({ q: trimmed })
+    if (opts?.directory) params.set("directory", opts.directory)
     if (opts?.limit) {
       params.set("limit", String(opts.limit))
     }

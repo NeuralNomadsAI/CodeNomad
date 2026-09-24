@@ -1,21 +1,17 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createSignal, type Accessor } from "solid-js"
 import { addAttachment, getAttachments, removeAttachment } from "../../stores/attachments"
-import { createFileAttachment, createTextAttachment } from "../../types/attachment"
+import { createTextAttachment } from "../../types/attachment"
 import type { Attachment } from "../../types/attachment"
 import { createAttachmentPlaceholderRegex } from "../../lib/attachment-placeholders"
 import { createPromptMentionRegex, getAttachmentPromptMentionCandidates } from "../../lib/attachment-mentions"
-import { tGlobal } from "../../lib/i18n"
-import { showToastNotification } from "../../lib/notifications"
-import { PROMPT_INLINE_FILE_LIMITS } from "../../../../server/src/api-types"
 import {
   bracketedImageDisplayCounterRegex,
   findHighestAttachmentCounters,
-  formatImagePlaceholder,
   formatPastedPlaceholder,
   imageDisplayCounterRegex,
   pastedDisplayCounterRegex,
 } from "./attachmentPlaceholders"
-import { getInlineFileUsage, readDeviceFileSelection } from "./device-file-selection"
+import { useDeviceAttachments } from "./useDeviceAttachments"
 
 type PromptAttachmentsOptions = {
   instanceId: Accessor<string>
@@ -25,6 +21,7 @@ type PromptAttachmentsOptions = {
   setPrompt: (value: string) => void
   getTextarea: () => HTMLTextAreaElement | null
   disabled?: Accessor<boolean>
+  active?: Accessor<boolean>
 }
 
 type PromptAttachments = {
@@ -39,8 +36,7 @@ type PromptAttachments = {
   handleDragOver: (e: DragEvent) => void
   handleDragLeave: (e: DragEvent) => void
   handleDrop: (e: DragEvent) => void
-  handleDeviceFileSelection: (files: FileList | readonly File[] | null) => Promise<void>
-  handleFilePathAttachment: (path: string, contents: string, options?: { encoding?: "utf-8" | "base64" }) => void
+  handleUploadFiles: () => void
 
   handleRemoveAttachment: (attachmentId: string) => void
   handleExpandTextAttachment: (attachment: Attachment) => void
@@ -49,11 +45,9 @@ type PromptAttachments = {
 export function usePromptAttachments(options: PromptAttachmentsOptions): PromptAttachments {
   const attachments = () => getAttachments(options.instanceId(), options.sessionId())
   const [isDragging, setIsDragging] = createSignal(false)
-  const [pendingFileReads, setPendingFileReads] = createSignal(0)
   const [pasteCount, setPasteCount] = createSignal(0)
   const [imageCount, setImageCount] = createSignal(0)
-  let disposed = false
-  onCleanup(() => { disposed = true })
+  const device = useDeviceAttachments({ ...options, inferMime: inferMimeTypeFromPath })
 
   function syncAttachmentCounters(currentPrompt: string) {
     const { highestPaste, highestImage } = findHighestAttachmentCounters(currentPrompt)
@@ -192,7 +186,9 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     removeAttachment(options.instanceId(), options.sessionId(), attachment.id)
 
     if (textarea) {
+      const owner = device.capture()
       setTimeout(() => {
+        if (!owner.current()) return
         textarea.focus()
         if (selectionTarget !== null) {
           textarea.setSelectionRange(selectionTarget, selectionTarget)
@@ -202,61 +198,17 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   }
 
   async function handlePaste(e: ClipboardEvent) {
+    if (options.disabled?.() || options.active?.() === false) return
     const items = e.clipboardData?.items
     if (!items) return
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-
-      if (item.type.startsWith("image/")) {
-        e.preventDefault()
-
-        const blob = item.getAsFile()
-        if (!blob) continue
-
-        const { highestImage } = findHighestAttachmentCounters(options.prompt())
-        const count = highestImage + 1
-        setImageCount(count)
-
-        const placeholder = formatImagePlaceholder(count)
-        const textarea = options.getTextarea()
-
-        if (textarea) {
-          const start = textarea.selectionStart
-          const end = textarea.selectionEnd
-          const currentText = options.prompt()
-          const newText = currentText.substring(0, start) + placeholder + currentText.substring(end)
-          options.setPrompt(newText)
-
-          setTimeout(() => {
-            const newCursorPos = start + placeholder.length
-            textarea.setSelectionRange(newCursorPos, newCursorPos)
-            textarea.focus()
-          }, 0)
-        } else {
-          options.setPrompt(options.prompt() + placeholder)
-        }
-
-        const reader = new FileReader()
-        reader.onload = () => {
-          const base64Data = (reader.result as string).split(",")[1]
-          const filename = `image-${count}.png`
-
-          const attachment = createFileAttachment(
-            filename,
-            filename,
-            "image/png",
-            new TextEncoder().encode(base64Data),
-            options.instanceFolder(),
-          )
-          attachment.url = `data:image/png;base64,${base64Data}`
-          attachment.display = placeholder
-          addAttachment(options.instanceId(), options.sessionId(), attachment)
-        }
-        reader.readAsDataURL(blob)
-
-        return
-      }
+    const files = Array.from(items).filter(item => item.kind === "file").flatMap(item => {
+      const file = item.getAsFile()
+      return file ? [file] : []
+    })
+    if (files.length) {
+      e.preventDefault()
+      await device.enqueue(files, true)
+      return
     }
 
     const pastedText = e.clipboardData?.getData("text/plain")
@@ -279,6 +231,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
       const filename = `paste-${count}.txt`
 
       const attachment = createTextAttachment(pastedText, display, filename)
+      const owner = device.capture()
       const placeholder = formatPastedPlaceholder(count)
       const textarea = options.getTextarea()
       if (textarea) {
@@ -289,6 +242,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
         options.setPrompt(newText)
 
         setTimeout(() => {
+          if (!owner.current()) return
           const newCursorPos = start + placeholder.length
           textarea.setSelectionRange(newCursorPos, newCursorPos)
           textarea.focus()
@@ -304,16 +258,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
   function handleDragOver(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (options.disabled?.() || pendingFileReads() > 0) {
+    if (options.disabled?.() || options.active?.() === false) {
       setIsDragging(false)
       return
     }
     setIsDragging(true)
-  }
-
-  function getFilenameFromPath(path: string) {
-    const normalized = path.replace(/\\/g, "/")
-    return normalized.split("/").pop() || path
   }
 
   function inferMimeTypeFromPath(path: string) {
@@ -366,136 +315,10 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     return imageMimeTypes[extension] ?? textMimeTypes[extension] ?? (extension === "pdf" ? "application/pdf" : "application/octet-stream")
   }
 
-  function showTooLargeFilesWarning(count: number) {
-    if (count <= 0) return
-    showToastNotification({
-      variant: "warning",
-      title: tGlobal("promptInput.attachFiles.skipped.title"),
-      message: tGlobal(
-        count === 1 ? "promptInput.attachFiles.tooLarge.one" : "promptInput.attachFiles.tooLarge.other",
-        { count },
-      ),
-    })
-  }
-
-  function showAttachmentBudgetWarning(count: number) {
-    if (count <= 0) return
-    showToastNotification({
-      variant: "warning",
-      title: tGlobal("promptInput.attachFiles.skipped.title"),
-      message: tGlobal(
-        count === 1 ? "promptInput.attachFiles.limit.one" : "promptInput.attachFiles.limit.other",
-        {
-          count,
-          maxFiles: PROMPT_INLINE_FILE_LIMITS.maxFiles,
-          maxMegabytes: PROMPT_INLINE_FILE_LIMITS.maxTotalBytes / (1024 * 1024),
-        },
-      ),
-    })
-  }
-
-  function showDeviceSelectionWarning(count: number) {
-    if (count <= 0) return
-    showToastNotification({
-      variant: "warning",
-      title: tGlobal("promptInput.attachFiles.skipped.title"),
-      message: tGlobal(
-        count === 1 ? "promptInput.attachFiles.deviceRejected.one" : "promptInput.attachFiles.deviceRejected.other",
-        {
-          count,
-          maxFileMegabytes: PROMPT_INLINE_FILE_LIMITS.maxFileBytes / (1024 * 1024),
-          maxFiles: PROMPT_INLINE_FILE_LIMITS.maxFiles,
-          maxTotalMegabytes: PROMPT_INLINE_FILE_LIMITS.maxTotalBytes / (1024 * 1024),
-        },
-      ),
-    })
-  }
-
-  function encodeBytesAsBase64(bytes: Uint8Array) {
-    let binary = ""
-    const chunkSize = 0x8000
-    for (let index = 0; index < bytes.length; index += chunkSize) {
-      const chunk = bytes.subarray(index, Math.min(index + chunkSize, bytes.length))
-      binary += String.fromCharCode(...chunk)
-    }
-    return btoa(binary)
-  }
-
-  function decodeBase64ToBytes(value: string) {
-    const binary = atob(value)
-    const bytes = new Uint8Array(binary.length)
-    for (let index = 0; index < binary.length; index++) {
-      bytes[index] = binary.charCodeAt(index)
-    }
-    return bytes
-  }
-
-  function attachFileData(
-    path: string,
-    filename: string,
-    mime: string,
-    data: Uint8Array,
-    previewUrl?: string,
-  ): "attached" | "too-large" | "budget" {
-    if (data.byteLength > PROMPT_INLINE_FILE_LIMITS.maxFileBytes) return "too-large"
-    const usage = getInlineFileUsage(attachments())
-    if (
-      usage.count + 1 > PROMPT_INLINE_FILE_LIMITS.maxFiles
-      || usage.bytes + data.byteLength > PROMPT_INLINE_FILE_LIMITS.maxTotalBytes
-    ) return "budget"
-    const attachment = createFileAttachment(path, filename, mime, data, options.instanceFolder())
-    attachment.url = previewUrl ?? `data:${mime};base64,${encodeBytesAsBase64(data)}`
-    addAttachment(options.instanceId(), options.sessionId(), attachment)
-    return "attached"
-  }
-
-  function handleFilePathAttachment(path: string, contents: string, attachmentOptions?: { encoding?: "utf-8" | "base64" }) {
-    if (options.disabled?.()) return
-    if (!path || path.trim().length === 0) return
-
-    const filename = getFilenameFromPath(path)
-    const mime = inferMimeTypeFromPath(path)
-    const data = attachmentOptions?.encoding === "base64" ? decodeBase64ToBytes(contents) : new TextEncoder().encode(contents)
-    const result = attachFileData(path, filename, mime, data)
-    if (result === "too-large") showTooLargeFilesWarning(1)
-    if (result === "budget") showAttachmentBudgetWarning(1)
-    options.getTextarea()?.focus()
-  }
-
   function handleDragLeave(e: DragEvent) {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
-  }
-
-  async function handleDeviceFileSelection(files: FileList | readonly File[] | null) {
-    if (options.disabled?.() || pendingFileReads() > 0) return
-    if (!files || files.length === 0) return
-
-    const instanceId = options.instanceId()
-    const sessionId = options.sessionId()
-    const isCurrent = () => !disposed && options.instanceId() === instanceId && options.sessionId() === sessionId
-    setPendingFileReads(count => count + 1)
-    try {
-      const result = await readDeviceFileSelection(files, attachments(), isCurrent)
-      if (result.stale || !isCurrent()) return
-
-      let commitRejections = 0
-      for (const selected of result.files) {
-        const filename = selected.file.name
-        const mime = selected.file.type || inferMimeTypeFromPath(filename)
-        const previewUrl = `data:${mime};base64,${encodeBytesAsBase64(selected.data)}`
-        if (attachFileData(filename, filename, mime, selected.data, previewUrl) !== "attached") {
-          commitRejections += 1
-        }
-      }
-      showDeviceSelectionWarning(
-        result.tooLargeCount + result.overBudgetCount + result.unreadableCount + commitRejections,
-      )
-    } finally {
-      setPendingFileReads(count => Math.max(0, count - 1))
-      if (isCurrent()) options.getTextarea()?.focus()
-    }
   }
 
   function handleDrop(e: DragEvent) {
@@ -503,9 +326,7 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     e.stopPropagation()
     setIsDragging(false)
 
-    if (options.disabled?.() || pendingFileReads() > 0) return
-
-    void handleDeviceFileSelection(e.dataTransfer?.files ?? null)
+    void device.enqueue(Array.from(e.dataTransfer?.files ?? []))
   }
 
   return {
@@ -515,12 +336,11 @@ export function usePromptAttachments(options: PromptAttachmentsOptions): PromptA
     syncAttachmentCounters,
     handlePaste,
     isDragging,
-    isReadingFiles: () => pendingFileReads() > 0,
+    isReadingFiles: device.isReadingFiles,
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    handleDeviceFileSelection,
-    handleFilePathAttachment,
+    handleUploadFiles: device.handleUploadFiles,
     handleRemoveAttachment,
     handleExpandTextAttachment,
   }

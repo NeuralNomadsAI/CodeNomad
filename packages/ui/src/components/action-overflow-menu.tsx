@@ -5,6 +5,7 @@ import { MoreHorizontal } from "lucide-solid"
 export interface ActionOverflowMenuItem {
   key: string
   label: string
+  description?: string
   icon?: JSXElement
   disabled?: boolean
   checked?: boolean
@@ -65,6 +66,8 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   role={typeof item.checked === "boolean" ? "menuitemcheckbox" : undefined}
                   aria-checked={typeof item.checked === "boolean" ? item.checked : undefined}
                   disabled={item.disabled}
+                  aria-description={item.description}
+                  title={item.description}
                   onPointerEnter={() => {
                     if (item.disabled) return
                     const previous = hoveredItem()
