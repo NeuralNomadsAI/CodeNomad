@@ -24,13 +24,25 @@ Incremental comparison with official OpenCode Desktop V2, including parity, clos
 
 September 2026 published API-contract census, verified compatibility failures, connection-scoped adapter proposal, support targets and cross-runtime acceptance roadmap. Start here for OpenCode upgrade and backward-compatibility work.
 
+### [OPENCODE_V2_POST_BETA.md](OPENCODE_V2_POST_BETA.md)
+
+Maintained stable-V2 transition plan: shared installation/required-update screen, bundled Node/npm proposal, support-policy decisions, adapter retirement map, historical-data acceptance and incremental release gates. Current runtime support remains unchanged.
+
 ### [DEV_V2_CODE_REDUCTION.md](DEV_V2_CODE_REDUCTION.md)
 
 Measured DEV-v2 growth analysis, maintainer position on test volume, ranked reduction candidates, and guardrails for later simplification without product regressions.
 
 ### [DEVELOPER_MODE.md](DEVELOPER_MODE.md)
 
-Persistent Electron/Tauri Developer Mode, OpenCode feedback tools, reconnect behavior, and trust boundaries.
+Always-available Electron/Tauri automation, OpenCode feedback tools, reconnect behavior, and trust boundaries (formerly Developer Mode).
+
+### [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)
+
+Autonomous native browser previews, shared automation bridge routing, host security, and focused validation.
+
+### [WORKTREE_SESSION_PLACEMENT.md](WORKTREE_SESSION_PLACEMENT.md)
+
+Native project/location versus CodeNomad conversation attachment, user-authorized movement, session instruction synchronization, and Windows directory-spelling diagnostics.
 
 ---
 

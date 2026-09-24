@@ -45,6 +45,9 @@ use windows_sys::Win32::System::JobObjects::{
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MISSING_NODE_PREFIX: &str = "CODENOMAD_MISSING_NODE:";
+#[cfg(test)]
+#[path = "cli_service_lifetime_tests.rs"]
+mod service_lifetime_tests;
 #[cfg(windows)]
 const CLI_SHUTDOWN_COMMAND: &[u8] = b"codenomad:shutdown\n";
 
@@ -470,7 +473,7 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
                     move |app| {
                         navigate
                             .with_current_generation(generation, || {
-                                app.get_webview_window(&target_label)
+                                app.get_webview(&target_label)
                                     .ok_or_else(|| {
                                         "local window not found for CLI navigation".to_string()
                                     })?
@@ -624,7 +627,7 @@ fn set_session_cookie(
     let cookie = local_session_cookie(base_url, cookie_name, session_id)?;
 
     for record in app.state::<crate::local_windows::LocalWindows>().records() {
-        if let Some(win) = app.get_webview_window(&record.label) {
+        if let Some(win) = app.get_webview(&record.label) {
             win.set_cookie(cookie.clone())?;
         }
     }

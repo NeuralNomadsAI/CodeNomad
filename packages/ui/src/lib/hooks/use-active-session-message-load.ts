@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { createEffect, createMemo, onCleanup } from "solid-js"
 
 /**
  * Dependencies for {@link useActiveSessionMessageLoad}. Everything is injected
@@ -13,14 +13,11 @@ export interface ActiveSessionMessageLoadDeps {
   instanceId: () => string
   /** The current session object (or undefined). Read reactively. */
   session: () => { id: string } | undefined
-  /** Optional reactive gate. Each false-to-true transition reloads the same session. */
-  shouldLoad?: () => boolean
   /** Loads the messages for a session. */
-  loadMessages: (
-    instanceId: string,
-    sessionId: string,
-    options?: { registerInvalidation?: (invalidate: () => void) => void },
-  ) => Promise<unknown> | void
+  loadMessages: (instanceId: string, sessionId: string, options?: {
+    signal?: AbortSignal
+    registerInvalidation?: (invalidate: () => void) => void
+  }) => Promise<void> | void
   /** Resolves once the instance's workspace metadata has hydrated. */
   waitForHydration: (instanceId: string) => Promise<void>
   /** Optional error sink for a rejected load. */
@@ -44,45 +41,30 @@ export interface ActiveSessionMessageLoadDeps {
  * preserving load-on-activation and load-on-switch behavior.
  */
 export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps): void {
-  const activeBinding = createMemo(() => {
-    const sessionId = deps.isActive() ? deps.session()?.id : undefined
-    return sessionId ? `${deps.instanceId()}\u0000${sessionId}` : null
-  })
-  const [reloadVersion, setReloadVersion] = createSignal(0)
-  let previousLoadBinding: string | null = null
+  const activeSessionId = createMemo(() => (deps.isActive() ? (deps.session()?.id ?? null) : null))
   createEffect(() => {
-    if (!deps.shouldLoad) return
-    const binding = activeBinding()
-    const loadBinding = binding && deps.shouldLoad() ? binding : null
-    if (loadBinding && loadBinding !== previousLoadBinding) setReloadVersion((value) => value + 1)
-    previousLoadBinding = loadBinding
-  })
-
-  createEffect(() => {
-    const binding = activeBinding()
-    if (deps.shouldLoad) {
-      reloadVersion()
-      if (!untrack(deps.shouldLoad)) return
-    }
-    if (!binding) return
-    const [instanceId, sessionId] = binding.split("\u0000")
-    let invalidate = () => {}
-    let cancelled = false
-    let pending = false
+    const sessionId = activeSessionId()
+    if (!sessionId) return
+    const instanceId = deps.instanceId()
+    const controller = new AbortController()
+    let invalidate: (() => void) | undefined
+    let settled = false
     onCleanup(() => {
-      cancelled = true
-      if (pending) invalidate()
+      // Release the old request's loading authority synchronously so a rapid
+      // return can start immediately, before the aborted promise settles.
+      if (!settled) invalidate?.()
+      controller.abort()
     })
     void Promise.resolve(deps.waitForHydration(instanceId))
       .then(() => {
         // Re-check after the async gate: the user may have switched away or to
         // a different session while metadata was hydrating.
-        if (cancelled || !deps.isActive() || deps.instanceId() !== instanceId || deps.session()?.id !== sessionId) return
-        pending = true
-        return Promise.resolve(deps.loadMessages(instanceId, sessionId, {
-          registerInvalidation: (next) => { invalidate = next },
-        })).finally(() => { pending = false })
+        if (controller.signal.aborted || !deps.isActive() || deps.session()?.id !== sessionId) return
+        return deps.loadMessages(instanceId, sessionId, {
+          signal: controller.signal, registerInvalidation: callback => { invalidate = callback },
+        })
       })
-      .catch((error) => deps.onError?.(error))
+      .catch((error) => { if (!controller.signal.aborted) deps.onError?.(error) })
+      .finally(() => { settled = true })
   })
 }

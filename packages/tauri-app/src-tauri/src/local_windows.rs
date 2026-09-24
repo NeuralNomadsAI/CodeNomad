@@ -3,7 +3,7 @@ use crate::identity::{local_window_id, local_window_label};
 use crate::launch::LaunchIntent;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, Webview, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const MAX_LOCAL_WINDOWS: usize = 16;
@@ -19,6 +19,7 @@ pub(crate) struct LocalWindowRecord {
     pending_folders: VecDeque<PendingFolder>,
     renderer_ready: bool,
     workspace_menu_enabled: bool,
+    pub(crate) view_menu_state: Option<crate::view_menu::ViewMenuState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ impl Registry {
             pending_folders: VecDeque::new(),
             renderer_ready: false,
             workspace_menu_enabled: false,
+            view_menu_state: None,
         };
         self.records.insert(label.clone(), record.clone());
         self.mark_focused(&label);
@@ -137,20 +139,35 @@ impl LocalWindows {
             .get_mut(label)
             .ok_or_else(|| "Unknown local window".to_string())?;
         record.workspace_menu_enabled = enabled;
+        if !enabled {
+            record.view_menu_state = None;
+        }
         Ok(())
     }
 
-    pub(crate) fn workspace_menu_enabled(&self, label: &str) -> bool {
-        self.registry
-            .lock()
-            .ok()
-            .and_then(|registry| {
-                registry
-                    .records
-                    .get(label)
-                    .map(|record| record.workspace_menu_enabled)
-            })
-            .unwrap_or(false)
+    pub(crate) fn set_view_menu_state(
+        &self,
+        label: &str,
+        state: Option<crate::view_menu::ViewMenuState>,
+    ) -> Result<(), String> {
+        let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
+        let record = registry.records.get_mut(label).ok_or("Unknown local window")?;
+        record.view_menu_state = state;
+        Ok(())
+    }
+
+    pub(crate) fn menu_state(
+        &self,
+        focused: Option<&str>,
+    ) -> (bool, Option<crate::view_menu::ViewMenuState>) {
+        let Ok(registry) = self.registry.lock() else {
+            return (false, None);
+        };
+        let label = select_local_label(focused, registry.mru_label().as_deref());
+        let record = label.as_ref().and_then(|label| registry.records.get(label));
+        record
+            .map(|record| (record.workspace_menu_enabled, record.view_menu_state.clone()))
+            .unwrap_or_default()
     }
 
     pub(crate) fn set_backend_target(&self, target: Option<String>) {
@@ -182,8 +199,8 @@ impl LocalWindows {
             record.renderer_ready
         };
         if ready {
-            if let Some(window) = app.get_webview_window(label) {
-                let _ = window.emit("desktop:folders-pending", ());
+            if let Some(webview) = app.get_webview(label) {
+                let _ = webview.emit("desktop:folders-pending", ());
             }
         }
         Ok(())
@@ -200,8 +217,8 @@ impl LocalWindows {
             !record.pending_folders.is_empty()
         };
         if pending {
-            if let Some(window) = app.get_webview_window(label) {
-                let _ = window.emit("desktop:folders-pending", ());
+            if let Some(webview) = app.get_webview(label) {
+                let _ = webview.emit("desktop:folders-pending", ());
             }
         }
         Ok(())
@@ -248,10 +265,19 @@ impl LocalWindows {
     }
 }
 
-pub(crate) fn focused_window(app: &AppHandle) -> Option<WebviewWindow> {
-    app.webview_windows()
+fn is_primary_webview_label(webview_label: &str, window_label: &str) -> bool {
+    webview_label == window_label
+}
+
+fn is_primary_webview(webview: &Webview) -> bool {
+    is_primary_webview_label(webview.label(), webview.window().label())
+}
+
+pub(crate) fn focused_window(app: &AppHandle) -> Option<Webview> {
+    app.webviews()
         .into_values()
-        .find(|window| window.is_focused().unwrap_or(false))
+        .filter(is_primary_webview)
+        .find(|webview| webview.window().is_focused().unwrap_or(false))
 }
 
 fn select_local_label(focused: Option<&str>, mru: Option<&str>) -> Option<String> {
@@ -264,25 +290,26 @@ fn select_local_label(focused: Option<&str>, mru: Option<&str>) -> Option<String
     }
 }
 
-pub(crate) fn focused_local_window(app: &AppHandle) -> Option<WebviewWindow> {
+pub(crate) fn focused_local_window(app: &AppHandle) -> Option<Webview> {
     let focused = focused_window(app);
     let mru = app.state::<LocalWindows>().mru_label();
-    let label = select_local_label(focused.as_ref().map(WebviewWindow::label), mru.as_deref())?;
-    app.get_webview_window(&label)
+    let label = select_local_label(focused.as_ref().map(Webview::label), mru.as_deref())?;
+    app.get_webview(&label)
 }
 
-pub(crate) fn targeted_window(app: &AppHandle) -> Option<WebviewWindow> {
+pub(crate) fn targeted_window(app: &AppHandle) -> Option<Webview> {
     focused_window(app).or_else(|| {
         app.state::<LocalWindows>()
             .mru_label()
-            .and_then(|label| app.get_webview_window(&label))
+            .and_then(|label| app.get_webview(&label))
     })
 }
 
 pub(crate) fn focus(app: &AppHandle, label: &str) -> bool {
-    let Some(window) = app.get_webview_window(label) else {
+    let Some(webview) = app.get_webview(label) else {
         return false;
     };
+    let window = webview.window();
     if window.is_minimized().unwrap_or(false) {
         let _ = window.unminimize();
     }
@@ -450,7 +477,7 @@ pub(crate) fn navigate_window(app: &AppHandle, label: &str, target: &str, kind: 
         kind,
         Some(url.clone()),
         move |app| {
-            app.get_webview_window(&label_for_navigation)
+            app.get_webview(&label_for_navigation)
                 .ok_or_else(|| "local window not found for navigation".to_string())?
                 .navigate(url)
                 .map_err(|error| error.to_string())
@@ -472,8 +499,8 @@ pub(crate) fn show_loading_all(app: &AppHandle) {
 
 pub(crate) fn emit_all(app: &AppHandle, event: &str, payload: impl serde::Serialize + Clone) {
     for record in app.state::<LocalWindows>().records() {
-        if let Some(window) = app.get_webview_window(&record.label) {
-            let _ = window.emit(event, payload.clone());
+        if let Some(webview) = app.get_webview(&record.label) {
+            let _ = webview.emit(event, payload.clone());
         }
     }
     if let Some(window) = app.get_webview_window(crate::preferences_window::LABEL) {
@@ -483,35 +510,35 @@ pub(crate) fn emit_all(app: &AppHandle, event: &str, payload: impl serde::Serial
 
 #[tauri::command]
 pub(crate) fn desktop_launch_ready(
-    window: WebviewWindow,
+    webview: Webview,
     app: AppHandle,
     windows: tauri::State<'_, LocalWindows>,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), String> {
-    crate::require_local_app_window(&window, &state)?;
-    windows.renderer_ready(&app, window.label())
+    crate::require_local_app_webview(&webview, &state)?;
+    windows.renderer_ready(&app, webview.label())
 }
 
 #[tauri::command]
 pub(crate) fn desktop_launch_next_folder(
-    window: WebviewWindow,
+    webview: Webview,
     windows: tauri::State<'_, LocalWindows>,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<String>, String> {
-    crate::require_local_app_window(&window, &state)?;
-    windows.next_folder(window.label())
+    crate::require_local_app_webview(&webview, &state)?;
+    windows.next_folder(webview.label())
 }
 
 #[tauri::command]
 pub(crate) fn desktop_launch_acknowledge_folder(
-    window: WebviewWindow,
+    webview: Webview,
     windows: tauri::State<'_, LocalWindows>,
     state: tauri::State<'_, crate::AppState>,
     folder: String,
     opened: bool,
 ) -> Result<(), String> {
-    crate::require_local_app_window(&window, &state)?;
-    windows.acknowledge_folder(window.label(), &folder, opened)
+    crate::require_local_app_webview(&webview, &state)?;
+    windows.acknowledge_folder(webview.label(), &folder, opened)
 }
 
 #[cfg(test)]

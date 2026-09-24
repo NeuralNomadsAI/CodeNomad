@@ -9,8 +9,8 @@ import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
-import { normalizeRuntimeEvent } from "../opencode/compatibility/events"
 import { locationRequestOptions } from "../opencode/compatibility/location"
+import { assertSupportedOpenCode } from "../opencode/runtime-support"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -18,12 +18,16 @@ const CONNECTION_RECHECK_INTERVAL_MS = 30_000
 export interface OpenCodeServiceLifecycle {
   discover: (deadlineAt?: number) => Promise<Endpoint | undefined>
   ensure: (deadlineAt?: number) => Promise<Endpoint>
+  restart?: (deadlineAt?: number) => Promise<Endpoint>
 }
 
 export type OpenCodeSharedServiceOptions = {
   kind: "lifecycle"
   identity: string
   lifecycle: OpenCodeServiceLifecycle
+  // False leaves the service usable and retries optional provisioning on its
+  // next acquisition; the caller reports installation/discovery failures.
+  prepareDesktopPlugins?: (connection: ServiceConnection, deadlineAt?: number) => Promise<boolean>
 }
 
 export interface ServiceConnection {
@@ -52,6 +56,7 @@ export class OpenCodeSharedService {
   private connectionValidatedAt?: number
   private generation = 0
   private readonly negotiationControllers = new WeakMap<ServiceConnection, AbortController>()
+  private readonly pluginPreparations = new WeakMap<ServiceConnection, Promise<boolean>>()
 
   constructor(private readonly dependencies: OpenCodeSharedServiceDependencies = {
     headers: Service.headers,
@@ -143,6 +148,27 @@ export class OpenCodeSharedService {
   }
 
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
+    return this.connectService(options, deadlineAt).then(async connection => {
+      if (await connection.profile() !== "modern") throw new Error("Unsupported OpenCode runtime contract")
+      const prepare = this.serviceOptions?.prepareDesktopPlugins
+      if (!prepare) return connection
+      connection.assertCurrent()
+      let pending = this.pluginPreparations.get(connection)
+      if (!pending) {
+        pending = prepare(connection, deadlineAt).then(ready => {
+          if (!ready) this.pluginPreparations.delete(connection)
+          return ready
+        })
+        this.pluginPreparations.set(connection, pending)
+        void pending.catch(() => this.pluginPreparations.delete(connection))
+      }
+      await pending
+      connection.assertCurrent()
+      return connection
+    })
+  }
+
+  private connectService(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     try {
       this.pinServiceOptions(options)
     } catch (error) {
@@ -160,7 +186,7 @@ export class OpenCodeSharedService {
     }
     const generation = this.generation
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
-      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
+      if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
       if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
         this.connectionValidatedAt = this.now()
         return current
@@ -168,7 +194,7 @@ export class OpenCodeSharedService {
       this.invalidateConnection(current)
       return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
     }, () => {
-      if (generation !== this.generation || this.connected !== current) return this.connect(undefined, deadlineAt)
+      if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
       this.invalidateConnection(current)
       return this.startConnection(deadlineAt)
     })
@@ -200,6 +226,10 @@ export class OpenCodeSharedService {
   }
 
   private createConnection(endpoint: Endpoint, generation: number): ServiceConnection {
+    const runtime = runtimeIdentity(endpoint)
+    // Real CLI lifecycles attach authenticated metadata. Admission precedes
+    // client construction and plugin provisioning for proxy and direct callers.
+    if (runtime) assertSupportedOpenCode(runtime.version)
     const wildcard = new URL(endpoint.url).hostname === "0.0.0.0"
     const url = assertLoopbackServiceUrl(endpoint.url)
     if (wildcard) {
@@ -265,7 +295,7 @@ export class OpenCodeSharedService {
     try {
       for await (const event of events) {
         connection.assertCurrent()
-        yield normalizeRuntimeEvent(event)
+        yield event
       }
     } finally {
       this.invalidateConnection(connection)

@@ -33,7 +33,8 @@ function presets(values: Record<ToolCallExpansionPreset, VisibilityPreference>) 
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "bash",
-    label: "bash",
+    label: "shell",
+    aliases: ["shell"],
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
@@ -64,12 +65,18 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "apply_patch",
     label: "apply_patch",
-    configurable: true,
+    configurable: false,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
   {
     tool: "webfetch",
     label: "webfetch",
+    configurable: true,
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+  },
+  {
+    tool: "websearch",
+    label: "websearch",
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
   },
@@ -88,12 +95,19 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
     tool: "todowrite",
     label: "todowrite",
-    configurable: true,
+    configurable: false,
     expansionPresets: presets({ minimal: expanded, balanced: expanded, detailed: expanded, everything: expanded }),
   },
   {
     tool: "task",
-    label: "task",
+    label: "subagent",
+    aliases: ["subagent"],
+    configurable: true,
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+  },
+  {
+    tool: "execute",
+    label: "execute",
     configurable: true,
     expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
   },
@@ -138,6 +152,16 @@ export function getToolRegistryEntry(toolName: string): ToolRegistryEntry {
   return registryMap[toolName] ?? otherToolEntry
 }
 
+// Registry tool id for a raw tool name, following aliases (e.g. "subagent" → "task").
+// Unregistered tools map to OTHER_TOOL_NAME.
+export function getCanonicalToolName(toolName: string): string {
+  return getToolRegistryEntry(toolName).tool
+}
+
+export function getRegisteredToolEntries(): ToolRegistryEntry[] {
+  return TOOL_REGISTRY
+}
+
 export function getConfigurableToolEntries(): ToolRegistryEntry[] {
   return TOOL_REGISTRY.filter((entry) => entry.configurable)
 }
@@ -151,7 +175,10 @@ export function buildToolExpansionPresetDefaults(preset: ToolCallExpansionPreset
 }
 
 export function resolveToolVisibility(preferences: Preferences, toolName: string): VisibilityPreference {
-  const entry = getToolRegistryEntry(toolName)
+  const registered = getToolRegistryEntry(toolName)
+  // Retired tools retain their historical renderers, but follow the visible
+  // "Other tools" control rather than inaccessible saved per-tool overrides.
+  const entry = registered.configurable ? registered : otherToolEntry
   const defaults = preferences.toolCallExpansionDefaults
   const presetMode = defaults.preset === "custom" ? undefined : entry.expansionPresets[defaults.preset]
   const otherPresetMode = defaults.preset === "custom" ? undefined : otherToolEntry.expansionPresets[defaults.preset]

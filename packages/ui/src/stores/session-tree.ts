@@ -1,4 +1,5 @@
 import type { Session } from "../types/session"
+import { normalizeSessionDirectory } from "./session-list-options"
 
 export type SessionThread = {
   session: Session
@@ -17,16 +18,70 @@ export type VisibleSessionRow = {
   expanded: boolean
 }
 
-export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
+export type SessionFamilySort = "activity" | "name" | "worktree"
+
+type SessionFamilyProjection = {
+  matchesSession?: (session: Session) => boolean
+  worktreeDirectory?: string
+  sort: SessionFamilySort
+  getWorktreeLabel: (directory: string) => string
+}
+
+function someSession(thread: SessionThread, predicate: (session: Session) => boolean): boolean {
+  return predicate(thread.session) || thread.children.some((child) => someSession(child, predicate))
+}
+
+export function projectSessionFamilies(
+  threads: SessionThread[],
+  options: SessionFamilyProjection,
+): SessionThread[] {
+  const worktreeDirectory = normalizeSessionDirectory(options.worktreeDirectory)
+  const projected = threads.filter((thread) => {
+    if (options.matchesSession && !someSession(thread, options.matchesSession)) return false
+    if (!worktreeDirectory) return true
+    return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
+  })
+
+  return [...projected].sort((left, right) => {
+    if (options.sort === "activity") {
+      return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
+    }
+    if (options.sort === "name") {
+      return (left.session.title ?? "").localeCompare(right.session.title ?? "") || left.session.id.localeCompare(right.session.id)
+    }
+    const leftLabel = options.getWorktreeLabel(left.session.location?.directory ?? "")
+    const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
+    return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
+  })
+}
+
+// Search rows are independent leaves: filtering, sorting and selection all use
+// the session itself, without adding ancestors or inheriting descendant activity.
+export function projectSessionSearchResults(
+  sessions: Iterable<Session>,
+  options: SessionFamilyProjection & { includeMainSessions: boolean; includeSubsessions: boolean },
+): SessionThread[] {
+  const rows = new Map<string, SessionThread>()
+  for (const session of sessions) {
+    if (session.parentId && !options.includeSubsessions) continue
+    if (!session.parentId && !options.includeMainSessions) continue
+    rows.set(session.id, { session, children: [], depth: 0, hasChildren: false, latestUpdated: session.time.updated })
+  }
+  return projectSessionFamilies([...rows.values()], options)
+}
+
+export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null
+  const inScope = (session: Session) => !directoryOnly || normalizeSessionDirectory(session.location.directory) === normalizeSessionDirectory(directoryOnly)
+  if (!inScope(current)) return null
 
   const seen = new Set<string>()
   while (current.parentId) {
     if (seen.has(current.id)) return null
     seen.add(current.id)
     const parent = instanceSessions.get(current.parentId)
-    if (!parent) return null
+    if (!parent || !inScope(parent)) return directoryOnly ? current : null
     current = parent
   }
   return current
@@ -100,6 +155,7 @@ export function buildSessionThreadsFromMap(
   instanceSessions: Map<string, Session>,
   rootIds: string[],
   includedDescendantIds?: Set<string>,
+  directoryOnly?: string,
 ): SessionThread[] {
   let includedIds: Set<string> | null = null
   if (includedDescendantIds) {
@@ -112,6 +168,7 @@ export function buildSessionThreadsFromMap(
 
   const childrenByParent = new Map<string, Session[]>()
   for (const session of instanceSessions.values()) {
+    if (directoryOnly && normalizeSessionDirectory(session.location.directory) !== normalizeSessionDirectory(directoryOnly)) continue
     if (!session.parentId || (includedIds && !includedIds.has(session.id))) continue
     const children = childrenByParent.get(session.parentId)
     if (children) children.push(session)
@@ -124,7 +181,7 @@ export function buildSessionThreadsFromMap(
     if (seenRootIds.has(rootId)) continue
     seenRootIds.add(rootId)
     const root = instanceSessions.get(rootId)
-    if (!root || root.parentId !== null) continue
+    if (!root || getSessionRootFromMap(instanceSessions, root.id, directoryOnly)?.id !== root.id) continue
     const thread = buildThread(root, childrenByParent, 0, new Set())
     if (thread) threads.push(thread)
   }

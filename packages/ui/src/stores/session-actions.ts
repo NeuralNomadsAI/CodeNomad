@@ -6,6 +6,8 @@ import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
+import { planSessionTechnicalPartDeletion, executeSessionTechnicalPartDeletion } from "./session-history"
+export type { SessionTechnicalPartDeletionPlan } from "./session-history"
 import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
 import type { ClientPart } from "../types/message"
 
@@ -18,18 +20,10 @@ import { messageStoreBus } from "./message-v2/bus"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
-import { clearConversationPlaybackForSession, isConversationModeEnabled } from "./conversation-speech"
+import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { syncSessionInstructions } from "./session-instructions"
 
 const log = getLogger("actions")
-const VOICE_MODE_INSTRUCTION_KEY = "codenomad.voice-mode"
-const VOICE_MODE_INSTRUCTION = [
-  "Voice conversation mode is enabled.",
-  "Prepend your reply with a fenced code block using language `spoken`.",
-  "The `spoken` block should be a concise, natural spoken gist of the full response in 2 to 4 sentences.",
-  "Do not include code, bullet lists, markdown formatting, or long technical detail in the spoken block.",
-  "After the `spoken` block, continue with your normal detailed response.",
-].join("\n\n")
-const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void> }>()
 const technicalPartUpdates = new Map<string, Promise<void>>()
 const sessionAdmissions = new Map<string, Promise<unknown>>()
 
@@ -107,37 +101,6 @@ function serializeTechnicalPartUpdate(
   })
   technicalPartUpdates.set(key, settled)
   return settled
-}
-
-async function syncVoiceModeInstruction(client: ReturnType<typeof getRootClient>, instanceId: string, sessionId: string): Promise<void> {
-  const key = `${instanceId}:${sessionId}`
-  const existing = voiceInstructionSyncs.get(key)
-  if (existing) {
-    existing.desired = isConversationModeEnabled(instanceId)
-    return existing.running
-  }
-
-  const state = { desired: isConversationModeEnabled(instanceId), running: Promise.resolve() }
-  state.running = (async () => {
-    try {
-      let applied: boolean | undefined
-      while (applied !== state.desired) {
-        const desired = state.desired
-        const instruction = client.session.instructions.entry
-        if (desired) {
-          await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
-        } else {
-          await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
-        }
-        applied = desired
-        state.desired = isConversationModeEnabled(instanceId)
-      }
-    } finally {
-      if (voiceInstructionSyncs.get(key) === state) voiceInstructionSyncs.delete(key)
-    }
-  })()
-  voiceInstructionSyncs.set(key, state)
-  return state.running
 }
 
 function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
@@ -374,7 +337,7 @@ async function sendMessage(
       if (!currentInstance?.client) throw new Error("Instance not ready")
       if (!currentSession) throw new Error("Session not found")
       const client = getRootClient(instanceId)
-      await syncVoiceModeInstruction(client, instanceId, sessionId)
+      await syncSessionInstructions(client, instanceId, sessionId)
       if (options.delivery !== "queue") {
         if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
         if (currentSession.model.providerId && currentSession.model.modelId) {
@@ -415,7 +378,7 @@ async function executeCustomCommand(
     if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
     if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
     const client = getRootClient(instanceId)
-    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await syncSessionInstructions(client, instanceId, sessionId)
     await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" })
   }, { optimisticGeneration: false })
 }
@@ -435,7 +398,7 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
     if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
     if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
     const client = getRootClient(instanceId)
-    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await syncSessionInstructions(client, instanceId, sessionId)
     await client.session.shell({ sessionID: sessionId, command })
   })
 }
@@ -583,14 +546,6 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
-async function moveSession(instanceId: string, sessionId: string, directory: string): Promise<void> {
-  if (!directory.trim()) throw new Error("Session directory is required")
-  await getRootClient(instanceId).session.move({ sessionID: sessionId, directory })
-  withSession(instanceId, sessionId, (session) => {
-    session.location = { directory }
-  })
-}
-
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
   await admitSessionAction(instanceId, sessionId, async () => {
     if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
@@ -707,56 +662,6 @@ async function deleteTechnicalPartGroup(
   }
 }
 
-export interface SessionTechnicalPartDeletionPlan {
-  instanceId: string
-  sessionId: string
-  toolCount: number
-  reasoningCount: number
-  messageIds: string[]
-}
-
-async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string): Promise<SessionTechnicalPartDeletionPlan> {
-  const client = getRootClient(instanceId)
-  const messageIds: string[] = []
-  const seenCursors = new Set<string>()
-  let cursor: string | undefined
-  let toolCount = 0
-  let reasoningCount = 0
-
-  for (;;) {
-    const response = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: "asc" }) })
-    for (const message of response.data) {
-      if (message.type !== "assistant" || !message.time.completed) continue
-      const tools = message.content.filter((part) => part.type === "tool").length
-      const reasoning = message.content.filter((part) => part.type === "reasoning").length
-      if (tools + reasoning === 0) continue
-      toolCount += tools
-      reasoningCount += reasoning
-      messageIds.push(message.id)
-    }
-
-    const next = response.cursor?.next ?? undefined
-    if (!next) break
-    if (seenCursors.has(next)) throw new Error("Repeated message cursor")
-    seenCursors.add(next)
-    cursor = next
-  }
-
-  return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
-}
-
-async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<string[]> {
-  const failures: string[] = []
-  for (const messageId of plan.messageIds) {
-    try {
-      await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error))
-    }
-  }
-  return failures
-}
-
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {
   await getRootClient(instanceId).session.background({ sessionID: sessionId })
 }
@@ -772,7 +677,6 @@ export {
   executeSessionTechnicalPartDeletion,
   planSessionTechnicalPartDeletion,
   renameSession,
-  moveSession,
   runShellCommand,
   sendMessage,
   updateSessionAgent,

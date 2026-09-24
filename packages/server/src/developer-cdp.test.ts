@@ -106,6 +106,22 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("keeps window-scoped tools usable across session/project navigation and empty views", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const window = { endpoint: identity.endpoint, runId: identity.runId, windowId: identity.windowId }
+    try {
+      const first = await client.inspect(window)
+      chrome.context = { ...chrome.context, sessionId: "another-session", instanceId: "another-project" }
+      await client.act({ ...window, kind: "click", ref: first.nodes[0].ref! })
+      assert.equal((await client.inspect(window)).context.sessionId, "another-session")
+      chrome.context = { windowId: "window-1", sessionId: null, instanceId: null } as never
+      assert.equal((await client.inspect(window)).context.sessionId, null)
+      chrome.context = { ...chrome.context, windowId: "another-window" }
+      await assert.rejects(client.screenshot(window), /window or active session changed/)
+    } finally { client.close() }
+  })
+
   it("matches out-of-order protocol responses and drains runtime diagnostics on inspect", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()

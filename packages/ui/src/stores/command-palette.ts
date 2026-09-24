@@ -1,13 +1,17 @@
-import { createSignal } from "solid-js"
+import { batch, createSignal } from "solid-js"
 
 const [openStates, setOpenStates] = createSignal<Map<string, boolean>>(new Map())
+const [focusRequests, setFocusRequests] = createSignal(new Map<string, number>())
 
 function updateState(instanceId: string, open: boolean) {
-  setOpenStates((prev) => {
-    const next = new Map(prev)
-    next.set(instanceId, open)
-    return next
+  batch(() => {
+    setOpenStates((prev) => new Map(prev).set(instanceId, open))
+    if (open) setFocusRequests(prev => new Map(prev).set(instanceId, (prev.get(instanceId) ?? 0) + 1))
   })
+}
+
+export function getCommandPaletteFocusRequest(instanceId: string): number {
+  return focusRequests().get(instanceId) ?? 0
 }
 
 export function showCommandPalette(instanceId: string) {

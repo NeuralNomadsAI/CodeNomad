@@ -1,11 +1,13 @@
-import { createSignal, onCleanup, onMount, type Component } from "solid-js"
+import { batch, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
+import OpenCodeSetup from "./opencode-setup"
 import { SettingsScreen } from "./settings-screen"
 import {
   getNativePreferencesRequest,
   acceptNativePreferencesRequest,
   markNativePreferencesReady,
+  onNativePreferencesFlushRequested,
   onNativePreferencesCloseRequested,
   onNativePreferencesTransitionRequested,
   onNativePreferencesRequest,
@@ -22,20 +24,43 @@ export const PreferencesWindow: Component = () => {
   const subscriptions: Array<() => void> = []
   let requestQueue = Promise.resolve()
   let closePromise: Promise<void> | undefined
+  let scrollTop = 0
+  let scrollTimer: ReturnType<typeof setTimeout> | undefined
+  let persistenceQueue = Promise.resolve()
+  const persist = (next: () => NativePreferencesRequest, generation?: number) => {
+    persistenceQueue = persistenceQueue.catch(() => undefined).then(() => acceptNativePreferencesRequest(next(), generation))
+    return persistenceQueue
+  }
+  const flushScroll = (generation?: number) => {
+    clearTimeout(scrollTimer)
+    scrollTimer = undefined
+    return persist(() => ({ ...request(), scrollTop }), generation)
+  }
+  const flush = async (generation?: number) => {
+    await requestQueue.catch(() => undefined)
+    await flushScroll(generation)
+  }
 
   const applyRequest = async (next: NativePreferencesRequest, guard = true) => {
     if (guard && !(await confirmSettingsDiscard())) return
-    if (guard) await acceptNativePreferencesRequest(next)
+    clearTimeout(scrollTimer)
+    if (guard) await persist(() => next)
     const previousInstanceId = request().instanceId
     if (previousInstanceId && previousInstanceId !== next.instanceId) sdkManager.destroyClientsForInstance(previousInstanceId)
-    setRequest(next)
-    setActiveSettingsSection(next.section)
+    scrollTop = next.scrollTop ?? 0
+    batch(() => {
+      setRequest(next)
+      setActiveSettingsSection(next.section)
+    })
   }
 
-  const close = async () => {
+  const close = async (guard = true) => {
     if (closePromise) return closePromise
     closePromise = (async () => {
-      if (await confirmSettingsDiscard()) await runNativeWindowAction("close")
+      if (!guard || await confirmSettingsDiscard()) {
+        await flush()
+        await runNativeWindowAction("close")
+      }
     })().finally(() => {
       closePromise = undefined
     })
@@ -48,6 +73,7 @@ export const PreferencesWindow: Component = () => {
     let requestGuardReady = false
     let closeGuardReady = false
     let transitionGuardReady = false
+    let flushGuardReady = false
     void (async () => {
       try {
         const stop = await onNativePreferencesRequest((next) => {
@@ -78,6 +104,7 @@ export const PreferencesWindow: Component = () => {
         const stop = await onNativePreferencesTransitionRequested((id) => {
           requestQueue = requestQueue.catch(() => undefined).then(async () => {
             const approved = await confirmSettingsDiscard()
+            if (approved) await flushScroll()
             await resolveNativePreferencesTransition(id, approved)
           })
         })
@@ -87,10 +114,19 @@ export const PreferencesWindow: Component = () => {
       } catch {
         // The host keeps the current document if a guarded transition cannot be confirmed.
       }
-      if (requestGuardReady && closeGuardReady && transitionGuardReady) await markNativePreferencesReady()
+      try {
+        const stop = await onNativePreferencesFlushRequested(flush)
+        if (!mounted) return stop()
+        subscriptions.push(stop)
+        flushGuardReady = true
+      } catch {
+        // Readiness also guarantees that native shutdown can drain pending view writes.
+      }
+      if (requestGuardReady && closeGuardReady && transitionGuardReady && flushGuardReady) await markNativePreferencesReady()
     })()
     onCleanup(() => {
       mounted = false
+      clearTimeout(scrollTimer)
       subscriptions.splice(0).forEach((stop) => stop())
       const instanceId = request().instanceId
       if (instanceId) sdkManager.destroyClientsForInstance(instanceId)
@@ -102,14 +138,23 @@ export const PreferencesWindow: Component = () => {
       <SettingsScreen
         standalone
         providerContext={{ instanceId: request().instanceId, location: request().location }}
+        scrollPosition={request()}
+        onScrollPositionChange={(top) => {
+          scrollTop = top
+          clearTimeout(scrollTimer)
+          scrollTimer = setTimeout(() => { void flushScroll().catch(() => undefined) }, 150)
+        }}
         onSectionChange={async (section) => {
-          const next = { ...request(), section }
-          await acceptNativePreferencesRequest(next)
+          clearTimeout(scrollTimer)
+          const next = { ...request(), section, scrollTop: 0 }
+          await persist(() => next)
+          scrollTop = 0
           setRequest(next)
         }}
-        onClose={() => runNativeWindowAction("close")}
+        onClose={() => close(false)}
       />
       <AlertDialog />
+      <OpenCodeSetup automatic={false} />
       <Toaster
         position="top-right"
         gutter={16}

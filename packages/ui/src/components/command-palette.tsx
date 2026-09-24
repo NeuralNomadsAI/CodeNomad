@@ -1,11 +1,13 @@
-import { Component, createSignal, For, Show, createEffect, createMemo } from "solid-js"
-import { Dialog } from "@kobalte/core/dialog"
+import { Component, createSignal, For, Show, createEffect, createMemo, on } from "solid-js"
+import DismissibleWindow from "./dismissible-window"
 import { resolveResolvable, type Command } from "../lib/commands"
 import Kbd from "./kbd"
 import { useI18n } from "../lib/i18n"
 
 interface CommandPaletteProps {
+  id: string
   open: boolean
+  focusRequest: number
   onClose: () => void
   commands: Command[]
   onExecute: (command: Command) => void
@@ -130,9 +132,12 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       setQuery("")
       setSelectedCommandId(null)
       setIsPointerSelecting(false)
-      setTimeout(() => inputRef?.focus(), 100)
     }
   })
+
+  createEffect(on(() => props.focusRequest, () => {
+    if (props.open) inputRef?.focus({ preventScroll: true })
+  }))
  
   createEffect(() => {
     const ordered = orderedCommands()
@@ -163,13 +168,6 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
 
   function handleKeyDown(e: KeyboardEvent) {
     const ordered = orderedCommands()
-
-    if (e.key === "Escape") {
-      e.preventDefault()
-      e.stopPropagation()
-      props.onClose()
-      return
-    }
 
     if (ordered.length === 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
@@ -218,16 +216,15 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
  
   return (
 
-    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
-            <Dialog.Content
-              class="modal-surface w-full max-w-2xl max-h-[60vh]"
-              onKeyDown={handleKeyDown}
-            >
-              <Dialog.Title class="sr-only">{t("commandPalette.title")}</Dialog.Title>
-              <Dialog.Description class="sr-only">{t("commandPalette.description")}</Dialog.Description>
+    <DismissibleWindow
+      id={props.id}
+      open={props.open}
+      onClose={props.onClose}
+      title={t("commandPalette.title")}
+      description={t("commandPalette.description")}
+      class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[60vh]"
+      onKeyDown={handleKeyDown}
+    >
 
             <div class="modal-search-container">
               <div class="flex items-center gap-3">
@@ -312,10 +309,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                 </For>
               </Show>
             </div>
-          </Dialog.Content>
-        </div>
-      </Dialog.Portal>
-    </Dialog>
+    </DismissibleWindow>
   )
 }
 

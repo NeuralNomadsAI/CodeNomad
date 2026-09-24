@@ -11,7 +11,8 @@ export const editRenderer: ToolRenderer = {
     const state = toolState()
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
-    const filePath = typeof input.filePath === "string" ? input.filePath : ""
+    const filePath =
+      typeof input.filePath === "string" ? input.filePath : typeof input.path === "string" ? input.path : ""
     if (!filePath) return getToolName("edit")
     return `${getToolName("edit")} ${getRelativePath(filePath)}`
   },

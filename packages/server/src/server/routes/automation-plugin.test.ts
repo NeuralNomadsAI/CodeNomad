@@ -4,7 +4,7 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
-test("fences Developer Mode by the visible owned session and forwards CDP actions", async () => {
+test("targets the inspected window independently of the visible conversation", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: Array<{ method: string; params: unknown }> = []
   let state = "ready"
@@ -34,8 +34,8 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
       },
     },
     developerCdp: {
-      context: async (identity: { sessionId: string }) => {
-        if (identity.sessionId !== visibleSession) throw new Error("active session mismatch")
+      context: async (identity: { sessionId?: string }) => {
+        assert.equal(identity.sessionId, undefined)
         return { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession }
       },
       inspect: async (identity: unknown) => {
@@ -48,6 +48,10 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
         }
       },
       close: () => undefined,
+      act: async (identity: { sessionId?: string; instanceId?: string }) => {
+        assert.equal(identity.sessionId, undefined)
+        assert.equal(identity.instanceId, undefined)
+      },
     },
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
@@ -70,10 +74,11 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
     endpoint: "http://127.0.0.1:9222",
     runId: "run-1",
     windowId: "window-1",
-    sessionId: "session-1",
-    instanceId: "workspace-1",
   })
   assert.equal(inspect.json().result.context.sessionId, "session-1")
+
+  visibleSession = "session-2"
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
 
   const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
   assert.equal(restart.statusCode, 200)
@@ -81,7 +86,8 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
     { method: "developer.status", params: {} },
     { method: "developer.restart", params: {} },
   ])
-  assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
+  assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })).statusCode, 404)
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
@@ -92,5 +98,53 @@ test("fences Developer Mode by the visible owned session and forwards CDP action
 
   const unauthorized = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, payload: { mode: "developer-probe", sessionID: "session-1" } })
   assert.equal(unauthorized.statusCode, 401)
+  await app.close()
+})
+
+test("browser works with an unavailable developer target and unrelated inventory failure", async () => {
+  const app = Fastify({ logger: false })
+  const nativeCalls: Array<{ method: string; params: unknown }> = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true },
+    bridgeToken: "secret",
+    nativeParent: {
+      request: async (method: string, params: unknown) => {
+        nativeCalls.push({ method, params })
+        return method === "developer.status" ? { status: { state: "stopped" } }
+          : method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
+      },
+    },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
+      list: () => [{ id: "unrelated-worktree" }, { id: "workspace-1" }],
+      ownsLocation: async (id: string) => {
+        if (id === "unrelated-worktree") throw new Error("Native worktree inventory is unavailable")
+        return true
+      },
+    },
+  } as never)
+
+  const request = async (body: Record<string, unknown>) => app.inject({
+    method: "POST",
+    url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" },
+    payload: body,
+  })
+
+  assert.equal((await request({ mode: "browser-claim", sessionID: "session-1" })).statusCode, 200)
+  assert.equal(nativeCalls.length, 0)
+  assert.equal((await request({ mode: "browser-probe", sessionID: "session-1" })).statusCode, 200)
+  const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
+  assert.equal(open.statusCode, 200)
+  assert.deepEqual(nativeCalls, [
+    { method: "browser.probe", params: { sessionID: "session-1" } },
+    {
+      method: "browser.execute",
+      params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
+    },
+  ])
+  const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
+  assert.equal(developer.statusCode, 404)
+  assert.match(developer.json().error, /Native automation has no active/)
   await app.close()
 })

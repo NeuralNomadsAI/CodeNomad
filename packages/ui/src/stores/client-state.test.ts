@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
+import { normalizePersistedOutline } from "./session-outline-persistence.ts"
 type ClientState = typeof import("./client-state.ts")
 type NativeApi = Record<string, (...args: any[]) => any>; type TransactionKind = "clear" | "disable"
 const layoutKey = "opencode-session-sidebar-width-v8"; let moduleId = 0
@@ -266,6 +267,26 @@ describe("secondary hosts", () => {
 })
 
 describe("partitioned client state", () => {
+  for (const kind of ["clear", "disable"] as const) it(`${kind}: removes optional persisted indexes and prevents their recapture`, async () => {
+    const sessionState = { activeTabIndex: 0, tabs: [{ kind: "workspace" as const, folder: "/repo", activeSessionId: "s",
+      drafts: { s: "draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+      outlineIndexes: { s: normalizePersistedOutline({ format: 1, directory: "/repo", projectID: "p", entries: [],
+        checkpoints: [{ after: -1, through: 0, digest: "a".repeat(64) }] })! } }] }
+    const encoded = await encodeClientSnapshotV2({ ...snapshot("unused"), session: sessionState })
+    let commits = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async () => { commits++; return true },
+      clearClientState: async () => true, setClientStateRestoreEnabled: async () => true,
+    })
+    assert.equal((state.loadedRestorableSession()?.tabs[0] as any).outlineIndexes.s.format, 1)
+    await transact(state, kind)
+    state.updateRestorableSession(sessionState)
+    await state.flushClientState()
+    assert.equal(state.loadedRestorableSession(), null)
+    assert.equal(commits, 0)
+  })
   it("restores a degraded graph and permits a repairing write", async () => {
     const persisted = {
       version: 1 as const, revision: 3, savedAt: 4, layout: { [layoutKey]: "390" },

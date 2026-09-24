@@ -4,7 +4,12 @@ const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
 
-const MANAGED_NODE_VERSION = "v22.22.2"
+// Keep packaged runtimes and CI on the same exact LTS release.
+const nodeVersion = fs.readFileSync(path.join(__dirname, "..", ".node-version"), "utf8").trim()
+if (!/^\d+\.\d+\.\d+$/.test(nodeVersion)) {
+  throw new Error(".node-version must pin an exact Node.js release")
+}
+const MANAGED_NODE_VERSION = `v${nodeVersion}`
 
 const ARTIFACTS = {
   "darwin-x64": { archive: `node-${MANAGED_NODE_VERSION}-darwin-x64.tar.gz`, root: `node-${MANAGED_NODE_VERSION}-darwin-x64`, binary: path.join("bin", "node") },
@@ -134,6 +139,11 @@ function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath) {
   fs.rmSync(destinationRoot, { recursive: true, force: true })
   fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
   fs.copyFileSync(sourceBinary, destinationBinary)
+  const npmRelativePath = binaryRelativePath === "node.exe" ? "node_modules/npm" : "lib/node_modules/npm"
+  const npmSource = path.join(sourceRoot, npmRelativePath)
+  if (!fs.existsSync(path.join(npmSource, "bin/npm-cli.js"))) throw new Error("Node archive is missing npm")
+  fs.cpSync(npmSource, path.join(destinationRoot, npmRelativePath), { recursive: true })
+  fs.copyFileSync(path.join(sourceRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
 }
 
 async function prepareBundledNodeRuntime(options) {
@@ -192,6 +202,7 @@ async function prepareBundledNodeRuntime(options) {
 
 module.exports = {
   MANAGED_NODE_VERSION,
+  pruneForRuntime,
   prepareBundledNodeRuntime,
   normalizeTarget,
   currentTarget,

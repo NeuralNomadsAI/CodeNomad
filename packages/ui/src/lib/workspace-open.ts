@@ -1,4 +1,5 @@
 import { isDesktopHost, isLocalWindow, isTauriHost } from "./runtime-env"
+import type { ViewMenuState } from "./native/view-menu"
 
 export type WorkspaceOpenTarget = "default" | "reveal" | "terminal" | "editor"
 export type WorkspaceEditor = "vscode" | "cursor" | "zed" | "vscodium"
@@ -30,11 +31,11 @@ export async function openWorkspacePath(request: WorkspaceOpenRequest): Promise<
   await openTarget(request)
 }
 
-export async function setWorkspaceMenuEnabled(enabled: boolean): Promise<void> {
+export async function setWorkspaceMenuEnabled(enabled: boolean, viewState?: ViewMenuState): Promise<void> {
   if (!isDesktopHost() || !isLocalWindow()) return
   if (isTauriHost()) {
-    await window.__TAURI__?.core?.invoke("set_workspace_menu_enabled", { enabled })
+    await window.__TAURI__?.core?.invoke("set_workspace_menu_enabled", { enabled, viewState })
     return
   }
-  await window.electronAPI?.setWorkspaceMenuEnabled?.(enabled)
+  await window.electronAPI?.setWorkspaceMenuEnabled?.(enabled, viewState)
 }

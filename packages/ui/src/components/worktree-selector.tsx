@@ -1,7 +1,7 @@
 import { Select } from "@kobalte/core/select"
 import { Dialog } from "@kobalte/core/dialog"
-import { For, Show, createMemo, createSignal } from "solid-js"
-import { ChevronDown, Copy, Trash2 } from "lucide-solid"
+import { Show, createMemo, createSignal, createUniqueId, untrack } from "solid-js"
+import { ChevronDown, Copy, FolderOpen, Loader2, Trash2 } from "lucide-solid"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -10,7 +10,9 @@ import {
   createWorktree,
   deleteWorktree,
   getParentSessionId,
+  getPendingWorktreeSlug,
   getGitRepoStatus,
+  getDirectoryOnlyWorktree,
   getWorktreeSlugForParentSession,
   getWorktrees,
   reloadWorktrees,
@@ -18,6 +20,7 @@ import {
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
+import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
 
 const log = getLogger("session")
 
@@ -34,8 +37,6 @@ type DeleteErrorDetails = {
 }
 
 function preventSelectPress(event: PointerEvent | MouseEvent) {
-  // Prevent Select.Item from treating this as a selection.
-  // We intentionally prevent default to stop Kobalte's internal press handling.
   event.preventDefault()
   event.stopImmediatePropagation?.()
   event.stopPropagation()
@@ -129,6 +130,7 @@ interface WorktreeSelectorProps {
 
 export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const { t } = useI18n()
+  const createInputId = createUniqueId()
   const [isOpen, setIsOpen] = createSignal(false)
   const [createOpen, setCreateOpen] = createSignal(false)
   const [createSlug, setCreateSlug] = createSignal("")
@@ -144,13 +146,34 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const isChildSession = createMemo(() => Boolean(session()?.parentId))
   const parentId = createMemo(() => getParentSessionId(props.instanceId, props.sessionId))
   const currentSlug = createMemo(() => getWorktreeSlugForParentSession(props.instanceId, parentId()))
+  const movingSlug = createMemo(() => getPendingWorktreeSlug(props.instanceId, parentId()))
 
   const gitRepoStatus = createMemo(() => getGitRepoStatus(props.instanceId))
-  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false)
-  const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable())
+  const worktreesUnavailable = createMemo(() => gitRepoStatus() === false || Boolean(getDirectoryOnlyWorktree(props.instanceId)))
+  const dropdownDisabled = createMemo(() => isChildSession() || worktreesUnavailable() || Boolean(movingSlug()))
+  let listbox: HTMLUListElement | undefined
 
   const worktreeOptions = createMemo<WorktreeOption[]>(() => {
     const list = getWorktrees(props.instanceId)
+    // Kobalte recreates option DOM when its collection changes. Keep the user's
+    // keyboard target (including an inline action) through lazy inventory updates.
+    const focused = document.activeElement as HTMLElement | null
+    const option = focused?.closest<HTMLElement>("[role=option]")
+    const key = option?.dataset.key
+    const actionLabel = focused?.closest("button")?.getAttribute("aria-label")
+    if (key && listbox?.contains(focused) && untrack(isOpen)) {
+      queueMicrotask(() => {
+        if (!isOpen() || focused?.isConnected || !listbox?.isConnected) return
+        if (document.activeElement !== document.body && !listbox.contains(document.activeElement)) return
+        const replacement = Array.from(listbox.querySelectorAll<HTMLElement>("[role=option]")).find(item => item.dataset.key === key)
+        const action = actionLabel ? Array.from(replacement?.querySelectorAll("button") ?? []).find(button => button.getAttribute("aria-label") === actionLabel) : undefined
+        const target = action ?? replacement
+        // Update Kobalte's focused key before focusing a nested button; a button
+        // focus alone leaves the previous option as its keyboard target.
+        if (action) replacement?.focus({ preventScroll: true })
+        ;(target ?? listbox).focus({ preventScroll: true })
+      })
+    }
     const mapped: WorktreeOption[] = list.map((wt) => ({
       kind: "worktree",
       key: wt.slug,
@@ -163,7 +186,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   })
 
   const selectedOption = createMemo<WorktreeOption | undefined>(() => {
-    const slug = currentSlug()
+    const slug = movingSlug() ?? currentSlug()
     const match = worktreeOptions().find((opt) => opt.kind === "worktree" && opt.slug === slug)
     if (match) return match
     // Fallback to root if mapped slug is missing.
@@ -187,7 +210,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
     const list = getWorktrees(props.instanceId)
     return list.find((wt) => wt.slug === "root")?.directory ?? ""
   })
-
   const displayPathFor = (directory: string) => {
     const base = repoRoot()
     if (!base) return directory
@@ -197,10 +219,22 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const handleCopyPath = async (directory: string) => {
     try {
       const ok = await copyToClipboard(directory)
-      showToastNotification({ message: ok ? "Copied worktree path" : "Failed to copy path", variant: ok ? "success" : "error" })
+      showToastNotification({
+        message: t(ok ? "instanceShell.filesShell.toast.copyPathSuccess" : "instanceShell.filesShell.toast.copyPathError"),
+        variant: ok ? "success" : "error",
+      })
     } catch (error) {
       log.error("Failed to copy worktree path", error)
-      showToastNotification({ message: "Failed to copy path", variant: "error" })
+      showToastNotification({ message: t("instanceShell.filesShell.toast.copyPathError"), variant: "error" })
+    }
+  }
+
+  const handleOpenInFileManager = async (worktreeSlug: string) => {
+    try {
+      await openWorkspacePath({ target: "default", instanceId: props.instanceId, worktreeSlug })
+    } catch (error) {
+      log.error("Failed to open worktree in file manager", error)
+      showToastNotification({ message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
     }
   }
 
@@ -296,6 +330,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       setCreateOpen(true)
       return
     }
+    if (movingSlug() || value.slug === currentSlug()) return
+    setIsOpen(false)
     await setWorktreeSlugForParentSession(props.instanceId, parentId(), value.slug)
   }
 
@@ -304,15 +340,21 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       <Select<WorktreeOption>
         gutter={0}
         open={isOpen()}
-        onOpenChange={setIsOpen}
+        onOpenChange={(open) => {
+          if (!open) { setIsOpen(false); return }
+          setIsOpen(true)
+          void reloadWorktrees(props.instanceId).catch(error => log.warn("Failed to refresh worktrees", error))
+        }}
         value={selectedOption() ?? null}
         onChange={(value) => {
           void handleChange(value).catch((error) => log.warn("Failed to change worktree", error))
         }}
         options={worktreeOptions()}
+        // Inventory reconciliation is not a user selection and must not close the menu.
+        allowDuplicateSelectionEvents={false}
         optionValue="key"
-        optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.slug)}
-        placeholder="Worktree"
+        optionTextValue={(opt) => (opt.kind === "action" ? opt.label : opt.raw.label ?? opt.slug)}
+        placeholder={t("sessionList.sort.worktree")}
         disabled={dropdownDisabled()}
         itemComponent={(itemProps) => {
           const opt = itemProps.item.rawValue
@@ -321,26 +363,40 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
               <Select.Item item={itemProps.item} class="selector-option worktree-selector-item">
                 <div class="selector-option-content w-full">
                   <Select.ItemLabel class="selector-option-label">{opt.label}</Select.ItemLabel>
-                  <Select.ItemDescription class="selector-option-description">New from current branch</Select.ItemDescription>
+                  <Select.ItemDescription class="selector-option-description">
+                    {t("instanceShell.worktree.create.fromCurrentBranch")}
+                  </Select.ItemDescription>
                 </div>
               </Select.Item>
             )
           }
 
           return (
-            <Select.Item item={itemProps.item} class="selector-option worktree-selector-item">
+            <Select.Item
+              item={itemProps.item}
+              class="selector-option worktree-selector-item"
+              onClick={() => { if (opt.slug === currentSlug()) setIsOpen(false) }}
+              onKeyDown={(event) => {
+                if (opt.slug === currentSlug() && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault()
+                  setIsOpen(false)
+                }
+              }}
+            >
               <div class="flex flex-col gap-1 flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <Select.ItemLabel class="selector-option-label flex-1 min-w-0 truncate">
-                    {opt.slug === "root" ? "Workspace" : opt.slug}
+                    {opt.slug === "root" ? t("sessionList.worktree.workspace") : opt.raw.label ?? opt.slug}
                   </Select.ItemLabel>
-                  <Show when={opt.slug !== "root"}>
+                  <Show when={opt.slug !== "root" && opt.raw.removable !== false}>
                     <button
                       type="button"
                       class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                      aria-label="Delete worktree"
-                      title="Delete worktree"
-                      onPointerDown={(event) => {
+                      aria-label={t("instanceShell.worktree.delete.action")}
+                      title={t("instanceShell.worktree.delete.action")}
+                      onPointerDown={preventSelectPress}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
                         preventSelectPress(event)
                         setIsOpen(false)
                         openDeleteDialog(opt)
@@ -348,7 +404,6 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       onPointerUp={preventSelectPress}
                       onMouseDown={preventSelectPress}
                       onMouseUp={preventSelectPress}
-                      onClick={preventSelectPress}
                     >
                       <Trash2 class="w-3 h-3" />
                     </button>
@@ -364,9 +419,11 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   <button
                     type="button"
                     class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
-                    aria-label="Copy path"
-                    title="Copy path"
-                    onPointerDown={(event) => {
+                    aria-label={t("instanceShell.filesShell.actions.copyPath")}
+                    title={t("instanceShell.filesShell.actions.copyPath")}
+                    onPointerDown={preventSelectPress}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
                       preventSelectPress(event)
                       void (async () => {
                         await handleCopyPath(opt.directory)
@@ -376,17 +433,38 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     onPointerUp={preventSelectPress}
                     onMouseDown={preventSelectPress}
                     onMouseUp={preventSelectPress}
-                    onClick={preventSelectPress}
                   >
                     <Copy class="w-3 h-3" />
                   </button>
+                  <Show when={canOpenWorkspacePaths()}>
+                    <button
+                      type="button"
+                      class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
+                      aria-label={t("instanceShell.worktree.openInFileManager.action")}
+                      title={t("instanceShell.worktree.openInFileManager.action")}
+                      onPointerDown={preventSelectPress}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        preventSelectPress(event)
+                        void (async () => {
+                          await handleOpenInFileManager(opt.slug)
+                          setIsOpen(false)
+                        })()
+                      }}
+                      onPointerUp={preventSelectPress}
+                      onMouseDown={preventSelectPress}
+                      onMouseUp={preventSelectPress}
+                    >
+                      <FolderOpen class="w-3 h-3" />
+                    </button>
+                  </Show>
                 </div>
               </div>
             </Select.Item>
           )
         }}
       >
-        <Select.Trigger class="selector-trigger">
+        <Select.Trigger class="selector-trigger" aria-busy={Boolean(movingSlug())}>
           <div class="flex-1 min-w-0">
             <Select.Value<WorktreeOption>>
               {(state) => {
@@ -394,18 +472,26 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   return (
                     <div class="selector-trigger-label selector-trigger-label--stacked">
                       <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                        <span class="session-sidebar-selector-prefix">Worktree:</span> Unavailable
+                        <span class="session-sidebar-selector-prefix">
+                          {t("sessionList.worktree.tooltip", { worktree: "" }).trim()}
+                        </span>{" "}
+                        {t("instanceShell.worktree.unavailable")}
                       </span>
                     </div>
                   )
                 }
 
                 const value = state.selectedOption()
-                const label = value && value.kind === "worktree" ? (value.slug === "root" ? "Workspace" : value.slug) : "Workspace"
+                const label = value && value.kind === "worktree"
+                  ? (value.slug === "root" ? t("sessionList.worktree.workspace") : value.raw.label ?? value.slug)
+                  : t("sessionList.worktree.workspace")
                 return (
                   <div class="selector-trigger-label selector-trigger-label--stacked">
                     <span class="selector-trigger-primary selector-trigger-primary--align-left">
-                      <span class="session-sidebar-selector-prefix">Worktree:</span> {label}
+                      <span class="session-sidebar-selector-prefix">
+                        {t("sessionList.worktree.tooltip", { worktree: "" }).trim()}
+                      </span>{" "}
+                      {label}
                     </span>
                   </div>
                 )
@@ -413,13 +499,15 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
             </Select.Value>
           </div>
           <Select.Icon class="selector-trigger-icon">
-            <ChevronDown class="w-3 h-3" />
+            <Show when={movingSlug()} fallback={<ChevronDown class="w-3 h-3" />}>
+              <Loader2 class="w-3 h-3 animate-spin" aria-hidden="true" />
+            </Show>
           </Select.Icon>
         </Select.Trigger>
 
         <Select.Portal>
           <Select.Content class="selector-popover session-sidebar-selector-popover">
-            <Select.Listbox class="selector-listbox" />
+            <Select.Listbox ref={listbox} class="selector-listbox" />
           </Select.Content>
         </Select.Portal>
       </Select>
@@ -430,17 +518,22 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <Dialog.Content class="modal-surface w-full max-w-md p-6 flex flex-col gap-5">
               <div>
-                <Dialog.Title class="text-xl font-semibold text-primary">Create worktree</Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-2">Creates a git worktree</Dialog.Description>
+                <Dialog.Title class="text-xl font-semibold text-primary">{t("instanceShell.worktree.create.action")}</Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-2">
+                  {t("instanceShell.worktree.create.description")}
+                </Dialog.Description>
               </div>
 
               <div class="space-y-2">
-                <label class="text-xs font-medium text-muted uppercase tracking-wide">Name</label>
+                <label for={createInputId} class="text-xs font-medium text-muted uppercase tracking-wide">
+                  {t("instanceShell.worktree.create.name")}
+                </label>
                 <input
+                  id={createInputId}
                   class="form-input w-full"
                   value={createSlug()}
                   onInput={(e) => setCreateSlug(e.currentTarget.value)}
-                  placeholder="worktree-name"
+                  placeholder={t("instanceShell.worktree.create.placeholder")}
                   disabled={isCreating()}
                   spellcheck={false}
                   autocapitalize="off"
@@ -455,7 +548,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   onClick={() => setCreateOpen(false)}
                   disabled={isCreating()}
                 >
-                  Cancel
+                  {t("sessionPicker.actions.cancel")}
                 </button>
                 <button
                   type="button"
@@ -470,16 +563,16 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     const slug = createSlug().trim()
                     void (async () => {
                       setIsCreating(true)
-                      await createWorktree(props.instanceId, slug)
+                      const created = await createWorktree(props.instanceId, slug, currentSlug())
                       await reloadWorktrees(props.instanceId)
-                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), slug)
+                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), created.slug)
                       setCreateOpen(false)
-                      showToastNotification({ message: `Created worktree ${slug}`, variant: "success" })
+                      showToastNotification({ message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
                     })()
                       .catch((error) => {
                         log.warn("Failed to create worktree", error)
                         showToastNotification({
-                          message: error instanceof Error ? error.message : "Failed to create worktree",
+                          message: error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
                           variant: "error",
                         })
                       })
@@ -488,7 +581,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       })
                   }}
                 >
-                  {isCreating() ? "Creating..." : "Create"}
+                  {isCreating() ? t("sessionPicker.actions.creating") : t("instanceShell.worktree.create.action")}
                 </button>
               </div>
             </Dialog.Content>
@@ -502,15 +595,17 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
           <div class="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4">
             <Dialog.Content class="modal-surface w-[clamp(640px,45vw,960px)] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-2rem)] overflow-y-auto p-4 flex flex-col gap-3">
               <div>
-                <Dialog.Title class="text-xl font-semibold text-primary">Delete worktree</Dialog.Title>
-                <Dialog.Description class="text-sm text-secondary mt-1">Deletes this branch worktree and its local folder.</Dialog.Description>
+                <Dialog.Title class="text-xl font-semibold text-primary">{t("instanceShell.worktree.delete.action")}</Dialog.Title>
+                <Dialog.Description class="text-sm text-secondary mt-1">
+                  {t("instanceShell.worktree.delete.description")}
+                </Dialog.Description>
               </div>
 
               <Show when={deleteTarget()}>
                 {(target) => (
                   <div class="border border-base bg-surface-secondary px-3 py-2">
                     <p class="text-sm text-primary">
-                      Worktree <span class="font-semibold font-mono">&quot;{target().slug}&quot;</span>
+                      {t("instanceShell.worktree.delete.target", { slug: target().raw.label ?? target().slug })}
                     </p>
                     <p class="text-[11px] text-secondary break-all font-mono leading-5">{target().directory}</p>
                   </div>
@@ -524,7 +619,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   onChange={(e) => setForceDelete(e.currentTarget.checked)}
                   disabled={isDeleting()}
                 />
-                Force delete (discard local changes)
+                {t("instanceShell.worktree.delete.force")}
               </label>
 
               <div class="flex justify-end gap-2">
@@ -534,7 +629,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   onClick={closeDeleteDialog}
                   disabled={isDeleting()}
                 >
-                  Cancel
+                  {t("sessionPicker.actions.cancel")}
                 </button>
                 <button
                   type="button"
@@ -550,11 +645,13 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     void (async () => {
                       setIsDeleting(true)
                       setDeleteError(null)
-                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
-                       await reloadWorktrees(props.instanceId)
+                      await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
 
                       closeDeleteDialog()
-                      showToastNotification({ message: `Deleted worktree ${target.slug}`, variant: "success" })
+                      showToastNotification({
+                        message: t("instanceShell.worktree.delete.success", { slug: target.raw.label ?? target.slug }),
+                        variant: "success",
+                      })
                     })()
                       .catch((error) => {
                         log.warn("Failed to delete worktree", error)
@@ -565,7 +662,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       })
                   }}
                 >
-                  {isDeleting() ? "Deleting..." : "Delete"}
+                  {isDeleting() ? t("messagePart.actions.deleting") : t("sessionList.delete.confirmLabel")}
                 </button>
               </div>
 

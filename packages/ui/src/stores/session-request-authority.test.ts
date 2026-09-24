@@ -2,11 +2,12 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchCommands, getCommands } from "./commands.ts"
-import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
@@ -57,12 +58,19 @@ function apiMessage(id: string) {
 }
 
 function setup(instanceId: string) {
+  const originalFetchWorktrees = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+    { slug: "root", directory: "/work", kind: "root" },
+    { slug: "feature", directory: "/work/.worktrees/feature", kind: "worktree" },
+    { slug: "external-feature", directory: "/work-feature", kind: "worktree" },
+  ] })
   const client = { session: { active: async () => ({}) } } as any
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   return {
     client,
     cleanup() {
+      serverApi.fetchWorktrees = originalFetchWorktrees
       messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
@@ -294,24 +302,22 @@ describe("session request authority", () => {
     const instanceId = "late-search-delete"
     const { client, cleanup } = setup(instanceId)
     const search = deferred<any>()
-    const parents = deferred<any>()
     let calls = 0
     ;(client.session as any).list = () => { calls += 1; return search.promise }
-    ;(client.session as any).get = () => parents.promise
+    ;(client.session as any).get = () => { throw new Error("Flat search must not hydrate parents") }
 
     try {
       const request = searchSessions(instanceId, "child")
-      search.resolve({ data: [apiSession("child", "parent")] })
       await new Promise<void>((resolve) => setImmediate(resolve))
       removeSessionRuntimeState(instanceId, "child")
       removeSessionRuntimeState(instanceId, "parent")
-      parents.resolve(apiSession("parent"))
+      search.resolve({ data: [apiSession("child", "parent")] })
       await request
 
       assert.equal(sessions().get(instanceId)?.has("child") ?? false, false)
       assert.equal(sessions().get(instanceId)?.has("parent") ?? false, false)
       assert.deepEqual(getSessionSearchResultIds(instanceId), [])
-      assert.equal(calls, 1)
+      assert.equal(calls, 3)
     } finally {
       cleanup()
     }
@@ -1382,6 +1388,17 @@ describe("session request authority", () => {
     const instanceId = "bounded-complete-newer-path", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const latestPage = 40
+    const originalHistoryWindow = serverApi.fetchHistoryWindow
+    const directRequests: string[] = []
+    serverApi.fetchHistoryWindow = async (_instance, _session, target) => {
+      assert.equal(target.kind, "after")
+      if (!("messageID" in target)) throw new Error("Missing anchor")
+      directRequests.push(target.messageID)
+      const page = Number(target.messageID.slice(5)) + 1
+      return { status: "window", messages: [{ ...apiMessage(`page-${page}`), type: "assistant" }],
+        older: { kind: "before", messageID: `page-${page}` }, newer: page < latestPage ? { kind: "after", messageID: `page-${page}` } : null,
+        resume: target, latest: page === latestPage }
+    }
     ;(client as any).message = { list: async (input: any) => {
       if (!input.cursor) return { data: [apiMessage(`page-${latestPage}`)], cursor: { next: `c${latestPage - 1}` } }
       const page = Number(input.cursor.slice(1))
@@ -1399,7 +1416,9 @@ describe("session request authority", () => {
         assert.ok(visited.length <= latestPage)
       }
       assert.deepEqual(visited, Array.from({ length: latestPage }, (_, index) => `page-${index + 1}`))
+      assert(directRequests.length > 0, "discarded native cursor paths use direct anchors instead of replaying history")
     } finally {
+      serverApi.fetchHistoryWindow = originalHistoryWindow
       cleanup()
     }
   })
@@ -1674,7 +1693,12 @@ describe("session request authority", () => {
         cursor: { next: "root-page-2" },
       }
       if (input.project === "project") return {
-        data: [apiSession("root"), apiSession("child", "root")],
+        data: [
+          apiSession("root"),
+          apiSession("child", "root"),
+          { ...apiSession("worktree-root"), location: { directory: "/work/.worktrees/feature" } },
+          { ...apiSession("other-clone"), location: { directory: "/other-clone" } },
+        ],
         cursor: { next: "project-inventory-page-2" },
       }
       return {
@@ -1689,24 +1713,159 @@ describe("session request authority", () => {
       assert.deepEqual(sessions().get(instanceId)?.get("root")?.metadata, { owner: "native" })
       assert.equal(sessions().get(instanceId)?.has("child"), true)
       assert.equal(sessions().get(instanceId)?.has("grandchild"), true)
+      assert.equal(sessions().get(instanceId)?.has("worktree-root"), true)
+      assert.equal(getSessionListIds(instanceId).includes("worktree-root"), true)
+      assert.equal(getSessionListIds(instanceId).includes("other-clone"), false)
+      assert.equal(sessions().get(instanceId)?.has("other-clone"), false)
       assert.equal(sessions().get(instanceId)?.get("legacy-child")?.projectID, "global")
       assert.equal(requests[0].directory, "/work")
       assert.equal("project" in requests[0], false)
       assert.equal(requests[0].parentID, null)
       assert.equal(requests[1].project, "project")
       assert.equal("directory" in requests[1], false)
-      assert.deepEqual(requests[2], { cursor: "project-inventory-page-2", limit: 200 })
+      assert.deepEqual(requests[2], { cursor: "project-inventory-page-2" })
       assert.equal(requests[3].directory, "/work")
       assert.equal("project" in requests[3], false)
-      assert.deepEqual(requests[4], { cursor: "directory-inventory-page-2", limit: 200 })
+      assert.deepEqual(requests[4], { cursor: "directory-inventory-page-2" })
       assert.equal(requests.some((request) => typeof request.parentID === "string"), false)
-
       await loadMoreSessions(instanceId)
-      assert.deepEqual(requests[5], { cursor: "root-page-2", limit: 200 })
-      assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
+      assert.deepEqual(requests[5], { cursor: "root-page-2" })
+      assert.equal(requests.filter((request) => request.cursor).every((request) => Object.keys(request).join(",") === "cursor"), true)
       assert.equal(requests.length, 6)
       assert.equal(sessions().get(instanceId)?.get("later")?.status, "working")
       assert.equal(sessions().get(instanceId)?.get("later")?.runtimeStatusKnown, true)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("keeps worktree rows visible throughout repeated refreshes until the complete inventory replaces them", async () => {
+    const instanceId = "stable-worktree-rows"
+    const { client, cleanup } = setup(instanceId)
+    const root = apiSession("root")
+    const worktree = { ...apiSession("worktree"), location: { directory: "/work-feature" } }
+    let inventory = deferred<any>()
+    let inventoryStarted = deferred<void>()
+    let rootPageHasMore = false
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      if (input.project === "project") {
+        inventoryStarted.resolve()
+        return inventory.promise
+      }
+      return { data: [root], cursor: input.parentID === null && rootPageHasMore ? { next: "older-roots" } : {} }
+    }
+
+    try {
+      inventory.resolve({ data: [root, worktree], cursor: {} })
+      await fetchSessions(instanceId)
+      assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+
+      for (let refresh = 0; refresh < 3; refresh += 1) {
+        inventory = deferred<any>()
+        inventoryStarted = deferred<void>()
+        const request = fetchSessions(instanceId, { reset: true })
+        await inventoryStarted.promise
+        // The directory page has arrived, but the worktree inventory has not.
+        const pendingIds = [...getSessionListIds(instanceId)]
+        inventory.resolve({ data: [root, worktree], cursor: {} })
+        await request
+        assert.deepEqual(pendingIds, ["root", "worktree"])
+        assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+      }
+
+      inventory = deferred<any>()
+      inventoryStarted = deferred<void>()
+      const failedRequest = fetchSessions(instanceId, { reset: true })
+      await inventoryStarted.promise
+      inventory.resolve(Promise.reject(new Error("inventory unavailable")))
+      await failedRequest
+      assert.deepEqual(getSessionListIds(instanceId), ["root", "worktree"])
+
+      // A complete inventory is authoritative even when the first root page
+      // has an older continuation. A session that left the scope must disappear.
+      rootPageHasMore = true
+      inventory = deferred<any>()
+      inventoryStarted = deferred<void>()
+      const request = fetchSessions(instanceId, { reset: true })
+      await inventoryStarted.promise
+      const pendingIds = [...getSessionListIds(instanceId)]
+      inventory.resolve({ data: [root, { ...worktree, location: { directory: "/other-clone" } }], cursor: {} })
+      await request
+      assert.deepEqual(pendingIds, ["root", "worktree"])
+      assert.deepEqual(getSessionListIds(instanceId), ["root"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("rejects a repeated incremental session cursor", async () => {
+    const instanceId = "repeated-root-cursor"
+    const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", directory: "/work", canonical: "/work" } as any })
+    ;(client.session as any).list = async (input: any) => {
+      if (input.cursor === "repeat") return { data: [], cursor: { next: "repeat" } }
+      if (input.parentID === null) return { data: [apiSession("root")], cursor: { next: "repeat" } }
+      return { data: [apiSession("root")], cursor: {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await assert.rejects(loadMoreSessions(instanceId), /Repeated session cursor/)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("loads every root page for global sorting", async () => {
+    const instanceId = "global-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const cursors: string[] = []
+    ;(client.session as any).list = async (input: any) => {
+      if (!input.cursor) return { data: [apiSession("root-1")], cursor: { next: "page-2" } }
+      cursors.push(input.cursor)
+      const page = Number(input.cursor.slice("page-".length))
+      return { data: [apiSession(`root-${page}`)], cursor: page < 5 ? { next: `page-${page + 1}` } : {} }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      await Promise.all([loadAllSessions(instanceId), loadAllSessions(instanceId)])
+      assert.deepEqual(cursors, ["page-2", "page-3", "page-4", "page-5"])
+      assert.deepEqual(getSessionListIds(instanceId), ["root-1", "root-2", "root-3", "root-4", "root-5"])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it("starts a fresh sort exhaustion when the session list is superseded", async () => {
+    const instanceId = "superseded-sort-pages"
+    const { client, cleanup } = setup(instanceId)
+    const stalePage = deferred<any>()
+    const stalePageStarted = deferred<void>()
+    let refreshed = false
+    ;(client.session as any).list = async (input: any) => {
+      if (input.cursor === "stale-page") {
+        stalePageStarted.resolve()
+        return stalePage.promise
+      }
+      if (input.cursor === "fresh-page") return { data: [apiSession("fresh-2")], cursor: {} }
+      return refreshed
+        ? { data: [apiSession("fresh-1")], cursor: { next: "fresh-page" } }
+        : { data: [apiSession("stale-1")], cursor: { next: "stale-page" } }
+    }
+
+    try {
+      await fetchSessions(instanceId)
+      const staleExhaustion = loadAllSessions(instanceId)
+      await stalePageStarted.promise
+      refreshed = true
+      await fetchSessions(instanceId)
+      await loadAllSessions(instanceId)
+      stalePage.resolve({ data: [apiSession("stale-2")], cursor: {} })
+      await staleExhaustion
+      assert.equal(getSessionListIds(instanceId).includes("fresh-2"), true)
+      assert.equal(getSessionListIds(instanceId).includes("stale-2"), false)
     } finally {
       cleanup()
     }
@@ -1738,6 +1897,25 @@ describe("session request authority", () => {
     }
   })
 
+  it("searches the local worktree catalogue and follows each opaque cursor without widening scope", async () => {
+    const instanceId = "search-local-worktrees"
+    const { client, cleanup } = setup(instanceId)
+    const requests: any[] = []
+    ;(client.session as any).list = async (input: any) => {
+      requests.push(input)
+      if (input.cursor === "feature-next") return { data: [{ ...apiSession("feature-match"), location: { directory: "/work-feature" } }], cursor: {} }
+      if (input.directory === "/work-feature") return { data: [], cursor: { next: "feature-next" } }
+      return { data: [], cursor: {} }
+    }
+    try {
+      await searchSessions(instanceId, "match")
+      assert.deepEqual(getSessionSearchResultIds(instanceId), ["feature-match"])
+      assert.deepEqual(requests.filter(input => input.directory).map(input => input.directory), ["/work", "/work/.worktrees/feature", "/work-feature"])
+      assert.deepEqual(requests.at(-1), { cursor: "feature-next" })
+      assert.ok(requests.every(input => !input.project))
+    } finally { cleanup() }
+  })
+
   it("keeps the global project scoped to the workspace directory", async () => {
     const instanceId = "global-project-directory"
     const { client, cleanup } = setup(instanceId)
@@ -1745,8 +1923,9 @@ describe("session request authority", () => {
     setInstanceMetadata(instanceId, { project: { id: "global", directory: "/", canonical: "/" } as any })
     ;(client.session as any).list = async (input: any) => {
       requests.push(input)
+      if (input.cursor === "search-next") return { data: [apiSession("search-result")], cursor: {} }
       if (input.cursor) return { data: [], cursor: {} }
-      if (input.search) return { data: [], cursor: {} }
+      if (input.search) return { data: [], cursor: { next: "search-next" } }
       return { data: [], cursor: { next: input.parentID === null ? "root-next" : "inventory-next" } }
     }
 
@@ -1755,11 +1934,12 @@ describe("session request authority", () => {
       await loadMoreSessions(instanceId)
       await searchSessions(instanceId, "needle")
 
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, 6)
+      assert.deepEqual(requests.at(-1), { cursor: "search-next" })
       assert.equal(requests.filter((request) => !request.cursor).every((request) => request.directory === "/work"), true)
       assert.equal(requests.every((request) => !("project" in request)), true)
       assert.equal(requests.filter((request) => request.cursor)
-        .every((request) => Object.keys(request).sort().join(",") === "cursor,limit"), true)
+        .every((request) => Object.keys(request).join(",") === "cursor"), true)
     } finally {
       cleanup()
     }

@@ -1,5 +1,9 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
+import { backgroundReads } from "./background-read-queue"
+import { authenticatedFetch } from "./auth-recovery"
+import { prioritizedRead } from "./prioritized-read"
+import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -8,7 +12,7 @@ class SDKManager {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
   }
 
-  createClient(instanceId: string, proxyPath: string): OpenCodeClient {
+  createClient(instanceId: string, proxyPath: string, isForeground: () => boolean = () => false): OpenCodeClient {
     const key = this.key(instanceId, proxyPath)
     const existing = this.clients.get(key)
     if (existing) {
@@ -16,7 +20,7 @@ class SDKManager {
     }
 
     const baseUrl = buildInstanceBaseUrl(proxyPath)
-    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground) })
 
     this.clients.set(key, client)
 
@@ -40,14 +44,45 @@ export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_
   return `${base}${normalized}/`
 }
 
-export function createInstanceFetch(baseUrl: string): typeof globalThis.fetch {
+export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
-    const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
-    return globalThis.fetch(new URL(relativeUrl, baseUrl), {
-      ...init,
-      credentials: init?.credentials ?? "include",
-    })
+    const basePath = new URL(baseUrl, requestUrl).pathname.replace(/\/+$/, "") + "/"
+    // The pinned client preserves baseUrl's proxy prefix. Strip it only for
+    // scheduling decisions; forwarding must retain the generated URL unchanged.
+    const apiPath = requestUrl.pathname.startsWith(basePath)
+      ? `/${requestUrl.pathname.slice(basePath.length)}` : requestUrl.pathname
+    const read = async () => {
+      const response = await authenticatedFetch(input, {
+        ...init,
+        credentials: init?.credentials ?? "include",
+      })
+      if (response.status === 426) {
+        const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
+        reportOpenCodeSetupRequired()
+      }
+      if (response.status === 502) {
+        const body = await response.clone().json().catch(() => undefined)
+        if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {
+          const { tGlobal } = await import("./i18n")
+          throw new Error(tGlobal("envEditor.applyFailed"))
+        }
+      }
+      return response
+    }
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    // Project identity gates the visible cross-worktree session list. Promote
+    // this dependency with selection rather than leaving it behind Git scans.
+    if (method === "GET" && /^\/api\/location\/?$/.test(apiPath)) {
+      return prioritizedRead(isForeground, init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+    }
+    // Catalogues from every restored project used to consume all HTTP/1.1
+    // connections before the saved session/message reads could even dispatch.
+    // Share the secondary budget with inventory scans, including reconnects.
+    if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(apiPath)) {
+      return backgroundReads.run(init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+    }
+    return read()
   }
 }
 

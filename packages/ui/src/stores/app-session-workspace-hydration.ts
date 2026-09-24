@@ -5,6 +5,8 @@ import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
 import { messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
 import { getSessionAncestorIdsFromMap } from "./session-tree"
+import { seedRestoredSessionSelection } from "./session-state"
+import { seedSessionOutlineIndexes } from "./session-outline"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -13,13 +15,15 @@ import {
 const MESSAGE_SCROLL_SCOPE = "message-stream"
 export const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
-export function seedRestoredWorkspaceScrollSnapshots(
+export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
 ): void {
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
+  seedSessionOutlineIndexes(instanceId, snapshot.outlineIndexes)
+  seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 
 export async function hydrateRestoredWorkspaceState(
@@ -33,8 +37,8 @@ export async function hydrateRestoredWorkspaceState(
   // Session selection mounts MessageSection synchronously. Seed scroll state
   // first so its initial restore cannot mistake an unavailable snapshot for a
   // deliberate at-bottom state.
-  seedRestoredWorkspaceScrollSnapshots(instanceId, snapshot)
-  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal)
+  seedRestoredWorkspaceState(instanceId, snapshot)
+  await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
@@ -52,7 +56,7 @@ export async function hydrateRestoredWorkspaceState(
   await hydrateRestoredSessionChain(instanceId, getRestoredSessionIds([
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
-  ]), signal)
+  ]), signal, isCurrentBinding)
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   sessions = getSessions(instanceId)

@@ -29,6 +29,8 @@ export interface PersistedClientState {
   windowOrder: string[]
   windows: Record<string, ClientWindowStateRecord>
   preferences?: PreferencesRequest
+  lastPreferences?: PreferencesRequest
+  preferencesWindow?: NativeWindowState
 }
 
 export interface ParsedClientState {
@@ -123,7 +125,7 @@ function parsePreferences(value: unknown): PreferencesRequest | undefined {
 }
 
 function parseV3(envelope: Record<string, unknown>): PersistedClientState | undefined {
-  if (!hasOnlyKeys(envelope, ["version", "activeWindowId", "windowOrder", "windows", "preferences"])
+  if (!hasOnlyKeys(envelope, ["version", "activeWindowId", "windowOrder", "windows", "preferences", "lastPreferences", "preferencesWindow"])
     || !isWindowId(envelope.activeWindowId)
     || !Array.isArray(envelope.windowOrder)
     || envelope.windowOrder.length > MAX_CLIENT_STATE_WINDOWS
@@ -143,12 +145,17 @@ function parseV3(envelope: Record<string, unknown>): PersistedClientState | unde
   }
   const preferences = hasOwn(envelope, "preferences") ? parsePreferences(envelope.preferences) : undefined
   if (hasOwn(envelope, "preferences") && !preferences) return undefined
+  const lastPreferences = hasOwn(envelope, "lastPreferences") ? parsePreferences(envelope.lastPreferences) : preferences
+  const preferencesWindow = hasOwn(envelope, "preferencesWindow") ? strictWindowState(envelope.preferencesWindow) : undefined
+  if ((hasOwn(envelope, "lastPreferences") && !lastPreferences) || (hasOwn(envelope, "preferencesWindow") && !preferencesWindow)) return undefined
   return {
     version: CLIENT_STATE_ENVELOPE_VERSION,
     activeWindowId: envelope.activeWindowId,
     windowOrder: [...windowOrder],
     windows,
     ...(preferences ? { preferences } : {}),
+    ...(lastPreferences ? { lastPreferences } : {}),
+    ...(preferencesWindow ? { preferencesWindow } : {}),
   }
 }
 

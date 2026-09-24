@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
+import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -29,7 +29,9 @@ import {
   reloadWorktrees,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
+import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
+import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
@@ -46,6 +48,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -95,6 +98,7 @@ import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
 import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
 
@@ -279,7 +283,6 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 
 const MAX_LOG_ENTRIES = 1000
 
-const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
@@ -298,16 +301,19 @@ const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 let nextPendingRequestSyncGeneration = 0
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true): Promise<T> {
   const controller = new AbortController()
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
   pendingRequestControllers.set(instanceId, controllers)
-  const timeout = setTimeout(() => controller.abort(), 10_000)
   try {
-    return await run(controller.signal)
+    const timed = async () => {
+      const timeout = setTimeout(() => controller.abort(), 10_000)
+      try { return await run(controller.signal) }
+      finally { clearTimeout(timeout) }
+    }
+    return await (background ? backgroundReads.run(controller.signal, timed) : timed())
   } finally {
-    clearTimeout(timeout)
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
       pendingRequestControllers.delete(instanceId)
@@ -382,6 +388,7 @@ const connectionResyncs = new TrailingResyncCoordinator(
       sessionError = error
     }
     await Promise.all([
+      reloadWorktrees(instanceId),
       syncPendingRequests(instanceId),
       refreshVolatileInstanceState(instanceId),
       syncLoadedSessionInboxes(instanceId),
@@ -560,7 +567,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     destroyOpenCodeData(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -860,7 +867,7 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   let sessionError: unknown
   if (hasRunningSession || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
-      await withPendingRequestTimeout(instanceId, (signal) => fetchSessions(instanceId, { reset: true, signal }))
+      await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
     } catch (error) {
       sessionError = error
     }
@@ -887,24 +894,30 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   const worktreeHydration = force
     ? reloadWorktrees(instanceId)
     : ensureWorktreesLoaded(instanceId)
-  const workspaceMetadata = worktreeHydration.then(async () => {
+  const projectMetadata = Promise.resolve().then(async () => {
     const instance = instances().get(instanceId)
     if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
       log.warn("Failed to load project metadata before session hydration", { instanceId, error })
     })
   })
-  void worktreeHydration.then(async () => {
+  const workspaceMetadata = Promise.all([worktreeHydration, projectMetadata]).then(() => {})
+  // Session hydration can outlive a failed forced worktree read. Observe the
+  // rejection immediately while retaining it for metadata-dependent callers.
+  void workspaceMetadata.catch((error) => log.warn("Failed to hydrate workspace metadata", { instanceId, error }))
+  // Publish the root directory page without waiting for project/checkout metadata.
+  // Full family reconciliation still awaits that inventory in session-api.
+  const sessions = Promise.resolve().then(async () => {
+    resetSessionPagination(instanceId)
+    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
+      log.error("Failed to hydrate sessions", { instanceId, error })
+    })
+  })
+  void sessions.then(async () => {
     const instance = instances().get(instanceId)
     if (instance?.client) {
       await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
     }
   }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
-  const sessions = workspaceMetadata.then(async () => {
-    resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
-      log.error("Failed to hydrate sessions", { instanceId, error })
-    })
-  })
   return { sessions, workspaceMetadata }
 }
 
@@ -921,53 +934,18 @@ async function hydrateInstanceData(instanceId: string, options?: {
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
       : startInstanceSessionHydration(instanceId, options?.force)
-    await hydration.sessions
-    await hydration.workspaceMetadata
-    await refreshSessionCatalog(instanceId, options?.force)
+    // Composer catalogues must not wait for the complete historical inventory.
+    await Promise.all([
+      hydration.sessions,
+      hydration.workspaceMetadata,
+      refreshSessionCatalog(instanceId, options?.force),
+    ])
     await ensureInstanceConfigLoaded(instanceId)
     await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
   }
-}
-
-async function postInstanceDispose(instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.proxyPath) {
-    throw new Error("Instance not ready")
-  }
-
-  const baseUrl = buildInstanceBaseUrl(instance.proxyPath)
-  const url = new URL("instance/dispose", baseUrl)
-
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-    },
-  })
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "")
-    throw new Error(message || `Dispose request failed with ${response.status}`)
-  }
-
-  const contentType = response.headers.get("content-type") ?? ""
-  if (contentType.includes("application/json")) {
-    const data = await response.json().catch(() => undefined)
-    if (typeof data === "boolean") return data
-    if (data && typeof data === "object" && "data" in (data as any)) {
-      return Boolean((data as any).data)
-    }
-    return Boolean(data)
-  }
-
-  const text = await response.text().catch(() => "")
-  if (text.trim() === "true") return true
-  if (text.trim() === "false") return false
-  return Boolean(text)
 }
 
 function clearReloadableInstanceState(instanceId: string): void {
@@ -1001,26 +979,10 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
   return promise
 }
 
-async function disposeInstance(instanceId: string): Promise<boolean> {
-  if (pendingDisposeRequests.has(instanceId)) {
-    return pendingDisposeRequests.get(instanceId)!
-  }
-
-  const promise = (async () => {
-    const ok = await postInstanceDispose(instanceId)
-    if (ok) {
-      await rehydrateInstance(instanceId, { reason: "disposed" })
-    }
-    return ok
-  })().finally(() => {
-    pendingDisposeRequests.delete(instanceId)
-  })
-
-  pendingDisposeRequests.set(instanceId, promise)
-  return promise
-}
-
 async function refreshWorkspaceList(): Promise<void> {
+  // Preferences imports shared controls, but does not own workspace/session
+  // hydration. Its provider editor receives an explicit location from the host.
+  if (!usesClientState()) return
   const requestFence = workspaceListReconciliationFence.begin()
   const removalCandidates = new Set(instances().keys())
   try {
@@ -1108,6 +1070,7 @@ async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
 function handleWorkspaceEvent(event: WorkspaceEventPayload) {
+  if (!usesClientState()) return
   const workspaceId = event.type === "workspace.log"
     ? event.entry.workspaceId
     : "workspace" in event
@@ -1975,6 +1938,12 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   }
 }
 
+// Events after which assistant message cost/token totals may have changed.
+const USAGE_EVENT_TYPES = new Set<string>([
+  "session.step.ended",
+  "session.step.failed",
+])
+
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -2001,13 +1970,16 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-    )) projectOpenCodeMessages(
-      instanceId,
-      sessionId,
-      data,
-      preserveOmitted,
-      force || event.type !== "session.inbox.enqueued",
-    )
+    )) {
+      projectOpenCodeMessages(
+        instanceId,
+        sessionId,
+        data,
+        preserveOmitted,
+        force || event.type !== "session.inbox.enqueued",
+      )
+      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+    }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
     projectMessages(data, preserveOmitted)
@@ -2156,7 +2128,6 @@ export {
   setPendingFormAddedHandler,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
-  disposeInstance,
   reconcilePendingSessionIndicators,
   reconcilePendingRequestLiveness,
   syncPendingRequests,

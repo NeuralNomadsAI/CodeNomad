@@ -91,23 +91,52 @@ export type WorktreeKind = "root" | "worktree"
 export interface WorktreeDescriptor {
   /** Stable identifier used by CodeNomad + clients ("root" for the selected workspace folder). */
   slug: string
+  /** Presentation only; the worktree identifier does not change with its branch. */
+  label?: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Equivalent path in the OpenCode service namespace (notably WSL). */
+  serviceDirectory?: string
+  /** Native checkout root (before mirroring a nested workspace folder). */
+  serviceRoot?: string
+  /** Exact path registered in Git's worktree inventory. */
+  registeredDirectory?: string
+  /** Degraded mode: only this exact physical directory authorizes sessions. */
+  directoryOnly?: boolean
   kind: WorktreeKind
+  /** False for the opened folder and Git's main checkout. */
+  removable?: boolean
   /** Optional VCS branch name when available. */
   branch?: string
+  /** Commit recorded by the Git worktree inventory. */
+  head?: string
 }
 
 export interface WorktreeListResponse {
+  /** False means directory-only degraded mode; repository membership is unknown. */
+  gitAvailable?: boolean
   worktrees: WorktreeDescriptor[]
+  /** Default creation parent in the OpenCode service namespace. */
+  defaultDirectory?: string
   /** True when the workspace folder resolves to a Git repository. */
   isGitRepo?: boolean
 }
 
 export interface WorktreeCreateRequest {
   slug: string
+  fromSlug?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
+}
+
+export interface WorktreeSessionMoveRequest {
+  worktreeSlug: string
+}
+
+export interface WorktreeSessionMoveResponse {
+  rootSessionId: string
+  sessionIds: string[]
+  worktreeSlug: string
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
@@ -338,6 +367,7 @@ export interface BinaryUpdateRequest {
 }
 
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
+export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
 
 export interface BinaryValidationResult {
   valid: boolean
@@ -347,11 +377,25 @@ export interface BinaryValidationResult {
 }
 
 export interface OpenCodeUpdateStatus {
-  currentVersion: string
+  currentVersion: string | null
   latestVersion: string | null
   updateAvailable: boolean | null
   canUpgrade: boolean
   checkError?: "update_check_failed"
+  minimumVersion: string
+  recommendedVersion: string
+  versionAssessment: "tested" | "untested" | "incompatible"
+  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  state: "missing" | "update_required" | "ready" | "error"
+  binaryPath: string
+  installationSource?: "path" | "user"
+  needsSharedInstallation?: boolean
+  daemonVersion?: string
+  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
+  canReload?: boolean
+  serviceError?: string
+  target: "host" | "wsl"
+  canRestart: boolean
 }
 
 export interface OpenCodeUpdateResponse {
@@ -443,6 +487,7 @@ export type WorkspaceEventType =
   | "workspace.error"
   | "workspace.stopped"
   | "workspace.log"
+  | "workspace.worktreesChanged"
   | "sidecar.updated"
   | "sidecar.removed"
   | "storage.configChanged"
@@ -459,6 +504,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
+  | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }

@@ -5,6 +5,7 @@ import type { DiffPayload } from "./types"
 import { getLogger } from "../../lib/logger"
 import { tGlobal } from "../../lib/i18n"
 import { exceedsRetainedByteLimit } from "../../lib/retained-size"
+import { getCanonicalToolName } from "./tool-presentation"
 const log = getLogger("session")
 
 
@@ -72,8 +73,25 @@ export function getToolName(tool: string): string {
 
 export function getRelativePath(path: string): string {
   if (!path) return ""
-  const parts = path.split("/")
+  const parts = path.split(/[\\/]/)
   return parts.slice(-1)[0] || path
+}
+
+// Strips the tool label prefix from a renderer title so the header can show the
+// raw tool name once. Both the raw name ("subagent") and its registry tool
+// ("task") are accepted as prefixes because renderers are shared across aliases.
+export function getToolTitleDetail(rawTitle: string, toolName: string): string {
+  const title = rawTitle.trim()
+  if (!title) return ""
+  const canonical = getCanonicalToolName(toolName)
+  const labels = [toolName.trim(), getToolName(toolName).trim(), canonical, getToolName(canonical).trim()].filter(Boolean)
+  for (const label of new Set(labels)) {
+    if (title === label) return ""
+    if (title.startsWith(`${label} `)) return title.slice(label.length).trimStart()
+    if (title.startsWith(`${label}[`)) return title.slice(label.length).trimStart()
+    if (title.startsWith(`${label} · `)) return title.slice(label.length + 3).trimStart()
+  }
+  return title
 }
 
 export function ensureMarkdownContent(
@@ -187,7 +205,8 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   if (!diffCapableTools.has(toolName)) return null
 
   const { metadata, input, output } = readToolStatePayload(state)
-  const candidates = [metadata.diff, output, metadata.output]
+  const fileDiff = readSingleFileDiff(metadata)
+  const candidates = [metadata.diff, fileDiff?.patch, output, metadata.output]
   let diffText: string | null = null
 
   for (const candidate of candidates) {
@@ -208,9 +227,26 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
   const filePath =
     (typeof input.filePath === "string" ? input.filePath : undefined) ||
     (typeof metadata.filePath === "string" ? metadata.filePath : undefined) ||
-    (typeof input.path === "string" ? input.path : undefined)
+    (typeof input.path === "string" ? input.path : undefined) ||
+    fileDiff?.file
 
   return { diffText, filePath }
+}
+
+// OpenCode 2.x edit/patch tool metadata: `metadata.files` is a list of FileDiff
+// entries `{ file, patch, additions, deletions, status }` rather than a
+// `metadata.diff` string. The single-file diff viewer can only present one
+// entry, so a multi-file patch is left to the renderer's own fallback instead
+// of being cut down to its first file.
+export function readSingleFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
+  const files = metadata.files
+  if (!Array.isArray(files) || files.length !== 1) return null
+  const only = files[0]
+  if (!only || typeof only !== "object") return null
+  return {
+    file: typeof only.file === "string" ? only.file : undefined,
+    patch: typeof only.patch === "string" ? only.patch : undefined,
+  }
 }
 
 export function readToolStatePayload(state?: ToolState): {

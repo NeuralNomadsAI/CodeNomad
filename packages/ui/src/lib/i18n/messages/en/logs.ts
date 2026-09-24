@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "Scroll to top",
   "infoView.logs.scrollToBottom": "Scroll to bottom",
 
-  "infoView.dispose.actions.dispose": "Dispose instance",
-  "infoView.dispose.actions.disposing": "Disposing...",
-  "infoView.dispose.confirm.title": "Dispose instance?",
-  "infoView.dispose.confirm.message": "This clears cached per-project state for this directory and reloads the instance.",
-  "infoView.dispose.confirm.confirmLabel": "Dispose",
-  "infoView.dispose.confirm.cancelLabel": "Cancel",
-  "infoView.dispose.toast.success": "Instance disposed. Reloading...",
-  "infoView.dispose.toast.error": "Failed to dispose instance.",
 } as const

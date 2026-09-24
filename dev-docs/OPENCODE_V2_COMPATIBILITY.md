@@ -1,9 +1,130 @@
 # OpenCode V2 compatibility: audit and implementation roadmap
 
+## Current qualification policy
+
+Qualify against the technical minimum and the latest published stable OpenCode
+runtime (`@opencode/cli@latest`). A blocking minimum must follow a demonstrated
+API/behavior dependency; the latest publication and client/plugin pin are not
+sufficient reasons. Keep minimum requirements, recommended/tested versions and
+unverified versions distinct.
+
+CI records the resolved runtime version. Pin client/plugin dependencies together
+to the release target and qualify them before publishing CodeNomad. Retained
+compatibility code and historical-data handling do not imply support for older
+runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
+reports. Update this reference in place.
+
+PR #696's corrected technical minimum is **2.0.7**, when native step-start events
+gain the `data.started` field consumed by the current Solid reducer. **2.0.15**
+is the recommended release-tested target, not the minimum. Unlisted versions,
+including prereleases/custom labels/future majors, undergo authenticated contract
+recognition rather than being refused solely for their label. Missing canonical
+APIs or session environment support produce a concrete incompatibility reason.
+The bundled Node/npm installer and explicit daemon restart are distinct actions.
+Pre-2.0.4 wire adapters and the pre-2.0.7 timestamp fallback are retired, including
+remaining legacy live location serializers. Historical internal identity,
+current import/cursor authorization, cancellation and connection checks remain.
+The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse while
+preserving session IDs and complete history. See the
+[transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
+
+### Side questions (`/btw`)
+
+The composer-owned command calls native `session.generate({ sessionID, prompt })`
+through the ownership-checked session proxy. It does not use `session.command`,
+create a fork, replace session environment, or add transcript/inbox records.
+The native API returns one text answer; there is no client-side context assembly
+or tool loop. Closing/cancelling the ephemeral window aborts that request only.
+`scripts/test-session-aside-native.mjs` uses a private daemon and local provider
+to verify context reuse, unchanged idle history and generation during an active
+main turn. It passes on 2.0.7 (technical minimum), 2.0.11 and 2.0.12, and runs in
+the minimum/latest-stable CI matrix. These targeted results do not change the
+global minimum, dependency pins or recommended release-tested version.
+
+### 2.0.14 qualification baseline (2026-09-23)
+
+The qualification baseline includes merged #751 (`0a31a8b3`). Server/UI client
+and bundled-plugin dependencies were aligned at **2.0.14**, together with the
+then-recommended/tested version. The technical minimum remains **2.0.7**. Newer
+runtime labels continue through authenticated contract recognition; this update
+does not widen the proxy allowlist or retry mutations under another contract.
+
+The 2.0.11-to-2.0.14 client contract adds `ConnectionCredentialInfo.method`
+(`key` or `oauth`). Historical migration assertions retain full comparison of
+the old connection fields and separately validate that the synthetic key
+credential remains a key when the runtime exposes that metadata. They do not
+discard unknown fields or relax session/history preservation checks.
+
+With the 2.0.14 dependencies, isolated Windows fixtures pass native migrations
+from 2.0.3 and beta-19271 to both 2.0.7 and 2.0.14, preserving complete history,
+forks, pending inbox state and provider configuration. The same native suite
+passes against both 2.0.7 and 2.0.14: discovery/automation, plugin provisioning/heartbeats, proxy and
+ownership checks, worktrees, Forms/permissions, 241-message history queries,
+1,501-message outline/window parity, pruning/concurrency/restart, per-send
+environment, inclusive forks and idle/busy side questions. All storage and
+daemons are synthetic and isolated. Detailed logs and remaining platform
+qualification belong in the qualification PR/CI, not a separate version report.
+
+The previous #751 compatibility failures on Linux, Windows and macOS all stop
+at the same additive credential-metadata assertion. Local Windows migration
+coverage completed; the subsequent 2.0.15 qualification also confirms the
+corrected migrations on Linux, Windows and macOS in CI.
+The separate system-message browser fixture still has two search timeouts:
+it mocks HTTP APIs with `{}` and does not provide the current bounded history
+query contract. Those tests use synthetic browser data, not a 2.0.14 daemon;
+they are not native-runtime qualification evidence.
+
+### Current stable target: 2.0.15
+
+Server/UI client, bundled plugin and recommendation advance together to **2.0.15**;
+the technical minimum stays **2.0.7**. The upstream client now preserves a
+`baseUrl` path prefix ([#50428](https://github.com/anomalyco/opencode/pull/50428)).
+CodeNomad removes its former prefix-repair workaround: the generated URL passes
+through unchanged, while scheduling classifies the API path relative to the
+proxy prefix. A regression using the real generated client reproduced duplicate
+proxy prefixes before this correction and verifies exact DELETE/PUT instruction
+paths afterward, including deployments with an additional base path.
+
+Declared native API errors are now `Error` instances retaining `_tag`/data
+([#50788](https://github.com/anomalyco/opencode/pull/50788)); existing error
+classification remains applicable. Undeclared HTTP 500 responses still surface
+as `UnexpectedStatus`. Additive contracts include project `time.active`, session
+metadata updates and their event; these do not add new proxy routes or minimum
+runtime requirements. Runtime changes also cover media/provider handling,
+Code Mode expression support and Windows CLI update/uninstall coordination.
+
+These changes do **not** establish a fix for #750's remaining CodeNomad
+pre-forward exception. Updating only the CLI cannot replace the client bundled
+with CodeNomad. Keep #750 open until a reproducing desktop send verifies its
+specific failure; synthetic qualification is not that reproduction.
+
+With the 2.0.15 pins, Windows qualification passes the native suites on both
+2.0.7 and 2.0.15 (automation/discovery, proxy/ownership/worktrees, history/pruning,
+environment, forks and idle/busy side questions), plus all four historical
+migrations from 2.0.3/beta-19271 to minimum/current. The environment fixture's
+duplicate prefix workaround was removed too; its initial 403 was reproduced on
+both runtimes and the corrected real-manager/native-shell cases pass on both.
+CI run `35848468936` confirms historical migrations on Linux, Windows and macOS,
+plus native pruning/UI on Linux and macOS. Both Windows runtime suites complete
+their 2.0.7/2.0.15 native cases, then fail because the merge-ref workflow invokes
+the newer blank-session fixture absent from the checked-out PR head. Integrating
+`dev` brings that fixture into the branch; its native checks pass locally on both
+runtimes with the 2.0.15 client. The separate Windows pruning/UI CI process exits
+without an exception diagnostic. A local Node 24.20.0 run also exits abruptly,
+but the subsequent instrumented run passes the complete native/UI suite. Keep
+startup phase diagnostics for a recurrence; this passing rerun does not establish
+the cause or a fix for the intermittent exit. Detailed results and remaining CI
+gates belong in #752 rather than being inferred from other passing platforms.
+
+The audit and implementation record below is historical context, not a runtime
+qualification matrix to maintain.
+
 **Audit date:** 2026-09-16. **CodeNomad baseline:** PR #695 at `bcfe4d24`.
 **Status:** connection-scoped compatibility is implemented. Autonomous gatekeeper loops approved transport, identity, scripts/CI and rendered-fixture scopes with no remaining actionable findings. The original audit findings below remain as the change rationale; the implementation results section records their current disposition.
 
 ## Decision summary
+
+The [OpenCode V2 stable-runtime transition register](OPENCODE_V2_POST_BETA.md) supersedes the earlier live-support set and records implementation and acceptance evidence. The sections below preserve the original #695 audit.
 
 At `bcfe4d24`, CodeNomad had a working modern-client path and backward-compatible service discovery, **not a complete backward-compatible V2 integration**. The follow-up change keeps that discovery fix and addresses the remaining issues through one connection-scoped integration module and one cross-runtime acceptance matrix.
 
@@ -79,6 +200,33 @@ Source review of OpenCode `v2.0.4` (`466b3e594d3df396a57340249590a70c5c358c8a`) 
 The native fixture now resolves its temporary root with `realpath` **before** constructing any daemon paths. Installation still happens after daemon/location startup; an explicit assertion verifies that the bundled plugin was absent beforehand. Discovery failures retain the last plugin inventory and phase context. CI uploads only these isolated fixtures' daemon logs, discovery snapshots and rendered captures on failure.
 
 The corrected full native suite passes on Linux/WSL 2.0.4 with a symlinked TEMP root, and the Windows 2.0.4 rendered/native suite passes. Script syntax, workflow YAML parsing and whitespace checks pass; an independent gatekeeper review reports no actionable findings. This corrects the fixture namespace rather than preinstalling the plugin, restarting the daemon, or extending the timeout. Actual macOS confirmation requires the next CI run; the prior runner's raw watcher paths were not retained. Existing user daemons configured through symlinked config roots remain an upstream watcher limitation, not a production fix claimed by this fixture change.
+
+### Server-info discovery follow-up (2026-09-17)
+
+The installed 2.0.7 daemon returns 404 for both `/api/status` and `/api/health`,
+and exposes authenticated `/api/info`. Lifecycle validation now tries the three
+read routes in that order, advancing only on 404 and sharing the same credentials,
+response-size bound and absolute deadline. Redirects are rejected. Earlier V2
+services still stop at `/api/health`; no minimum release or new version exception
+is introduced. Unknown versions still negotiate their actual OpenAPI contract.
+
+The connection records `info` discovery so canonical `client.server.status()`
+uses `/api/info` too. Translation is limited to GET and does not retry a failed
+request with another route. A comparison of the 132 pinned-client HTTP method/path
+pairs with the installed 2.0.7 schema found 131 unchanged pairs and this single
+status/info difference. Experimental paths were already part of the merged modern
+contract; this is not another experimental-route migration.
+
+Host/WSL regressions cover the third probe, credentials, body validation and shared
+deadline. Client regressions cover 2.0.0 health, 2.0.4 status, negotiated 2.0.7 info
+and an unknown future version. The isolated location fixture exercises production
+lifecycle validation and canonical `client.server.status()` before location tests.
+On Windows, that fixture passes against real isolated 2.0.0 and 2.0.7 daemons:
+2.0.0 takes the health route and passes the legacy identity/Form/Shell/PTY/SSE/
+cursor/rollback cases; 2.0.7 takes the info route and passes modern location and
+obsolete-selector checks. The 44 focused lifecycle/transport/negotiation tests
+and server typecheck also pass.
+Route presence and these targeted checks do not certify every runtime behavior.
 
 ### Validation boundaries
 

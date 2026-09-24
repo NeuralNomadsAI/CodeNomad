@@ -139,6 +139,7 @@ export function getTaskToolSearchText(context: ToolSearchTextContext): string[] 
   appendBaseToolText(values, context)
   appendString(values, input.prompt)
   appendString(values, input.subagent_type)
+  appendString(values, input.agent)
   appendFormatted(values, output)
   appendFormatted(values, metadata.summary)
   appendToolErrorText(values, context)

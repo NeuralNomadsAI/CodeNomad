@@ -6,16 +6,16 @@ import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
-import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
+import { getSessionMessagesLoadError, loading, messagesLoaded } from "../../../stores/session-state"
 import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
-import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
-import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
 import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
 import { getMessageWindowPageKey, loadCompleteMessageHistory } from "../../message-history-pagination"
+import { getCanonicalToolName } from "../tool-presentation"
+import { describeTaskTitle, readSubagentName } from "./task-title"
 
 const TASK_MESSAGE_SCAN_LIMIT = 10_000
 
@@ -121,19 +121,6 @@ function summarizeStatusLabel(status?: ToolState["status"]) {
   return status
 }
 
-function describeTaskTitle(input: Record<string, any>) {
-  const description = typeof input.description === "string" ? input.description : undefined
-  const subagent = typeof input.subagent_type === "string" ? input.subagent_type : undefined
-  const base = getToolName("task")
-  if (description && subagent) {
-    return `${base}[${subagent}] ${description}`
-  }
-  if (description) {
-    return `${base} ${description}`
-  }
-  return base
-}
-
 function describeGenericToolTitle(tool: string, input: Record<string, any>) {
   const base = getToolName(tool)
   const detail =
@@ -157,8 +144,8 @@ function describeToolTitle(item: TaskSummaryItem): string {
     return item.title
   }
 
-  if (item.tool === "task") {
-    return describeTaskTitle({ ...item.metadata, ...item.input })
+  if (getCanonicalToolName(item.tool) === "task") {
+    return describeTaskTitle({ ...item.metadata, ...item.input }, item.tool)
   }
 
   if (item.state) {
@@ -181,11 +168,11 @@ export const taskRenderer: ToolRenderer = {
     const output = getTaskOutputCopyText(toolState())
     return output ? { getCopyText: () => output, hasCopyText: true } : undefined
   },
-  getTitle({ toolState }) {
+  getTitle({ toolState, toolName }) {
     const state = toolState()
     if (!state) return undefined
     const { input } = readToolStatePayload(state)
-    return describeTaskTitle(input)
+    return describeTaskTitle(input, toolName())
   },
   renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
@@ -213,18 +200,22 @@ export const taskRenderer: ToolRenderer = {
       void loadMessages(instanceId, id, { force: true }).catch(() => {})
     }
 
-    useActiveSessionMessageLoad({
-      isActive: () => Boolean(childSessionId()),
-      instanceId: () => instanceId,
-      session: () => {
-        const id = childSessionId()
-        return id ? sessions().get(instanceId)?.get(id) : undefined
-      },
-      shouldLoad: () => !childSessionLoaded(),
-      loadMessages: (childInstanceId, id, options) => loadMessages(childInstanceId, id, {
-        registerInvalidation: options?.registerInvalidation,
-      }),
-      waitForHydration: waitForInstanceWorkspaceMetadataHydration,
+    const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
+    const childSessionLoading = createMemo(() => {
+      const id = childSessionId()
+      if (!id) return false
+      const loadingSet = loading().loadingMessages.get(instanceId)
+      return loadingSet?.has(id) ?? false
+    })
+
+    createEffect(() => {
+      const id = childSessionId()
+      if (!id) return
+      if (requestedChildLoad()) return
+      if (childSessionLoaded()) return
+      if (childSessionLoading()) return
+      setRequestedChildLoad(true)
+      void loadMessages(instanceId, id)
     })
 
     createEffect(() => {
@@ -401,7 +392,9 @@ export const taskRenderer: ToolRenderer = {
       const state = toolState()
       if (!state) return null
       const { input } = readToolStatePayload(state)
-      return typeof input.subagent_type === "string" ? limitToolTitleForRender(input.subagent_type) : null
+      const { input } = readToolStatePayload(state)
+      const name = readSubagentName(input)
+      return name ? limitToolTitleForRender(name) : null
     })
 
     const modelLabel = createMemo(() => {

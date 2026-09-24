@@ -4,6 +4,7 @@ export const PRUNING_RPC_ID = "codenomad.session-pruning"
 export const PRUNING_EVENT = `rpc.${PRUNING_RPC_ID}.pruned` as const
 const id = z.string().min(1).max(256)
 export const messageTargetSchema = z.object({ sessionID: id, messageID: id }).strict()
+export const pruneAllRequestSchema = messageTargetSchema.extend({ revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 export const pruneRequestSchema = messageTargetSchema.extend({
   revision: z.string().regex(/^[a-f0-9]{64}$/),
   indexes: z.array(z.number().int().min(0).max(100_000)).min(1).max(100_001)

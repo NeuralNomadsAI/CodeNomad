@@ -16,6 +16,8 @@ import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
+import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerConfigFileRoutes } from "./routes/config-files"
@@ -32,7 +34,7 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
-import { ServerMeta } from "../api-types"
+import { ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
@@ -44,7 +46,6 @@ import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
-import { contractProfile, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext } from "../opencode/compatibility/location"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
@@ -422,6 +423,7 @@ export interface InstanceProxyWorkspaceManager {
   getWorktreeIdentityForPath(id: string, directory: string): Promise<string | undefined>
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
+  getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
   ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): ReturnType<WorkspaceManager["ownsLocation"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
@@ -660,9 +662,9 @@ async function proxyWorkspaceRequest(args: {
     return
   }
 
-  const profile = connection ? await connection.profile() : contractProfile(runtimeIdentity(endpoint))
+  await connection?.profile()
   let locationContext: LocationRef | undefined
-  try { locationContext = readLocationContext(request.headers[LOCATION_CONTEXT_HEADER], profile) }
+  try { locationContext = readLocationContext(request.headers[LOCATION_CONTEXT_HEADER]) }
   catch { return reply.code(400).send({ error: "Invalid location context" }) }
 
   const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
@@ -704,7 +706,7 @@ async function proxyWorkspaceRequest(args: {
   const sessionListHasScope = request.method === "GET"
     && pathname.replace(/\/+$/, "") === "/api/session"
     && (targetUrl.searchParams.has("cursor") || targetUrl.searchParams.has("project"))
-  const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId, profile, connection?.client)
+  const sessionListScope = await authorizeSessionList(targetUrl, request.method, workspaceManager, workspaceId, connection?.client)
   if (sessionListScope !== "allowed") {
     reply.code(sessionListScope === "invalid" ? 400 : 403).send({ error: "Session list does not belong to workspace" })
     return
@@ -740,9 +742,8 @@ async function proxyWorkspaceRequest(args: {
     request.method,
     stripLocationSelectors(targetUrl, request.body, workspace.path, serviceDirectory),
     serviceDirectory,
-    profile,
   )
-  const requestLocations = readRequestLocations(targetUrl, imported.body, workspace.path, profile)
+  const requestLocations = readRequestLocations(targetUrl, imported.body, workspace.path)
   const explicitLocations = [...requestLocations.locations]
   if (locationContext) {
     requestLocations.directories.push(locationContext.directory)
@@ -901,12 +902,14 @@ async function proxyWorkspaceRequest(args: {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
-    if (!sessionWorktree) {
-      reply.code(403).send({ error: "Session does not belong to workspace" })
-      return
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const sessionWorktree = await workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory)
+      if (!sessionWorktree) {
+        reply.code(403).send({ error: "Session does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(sessionWorktree)
     }
-    mutationIdentities.add(sessionWorktree)
   }
 
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
@@ -922,6 +925,43 @@ async function proxyWorkspaceRequest(args: {
 
   try {
     connection?.assertCurrent()
+    if (request.method === "POST" && /^\/api\/session\/[^/]+\/(?:prompt|command|shell)\/?$/.test(pathname)) {
+      const disconnected = new AbortController()
+      const onDisconnect = () => disconnected.abort()
+      reply.raw.once("close", onDisconnect)
+      try {
+        try {
+          const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(15_000)])
+          if (reply.raw.destroyed || request.raw.aborted) disconnected.abort()
+          signal.throwIfAborted()
+          const variables = await workspaceManager.getSessionEnvironment(workspaceId, signal)
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+          await (await clientForRequest()).session.environment({ sessionID: sessionId!, variables }, { signal })
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+        } catch {
+          // Never log the SDK error: it can contain the complete environment body.
+          releaseMutation?.()
+          logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
+          return reply.code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
+        }
+        if (!pathname.replace(/\/$/, "").endsWith("/shell")) {
+          try {
+            connection?.assertCurrent()
+            await syncSessionGitContext(await clientForRequest(), sessionId!, disconnected.signal)
+          } catch {
+            // Advisory context must not turn Git recovery into another send blocker.
+            // Do not log SDK bodies (they may include unrelated session context).
+            logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
+          }
+        }
+        disconnected.signal.throwIfAborted()
+        connection?.assertCurrent()
+      } finally {
+        reply.raw.off("close", onDisconnect)
+      }
+    }
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
       delete headers[LOCATION_CONTEXT_HEADER]
@@ -1122,16 +1162,18 @@ async function authorizeSessionList(
   method: string,
   manager: InstanceProxyWorkspaceManager,
   workspaceId: string,
-  profile: ContractProfile,
   client?: OpenCodeClient,
 ): Promise<"allowed" | "invalid" | "foreign"> {
   if (method !== "GET" || targetUrl.pathname.replace(/\/+$/, "") !== "/api/session") return "allowed"
   const cursors = targetUrl.searchParams.getAll("cursor")
   if (cursors.length > 1) return "invalid"
   if (cursors.length === 1) {
-    const scope = decodeSessionListScope(cursors[0], profile)
+    const scope = decodeSessionListScope(cursors[0])
     if (!scope) return "invalid"
-    for (const key of ["directory", "location[directory]", "project", "subpath", ...(profile === "legacy" ? ["workspace", "location[workspace]"] : [])]) {
+    // A project cursor embeds its original wide scope; never reinterpret it as
+    // a directory cursor when Git authority is unavailable.
+    if (scope.project && !(await readGitStatus()).available) return "foreign"
+    for (const key of ["directory", "location[directory]", "project", "subpath"]) {
       targetUrl.searchParams.delete(key)
     }
     return ownsSessionListScope(manager, workspaceId, scope, client)
@@ -1150,7 +1192,19 @@ async function authorizeSessionList(
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { project, subpath, workspaceID: targetUrl.searchParams.get("workspace") ?? undefined }, client)
+  const ownership = await ownsSessionListScope(manager, workspaceId, { project, subpath }, client)
+  if (ownership !== "allowed") return ownership
+  if (!(await readGitStatus()).available) {
+    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client)) return "foreign"
+    // Narrow the initial query, preserving native directory-scoped pagination.
+    // Unlike a project cursor this request has no already-established scope.
+    const root = manager.getServiceDirectory?.(workspaceId) ?? manager.get(workspaceId)?.path
+    if (!root) return "foreign"
+    targetUrl.searchParams.delete("project")
+    targetUrl.searchParams.delete("subpath")
+    targetUrl.searchParams.set("directory", root)
+  }
+  return "allowed"
 }
 
 function isSafeRelativePath(value: string): boolean {
@@ -1164,7 +1218,7 @@ async function ownsSessionListScope(
   client?: OpenCodeClient,
 ): Promise<"allowed" | "foreign"> {
   if (scope.directory) {
-    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory, workspaceID: scope.workspaceID }, client)
+    const owned = await manager.ownsLocation(workspaceId, { directory: scope.directory }, client)
     return owned ? "allowed" : "foreign"
   }
   if (!scope.project) return "foreign"
@@ -1175,7 +1229,7 @@ async function ownsSessionListScope(
     : /^[A-Za-z]:[\\/]|^\\\\/.test(project.canonical)
       ? path.win32.resolve(project.canonical, scope.subpath)
       : path.posix.resolve(project.canonical, scope.subpath)
-  const owned = await manager.ownsLocation(workspaceId, { directory, workspaceID: scope.workspaceID }, client)
+  const owned = await manager.ownsLocation(workspaceId, { directory }, client)
   return owned ? "allowed" : "foreign"
 }
 
@@ -1248,13 +1302,14 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/session\/[^/]+$/],
     ["DELETE", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
     ["PATCH", /^\/api\/session\/[^/]+$/],
-    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|move|prompt|command|shell|compact|interrupt|background|fork)$/],
+    ["POST", /^\/api\/session\/[^/]+\/(?:agent|model|move|prompt|command|shell|compact|interrupt|background|fork|generate)$/],
     ["POST", /^\/api\/experimental\/session\/[^/]+\/wait$/],
     ["PATCH", /^\/api\/session\/[^/]+\/inbox\/[^/]+$/],
     ["POST", /^\/api\/session\/[^/]+\/revert\/stage$/],
     ["DELETE", /^\/api\/session\/[^/]+\/revert$/],
     ["PUT", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["DELETE", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["GET", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries$/],
     ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],
     ["POST", /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/],
     ["DELETE", /^\/api\/session\/[^/]+\/form\/[^/]+$/],
@@ -1399,10 +1454,10 @@ function replacePromptFileUris(body: unknown, replacements: ReadonlyMap<string, 
   }
 }
 
-function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string, profile: ContractProfile) {
+function prepareSessionImport(pathname: string, method: string, body: unknown, directory: string) {
   const result = { body, directories: [] as string[], locations: [] as LocationRef[], invalid: false }
   if (pathname !== "/api/experimental/session/import" || method !== "POST") return result
-  return prepareLocationImport(body, directory, profile)
+  return prepareLocationImport(body, directory)
 }
 
 function normalizeInstanceSuffix(pathSuffix: string | undefined) {

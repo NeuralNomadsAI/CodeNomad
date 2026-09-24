@@ -11,6 +11,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: auto;
   outline: none;
   background-color: var(--surface-base);
   color: inherit;

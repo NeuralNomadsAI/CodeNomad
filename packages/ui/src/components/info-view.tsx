@@ -134,7 +134,7 @@ const InfoView: Component<InfoViewProps> = (props) => {
     <div class="log-container">
       <div class="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
         <div class="lg:w-80 flex-shrink-0 min-h-0 overflow-y-auto max-h-[40vh] lg:max-h-none">
-          <Show when={instance()}>{(inst) => <InstanceInfo instance={inst()} showDisposeButton />}</Show>
+          <Show when={instance()}>{(inst) => <InstanceInfo instance={inst()} showReloadButton />}</Show>
         </div>
 
         <div class="panel flex-1 flex flex-col min-h-0 overflow-hidden">

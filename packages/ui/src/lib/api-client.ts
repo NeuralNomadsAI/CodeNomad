@@ -1,3 +1,5 @@
+import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
   PruneResult,
@@ -42,17 +44,19 @@ import type {
   WorkspaceEventType,
   WorktreeListResponse,
   WorktreeCreateRequest,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
+import { authenticatedFetch } from "./auth-recovery"
+import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 
-const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env?.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
@@ -131,11 +135,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${path}`)
 
   try {
-    const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new Error(message || `Request failed with ${response.status}`)
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"))
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -160,7 +164,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -173,6 +177,31 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+      method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+    })
+  },
+  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+      method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
+    })
+  },
+  fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+      method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
+    })
+  },
+  querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
   pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
       method: "POST", body: JSON.stringify(input),
@@ -208,6 +237,13 @@ export const serverApi = {
     const suffix = params.toString() ? `?${params.toString()}` : ""
     return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
       method: "DELETE",
+    })
+  },
+
+  moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+    return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
 
@@ -322,7 +358,7 @@ export const serverApi = {
   searchWorkspaceFiles(
     id: string,
     query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all" },
+    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal },
   ): Promise<WorkspaceFileSearchResponse> {
     const trimmed = query.trim()
     if (!trimmed) {
@@ -335,9 +371,11 @@ export const serverApi = {
     if (opts?.type) {
       params.set("type", opts.type)
     }
-    return request<WorkspaceFileSearchResponse>(
+    const search = () => request<WorkspaceFileSearchResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
+      { signal: opts?.signal },
     )
+    return opts?.signal ? retryFileSearch(search, opts.signal) : search()
   },
   readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
@@ -361,18 +399,20 @@ export const serverApi = {
       },
     )
   },
-  fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
+  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+      { signal },
     )
   },
-  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest): Promise<WorktreeGitDiffResponse> {
+  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
     const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
     if (requestPayload.originalPath) {
       params.set("originalPath", requestPayload.originalPath)
     }
     return request<WorktreeGitDiffResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+      { signal },
     )
   },
   stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
@@ -433,6 +473,12 @@ export const serverApi = {
   },
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
+  },
+  startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
+  },
+  reloadOpenCodeConfiguration(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ reload: true }) })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")

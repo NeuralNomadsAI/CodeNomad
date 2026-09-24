@@ -16,6 +16,70 @@ const endpoint: Endpoint = {
 }
 
 describe("OpenCodeSharedService", () => {
+  it("prepares plugins once per connected daemon, coalesces callers, and prepares replacements", async () => {
+    let release!: () => void
+    let preparations = 0
+    let active = endpoint
+    const service = createService()
+    const options: OpenCodeSharedServiceOptions = {
+      ...lifecycleOptions("host:plugins", { discover: async () => active, ensure: async () => active }),
+      prepareDesktopPlugins: async (connection, deadlineAt) => {
+        connection.assertCurrent()
+        preparations++
+        if (preparations === 1) {
+          assert.equal(deadlineAt, 12345)
+          await new Promise<void>(resolve => { release = resolve })
+        }
+        return true
+      },
+    }
+    let ready = false
+    const first = service.client(options, { deadlineAt: 12345 }).then(value => { ready = true; return value })
+    const second = service.endpoint(options)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(preparations, 1)
+    assert.equal(ready, false)
+    release()
+    await Promise.all([first, second])
+    await service.acquire()
+    assert.equal(preparations, 1)
+    active = { ...endpoint, url: "http://127.0.0.1:4322" }
+    service.invalidate()
+    assert.equal((await service.acquire()).endpoint, active)
+    assert.equal(preparations, 2)
+  })
+
+  it("does not publish stale plugin preparation and retries a failed preparation", async () => {
+    const service = createService()
+    let fail = true
+    const options: OpenCodeSharedServiceOptions = {
+      ...lifecycleOptions("host:plugin-failure", lifecycleFor(endpoint)),
+      prepareDesktopPlugins: async () => {
+        if (fail) throw new Error("No authoritative discovery directory")
+        service.invalidate()
+        return true
+      },
+    }
+    await assert.rejects(service.client(options), /No authoritative/)
+    fail = false
+    await assert.rejects(service.client(options), /connection changed/)
+  })
+
+  it("retries reported optional provisioning failures without making the daemon unavailable", async () => {
+    const service = createService()
+    let preparations = 0
+    const options: OpenCodeSharedServiceOptions = {
+      ...lifecycleOptions("host:plugin-retry", lifecycleFor(endpoint)),
+      prepareDesktopPlugins: async () => ++preparations > 1,
+    }
+    await service.client(options)
+    assert.equal(preparations, 1)
+    await service.client()
+    assert.equal(preparations, 2)
+    await service.client()
+    assert.equal(preparations, 2)
+  })
+
   it("discovers or starts one pinned CLI lifecycle", async () => {
     let discoveries = 0
     let starts = 0
@@ -148,7 +212,7 @@ describe("OpenCodeSharedService", () => {
     await new Promise((resolve) => setImmediate(resolve))
     await service.shutdown()
     resolveStart(endpoint)
-    assert.equal(await pending, endpoint)
+    await assert.rejects(pending, /connection changed/)
     assert.equal(await service.endpoint(lifecycleOptions("host:test", lifecycle)), endpoint)
     assert.equal(discoveries, 2)
   })

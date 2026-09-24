@@ -19,7 +19,8 @@ import type { Instance } from "../../types/instance"
 import type { Command } from "../../lib/commands"
 import { keyboardRegistry, type KeyboardShortcut } from "../../lib/keyboard-registry"
 
-import { isOpen as isCommandPaletteOpen, hideCommandPalette, showCommandPalette } from "../../stores/command-palette"
+import { isOpen as isCommandPaletteOpen, hideCommandPalette, toggleCommandPalette, getCommandPaletteFocusRequest } from "../../stores/command-palette"
+import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../../stores/session-search"
 import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
@@ -45,6 +46,7 @@ import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
+import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
@@ -85,7 +87,6 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
-const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 const MIN_SESSION_CENTER_WIDTH = 480
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
@@ -158,7 +159,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessions,
     activeSessionIdForInstance,
     activeSessionForInstance,
-    latestTodoState,
     tokenStats,
     handleSessionSelect,
   } = useInstanceSessionContext({
@@ -233,6 +233,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  registerViewMenuPanels(props.instance.id, {
+    enabled: () => !mobileFullscreen(),
+    leftOpen,
+    rightOpen,
+    toggleLeft: () => leftOpen() ? closeLeftDrawer() : handleLeftAppBarButtonClick(),
+    toggleRight: () => rightOpen() ? closeRightDrawer() : handleRightAppBarButtonClick(),
+  })
 
   // When the user switches away from this instance (e.g., taps a different
   // instance/project tab while a floating drawer is open on phone), close any
@@ -607,17 +615,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   ) : renderPreviewToggleButton()
 
   const handleCommandPaletteClick = () => {
-    showCommandPalette(props.instance.id)
+    toggleCommandPalette(props.instance.id)
   }
 
   const handleChatSearchClick = () => {
-    if (typeof window === "undefined") return
-    window.dispatchEvent(new CustomEvent(OPEN_SESSION_SEARCH_EVENT))
+    const id = activeSessionIdForInstance()
+    if (id && id !== "info") setSessionSearchOpen(props.instance.id, id, !isSessionSearchOpen(props.instance.id, id))
   }
+  const searchOpen = () => isSessionSearchOpen(props.instance.id, activeSessionIdForInstance() ?? "")
+  const searchWindowId = () => sessionSearchWindowId(props.instance.id, activeSessionIdForInstance() ?? "")
+  const paletteWindowId = () => `command-palette-${props.instance.id}`
 
   const headerActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = [{
       key: "commands",
+      checked: paletteOpen(),
       label: t("instanceShell.commandPalette.openAriaLabel"),
       icon: <CommandIcon class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleCommandPaletteClick,
@@ -626,6 +638,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     items.push(
       {
         key: "search",
+        checked: searchOpen(),
         label: t("instanceShell.chatSearch.openAriaLabel"),
         icon: <Search class="w-4 h-4" aria-hidden="true" />,
         onSelect: handleChatSearchClick,
@@ -645,6 +658,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))
+  createEffect(() => { if (props.isActiveInstance === false) hideCommandPalette(props.instance.id) })
 
   const keyboardShortcuts = createMemo(() =>
     [keyboardRegistry.get("session-prev"), keyboardRegistry.get("session-next")].filter(
@@ -792,12 +806,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
           <RightPanel
+            isActive={() => props.isActiveInstance !== false}
             t={t}
             instanceId={props.instance.id}
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            latestTodoState={latestTodoState}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -820,12 +834,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
       >
         <RightPanel
+          isActive={() => props.isActiveInstance !== false && rightOpen()}
           t={t}
           instanceId={props.instance.id}
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          latestTodoState={latestTodoState}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -1055,6 +1069,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <IconButton
                           color="inherit"
                           onClick={handleCommandPaletteClick}
+                          class="icon-toggle"
+                          aria-expanded={paletteOpen()}
+                          aria-controls={paletteWindowId()}
+                          aria-haspopup="dialog"
                           aria-label={t("instanceShell.commandPalette.openAriaLabel")}
                           title={t("instanceShell.commandPalette.openAriaLabel")}
                           size="small"
@@ -1065,6 +1083,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           <IconButton
                             color="inherit"
                             onClick={handleChatSearchClick}
+                            class="icon-toggle"
+                            aria-expanded={searchOpen()}
+                            aria-controls={searchWindowId()}
+                            aria-haspopup="dialog"
                             aria-label={t("instanceShell.chatSearch.openAriaLabel")}
                             title={t("instanceShell.chatSearch.openAriaLabel")}
                             size="small"
@@ -1134,6 +1156,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
               <Show
                 when={cachedSessionIds().length > 0 && activeSessionIdForInstance()}
                 fallback={
+                  <Show when={!activeSessionIdForInstance()} fallback={
+                    <div class="session-view" data-restoring-session-id={activeSessionIdForInstance()}>
+                      <MessageSection
+                        instanceId={props.instance.id}
+                        sessionId={activeSessionIdForInstance()!}
+                        loading={true}
+                        isActive={props.isActiveInstance}
+                        showSidebarToggle={showEmbeddedSidebarToggle()}
+                        onSidebarToggle={() => setLeftOpen(true)}
+                        forceCompactStatusLayout={showEmbeddedSidebarToggle()}
+                      />
+                    </div>
+                  }>
                   <div class="session-view">
                     <MessageSection
                       instanceId={props.instance.id}
@@ -1184,6 +1219,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       registerPromptInputApi={registerDraftPromptInputApi}
                     />
                   </div>
+                  </Show>
                 }
               >
                 <For each={cachedSessionIds()}>
@@ -1250,7 +1286,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       </div>
 
       <CommandPalette
+        id={paletteWindowId()}
         open={paletteOpen()}
+        focusRequest={getCommandPaletteFocusRequest(props.instance.id)}
         onClose={() => hideCommandPalette(props.instance.id)}
         commands={instancePaletteCommands()}
         onExecute={props.onExecuteCommand}

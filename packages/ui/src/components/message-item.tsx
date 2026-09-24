@@ -479,10 +479,14 @@ export default function MessageItem(props: MessageItemProps) {
 
     }
 
-    if (isUser() && canUseHistoryActions() && props.onFork) {
+    if (
+      canUseHistoryActions() && !props.record.isEphemeral &&
+      (isUser() || props.record.status === "complete" ||
+        (props.record.status === "error" && Boolean(props.messageInfo?.time?.completed))) && props.onFork
+    ) {
       items.push({
         key: "fork",
-        label: t("messageItem.actions.fork"),
+        label: t("messageItem.actions.forkTitle"),
         icon: <Split class="w-3.5 h-3.5" aria-hidden="true" />,
         onSelect: () => props.onFork?.(props.record.id),
       })

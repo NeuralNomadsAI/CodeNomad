@@ -4,6 +4,7 @@ import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
+import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
@@ -17,6 +18,7 @@ import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
+import { reloadWorktrees } from "./stores/worktrees"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
@@ -25,13 +27,21 @@ import { loadedRestorableSession } from "./stores/client-state"
 import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import OpenCodeSetup from "./components/opencode-setup"
+import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import {
+  claimNativeBrowserOpen,
+  onNativeBrowserOpen,
+  releaseNativeBrowserOpen,
+  selectBrowserOpenOwner,
+} from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
-import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
+import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -60,9 +70,11 @@ import {
   createSession,
   fetchSessions,
   loadMessages,
+  setActiveSessionFromList,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { openSessionPreview } from "./stores/session-previews"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -262,6 +274,8 @@ const App: Component = () => {
   })
 
   onMount(() => {
+    let disposed = false
+    let browserOpenUnsubscribe = () => {}
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
@@ -273,7 +287,53 @@ const App: Component = () => {
         })
       }
     }, 30_000)
+    const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
+      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      let owners = findOwners()
+      if (owners.length === 0) {
+        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        owners = findOwners()
+      }
+      const activeTab = activeAppTab()
+      const owner = selectBrowserOpenOwner(
+        owners,
+        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+      )
+      if (disposed || !owner) {
+        if (!disposed) log.warn("Failed to route agent-requested web preview", {
+          sessionID,
+          owners: owners.map((instance) => instance.id),
+          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+        })
+        return
+      }
+      if (!await claimNativeBrowserOpen(requestID)) return
+      try {
+        const instance = owner
+        await openSessionPreview(sessionID, url, instance.folder)
+        if (disposed) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
+        setShowFolderSelection(false)
+        selectInstanceTab(instance.id)
+        setActiveSessionFromList(instance.id, sessionID)
+      } catch (error) {
+        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
+        })
+        throw error
+      }
+    }
+    void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
+      void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else browserOpenUnsubscribe = cleanup
+    }).catch((error) => log.warn("Failed to listen for native browser open requests", { error }))
     onCleanup(() => {
+      disposed = true
+      browserOpenUnsubscribe()
       window.removeEventListener("resize", handleResize)
       window.clearInterval(livenessTimer)
     })
@@ -324,6 +384,7 @@ const App: Component = () => {
                 sessionError = error
               }
               await Promise.all([
+                reloadWorktrees(id),
                 syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
                 refreshVolatileInstanceState(id),
                 syncLoadedSessionInboxes(id),
@@ -458,6 +519,10 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        return false
+      }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
       return false
@@ -634,10 +699,12 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Native menus execute the same commands as the command palette.
+  // Native visibility actions share the shell/preferences state; other actions use palette commands.
+  const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
         const instance = activeInstance()
         if (instance) showCommandPalette(instance.id)
@@ -671,14 +738,9 @@ const App: Component = () => {
     onCleanup(() => unsubscribe?.())
   })
 
-  createEffect(() => {
-    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
-      log.warn("Failed to update native workspace menu state", error)
-    })
-  })
-
   return (
     <>
+      <OpenCodeSetup />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}
@@ -837,6 +899,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <AuthRecoveryDialog />
 
         <Toaster
           position="top-right"

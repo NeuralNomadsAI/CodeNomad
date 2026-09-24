@@ -10,6 +10,7 @@ export type PreferencesSection = typeof PREFERENCES_SECTIONS[number]
 
 export interface PreferencesRequest {
   section: PreferencesSection
+  scrollTop?: number
   instanceId?: string
   location?: { directory: string; workspaceID?: string }
 }
@@ -32,7 +33,12 @@ export function requirePreferencesRequest(section: unknown, context: unknown): P
   if (context === undefined || context === null) return request
   if (typeof context !== "object") throw new Error("Invalid Preferences context")
   const candidate = context as Record<string, unknown>
-  request.instanceId = optionalString(candidate.instanceId, "instance ID", 512)
+  const instanceId = optionalString(candidate.instanceId, "instance ID", 512)
+  if (instanceId) request.instanceId = instanceId
+  if (candidate.scrollTop !== undefined) {
+    if (!Number.isSafeInteger(candidate.scrollTop) || (candidate.scrollTop as number) < 0 || (candidate.scrollTop as number) > 10_000_000) throw new Error("Invalid Preferences scroll position")
+    request.scrollTop = candidate.scrollTop as number
+  }
   if (candidate.location !== undefined && candidate.location !== null) {
     if (typeof candidate.location !== "object") throw new Error("Invalid Preferences location")
     const location = candidate.location as Record<string, unknown>

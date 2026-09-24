@@ -19,7 +19,7 @@ import {
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
 import { showFolderSelection } from "../../stores/ui"
-import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
+import { instances } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -33,6 +33,7 @@ import { serializeDraftAttachments } from "../../stores/client-state-attachments
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
+import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
@@ -86,6 +87,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
         getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
       ),
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
+      outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
         ...expanded.filter((sessionId) => !expansionAuthority.has(sessionId)),
@@ -226,6 +228,13 @@ export function useAppSessionCapture() {
     onInstanceLifecycleAuthority((event) => {
       const lifecycleToken = ++nextInstanceLifecycleToken
       instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
+      // A fresh page has no startup snapshot. Capture live work before an
+      // unavailable workspace is removed during backend-restart reconciliation.
+      if (!preservation && event.type === "unavailable") {
+        const captured = captureState(scrollAuthority)
+        preservation = createRestorableSessionPreservation(captured.state)
+        captured.tabIds.forEach((id, index) => recordRestoredTab(preservation!, index, id))
+      }
       if (!preservation) {
         if (event.type === "removed") {
           const authoritativeState = captureState(scrollAuthority).state
@@ -263,7 +272,7 @@ export function useAppSessionCapture() {
           && instances().has(event.instanceId)
           && hasRestoredTabBinding(preservation, sourceIndex, workspace.runtimeTabId),
         )
-        if (snapshot && instances().has(event.instanceId)) void waitForInstanceInitialSessionHydration(event.instanceId).then(() => {
+        if (snapshot && instances().has(event.instanceId)) void Promise.resolve().then(() => {
           if (!isCurrentBinding()) return null
           return hydrateRestoredWorkspaceState(event.instanceId, snapshot, hydrationController.signal, isCurrentBinding)
         }).then((unavailable) => {
@@ -283,6 +292,7 @@ export function useAppSessionCapture() {
     if (!enabled()) return
     const tabs = appTabs()
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
+    outlineCacheRevision()
     for (const tab of tabs) if (tab.kind === "instance") {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)

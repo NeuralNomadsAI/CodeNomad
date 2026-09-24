@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "Aller en haut",
   "infoView.logs.scrollToBottom": "Aller en bas",
 
-  "infoView.dispose.actions.dispose": "Réinitialiser l'instance",
-  "infoView.dispose.actions.disposing": "Réinitialisation...",
-  "infoView.dispose.confirm.title": "Réinitialiser l'instance ?",
-  "infoView.dispose.confirm.message": "Cela efface l'état en cache pour ce répertoire et recharge l'instance.",
-  "infoView.dispose.confirm.confirmLabel": "Réinitialiser",
-  "infoView.dispose.confirm.cancelLabel": "Annuler",
-  "infoView.dispose.toast.success": "Instance réinitialisée. Rechargement...",
-  "infoView.dispose.toast.error": "Impossible de réinitialiser l'instance.",
 } as const

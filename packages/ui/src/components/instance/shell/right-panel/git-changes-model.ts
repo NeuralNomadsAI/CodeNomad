@@ -42,6 +42,10 @@ export function adaptSdkGitStatusEntries(
     const adapted = adaptSdkGitStatusEntry(entry)
     if (!adapted.path) continue
     const detail = detailsByPath.get(adapted.path)
+    // Local Git supplies the complete staged/unstaged inventory used for edits.
+    // Native VCS can still report an older snapshot after checkout creation or
+    // movement; never resurrect absent files once local details are available.
+    if (details && !detail) continue
     adaptedByPath.set(adapted.path, {
       ...adapted,
       originalPath: detail?.originalPath ? normalizeGitChangePath(detail.originalPath) : adapted.originalPath ?? null,

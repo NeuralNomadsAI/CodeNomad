@@ -4,8 +4,9 @@ import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import type { NativeParent } from "../../native-parent"
-import { AUTOMATION_BRIDGE_PATH, parseDeveloperAction } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -40,10 +41,11 @@ export function isAutomationPluginRequest(
 }
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
+  const inspectedTargets = new DeveloperInspectionTargets()
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
-    if (!body || !["developer-probe", "developer-execute"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
@@ -55,9 +57,33 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(404).send({ error: "Session not found" })
     }
     const owned = (await Promise.all(deps.workspaceManager.list().map((workspace) =>
-      deps.workspaceManager.ownsLocation(workspace.id, location),
+      deps.workspaceManager.ownsLocation(workspace.id, location).catch(() => false),
     ))).some(Boolean)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+
+    if (body.mode === "browser-claim") return reply.send({ result: { available: true } })
+    if (body.mode === "browser-probe") {
+      try {
+        const result = await deps.nativeParent.request<{ available: boolean }>("browser.probe", { sessionID: body.sessionID })
+        return result.available ? reply.send({ result }) : reply.code(404).send({ error: "No visible browser target" })
+      } catch (error) {
+        return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    if (body.mode === "browser-execute") {
+      let command
+      try {
+        command = parseBrowserAction(body.command)
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+      try {
+        const result = await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
+        return reply.send({ result })
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
 
     let native: DeveloperNativeStatus
     try {
@@ -70,43 +96,51 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       && typeof status.nativeIdentity === "string" && typeof status.cdpUrl === "string" && typeof status.windowId === "string"
     if (!available) {
       if (typeof status?.runId === "string") deps.developerCdp.close(status.runId)
-      return reply.code(404).send({ error: "Developer Mode has no active CodeNomad session" })
+      return reply.code(404).send({ error: "Native automation has no active CodeNomad session" })
     }
 
     const selection: DeveloperCdpSelection = {
       endpoint: status.cdpUrl!,
       runId: status.runId!,
       windowId: status.windowId!,
-      sessionId: body.sessionID,
     }
-    let context
+    let command
+    if (body.mode !== "developer-probe") {
+      try {
+        command = parseDeveloperAction(body.command)
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    let identity: DeveloperCdpIdentity | undefined
     try {
-      context = await deps.developerCdp.context(selection)
+      if (body.mode === "developer-probe" || command?.action === "inspect") {
+        await deps.developerCdp.context(selection)
+      } else {
+        identity = inspectedTargets.get(body.sessionID, selection)
+        await deps.developerCdp.context(identity)
+      }
     } catch (error) {
+      if (body.mode !== "developer-probe") inspectedTargets.forget(body.sessionID)
       return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
     }
-    if (!await deps.workspaceManager.ownsLocation(context.instanceId, location)) {
-      return reply.code(404).send({ error: "The visible CodeNomad workspace does not own this OpenCode session" })
-    }
-    const identity: DeveloperCdpIdentity = { ...selection, instanceId: context.instanceId }
+    identity ??= selection
     if (body.mode === "developer-probe") {
       return reply.send({ result: { available: true, nativeIdentity: status.nativeIdentity, runId: status.runId } })
     }
 
-    let command
-    try {
-      command = parseDeveloperAction(body.command)
-    } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
-    }
+    if (!command) return reply.code(400).send({ error: "Missing developer command" })
     try {
       if (command.action === "restart") {
+        inspectedTargets.forget(body.sessionID)
         const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", {})
         deps.developerCdp.close(status.runId)
         return reply.send({ result })
       }
       if (command.action === "inspect") {
-        return reply.send({ result: await deps.developerCdp.inspect(identity) })
+        const result = await deps.developerCdp.inspect(identity)
+        inspectedTargets.remember(body.sessionID, identity)
+        return reply.send({ result })
       }
       if (command.action === "screenshot") {
         const image = await deps.developerCdp.screenshot(identity)

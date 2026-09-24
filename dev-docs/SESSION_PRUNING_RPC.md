@@ -57,6 +57,15 @@ compatibility proof. This prototype rejects incomplete messages.
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
 and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
+Provisioning uses the shared authenticated connection's `config.get` discovery
+sources, including after reconnect. The first directory is the daemon's global
+root; startup-environment overrides and CLI `debug paths` are not authoritative
+for an existing daemon. New managed payloads/leases use a sibling
+`<parent>/.codenomad/<root-hash>/` namespace: OpenCode watches the entire discovery
+root, so heartbeats inside it cause repeated configuration reloads. Existing
+outside-root storage is retained; inside-root storage migrates while the plugin
+continues reading older backends' independent leases. WSL maps native paths through the selected
+distro for filesystem access, never through a new shell's environment.
 
 The UI keeps individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
@@ -90,6 +99,11 @@ re-read or retry the **same** request, not assume no mutation occurred.
 
 ## Version and loading notes
 
+Full-session cleanup, counts and paginated session/workspace search extend this
+same plugin through `history` and `pruneBatch`; see
+[full-history queries](SESSION_HISTORY_QUERIES.md). Their UI keeps query results
+outside the transcript store and reports partial cleanup and skipped messages.
+
 - UI/server pin `@opencode/client@2.0.4`. The published low-level `rpc.call` transport is used by the broker.
 - Plugin definition pins `@opencode/plugin@2.0.4`, a development-only dependency bundled into the shipped plugin payload. No npm installation is performed at app startup. The native integration test uses the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy. CI uses CLI 2.0.4; production discovery has no exact runtime-version gate.
 - In that plugin contract, `ctx.session.message` and `ctx.db` do not exist.
@@ -121,7 +135,7 @@ token savings are claimed: the mock's usage numbers are synthetic.
 
 Still required before general availability: native WSL runs, interactive
 TUI and two desktop-window/scroll verification, provider-specific continuation-state
-and budget coverage, dedicated bulk progress/cancel UI and installation/capability UI.
+and budget coverage, interactive bulk progress/cancel verification and installation/capability UI.
 Do not describe these as passed on the strength of HTTP or mocked cache tests.
 Physical VACUUM, V1 cleanup and repair are separate maintenance work.
 

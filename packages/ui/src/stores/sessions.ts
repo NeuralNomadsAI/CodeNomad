@@ -38,7 +38,7 @@ import {
   getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -70,7 +70,7 @@ import {
 import { isSessionBusy } from "./session-status"
 
 import { getDefaultModel } from "./session-models"
-import { handleWorktreeReady } from "./worktrees"
+import { handleWorktreeReady, reloadWorktrees } from "./worktrees"
 import {
   createSession,
   deleteSession,
@@ -84,6 +84,7 @@ import {
   getMessageNextCursor,
   loadMoreMessages,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,
@@ -91,6 +92,7 @@ import {
   loadNewerMessageWindow,
   loadLatestMessageWindow,
   loadOldestMessageWindow,
+  loadMessageAnchor,
   isLatestMessageWindow,
   clearSessionListRequestState,
   clearSessionCatalogState,
@@ -129,6 +131,10 @@ sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
 sseManager.onWorktreeReady = handleWorktreeReady
+sseManager.onWorktreeUpdated = async (instanceId) => {
+  await reloadWorktrees(instanceId)
+  await fetchSessions(instanceId, { reset: true })
+}
 
 export {
   abortSession,
@@ -163,8 +169,10 @@ export {
   loadNewerMessageWindow,
   loadLatestMessageWindow,
   loadOldestMessageWindow,
+  loadMessageAnchor,
   isLatestMessageWindow,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   getActiveParentSession,
@@ -191,7 +199,7 @@ export {
   getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getSessionThreads,
   getThreadTotals,
   getSessions,
