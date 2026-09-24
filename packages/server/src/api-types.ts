@@ -388,7 +388,7 @@ export interface OpenCodeUpdateStatus {
   incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
-  installationSource?: "path" | "user" | "legacy"
+  installationSource?: "path" | "user"
   needsSharedInstallation?: boolean
   daemonVersion?: string
   serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"

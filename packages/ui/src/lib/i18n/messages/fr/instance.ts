@@ -265,7 +265,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Ajouter",
   "opencodeBinarySelector.actions.browse": "Parcourir le binaire…",
   "opencodeBinarySelector.actions.removeTitle": "Supprimer le binaire",
-  "opencodeBinarySelector.badge.systemPath": "PATH prioritaire, puis installation utilisateur ; ancienne copie CodeNomad en secours",
+  "opencodeBinarySelector.badge.systemPath": "PATH prioritaire, puis installation npm de l’utilisateur",
   "opencodeBinarySelector.status.checkingVersions": "Vérification des versions…",
   "opencodeBinarySelector.status.checking": "Vérification…",
   "opencodeBinarySelector.dialog.title": "Sélectionner le binaire OpenCode",

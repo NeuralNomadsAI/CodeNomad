@@ -76,8 +76,8 @@ test("installation re-resolves the executable and rejects false success", async 
   await assert.rejects(wrong.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "upgrade_verification_failed")
 })
 
-test("legacy migration and PATH repair remain available without an update and never downgrade", async () => {
-  for (const source of ["legacy", "user"] as const) {
+test("user npm PATH repair remains available without an update and never downgrades", async () => {
+  for (const source of ["user"] as const) {
     let migrated = false, installs = 0
     const service = new OpenCodeUpdateService(deps({
       resolveBinary: () => ({ path: migrated ? "common" : source, label: "OpenCode", source: migrated ? "path" : source }),
