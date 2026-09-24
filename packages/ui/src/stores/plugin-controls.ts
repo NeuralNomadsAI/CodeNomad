@@ -110,7 +110,9 @@ export class PluginControlsCache {
         ? record.snapshot
         : undefined
       record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
-      record.snapshotRevision = Math.max(record.snapshotRevision, requestRevision)
+      // Alias reads dispatched during the write must also see this publication
+      // as newer, even when the mutation's dispatch revision predates them.
+      record.snapshotRevision = ++this.revision
       record.error = undefined
       record.loading = false
       record.refreshing = false
@@ -234,6 +236,7 @@ export class PluginControlsCache {
       return record.inFlight
     }
     const generation = record.generation
+    const requestRevision = ++this.revision
     record.stale = false
     record.loading = !record.snapshot
     record.refreshing = Boolean(record.snapshot)
@@ -244,7 +247,7 @@ export class PluginControlsCache {
     const promise = this.api.getPluginControls(record.instanceId, record.location, controller.signal)
       .then((snapshot) => {
         if (!this.isActive(record) || generation !== record.generation) return
-        if (!this.adoptCanonicalLocation(record, snapshot.location)) return
+        if (!this.adoptCanonicalLocation(record, snapshot.location, false, { snapshot, revision: requestRevision })) return
         record.snapshot = snapshot
         record.snapshotRevision = ++this.revision
         record.error = undefined
@@ -313,6 +316,7 @@ export class PluginControlsCache {
     record: CacheRecord,
     location: PluginControlLocation,
     preferIncoming = false,
+    incomingRead?: { snapshot: PluginControlsSnapshot; revision: number },
   ): boolean {
     const canonicalKey = cacheKey(record.instanceId, location)
     const existing = this.records.get(canonicalKey)
@@ -338,6 +342,22 @@ export class PluginControlsCache {
         existing.inFlightController?.abort()
         this.mergeRecord(existing, record)
       } else {
+        // Keep the canonical owner (including its mutation queue), but let a
+        // genuinely newer successful alias read recover its failed refresh.
+        // Completion order alone cannot authorize replacing newer publications
+        // or invalidations; those require a canonical reconciliation instead.
+        if (existing.error) {
+          if (incomingRead && !existing.inFlight
+            && existing.snapshotRevision < incomingRead.revision
+            && existing.invalidationRevision < incomingRead.revision) {
+            existing.snapshot = incomingRead.snapshot
+            existing.snapshotRevision = ++this.revision
+            existing.error = undefined
+          } else {
+            existing.stale = true
+          }
+        }
+        existing.stale ||= record.stale || record.trailing
         record.generation += 1
         record.inFlightController?.abort()
         this.mergeRecord(record, existing)

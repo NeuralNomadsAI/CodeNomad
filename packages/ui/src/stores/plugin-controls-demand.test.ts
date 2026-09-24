@@ -186,6 +186,185 @@ describe("plugin controls visible demand", () => {
     assert.equal(cache.state("instance", location).error, undefined)
   })
 
+  it("recovers a failed canonical refresh from the first successful host-alias read", async (t) => {
+    const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const canonical = { directory: "/srv/repo" }
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        if (++reads === 2) throw new Error("offline")
+        return { ...snapshot(reads === 1 ? "old" : "recovered"), location: canonical }
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    await cache.load("instance", canonical)
+    cache.invalidateLocation("instance", canonical)
+    await cache.load("instance", canonical)
+    const release = cache.acquireDemand("instance", host)
+    t.after(release)
+    await tick()
+
+    assert.equal(reads, 3, "the successful recovery needs no duplicate read")
+    for (const alias of [host, canonical]) {
+      assert.equal(cache.state("instance", alias).snapshot?.controls[0].id, "recovered")
+      assert.equal(cache.state("instance", alias).error, undefined)
+      assert.equal(cache.state("instance", alias).stale, false)
+    }
+    cache.invalidateLocation("instance", canonical)
+    await tick()
+    assert.equal(reads, 4, "the transferred demand still refreshes")
+    release()
+    cache.invalidateLocation("instance", canonical)
+    await tick()
+    assert.equal(reads, 4, "the original host handle releases the canonical demand")
+  })
+
+  for (const winner of ["healthy", "newer-read", "newer-mutation"] as const) {
+    it(`does not recover over a ${winner} canonical snapshot`, async (t) => {
+      const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+      const canonical = { directory: "/srv/repo" }
+      const aliasRead = deferred<PluginControlsSnapshot>()
+      const reconciliation = deferred<PluginControlsSnapshot>()
+      const write = deferred<void>()
+      let canonicalReads = 0
+      let hostReads = 0
+      let fail = false
+      let reconcile = false
+      const cache = new PluginControlsCache({
+        getPluginControls: async (_instanceId, requested) => {
+          if (requested.directory === host.directory) {
+            hostReads++
+            return aliasRead.promise
+          }
+          canonicalReads++
+          if (reconcile) return reconciliation.promise
+          if (fail) throw new Error("offline")
+          return { ...snapshot(canonicalReads === 1 ? "original" : "newer"), location: canonical }
+        },
+        setPluginActivation: async () => {
+          await write.promise
+          return {
+            snapshot: { ...snapshot("newer"), location: canonical },
+            changed: true, reloadPending: true, rule: "newer",
+            target: { scope: "project", path: "/srv/repo/.opencode/opencode.jsonc", exists: true },
+          }
+        },
+      })
+      await cache.load("instance", canonical)
+      // Dispatch the mutation BEFORE the alias read, but publish it AFTER.
+      // Its dispatch revision alone must not let the alias roll it back.
+      const mutation = winner === "newer-mutation"
+        ? cache.mutate("instance", canonical, "newer", "project", true)
+        : undefined
+      await tick()
+      t.after(cache.acquireDemand("instance", host))
+      if (winner === "newer-read") await cache.load("instance", canonical, { force: true })
+      if (mutation) {
+        write.resolve()
+        await mutation
+      }
+      if (winner !== "healthy") {
+        fail = true
+        await cache.load("instance", canonical, { force: true })
+        reconcile = true
+      }
+      aliasRead.resolve({ ...snapshot("obsolete-alias"), location: canonical })
+      await tick()
+
+      assert.equal(hostReads, 1)
+      for (const alias of [host, canonical]) {
+        assert.equal(cache.state("instance", alias).snapshot?.controls[0].id, winner === "healthy" ? "original" : "newer")
+      }
+      if (winner === "healthy") {
+        assert.equal(canonicalReads, 1, "healthy canonical caches retain first-winner behavior")
+      } else {
+        assert.equal(cache.state("instance", canonical).refreshing, true, "recovery is reconciled instead of using an obsolete alias")
+        reconciliation.resolve({ ...snapshot("reconciled"), location: canonical })
+        await tick()
+        assert.equal(cache.state("instance", host).snapshot?.controls[0].id, "reconciled")
+        assert.equal(cache.state("instance", host).error, undefined)
+      }
+    })
+  }
+
+  for (const hidden of [false, true]) {
+    it(`preserves a later canonical invalidation during alias recovery, hidden=${hidden}`, async (t) => {
+      const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+      const canonical = { directory: "/srv/repo" }
+      const aliasRead = deferred<PluginControlsSnapshot>()
+      const reconciliation = deferred<PluginControlsSnapshot>()
+      let reads = 0
+      const cache = new PluginControlsCache({
+        getPluginControls: async () => {
+          reads++
+          if (reads === 1) return { ...snapshot("old"), location: canonical }
+          if (reads === 2) throw new Error("offline")
+          return reads === 3 ? aliasRead.promise : reconciliation.promise
+        },
+        setPluginActivation: async () => { throw new Error("not used") },
+      })
+      await cache.load("instance", canonical)
+      await cache.load("instance", canonical, { force: true })
+      const release = cache.acquireDemand("instance", host)
+      t.after(release)
+      cache.invalidateLocation("instance", canonical)
+      if (hidden) release()
+      aliasRead.resolve({ ...snapshot("before-event"), location: canonical })
+      await tick()
+
+      assert.equal(cache.state("instance", host).snapshot?.controls[0].id, "old")
+      assert.equal(reads, hidden ? 3 : 4)
+      if (hidden) {
+        assert.equal(cache.state("instance", host).stale, true)
+        t.after(cache.acquireDemand("instance", host))
+      }
+      assert.equal(reads, 4, "exactly one reconciliation survives the merge")
+      reconciliation.resolve({ ...snapshot("after-event"), location: canonical })
+      await tick()
+      assert.equal(cache.state("instance", host).snapshot?.controls[0].id, "after-event")
+      assert.equal(cache.state("instance", canonical).stale, false)
+    })
+  }
+
+  it("keeps canonical queued mutations when a successful alias recovers its failed refresh", async (t) => {
+    const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const canonical = { directory: "/srv/repo" }
+    const firstWrite = deferred<void>()
+    let reads = 0
+    const writes: boolean[] = []
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => {
+        if (++reads === 2) throw new Error("offline")
+        return { ...snapshot(reads === 1 ? "old" : "recovered"), location: canonical }
+      },
+      setPluginActivation: async (_instanceId, request) => {
+        writes.push(request.enabled)
+        if (writes.length === 1) await firstWrite.promise
+        return {
+          snapshot: { ...snapshot(request.enabled ? "enabled" : "disabled"), location: canonical },
+          changed: true, reloadPending: true, rule: request.enabled ? "known" : "-known",
+          target: { scope: "project", path: "/srv/repo/.opencode/opencode.jsonc", exists: true },
+        }
+      },
+    })
+    await cache.load("instance", canonical)
+    await cache.load("instance", canonical, { force: true })
+    const disable = cache.mutate("instance", canonical, "known", "project", false)
+    const enable = cache.mutate("instance", canonical, "known", "project", true)
+    await tick()
+    const release = cache.acquireDemand("instance", host)
+    t.after(release)
+    await tick()
+    assert.equal(cache.state("instance", host).snapshot?.controls[0].id, "recovered")
+    assert.deepEqual(writes, [false])
+    release()
+    firstWrite.resolve()
+    await Promise.all([disable, enable])
+    assert.deepEqual(writes, [false, true], "neither queued mutation is orphaned or replayed")
+    assert.equal(cache.state("instance", host).snapshot?.controls[0].id, "enabled")
+    assert.equal(reads, 3, "completion cannot restart hidden reads")
+  })
+
   it("a released handle from a cleared instance cannot cancel its replacement", async (t) => {
     let reads = 0
     const cache = new PluginControlsCache({
