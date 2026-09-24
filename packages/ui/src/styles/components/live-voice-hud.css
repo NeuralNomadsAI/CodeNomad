@@ -1,0 +1,219 @@
+/* Cockpit HUD & Audio Visualizer styling
+ * Strictly square-corner aesthetic per CodeNomad AGENT NOTES
+ */
+
+.live-voice-hud-window {
+  position: fixed;
+  z-index: 50;
+  inset-block-end: calc(var(--composer-height, 80px) + var(--space-md, 1rem));
+  inset-inline-end: var(--space-md, 1rem);
+  display: flex;
+  flex-direction: column;
+  width: min(28rem, calc(100vw - 2 * var(--space-md, 1rem)));
+  max-height: 70dvh;
+  box-shadow: var(--popover-shadow, 0 16px 40px rgba(0, 0, 0, 0.18));
+  border: 1px solid var(--border-base, #e0e0e0);
+  background: var(--surface-base, #ffffff);
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-header {
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 0.5rem);
+  min-width: 0;
+}
+
+.live-voice-hud-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 0.25rem);
+  flex-shrink: 0;
+}
+
+.live-voice-hud-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 0.5rem);
+  padding: var(--space-sm, 0.5rem) var(--space-md, 0.75rem);
+  overflow: hidden;
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-visualizer-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 0.25rem);
+  padding: var(--space-xs, 0.25rem);
+  background: var(--surface-secondary, #f5f5f5);
+  border: 1px solid var(--border-divider, #e0e0e0);
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-canvas {
+  display: block;
+  width: 100%;
+  height: 64px;
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-transcript-feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 0.25rem);
+  min-height: 8rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: var(--space-xs, 0.25rem) var(--space-sm, 0.5rem);
+  background: var(--surface-muted, #f8fafc);
+  border: 1px solid var(--border-divider, #e0e0e0);
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-transcript-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 6rem;
+  color: var(--text-muted, #475569);
+  font-size: var(--font-size-xs, 0.75rem);
+  font-style: italic;
+  text-align: center;
+}
+
+.live-voice-hud-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-xs, 0.25rem) 0;
+  border-bottom: 1px solid var(--border-divider, #e0e0e0);
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-entry:last-child {
+  border-bottom: 0;
+}
+
+.live-voice-hud-entry-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs, 0.25rem);
+}
+
+.live-voice-hud-entry-speaker {
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-medium, 500);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.live-voice-hud-entry-speaker.user {
+  color: var(--message-user-border, #2196f3);
+}
+
+.live-voice-hud-entry-speaker.assistant {
+  color: var(--message-assistant-border, #d97706);
+}
+
+.live-voice-hud-entry-time {
+  font-size: 10px;
+  color: var(--text-muted, #475569);
+}
+
+.live-voice-hud-entry-text {
+  font-size: var(--font-size-xs, 0.75rem);
+  line-height: var(--line-height-normal, 1.4);
+  color: var(--text-primary, #111827);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.live-voice-hud-entry-text.interim {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.live-voice-hud-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 0.5rem);
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 0.25rem);
+}
+
+.live-voice-hud-select {
+  height: var(--window-control-height, 28px);
+  padding: 0 var(--space-xs, 0.25rem);
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--text-secondary, #334155);
+  background: var(--surface-base, #ffffff);
+  border: 1px solid var(--border-base, #e0e0e0);
+  border-radius: 0 !important;
+  outline: none;
+}
+
+.live-voice-hud-select:focus-visible {
+  outline: 1px solid var(--focus-ring-color, #0066ff);
+}
+
+.live-voice-hud-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 1;
+  text-transform: capitalize;
+  border-radius: 0 !important;
+}
+
+.live-voice-hud-status-badge.connecting {
+  background-color: var(--status-starting-bg, rgba(250, 204, 21, 0.1));
+  color: var(--status-starting-fg, #ca8a04);
+}
+
+.live-voice-hud-status-badge.listening {
+  background-color: var(--badge-neutral-bg, rgba(0, 102, 255, 0.05));
+  color: var(--accent-primary, #0066ff);
+}
+
+.live-voice-hud-status-badge.speaking {
+  background-color: var(--status-ready-bg, rgba(34, 197, 94, 0.1));
+  color: var(--status-ready-fg, #16a34a);
+}
+
+.live-voice-hud-status-badge.idle {
+  background-color: var(--status-stopped-bg, rgba(107, 114, 128, 0.1));
+  color: var(--status-stopped-fg, #6b7280);
+}
+
+.live-voice-hud-status-badge.error {
+  background-color: var(--status-error-bg, rgba(239, 68, 68, 0.1));
+  color: var(--status-error-fg, #dc2626);
+}
+
+.live-voice-hud-provider-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  font-weight: var(--font-weight-medium, 500);
+  background: var(--surface-control, #f0f0f0);
+  color: var(--text-secondary, #334155);
+  border: 1px solid var(--border-divider, #e0e0e0);
+  border-radius: 0 !important;
+}

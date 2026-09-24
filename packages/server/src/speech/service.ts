@@ -2,8 +2,30 @@ import { z } from "zod"
 import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
-import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
+import type {
+  LiveVoiceProvider,
+  SpeechCapabilitiesResponse,
+  SpeechLiveCapabilitiesResponse,
+  SpeechSynthesisResponse,
+  SpeechTranscriptionResponse,
+} from "../api-types"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
+
+const LiveVoiceProviderSchema = z.enum(["gemini", "openai"])
+
+const SpeechLiveSettingsSchema = z
+  .object({
+    enabled: z.boolean().optional().default(false),
+    provider: LiveVoiceProviderSchema.default("gemini"),
+    geminiApiKey: z.string().nullish(),
+    openaiApiKey: z.string().nullish(),
+    geminiModel: z.string().optional().default("gemini-2.0-flash-exp"),
+    openaiModel: z.string().optional().default("gpt-4o-realtime-preview"),
+    geminiVoice: z.string().optional().default("Aoede"),
+    openaiVoice: z.string().optional().default("alloy"),
+    systemPrompt: z.string().nullish(),
+  })
+  .passthrough()
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -30,6 +52,7 @@ const ServerSpeechSettingsSchema = z.object({
           model: z.string().nullish(),
         })
         .optional(),
+      live: SpeechLiveSettingsSchema.optional(),
     })
     .optional(),
 })
@@ -110,6 +133,64 @@ export class SpeechService {
       sttConfigured,
       ttsConfigured,
       ...(separate ? { sttBaseUrl: sttSettings.baseUrl, ttsBaseUrl: ttsSettings.baseUrl } : {}),
+    }
+  }
+
+  getLiveCapabilities(): SpeechLiveCapabilitiesResponse {
+    const parsed = this.parseConfig()
+    const speech = parsed.speech ?? {}
+    const live = speech.live ?? {
+      enabled: false,
+      provider: "gemini" as LiveVoiceProvider,
+      geminiApiKey: null,
+      openaiApiKey: null,
+      geminiModel: "gemini-2.0-flash-exp",
+      openaiModel: "gpt-4o-realtime-preview",
+      geminiVoice: "Aoede",
+      openaiVoice: "alloy",
+      systemPrompt: null,
+    }
+
+    const geminiApiKey = live.geminiApiKey?.trim() || process.env.GEMINI_API_KEY || undefined
+    const openaiApiKey = live.openaiApiKey?.trim() || speech.apiKey?.trim() || process.env.OPENAI_API_KEY || undefined
+
+    const geminiConfigured = Boolean(geminiApiKey)
+    const openaiConfigured = Boolean(openaiApiKey)
+
+    const selectedProvider: LiveVoiceProvider = live.provider === "openai" ? "openai" : "gemini"
+    const isConfigured = selectedProvider === "gemini" ? geminiConfigured : openaiConfigured
+
+    const model = selectedProvider === "gemini"
+      ? (live.geminiModel?.trim() || "gemini-2.0-flash-exp")
+      : (live.openaiModel?.trim() || "gpt-4o-realtime-preview")
+
+    const voice = selectedProvider === "gemini"
+      ? (live.geminiVoice?.trim() || "Aoede")
+      : (live.openaiVoice?.trim() || "alloy")
+
+    return {
+      available: true,
+      configured: isConfigured,
+      provider: selectedProvider,
+      model,
+      voice,
+      systemPrompt: live.systemPrompt?.trim() || undefined,
+      providers: {
+        gemini: {
+          configured: geminiConfigured,
+          defaultModel: "gemini-2.0-flash-exp",
+          defaultVoice: "Aoede",
+          models: ["gemini-2.0-flash-exp"],
+          voices: ["Aoede", "Charon", "Fenrir", "Kore", "Puck"],
+        },
+        openai: {
+          configured: openaiConfigured,
+          defaultModel: "gpt-4o-realtime-preview",
+          defaultVoice: "alloy",
+          models: ["gpt-4o-realtime-preview"],
+          voices: ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"],
+        },
+      },
     }
   }
 

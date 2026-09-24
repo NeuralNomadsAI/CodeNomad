@@ -78,6 +78,56 @@ const StateFileSchema = z
   })
   .passthrough()
 
+export const LiveVoiceProviderSchema = z.enum(["gemini", "openai"])
+
+export const SpeechLiveConfigSchema = z
+  .object({
+    enabled: z.boolean().optional().default(false),
+    provider: LiveVoiceProviderSchema.default("gemini"),
+    geminiApiKey: z.string().nullish(),
+    openaiApiKey: z.string().nullish(),
+    geminiModel: z.string().optional().default("gemini-2.0-flash-exp"),
+    openaiModel: z.string().optional().default("gpt-4o-realtime-preview"),
+    geminiVoice: z.string().optional().default("Aoede"),
+    openaiVoice: z.string().optional().default("alloy"),
+    systemPrompt: z.string().nullish(),
+  })
+  .passthrough()
+
+export const ServerSpeechConfigSchema = z
+  .object({
+    provider: z.string().optional(),
+    apiKey: z.string().optional(),
+    baseUrl: z.string().optional(),
+    sttModel: z.string().optional(),
+    ttsModel: z.string().optional(),
+    ttsVoice: z.string().optional(),
+    ttsFormat: z.enum(["mp3", "wav", "opus", "aac"]).optional(),
+    separateProviders: z.boolean().optional(),
+    stt: z
+      .object({
+        apiKey: z.string().nullish(),
+        baseUrl: z.string().nullish(),
+        model: z.string().nullish(),
+      })
+      .optional(),
+    tts: z
+      .object({
+        apiKey: z.string().nullish(),
+        baseUrl: z.string().nullish(),
+        model: z.string().nullish(),
+      })
+      .optional(),
+    live: SpeechLiveConfigSchema.optional(),
+  })
+  .passthrough()
+
+export const ServerConfigSchema = z
+  .object({
+    speech: ServerSpeechConfigSchema.optional(),
+  })
+  .passthrough()
+
 const DEFAULT_CONFIG = ConfigFileSchema.parse({})
 const DEFAULT_CONFIG_YAML = ConfigYamlSchema.parse({})
 const DEFAULT_STATE = StateFileSchema.parse({})
@@ -106,3 +156,7 @@ export type OpenCodeBinary = z.infer<typeof OpenCodeBinarySchema>
 export type ConfigFile = z.infer<typeof ConfigFileSchema>
 export type ConfigYamlFile = z.infer<typeof ConfigYamlSchema>
 export type StateFile = z.infer<typeof StateFileSchema>
+export type LiveVoiceProviderConfig = z.infer<typeof LiveVoiceProviderSchema>
+export type SpeechLiveConfig = z.infer<typeof SpeechLiveConfigSchema>
+export type ServerSpeechConfig = z.infer<typeof ServerSpeechConfigSchema>
+export type ServerConfig = z.infer<typeof ServerConfigSchema>

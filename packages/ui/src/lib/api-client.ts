@@ -15,6 +15,7 @@ import type {
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
+  SpeechLiveCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   SideCar,
@@ -482,6 +483,9 @@ export const serverApi = {
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+  },
+  fetchSpeechLiveCapabilities(): Promise<SpeechLiveCapabilitiesResponse> {
+    return request<SpeechLiveCapabilitiesResponse>("/api/speech/live/capabilities")
   },
   transcribeAudio(payload: {
     audioBase64: string

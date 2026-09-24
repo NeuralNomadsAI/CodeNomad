@@ -9,6 +9,7 @@ import { showToastNotification } from "../../../../../lib/notifications"
 import { useTheme } from "../../../../../lib/theme"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import { canOpenWorkspacePaths, openWorkspacePath } from "../../../../../lib/workspace-open"
+import { setActiveFileInfo } from "../../../../../stores/live-voice-tools"
 
 const LazyMonacoFileViewer = lazy(() =>
   import("../../../../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
@@ -92,6 +93,16 @@ const FilesTab: Component<FilesTabProps> = (props) => {
   createEffect(() => {
     props.browserPath()
     setFilterQuery("")
+  })
+
+  createEffect(() => {
+    const selectedPath = props.browserSelectedPath()
+    const content = props.browserSelectedContent()
+    if (selectedPath) {
+      setActiveFileInfo({ path: selectedPath, content: content ?? "" })
+    } else {
+      setActiveFileInfo(null)
+    }
   })
 
   const sortedEntries = createMemo(() => {

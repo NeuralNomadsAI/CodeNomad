@@ -1,5 +1,6 @@
 import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, onMount, Show } from "solid-js"
-import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { Loader2, Mic, Paperclip, Volume2, X, Radio } from "lucide-solid"
+import LiveVoiceHud from "./voice/live-voice-hud"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
@@ -95,6 +96,7 @@ export default function PromptInput(props: PromptInputProps) {
     sessionId: () => props.sessionId,
     active: () => props.isActive !== false,
   })
+  const [isLiveVoiceOpen, setIsLiveVoiceOpen] = createSignal(false)
   // /btw is a local UI command, like OpenCode's TUI command of the same name.
   const promptCommands = () => [
     { name: "btw", description: t("promptInput.btw.commandDescription") },
@@ -910,6 +912,15 @@ export default function PromptInput(props: PromptInputProps) {
 
   const promptActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
+    items.push({
+      key: "live-voice",
+      label: t("promptInput.voiceInput.liveMode") || "Open Live Voice Mode",
+      icon: <Radio class="h-4 w-4" aria-hidden="true" />,
+      disabled: Boolean(props.disabled),
+      onSelect: () => {
+        setIsLiveVoiceOpen((prev) => !prev)
+      },
+    })
     if (showVoiceInput()) {
       items.push({
         key: "voice",
@@ -1156,6 +1167,12 @@ export default function PromptInput(props: PromptInputProps) {
       </div>
 
       <PromptAsideWindow id={asideId} controller={aside} returnFocus={() => textareaRef} />
+      <LiveVoiceHud
+        open={isLiveVoiceOpen()}
+        onClose={() => setIsLiveVoiceOpen(false)}
+        instanceId={props.instanceId}
+        sessionId={props.sessionId}
+      />
       <DirectoryBrowserDialog
         open={isFileBrowserOpen()}
         mode="files"

@@ -41,6 +41,7 @@ import type { AuthManager } from "../auth/manager"
 import { registerAuthRoutes } from "./routes/auth"
 import { sendUnauthorized, wantsHtml } from "../auth/http-auth"
 import type { SpeechService } from "../speech/service"
+import { LiveGateway } from "../speech/live-gateway"
 import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import type { PreviewManager } from "../previews/manager"
@@ -346,6 +347,12 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
   })
+  const liveGateway = new LiveGateway({
+    authManager: deps.authManager,
+    settings: deps.settings,
+    logger: proxyLogger,
+  })
+  setupLiveWebSocketProxy(app, liveGateway)
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence })
@@ -573,6 +580,18 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
       authManager: deps.authManager,
       logger: deps.logger,
     })
+  })
+}
+
+function setupLiveWebSocketProxy(app: FastifyInstance, liveGateway: LiveGateway) {
+  app.server.on("upgrade", (request, socket, head) => {
+    const rawUrl = request.url ?? "/"
+    const pathname = rawUrl.split("?")[0] ?? ""
+    if (!pathname.startsWith("/api/speech/live/ws")) {
+      return
+    }
+
+    void liveGateway.handleUpgrade(request, socket as Socket, head)
   })
 }
 
