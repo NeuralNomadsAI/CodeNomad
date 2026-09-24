@@ -1088,9 +1088,12 @@ describe("session request authority", () => {
     setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
     try {
       await loadMessages(instanceId, sessionId)
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
       const endTraversal = beginMessageHistoryTraversal(instanceId, sessionId)
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
       const request = loadOldestMessageWindow(instanceId, sessionId)
       endTraversal()
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId), true)
       oldest.resolve({ data: [apiMessage("stale-oldest")], cursor: { next: "newer" } })
       await request
 

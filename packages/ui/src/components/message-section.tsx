@@ -31,8 +31,8 @@ import { createSessionOutlineProjection } from "./session-outline-projection"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor, MESSAGE_HISTORY_TRAVERSAL_PAGE_LIMIT } from "./message-history-pagination"
-import { isLatestWindow, toWindowSnapshot } from "../stores/message-v2/message-window"
+import { isLatestWindow, preserveMessageWindowCursor, toWindowSnapshot } from "../stores/message-v2/message-window"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor } from "./message-history-pagination"
 import { getLogger } from "../lib/logger"
 import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
@@ -71,11 +71,11 @@ export interface MessageSectionProps {
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
   hasMoreMessages?: boolean
-  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<void>
-  onLoadMessageAnchor?: (messageId: string, signal?: AbortSignal) => Promise<void>
+  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadMessageAnchor?: (messageId: string, signal?: AbortSignal) => Promise<boolean | void>
   getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
@@ -518,14 +518,24 @@ export default function MessageSection(props: MessageSectionProps) {
       const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
-        store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
+        const resolvedStore = store()
+        resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+          snapshot,
+          resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+          resolvedStore.getMessageWindow(sessionId),
+        ))
         return
       }
     }
 
     const lastGoodScrollSnapshot = getLastGoodScrollSnapshot(sessionId)
     if (lastGoodScrollSnapshot) {
-      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
+      const resolvedStore = store()
+      resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+        lastGoodScrollSnapshot,
+        resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+        resolvedStore.getMessageWindow(sessionId),
+      ))
       return
     }
 
@@ -669,7 +679,7 @@ export default function MessageSection(props: MessageSectionProps) {
             hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
             hasMore: () => Boolean(props.hasMoreMessages),
             isCurrent: isCurrentRestore,
-            loadMore: props.onLoadMoreMessages!,
+            loadMore: async () => { await props.onLoadMoreMessages?.() },
             getCursor: () => props.getMessageHistoryCursor?.(),
           })
         } catch (error) {
@@ -926,8 +936,8 @@ export default function MessageSection(props: MessageSectionProps) {
       if (!isCurrent()) return
       const previousPage = messageWindowPageKey()
       const previousPosition = direction === "older" || direction === "newer" ? api.captureScrollSnapshot() : undefined
-      await load(controller.signal)
-      if (!isCurrent()) return
+      const committed = await load(controller.signal)
+      if (committed === false || !isCurrent()) return
       // An empty boundary probe retires the older cursor without changing the
       // resident page. Do not jump from its top back to its bottom in that case.
       if (direction === "older" && messageWindowPageKey() === previousPage) return

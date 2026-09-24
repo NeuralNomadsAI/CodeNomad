@@ -31,6 +31,9 @@ import {
   setAgents,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
+  finishMessageLoad,
+  getMessageLoadSignal,
+  supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
   isCurrentMessageLoad,
   setSessionMessagesLoadError,
@@ -65,16 +68,6 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
-import {
-  emptyLatestWindow,
-  isLatestWindow,
-  planNewerWindow,
-  planOlderWindow,
-  toWindowSnapshot,
-  windowFromSnapshot,
-  withOlderCursor,
-  type MessageWindowState,
-} from "./message-v2/message-window"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
@@ -88,6 +81,18 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { listMessageWindow } from "./session-message-pages"
+import {
+  MESSAGE_WINDOW_PAGE_SIZE,
+  emptyLatestWindow,
+  isLatestWindow,
+  planNewerWindow,
+  planOlderWindow,
+  toWindowSnapshot,
+  windowFromSnapshot,
+  withOlderCursor,
+  type MessageWindowState,
+} from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
@@ -106,11 +111,13 @@ const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: num
 interface MessagePageRequest {
   controller: AbortController
   consumers: Set<symbol>
-  request: Promise<void>
+  request: Promise<boolean>
 }
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
+const createSessionAuthorities = new Map<string, object>()
+const deleteSessionAuthorities = new Map<string, object>()
 const MESSAGE_STREAM_SCOPE = "message-stream"
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
@@ -126,28 +133,30 @@ function messagePageKey(instanceId: string, sessionId: string): string {
 
 function captureInstanceRequestAuthority(instanceId: string): () => boolean {
   const generation = getOpenCodeInstanceGeneration(instanceId)
+  const client = instances().get(instanceId)?.client
   return () => getOpenCodeInstanceGeneration(instanceId) === generation
+    && instances().get(instanceId)?.client === client
 }
 
 function beginMessageHistoryTraversal(instanceId: string, sessionId: string): () => void {
   const key = messagePageKey(instanceId, sessionId)
   const authority = {}
   messageHistoryAuthorities.set(key, authority)
-  invalidateSessionMessageLoad(instanceId, sessionId)
+  supersedeSessionMessageLoad(instanceId, sessionId)
   for (const requestKey of messagePageRequests.keys()) {
     if (requestKey.startsWith(`${key}\0`)) messagePageRequests.delete(requestKey)
   }
   return () => {
     if (messageHistoryAuthorities.get(key) !== authority) return
     messageHistoryAuthorities.delete(key)
-    invalidateSessionMessageLoad(instanceId, sessionId)
+    supersedeSessionMessageLoad(instanceId, sessionId)
   }
 }
 
 function invalidateMessageHistoryTraversal(instanceId: string, sessionId: string): void {
   const key = messagePageKey(instanceId, sessionId)
   messageHistoryAuthorities.delete(key)
-  invalidateSessionMessageLoad(instanceId, sessionId)
+  supersedeSessionMessageLoad(instanceId, sessionId)
   for (const requestKey of messagePageRequests.keys()) {
     if (requestKey.startsWith(`${key}\0`)) messagePageRequests.delete(requestKey)
   }
@@ -1024,7 +1033,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
   const activeId = activeSessionId().get(instanceId)
   const activeLocation = activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
@@ -1049,6 +1057,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     next.creatingSession.set(instanceId, true)
     return next
   })
+  const loadingAuthority = {}
+  createSessionAuthorities.set(instanceId, loadingAuthority)
 
   try {
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
@@ -1118,11 +1128,14 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      next.creatingSession.set(instanceId, false)
-      return next
-    })
+    if (createSessionAuthorities.get(instanceId) === loadingAuthority) {
+      createSessionAuthorities.delete(instanceId)
+      setLoading((prev) => {
+        const next = { ...prev }
+        next.creatingSession.set(instanceId, false)
+        return next
+      })
+    }
   }
 }
 
@@ -1135,7 +1148,6 @@ async function forkSession(
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
@@ -1198,9 +1210,11 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
+  const loadingKey = messagePageKey(instanceId, sessionId)
+  const loadingAuthority = {}
+  deleteSessionAuthorities.set(loadingKey, loadingAuthority)
 
   setLoading((prev) => {
     const next = { ...prev }
@@ -1221,14 +1235,17 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
     log.error("Failed to delete session:", error)
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      const deleting = next.deletingSession.get(instanceId)
-      if (deleting) {
-        deleting.delete(sessionId)
-      }
-      return next
-    })
+    if (deleteSessionAuthorities.get(loadingKey) === loadingAuthority) {
+      deleteSessionAuthorities.delete(loadingKey)
+      setLoading((prev) => {
+        const next = { ...prev }
+        const deleting = next.deletingSession.get(instanceId)
+        if (deleting) {
+          deleting.delete(sessionId)
+        }
+        return next
+      })
+    }
   }
 }
 
@@ -1256,7 +1273,9 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
 
   // Drop normalized message state and caches for this session.
   const pageKey = messagePageKey(instanceId, sessionId)
-  messagePageRequests.delete(pageKey)
+  for (const requestKey of messagePageRequests.keys()) {
+    if (requestKey.startsWith(`${pageKey}\0`)) messagePageRequests.delete(requestKey)
+  }
   messageHistoryAuthorities.delete(pageKey)
   messageStoreBus.getOrCreate(instanceId).clearSession(sessionId)
   clearCacheForSession(instanceId, sessionId)
@@ -1316,7 +1335,6 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
   const rootClient = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
@@ -1390,7 +1408,6 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
-
   const rootClient = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const requestKey = `${instanceId}\0${catalogLocationKey(location)}`
@@ -1451,10 +1468,9 @@ function planMessageWindowLoad(
   if (intent === "oldest") {
     return { order: "asc", next: { kind: "history", newerCursors: [] } }
   }
-  return {
-    cursor: current.kind === "history" ? current.resumeCursor : undefined,
-    next: current.kind === "history" ? { ...current } : emptyLatestWindow(),
-  }
+  if (current.kind !== "history") return { next: emptyLatestWindow() }
+  const forward = !current.newerCursors.includes(null)
+  return { cursor: current.resumeCursor, next: { ...current }, ...(forward ? { forward: true } : {}) }
 }
 
 function commitMessageWindow(
@@ -1504,30 +1520,31 @@ async function loadMessages(
   instanceId: string,
   sessionId: string,
   options?: MessageLoadOptions,
-): Promise<void> {
+): Promise<boolean> {
   const force = options?.force ?? false
   const intent = options?.intent ?? "open"
   const revisionRetry = options?.revisionRetry ?? 0
   const store = messageStoreBus.getOrCreate(instanceId)
   const storedWindow = store.getMessageWindow(sessionId)
-  const scrollSnapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
-  const currentWindow = storedWindow ?? windowFromSnapshot(scrollSnapshot)
+  let expectedWindow = storedWindow
+  const snapshot = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCOPE)
+  const currentWindow = storedWindow ?? windowFromSnapshot(snapshot)
   const planned: ReturnType<typeof planMessageWindowLoad> = options?.anchorMessageId
     ? { cursor: historyWindowCursor({ kind: "around", messageID: options.anchorMessageId }), next: currentWindow }
     : planMessageWindowLoad(currentWindow, intent)
-  if (!planned) return
+  if (!planned) return false
 
   const alreadyLoaded = messagesLoaded().get(instanceId)?.has(sessionId)
   if (alreadyLoaded && !force) {
     if (!sessionInfoByInstance().get(instanceId)?.has(sessionId)) updateSessionInfo(instanceId, sessionId)
-    return
+    return false
   }
 
   const previousError = getSessionMessagesLoadError(instanceId, sessionId)
-  if (previousError && !force) return
+  if (previousError && !force) return false
 
   const isLoading = loading().loadingMessages.get(instanceId)?.has(sessionId)
-  if (isLoading && !force) return
+  if (isLoading && !force) return false
 
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) throw new Error("Instance not ready")
@@ -1538,24 +1555,31 @@ async function loadMessages(
   if (!session) throw new Error("Session not found")
 
   const loadEpoch = advanceMessageLoadEpoch(instanceId, sessionId)
+  const loadSignal = getMessageLoadSignal(instanceId, sessionId)!
+  const signal = options?.signal ? AbortSignal.any([loadSignal, options.signal]) : loadSignal
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
   const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
-    && sessions().get(instanceId)?.has(sessionId)
+    && sessions().get(instanceId)?.has(sessionId) === true
     && generationCurrent()
     && (!historyAuthority || messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId)) === historyAuthority)
   const isCurrentLoad = () => ownsLoadState() && options?.signal?.aborted !== true
   const isCurrent = () => isCurrentLoad()
     && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
-    && store.getMessageWindow(sessionId) === storedWindow
+    && store.getMessageWindow(sessionId) === expectedWindow
+  const commitCurrentWindow = (window: MessageWindowState, windowIntent: MessageWindowIntent) => {
+    commitMessageWindow(instanceId, sessionId, window, windowIntent, options?.anchorMessageId)
+    expectedWindow = store.getMessageWindow(sessionId)
+  }
   options?.registerInvalidation?.(() => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) invalidateSessionMessageLoad(instanceId, sessionId)
   })
   const messageRevision = store.getSessionRevision(sessionId)
   const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
   let retryAfterRevisionConflict = false
+  let committed = false
   const showLoading = intent === "open" || intent === "latest"
 
   if (showLoading) {
@@ -1579,7 +1603,7 @@ async function loadMessages(
     const directTarget = historyWindowTarget(planned.cursor)
       ?? (lastResident ? { kind: "after" as const, messageID: lastResident } : undefined)
     if (directTarget) {
-      const direct = await readHistoryWindow(instanceId, sessionId, directTarget, options?.signal)
+      const direct = await readHistoryWindow(instanceId, sessionId, directTarget, signal)
       response = direct.response
       directWindow = direct.window
       responseAscending = true
@@ -1590,10 +1614,10 @@ async function loadMessages(
         if (page >= MESSAGE_CURSOR_SEEK_LIMIT) throw new Error(tGlobal("messageSection.loadError.detail"))
         response = await client.message.list({
           sessionID: sessionId,
-          limit: 200,
+          limit: MESSAGE_WINDOW_PAGE_SIZE,
           ...(cursor ? { cursor } : { order: "desc" }),
-        }, options?.signal ? { signal: options.signal } : undefined)
-        if (!isCurrent()) return
+        }, { signal })
+        if (!isCurrent()) return false
         if (response.cursor?.next === planned.seekNewer) {
           resolvedNext = cursor
             ? { kind: "history", resumeCursor: cursor, newerCursors: [null, null] }
@@ -1606,17 +1630,31 @@ async function loadMessages(
         cursor = next
       }
       responseAscending = false
+    } else if (intent === "open" && snapshot && planned.order !== "asc") {
+      const page = await listMessageWindow(client, sessionId, {
+        limit: MESSAGE_WINDOW_PAGE_SIZE,
+        cursor: planned.cursor,
+        forward: planned.forward,
+        signal,
+        isAuthoritative: isCurrent,
+      })
+      if (!page) return false
+      response = {
+        data: page.messages,
+        cursor: { previous: page.olderCursor, next: page.newerCursor },
+      } as SessionMessagesResponse
+      responseAscending = true
     } else {
       response = await client.message.list({
         sessionID: sessionId,
-        limit: 200,
+        limit: MESSAGE_WINDOW_PAGE_SIZE,
         ...(planned.cursor ? { cursor: planned.cursor } : { order: planned.order ?? "desc" }),
-      }, options?.signal ? { signal: options.signal } : undefined)
+      }, { signal })
     }
     // A staged undo leaves its tail in the native transcript until commit.
     // On opening/latest, seek the latest *visible* page rather than treating
     // a page consisting entirely of that hidden tail as an empty session.
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     if (!directWindow && (intent === "open" || intent === "latest") && !planned.cursor && session.revert?.messageID) {
       const boundary = session.revert.messageID
       const seen = new Set<string>()
@@ -1627,9 +1665,8 @@ async function loadMessages(
           throw new Error(tGlobal("messageSection.loadError.detail"))
         }
         seen.add(cursor)
-        response = await client.message.list({ sessionID: sessionId, limit: 200, cursor },
-          options?.signal ? { signal: options.signal } : undefined)
-        if (!isCurrent()) return
+        response = await client.message.list({ sessionID: sessionId, limit: MESSAGE_WINDOW_PAGE_SIZE, cursor }, { signal })
+        if (!isCurrent()) return false
       }
     }
     const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
@@ -1638,13 +1675,13 @@ async function loadMessages(
     if (planned.cursor && responseCursor === planned.cursor) {
       throw new Error("Repeated message cursor")
     }
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
 
     const forwardPage = intent === "oldest" || planned.forward
     const nextWindow = directWindow ?? (forwardPage
       ? newerCursor
-        ? { ...resolvedNext, olderCursor: undefined, newerCursors: [newerCursor] }
-        : emptyLatestWindow()
+        ? { ...resolvedNext, olderCursor, newerCursors: [newerCursor] }
+        : withOlderCursor(emptyLatestWindow(), olderCursor)
       : withOlderCursor(resolvedNext, olderCursor))
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
@@ -1655,7 +1692,7 @@ async function loadMessages(
         // history request says nothing about the messages already resident.
         // Keep their window identity (including live/latest authority) and
         // scroll anchor; only retire the cursor that reached the boundary.
-        commitMessageWindow(instanceId, sessionId, withOlderCursor(currentWindow, undefined), "open")
+        commitCurrentWindow(withOlderCursor(currentWindow, undefined), "open")
       } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
         retryAfterRevisionConflict = true
       } else if (store.getSessionRevision(sessionId) !== messageRevision) {
@@ -1666,8 +1703,9 @@ async function loadMessages(
         // page. It still carries session metadata authority: late projections
         // must retain the boundary, and a cleared boundary must not linger.
         store.setSessionRevert(sessionId, sessions().get(instanceId)?.get(sessionId)?.revert ?? null)
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent, options?.anchorMessageId)
+        commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
+        committed = true
       }
     } else {
       const seenMessageIds = new Set<string>()
@@ -1699,7 +1737,7 @@ async function loadMessages(
 
       if (!agentName && !providerID && !modelID) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
-        if (!isCurrent()) return
+        if (!isCurrent()) return false
         agentName = session.agent
         providerID = defaultModel.providerId
         modelID = defaultModel.modelId
@@ -1724,18 +1762,20 @@ async function loadMessages(
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
-      if (!isCurrent()) return
+      if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" ? messageRevision : undefined
       if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        commitMessageWindow(instanceId, sessionId, nextWindow, intent, options?.anchorMessageId)
+        store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
+        commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
+        committed = true
       }
     }
   } catch (error) {
-    if (options?.signal?.aborted) return
+    if (signal.aborted || !isCurrentLoad()) return false
     if (error instanceof MissingHistoryAnchorError && intent === "open" && isCurrent()) {
       // A persisted window can outlive its anchor (deletion, compaction, undo).
       // Recover once through a fresh visible latest page; its successful commit
@@ -1758,6 +1798,7 @@ async function loadMessages(
         return next
       })
     }
+    finishMessageLoad(instanceId, sessionId, loadEpoch)
   }
 
   if (retryAfterRevisionConflict && sessions().get(instanceId)?.has(sessionId)) {
@@ -1767,8 +1808,8 @@ async function loadMessages(
       throw error
     }
     await new Promise((resolve) => setTimeout(resolve, LATEST_WINDOW_RETRY_DELAY_MS * (2 ** revisionRetry)))
-    options?.signal?.throwIfAborted()
-    if (!isCurrent()) return
+    signal.throwIfAborted()
+    if (!isCurrent()) return false
     return loadMessages(instanceId, sessionId, {
       force: true,
       intent: intent === "open" && planned.cursor ? "latest" : intent,
@@ -1779,8 +1820,9 @@ async function loadMessages(
     })
   }
 
-  if (!isCurrent()) return
+  if (!isCurrent()) return false
   updateSessionInfo(instanceId, sessionId)
+  return committed
 }
 
 function enqueueMessageWindowLoad(
@@ -1788,15 +1830,18 @@ function enqueueMessageWindowLoad(
   sessionId: string,
   intent: Exclude<MessageWindowIntent, "open">,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
   let pending = messagePageRequests.get(key)
   if (!pending) {
     const controller = new AbortController()
-    pending = { controller, consumers: new Set(), request: undefined as unknown as Promise<void> }
+    pending = { controller, consumers: new Set(), request: undefined as unknown as Promise<boolean> }
     const entry = pending
     entry.request = loadMessages(instanceId, sessionId, { force: true, intent, signal: controller.signal }).then(
-      () => { if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key) },
+      (committed) => {
+        if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key)
+        return committed
+      },
       (error) => {
         if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key)
         throw error
@@ -1813,22 +1858,22 @@ function enqueueMessageWindowLoad(
       if (messagePageRequests.get(key) === pending) messagePageRequests.delete(key)
       pending.controller.abort()
     }
-    return Promise.resolve()
+    return Promise.resolve(false)
   }
 
   const entry = pending
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<boolean>((resolve, reject) => {
     let finished = false
-    const finish = (error?: unknown) => {
+    const finish = (committed: boolean, error?: unknown) => {
       if (finished) return
       finished = true
       signal?.removeEventListener("abort", handleAbort)
       entry.consumers.delete(consumer)
-      if (error === undefined) resolve()
+      if (error === undefined) resolve(committed)
       else reject(error)
     }
     const handleAbort = () => {
-      finish()
+      finish(false)
       if (entry.consumers.size === 0) {
         if (messagePageRequests.get(key) === entry) messagePageRequests.delete(key)
         entry.controller.abort()
@@ -1836,36 +1881,36 @@ function enqueueMessageWindowLoad(
     }
     signal?.addEventListener("abort", handleAbort, { once: true })
     entry.request.then(
-      () => finish(),
+      (committed) => finish(committed),
       (error) => {
-        if (signal?.aborted) finish()
-        else finish(error)
+        if (signal?.aborted) finish(false)
+        else finish(false, error)
       },
     )
   })
 }
 
-function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+function loadMoreMessages(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
 }
 
-function loadOlderMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+function loadOlderMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   return enqueueMessageWindowLoad(instanceId, sessionId, "older", signal)
 }
 
-function loadNewerMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+function loadNewerMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   return enqueueMessageWindowLoad(instanceId, sessionId, "newer", signal)
 }
 
-function loadLatestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+function loadLatestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   return enqueueMessageWindowLoad(instanceId, sessionId, "latest", signal)
 }
 
-function loadOldestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<void> {
+function loadOldestMessageWindow(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
   return enqueueMessageWindowLoad(instanceId, sessionId, "oldest", signal)
 }
 
-function loadMessageAnchor(instanceId: string, sessionId: string, messageId: string, signal?: AbortSignal): Promise<void> {
+function loadMessageAnchor(instanceId: string, sessionId: string, messageId: string, signal?: AbortSignal): Promise<boolean> {
   return loadMessages(instanceId, sessionId, { force: true, intent: "around", anchorMessageId: messageId, signal })
 }
 

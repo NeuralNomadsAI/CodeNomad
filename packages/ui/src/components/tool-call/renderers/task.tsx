@@ -6,8 +6,10 @@ import type { ToolRenderer } from "../types"
 import { ensureMarkdownContent, getDefaultToolAction, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
-import { getSessionMessagesLoadError, loading, messagesLoaded } from "../../../stores/session-state"
+import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
 import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
+import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
+import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
@@ -200,22 +202,19 @@ export const taskRenderer: ToolRenderer = {
       void loadMessages(instanceId, id, { force: true }).catch(() => {})
     }
 
-    const [requestedChildLoad, setRequestedChildLoad] = createSignal(false)
-    const childSessionLoading = createMemo(() => {
-      const id = childSessionId()
-      if (!id) return false
-      const loadingSet = loading().loadingMessages.get(instanceId)
-      return loadingSet?.has(id) ?? false
-    })
-
-    createEffect(() => {
-      const id = childSessionId()
-      if (!id) return
-      if (requestedChildLoad()) return
-      if (childSessionLoaded()) return
-      if (childSessionLoading()) return
-      setRequestedChildLoad(true)
-      void loadMessages(instanceId, id)
+    useActiveSessionMessageLoad({
+      isActive: () => Boolean(childSessionId()),
+      instanceId: () => instanceId,
+      session: () => {
+        const id = childSessionId()
+        return id ? sessions().get(instanceId)?.get(id) : undefined
+      },
+      shouldLoad: () => !childSessionLoaded(),
+      loadMessages: (childInstanceId, id, options) => loadMessages(childInstanceId, id, {
+        signal: options?.signal,
+        registerInvalidation: options?.registerInvalidation,
+      }),
+      waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     })
 
     createEffect(() => {
@@ -392,9 +391,8 @@ export const taskRenderer: ToolRenderer = {
       const state = toolState()
       if (!state) return null
       const { input } = readToolStatePayload(state)
-      const { input } = readToolStatePayload(state)
-      const name = readSubagentName(input)
-      return name ? limitToolTitleForRender(name) : null
+      const agent = readSubagentName(input)
+      return agent ? limitToolTitleForRender(agent) : null
     })
 
     const modelLabel = createMemo(() => {

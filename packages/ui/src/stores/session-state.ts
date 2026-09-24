@@ -372,13 +372,17 @@ function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
   })
 }
 
-function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
+function supersedeSessionMessageLoad(instanceId: string, sessionId: string): void {
   const key = getDraftKey(instanceId, sessionId)
   messageLoadControllers.get(key)?.abort()
   messageLoadControllers.delete(key)
   messageLoadEpochs.set(key, ++nextMessageLoadEpoch)
-  clearLoadedFlag(instanceId, sessionId)
   clearMessageLoadingFlag(instanceId, sessionId)
+}
+
+function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
+  supersedeSessionMessageLoad(instanceId, sessionId)
+  clearLoadedFlag(instanceId, sessionId)
 }
 
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
@@ -1278,6 +1282,7 @@ export {
   isCurrentMessageLoad,
   getMessageLoadSignal,
   finishMessageLoad,
+  supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
   clearInstanceMessageLoads,
   setSessionMessagesLoadError,
