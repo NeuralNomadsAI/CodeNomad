@@ -242,6 +242,7 @@ jobs:
           packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/session-outline-projection.test.ts
           packages/ui/src/components/provider-auth/provider-options.test.ts
+          packages/ui/src/components/prompt-input/device-file-selection.test.ts
           packages/ui/src/components/prompt-input/height-state.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts

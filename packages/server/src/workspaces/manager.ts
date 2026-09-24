@@ -442,15 +442,21 @@ export class WorkspaceManager {
     })?.id
   }
 
-  async listFiles(workspaceId: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  private async fileBrowserRoot(workspaceId: string, directory?: string): Promise<string> {
     const workspace = this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    if (!directory) return workspace.path
+    const owned = await this.resolveOwnedWorktree(workspace, directory)
+    if (!owned) throw new Error("Directory is not owned by this workspace")
+    return owned.directory
+  }
+
+  async listFiles(workspaceId: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     return browser.list(relativePath)
   }
 
-  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions): Promise<FileSystemEntry[]> {
-    const workspace = this.requireWorkspace(workspaceId)
-    return searchWorkspaceFiles(workspace.path, query, options)
+  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions, directory?: string): Promise<FileSystemEntry[]> {
+    return searchWorkspaceFiles(await this.fileBrowserRoot(workspaceId, directory), query, options)
   }
 
   async readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
@@ -837,7 +843,7 @@ export class WorkspaceManager {
     }
   }
 
-  private requireWorkspace(id: string): WorkspaceDescriptor {
+  private requireWorkspace(id: string): WorkspaceRecord {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) throw new Error("Workspace not found")
     return record
