@@ -1264,7 +1264,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView instanceId={props.instance.id} onBackToConversation={handleBackToConversation} />
+              <InfoView
+                instanceId={props.instance.id}
+                active={Boolean(props.isActiveInstance) && showingInfoView()}
+                onBackToConversation={handleBackToConversation}
+              />
             </div>
           </Show>
         </Box>

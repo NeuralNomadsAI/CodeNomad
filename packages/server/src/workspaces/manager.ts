@@ -320,6 +320,26 @@ export class WorkspaceManager {
       ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
+  getServicePathStyle(id: string): "win32" | "posix" | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const platform = this.options.platform ?? process.platform
+    return record.wslDistro || platform !== "win32" ? "posix" : "win32"
+  }
+
+  getServiceWslDistro(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.wslDistro : undefined
+  }
+
+  /** Translate a path reported by the authenticated daemon for local filesystem access. */
+  async getHostPathForServicePath(id: string, servicePath: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    if (!record.wslDistro) return servicePath
+    return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+  }
+
   private async nativeWorktreeContext(id: string) {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)

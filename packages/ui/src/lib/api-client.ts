@@ -19,6 +19,10 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  PluginActivationMutationRequest,
+  PluginActivationMutationResponse,
+  PluginControlLocation,
+  PluginControlsSnapshot,
   ProviderUsageResponse,
   ServerMeta,
   RemoteProxySessionCreateRequest,
@@ -334,6 +338,17 @@ export const serverApi = {
     return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
       method: "PUT",
       body: JSON.stringify(body),
+    })
+  },
+  getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const params = new URLSearchParams({ directory: location.directory })
+    if (location.workspaceID) params.set("workspaceID", location.workspaceID)
+    return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
+  },
+  setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+    return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
     })
   },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
