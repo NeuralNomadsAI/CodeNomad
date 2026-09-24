@@ -5,7 +5,7 @@ import { ConfigProvider, serverSettings, setThemePreference, updatePreferences }
 import { ThemeProvider } from "../../../src/lib/theme"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
-import { openOpenCodeSetup } from "../../../src/stores/opencode-setup"
+import { openOpenCodeSetup, refreshOpenCodeSetup, invalidateOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { createInstanceFetch } from "../../../src/lib/sdk-manager"
 import "../../../src/index.css"
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
@@ -23,6 +23,8 @@ await setThemePreference(params.get("theme") === "dark" ? "dark" : "light")
 ;(window as any).fixture = {
   open: () => openOpenCodeSetup(async () => { resumed++ }), resumed: () => resumed,
   selectedBinary: () => serverSettings().opencodeBinary,
+  refresh: refreshOpenCodeSetup,
+  invalidate: invalidateOpenCodeSetup,
   unsupported: () => createInstanceFetch(`${location.origin}/workspaces/w/instance/`)(`${location.origin}/workspaces/w/instance/api/session/s/prompt`,
     { method: "POST", body: "{}" }).then(response => response.status),
 }

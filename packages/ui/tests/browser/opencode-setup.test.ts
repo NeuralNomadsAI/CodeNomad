@@ -338,11 +338,138 @@ test("French settings remain readable at narrow widths and failed checks recover
     fail = true
     await panel.getByRole("button", { name: "Vérifier l’état et les mises à jour" }).click()
     await panel.getByRole("alert").waitFor()
+    assert.equal(await panel.getByText("OpenCode est connecté.", { exact: true }).count(), 0, "a failed read cannot retain connected as current status")
+    await panel.getByText("Dépannage", { exact: true }).click()
+    assert.equal(await panel.getByRole("button", { name: "Recharger la configuration OpenCode", exact: true }).isDisabled(), true)
     fail = false
     await panel.getByRole("button", { name: "Vérifier l’état et les mises à jour" }).click()
     await panel.getByText("Vérification de l’état et des mises à jour terminée.").waitFor()
     assert.equal(await panel.getByRole("alert").count(), 0)
   } finally { await page.close() }
+})
+
+const healthyStatus = { state: "ready", currentVersion: "2.0.16", latestVersion: "2.0.16", minimumVersion: "2.0.7",
+  recommendedVersion: "2.0.15", binaryPath: "opencode2", target: "host", canUpgrade: false, canRestart: false,
+  serviceState: "ready", daemonVersion: "2.0.16" }
+
+test("Continue rechecks a service stopped after the recovery screen opened and preserves the workspace retry", async () => {
+  const page = await browser.newPage()
+  let stopped = false, mutations = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() !== "GET" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+    return route.fulfill({ json: { ...healthyStatus, serviceState: stopped ? "stopped" : "ready" } })
+  })
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    const proceed = page.getByRole("button", { name: "Continue", exact: true })
+    await proceed.waitFor()
+    stopped = true
+    await proceed.click()
+    await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
+    assert.equal(await page.getByRole("dialog").count(), 1)
+    stopped = false
+    await page.getByRole("button", { name: "Check status and updates" }).click()
+    await proceed.click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(mutations, 0)
+  } finally { await page.close() }
+})
+
+test("refresh events during a read coalesce into a trailing check before reporting success", async () => {
+  const page = await browser.newPage()
+  let held = false, reads = 0, release!: () => void
+  await page.route("**/api/**", async route => {
+    const stale = held
+    if (held) {
+      reads++
+      await new Promise<void>(resolve => { release = resolve })
+    } else if (reads) reads++
+    return route.fulfill({ json: { ...healthyStatus, serviceState: stale || !reads ? "ready" : "stopped" } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    held = true
+    await page.getByRole("button", { name: "Check status and updates" }).click()
+    await page.waitForFunction(() => document.querySelector('[aria-busy="true"]'))
+    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
+    assert.ok(release)
+    await page.evaluate(() => { for (let i = 0; i < 10; i++) void (window as any).fixture.refresh() })
+    held = false; release()
+    await page.getByText("Status and update check complete.", { exact: true }).waitFor()
+    await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
+    assert.equal(reads, 2, "a burst queues one follow-up rather than losing the event or issuing ten checks")
+  } finally { held = false; release?.(); await page.close() }
+})
+
+test("a failed pre-action status read blocks activation and retains a visible connection retry", async () => {
+  const page = await browser.newPage()
+  let fail = false, mutations = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() !== "GET" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+    return route.fulfill(fail ? { status: 503, json: { error: "unavailable" } }
+      : { json: { ...healthyStatus, serviceState: "stopped" } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
+    fail = true
+    await page.getByRole("button", { name: "Connect and continue", exact: true }).click()
+    await page.getByRole("alert").waitFor()
+    assert.equal(mutations, 0)
+    assert.equal(await page.getByRole("button", { name: "Connect and continue", exact: true }).isEnabled(), true)
+    fail = false
+    await page.getByRole("button", { name: "Check status and updates" }).click()
+    await page.getByText("Status and update check complete.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("alert").count(), 0)
+  } finally { await page.close() }
+})
+
+test("a service discovery error is not announced as a successful check", async () => {
+  const page = await browser.newPage()
+  await page.route("**/api/**", route => route.fulfill({ json: { ...healthyStatus,
+    serviceState: "error", serviceError: "service_check_failed" } }))
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByRole("alert").waitFor()
+    await page.getByRole("button", { name: "Check status and updates" }).click()
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'))
+    assert.equal(await page.getByText("Status and update check complete.", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("OpenCode is connected.", { exact: true }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("changing executable fences an old read and its queued follow-up", async () => {
+  const page = await browser.newPage()
+  let hold = false, changed = false, release!: () => void, reads = 0
+  await page.route("**/api/**", async route => {
+    const status = { ...healthyStatus, binaryPath: changed ? "new-opencode" : "old-opencode", serviceState: changed ? "stopped" : "ready" }
+    if (hold) { reads++; await new Promise<void>(resolve => { release = resolve }) }
+    else if (reads) reads++
+    return route.fulfill({ json: status })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    hold = true
+    await page.getByRole("button", { name: "Check status and updates" }).click()
+    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
+    assert.ok(release)
+    await page.evaluate(() => { void (window as any).fixture.refresh() })
+    hold = false; changed = true
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
+    const oldRead = page.waitForResponse(response => response.url().includes("/api/opencode/update"))
+    release()
+    await oldRead
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)))
+    assert.equal(await page.getByText("old-opencode", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("OpenCode is connected.", { exact: true }).count(), 0)
+    assert.equal(reads, 2)
+  } finally { hold = false; release?.(); await page.close() }
 })
 
 test("continuing an already-connected recovery retries only the pending workspace", async () => {
