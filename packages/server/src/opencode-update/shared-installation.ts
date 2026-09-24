@@ -8,6 +8,7 @@ import { probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { compareVersionStrings } from "../releases/release-monitor"
 import { assertExecutableWritable, withInstallationLock } from "./installation-lock"
+import { upgradeSharedOpenCode } from "./native-upgrade"
 
 export interface InstallationHost {
   home?: string
@@ -157,12 +158,20 @@ export async function installSharedOpenCode(version: string, options: Installati
     const directory = npmCommandDirectory(prefix, platform)
     const commandHost = { ...options, env: { PATH: directory, PATHEXT: ".EXE;.CMD;.BAT" } }
     if (!existing.valid || existing.version !== target || !npmCommand(prefix, platform) || oldBinary !== binary) {
-      await assertExecutableWritable(oldBinary, platform)
       const env = { ...(options.env ?? process.env) }
-      const key = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
-      env[key] = `${path.dirname(node)}${platform === "win32" ? ";" : ":"}${env[key] || ""}`
-      await (options.execute ?? executeInstaller)(node, [npm, "install", "--global", "--prefix", prefix,
-        "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], env)
+      // 2.0.15 -> 2.0.16 is qualified with a live Windows service. Older
+      // installers and same-version launcher repair keep the npm preflight.
+      if (existing.valid && existing.version && /^\d+\.\d+\.\d+$/.test(existing.version)
+        && compareVersionStrings(existing.version, "2.0.15") >= 0 && existing.version !== target
+        && npmCommand(prefix, platform)) {
+        await upgradeSharedOpenCode({ binary: oldBinary, version: target, prefix, node, npm, env, platform, execute: options.execute })
+      } else {
+        await assertExecutableWritable(oldBinary, platform)
+        const key = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
+        env[key] = `${path.dirname(node)}${platform === "win32" ? ";" : ":"}${env[key] || ""}`
+        await (options.execute ?? executeInstaller)(node, [npm, "install", "--global", "--prefix", prefix,
+          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], env)
+      }
     }
     const result = await probe(binary)
     if (!result.valid || !result.version || !/^\d+\.\d+\.\d+$/.test(result.version) || compareVersionStrings(result.version, target) < 0) {
