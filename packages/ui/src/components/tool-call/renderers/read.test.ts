@@ -15,6 +15,8 @@ it("renders read output from the V2 tool state", () => {
     renderMarkdown: ({ content }: { content: string }) => content,
   } as unknown as ToolRendererContext
 
-  assert.equal(readRenderer.getOutputChrome?.(context)?.copyText, "const value = 1")
+  const chrome = readRenderer.getOutputChrome?.(context)
+  assert.equal(chrome?.copyText, undefined)
+  assert.equal(chrome?.getCopyText?.(), "const value = 1")
   assert.match(String(readRenderer.renderBody(context)), /const value = 1/)
 })

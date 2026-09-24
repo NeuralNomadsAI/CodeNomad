@@ -681,6 +681,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
     instanceSessions: allInstanceSessions,
     activeSessionId: activeSessionIdForInstance,
+    isActiveInstance: () => Boolean(props.isActiveInstance),
   })
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())

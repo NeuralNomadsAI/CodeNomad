@@ -35,6 +35,10 @@ async function open(run: (page: Page) => Promise<void>) {
   } finally { await page.close() }
 }
 const system = '[data-message-kind="system"]'
+async function toggleSystemDisclosure(page: Page) {
+  await page.locator(system).getByRole("button").focus()
+  await page.keyboard.press("Enter")
+}
 test("system context is hidden by default, including live instructions and reloads", async () => open(async page => {
   assert.equal(await page.locator(system).count(), 0)
   assert.equal(await page.getByText(/Today's date is now/).count(), 0)
@@ -95,7 +99,7 @@ test("visible live notices render as System and obey local and global disclosure
   assert.equal(await page.locator(`${system} pre`).count(), 0)
 }))
 
-test("search navigates system occurrences and restores highlights after disclosure changes", async () => open(async page => {
+test("search highlights system occurrences and restores highlights after disclosure changes", async () => open(async page => {
   await page.getByRole("button", { name: "Message content", exact: true }).click()
   const row = page.getByRole("group", { name: "System", exact: true })
   await row.getByRole("button", { name: "Show System", exact: true }).click()
@@ -104,14 +108,14 @@ test("search navigates system occurrences and restores highlights after disclosu
   await page.getByPlaceholder("Search current chat...").fill("system-reminder")
   await page.locator(`${system} mark.session-search-match-active`).waitFor()
   assert.equal(await page.locator(`${system} mark.session-search-match`).count(), 2)
-  await page.locator(system).getByRole("button").click()
+  await toggleSystemDisclosure(page)
   assert.equal(await page.locator(`${system} pre`).count(), 0)
-  await page.getByRole("button", { name: "Next match", exact: true }).click()
+  await toggleSystemDisclosure(page)
   await page.locator(`${system} pre`).waitFor({ timeout: 5000 })
   await page.locator(`${system} mark.session-search-match-active`).waitFor({ timeout: 5000 })
   assert.equal(await page.locator(`${system} mark.session-search-match-active`).count(), 1)
-  await page.locator(system).getByRole("button").click()
-  await page.locator(system).getByRole("button").click()
+  await toggleSystemDisclosure(page)
+  await toggleSystemDisclosure(page)
   await page.locator(`${system} mark.session-search-match-active`).waitFor({ timeout: 5000 })
 }))
 

@@ -37,6 +37,7 @@ type TranscriptEntry = {
   freshEntry?: DataEntry
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
+  retireWhenDrained: boolean
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -227,6 +228,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncing: false,
     resyncGeneration: 0,
     retryCount: 0,
+    retireWhenDrained: false,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -444,6 +446,7 @@ async function resyncAuthoritativeTranscript(
 
     transcript.onResynced?.(fresh.data)
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
     if (!isResyncCurrent(instanceId, sessionId, transcript, generation, fresh)) return
     transcript.resyncing = false
@@ -534,6 +537,7 @@ async function rotateTranscript(
   } finally {
     if (transcript.rotationGeneration === generation) transcript.rotating = false
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== entry) entry.dispose()
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   }
 }
 
@@ -596,6 +600,8 @@ export function applyOpenCodeDataEvent(
     : undefined
   const entry = transcript?.entry ?? primary
   if (transcript && typeof sessionId === "string") {
+    // A new execution must not inherit a preceding idle event's deferred cleanup.
+    if (event.type === "session.execution.started" || eventMayAppendMessage(event)) transcript.retireWhenDrained = false
     const key = messageRevisionKey(instanceId, sessionId)
     fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
     if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
@@ -692,7 +698,42 @@ export function projectOpenCodeMessages(
   }
 }
 
-export function destroyOpenCodeData(instanceId: string): void {
+function retireDrainedTranscript(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!transcript.retireWhenDrained || !isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
+    || transcript.retryTimer || transcript.queue.length) return
+  destroyOpenCodeData(instanceId, sessionId)
+}
+
+export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent): void {
+  const sessionId = eventSessionId(event)
+  if (sessionId === undefined) return
+  if (event.type === "session.deleted") destroyOpenCodeData(instanceId, sessionId)
+  if (event.type !== "session.idle") return
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (!transcript) return
+  // The caller has projected the synchronous page. Queued terminal updates and
+  // overflow recovery must publish their final page before releasing its reducer.
+  transcript.retireWhenDrained = true
+  retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    const key = messageRevisionKey(instanceId, sessionId)
+    const transcript = transcriptEntries.get(key)
+    if (transcript) {
+      invalidateTranscript(transcript)
+      transcript.entry.dispose()
+      transcriptEntries.delete(key)
+    }
+    // Payload lifetime is shorter than request authority: a pending native page
+    // must never see a pre-mutation revision again after idle/eviction. These
+    // scalar fences are released on deletion or a fenced instance-generation reset.
+    fullDataRevisions.delete(key)
+    instanceDataRevision(instanceId)[1]((current) => current + 1)
+    return
+  }
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)

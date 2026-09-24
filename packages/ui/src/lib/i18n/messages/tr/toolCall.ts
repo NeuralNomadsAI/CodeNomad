@@ -136,4 +136,8 @@ export const toolCallMessages = {
   "formRequest.cancel": "İptal",
   "formRequest.openExternal": "Harici formu aç",
   "formRequest.selectPlaceholder": "Bir seçenek seçin",
+  "toolCall.permission.diff.previous": "Önceki fark sayfası",
+  "toolCall.permission.diff.next": "Sonraki fark sayfası",
+  "toolCall.permission.diff.page": "Sayfa {page} / {total}",
+  "toolCall.permission.diff.reviewRequired": "Onayı etkinleştirmek için her sayfayı inceleyin veya yamanın tamamını kopyalayın.",
 } as const

@@ -17,6 +17,7 @@ import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { messageStoreBus } from "./message-v2/bus"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
@@ -282,6 +283,7 @@ async function sendMessage(
       isEphemeral: true,
       clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
     })
+    store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
     store.markSendPending(messageId)
   }
 
@@ -558,7 +560,11 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
 }
 
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
-  await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  await admitSessionAction(instanceId, sessionId, async () => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+  })
 }
 
 function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {
