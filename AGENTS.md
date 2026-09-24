@@ -32,6 +32,8 @@
 
 ## Coding Principles
 
+- Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for the captured failure and override removal criteria.
+
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
 
 - Git is a full-functionality prerequisite, with directory-only degraded conversations when the backend cannot find Git. Only the explicitly opened physical folder is session authority in that mode; never infer sibling worktrees from native project IDs. Keep ancestor/descendant mutation identities covered by the deletion fence across Git availability changes. Inform agents through the owned native `codenomad.git-availability` instruction before prompts/custom commands, remove stale context after recovery, and keep this advisory separate from fail-closed environment synchronization. No blocking Git setup UI. Validate with `scripts/test-git-degraded-native.mjs` using an isolated CLI/database and provider.
