@@ -29,6 +29,10 @@ export const toolCallMessages = {
   "toolCall.diff.enableWordWrap": "Enable word wrap",
   "toolCall.diff.disableWordWrap": "Disable word wrap",
   "toolCall.diff.copyPatch": "Copy patch",
+  "toolCall.permission.diff.previous": "Previous diff page",
+  "toolCall.permission.diff.next": "Next diff page",
+  "toolCall.permission.diff.page": "Page {page} of {total}",
+  "toolCall.permission.diff.reviewRequired": "Review every page or copy the complete patch to enable approval.",
 
   "toolCall.diagnostics.title": "Diagnostics",
   "toolCall.diagnostics.ariaLabel": "Diagnostics",

@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} फाइल)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} फाइलहरू)",
   "toolCall.applyPatch.fileFallback": "फाइल {number}",
+  "toolCall.permission.diff.previous": "भिन्नताको अघिल्लो पृष्ठ",
+  "toolCall.permission.diff.next": "भिन्नताको अर्को पृष्ठ",
+  "toolCall.permission.diff.page": "{total} मध्ये पृष्ठ {page}",
+  "toolCall.permission.diff.reviewRequired": "स्वीकृति सक्षम गर्न हरेक पृष्ठ समीक्षा गर्नुहोस् वा सम्पूर्ण प्याच प्रतिलिपि गर्नुहोस्।",
 } as const

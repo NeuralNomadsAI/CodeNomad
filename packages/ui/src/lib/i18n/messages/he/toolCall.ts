@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} קובץ)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} קבצים)",
   "toolCall.applyPatch.fileFallback": "קובץ {number}",
+  "toolCall.permission.diff.previous": "עמוד ההבדלים הקודם",
+  "toolCall.permission.diff.next": "עמוד ההבדלים הבא",
+  "toolCall.permission.diff.page": "עמוד {page} מתוך {total}",
+  "toolCall.permission.diff.reviewRequired": "יש לעיין בכל העמודים או להעתיק את התיקון המלא כדי לאפשר אישור.",
 } as const

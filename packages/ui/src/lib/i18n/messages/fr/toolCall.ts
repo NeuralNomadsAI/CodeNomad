@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} fichier)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} fichiers)",
   "toolCall.applyPatch.fileFallback": "Fichier {number}",
+  "toolCall.permission.diff.previous": "Page précédente du diff",
+  "toolCall.permission.diff.next": "Page suivante du diff",
+  "toolCall.permission.diff.page": "Page {page} sur {total}",
+  "toolCall.permission.diff.reviewRequired": "Consultez chaque page ou copiez le correctif complet pour activer l’approbation.",
 } as const

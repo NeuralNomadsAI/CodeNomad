@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} 件のファイル)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} 件のファイル)",
   "toolCall.applyPatch.fileFallback": "ファイル {number}",
+  "toolCall.permission.diff.previous": "差分の前のページ",
+  "toolCall.permission.diff.next": "差分の次のページ",
+  "toolCall.permission.diff.page": "{total} ページ中 {page} ページ",
+  "toolCall.permission.diff.reviewRequired": "すべてのページを確認するか、パッチ全体をコピーすると承認できます。",
 } as const

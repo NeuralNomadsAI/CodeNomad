@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.title.withFileCount.other": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.fileFallback": "文件 {number}",
+  "toolCall.permission.diff.previous": "上一页差异",
+  "toolCall.permission.diff.next": "下一页差异",
+  "toolCall.permission.diff.page": "第 {page} 页，共 {total} 页",
+  "toolCall.permission.diff.reviewRequired": "查看每一页或复制完整补丁后即可批准。",
 } as const

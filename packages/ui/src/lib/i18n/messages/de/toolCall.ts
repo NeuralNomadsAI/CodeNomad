@@ -154,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} Datei)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} Dateien)",
   "toolCall.applyPatch.fileFallback": "Datei {number}",
+  "toolCall.permission.diff.previous": "Vorherige Diff-Seite",
+  "toolCall.permission.diff.next": "Nächste Diff-Seite",
+  "toolCall.permission.diff.page": "Seite {page} von {total}",
+  "toolCall.permission.diff.reviewRequired": "Prüfen Sie jede Seite oder kopieren Sie den vollständigen Patch, um die Genehmigung zu ermöglichen.",
 } as const
