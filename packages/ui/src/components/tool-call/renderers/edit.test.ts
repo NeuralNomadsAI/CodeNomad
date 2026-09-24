@@ -38,7 +38,9 @@ it("renders the OpenCode 2.x edit diff and titles by input.path", () => {
   const { context, rendered } = createContext("src/example.ts")
 
   assert.equal(editRenderer.getTitle?.(context), "Edit example.ts")
-  assert.equal(editRenderer.getOutputChrome?.(context)?.copyText, patch)
+  const chrome = editRenderer.getOutputChrome?.(context)
+  assert.equal(chrome?.copyText, undefined)
+  assert.equal(chrome?.getCopyText?.(), patch)
   assert.equal(editRenderer.renderBody(context), "diff")
   assert.deepEqual(rendered(), { diffText: patch, filePath: "src/example.ts" })
 })

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { copyToClipboard } from "./clipboard"
+import { copyTextChunksToClipboard, copyToClipboard } from "./clipboard"
+import { installClipboardFallbackDom } from "./clipboard.test-fixture"
 
 describe("copyToClipboard fallback", () => {
   it("restores focus and removes its temporary textarea", async () => {
@@ -28,44 +29,30 @@ describe("copyToClipboard fallback", () => {
       state.restore()
     }
   })
+
+  it("checks authority after fallback focus handlers before dispatching execCommand", async () => {
+    let writes = 0
+    const state = installClipboardFallbackDom(() => { writes++; return true })
+    const controller = new AbortController()
+    state.textArea.focus = () => controller.abort()
+    try {
+      assert.equal(await copyToClipboard("obsolete", { signal: controller.signal }), false)
+      assert.equal(writes, 0)
+      assert.equal(state.removed(), true)
+    } finally { state.restore() }
+  })
+
+  it("does not dispatch any strategy with an aborted signal or expired authority", async () => {
+    let writes = 0
+    const state = installClipboardFallbackDom(() => { writes++; return true }, {
+      write: async () => { writes++ }, writeText: async () => { writes++ },
+    })
+    try {
+      for (const options of [{ signal: AbortSignal.abort() }, { isCurrent: () => false }]) {
+        assert.equal(await copyTextChunksToClipboard(["obsolete"], options), false)
+        assert.equal(await copyToClipboard("obsolete", options), false)
+      }
+      assert.equal(writes, 0)
+    } finally { state.restore() }
+  })
 })
-
-function installClipboardFallbackDom(execCommand: () => boolean) {
-  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator")
-  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document")
-  let removed = false
-  let focusRestored = false
-  const textArea = {
-    value: "",
-    readOnly: false,
-    style: {} as CSSStyleDeclaration,
-    focus() {},
-    select() {},
-    remove() { removed = true },
-  }
-  const activeElement = { focus() { focusRestored = true } }
-  const documentMock = {
-    activeElement,
-    createElement: () => textArea,
-    body: { appendChild() {} },
-    execCommand,
-  }
-
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} })
-  Object.defineProperty(globalThis, "document", { configurable: true, value: documentMock })
-
-  return {
-    textArea,
-    removed: () => removed,
-    focusRestored: () => focusRestored,
-    restore() {
-      restoreGlobal("navigator", navigatorDescriptor)
-      restoreGlobal("document", documentDescriptor)
-    },
-  }
-}
-
-function restoreGlobal(name: "navigator" | "document", descriptor?: PropertyDescriptor) {
-  if (descriptor) Object.defineProperty(globalThis, name, descriptor)
-  else Reflect.deleteProperty(globalThis, name)
-}

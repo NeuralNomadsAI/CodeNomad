@@ -108,6 +108,19 @@ test("bare /btw opens a question form; attachments and normal command routing su
   } finally { await page.close() }
 })
 
+test("failed custom commands restore the original draft and pasted text without duplicating retained images", async () => {
+  const { page } = await setup()
+  try {
+    const draft = "/review [Pasted #1] [Image #1] keep these arguments"
+    await composer(page).fill(draft)
+    await page.evaluate(() => { (window as any).fixture.paste(); (window as any).fixture.image(); (window as any).fixture.failCommand() })
+    await page.locator(".send-button").click()
+    await page.waitForFunction(() => (window as any).fixture.snapshot().commands.length === 1)
+    assert.equal(await composer(page).inputValue(), draft)
+    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).attachments, 2)
+  } finally { await page.close() }
+})
+
 test("pending side questions do not block normal prompts; a second side question keeps its draft", async () => {
   let release!: () => Promise<void>
   const { page, requests } = await setup(route => new Promise<void>(resolve => {

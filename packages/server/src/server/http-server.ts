@@ -36,7 +36,7 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
-import { ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
+import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
@@ -57,6 +57,7 @@ import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
 import { DeveloperCdp } from "../developer-cdp"
 import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
+import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 
 interface HttpServerDeps {
   bindHost: string
@@ -621,6 +622,25 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
       })
     }
 
+    const proxyPromptHandler = async (
+      request: FastifyRequest<{ Params: { id: string; sessionId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      await proxyWorkspaceRequest({
+        request,
+        reply,
+        workspaceManager: deps.workspaceManager,
+        worktreeDeletionFence: deps.worktreeDeletionFence,
+        pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
+        logger: deps.logger,
+      })
+    }
+
+    instance.post(
+      "/workspaces/:id/instance/api/session/:sessionId/prompt",
+      { bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes },
+      proxyPromptHandler,
+    )
     instance.all("/workspaces/:id/instance", proxyBaseHandler)
     instance.all("/workspaces/:id/instance/*", proxyWildcardHandler)
   })
@@ -763,6 +783,15 @@ async function proxyWorkspaceRequest(args: {
   requestLocations.invalid ||= imported.invalid
   readNativeCwd(targetUrl, imported.body, requestLocations)
   const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
+  const promptBudget = validatePromptAttachmentBudget(pathname, request.method, imported.body)
+  if (!promptBudget.ok) {
+    reply.code(promptBudget.reason === "limit" ? 413 : 400).send({
+      error: promptBudget.reason === "limit"
+        ? "Prompt attachments exceed the supported limits"
+        : "Prompt attachment data is invalid",
+    })
+    return
+  }
   if (requestLocations.invalid
     || !(await allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories))
     || !(await allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations, connection?.client))) {

@@ -56,6 +56,9 @@ export const toolCallMessages = {
   "toolCall.renderer.action.listingDirectory": "正在列出目录...",
 
   "toolCall.renderer.bash.title.timeout": "超时：{timeout}",
+  "toolCall.output.truncated": "[输出已截断以便显示；复制即可访问完整输出]",
+  "toolCall.output.tooLarge": "结构化输出过大，已省略显示。",
+  "toolCall.task.steps.truncated": "正在显示最近的 {count} 个步骤；更早的步骤已省略。",
   "toolCall.renderer.read.detail.offset": "偏移：{offset}",
   "toolCall.renderer.read.detail.limit": "限制：{limit}",
 
@@ -151,4 +154,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.title.withFileCount.other": "{tool}（{count} 个文件）",
   "toolCall.applyPatch.fileFallback": "文件 {number}",
+  "toolCall.permission.diff.previous": "上一页差异",
+  "toolCall.permission.diff.next": "下一页差异",
+  "toolCall.permission.diff.page": "第 {page} 页，共 {total} 页",
+  "toolCall.permission.diff.reviewRequired": "查看每一页或复制完整补丁后即可批准。",
 } as const

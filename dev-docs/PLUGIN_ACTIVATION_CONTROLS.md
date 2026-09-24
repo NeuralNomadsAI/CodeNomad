@@ -166,10 +166,10 @@ runtime state catches up.
 The feature uses only `config.get` and `plugin.list`, which are already consumed
 through CodeNomad's connection-scoped compatibility transport.
 
-The server, UI, and bundled plugin currently pin `2.0.15` together. Its
+The server, UI, and bundled plugin currently pin `2.0.16` together. Its
 declarations provide the location-scoped reads, ordered `ConfigEntry.plugins`,
 and plugin source/state metadata used here. CodeNomad's demonstrated technical
-minimum is `2.0.7`, while `2.0.15` is the separately recommended and tested
+minimum is `2.0.7`, while `2.0.16` is the separately recommended and tested
 target. These activation controls add no higher version requirement. The
 activation write remains a local JSONC rule; no runtime-specific mutation
 endpoint is used.

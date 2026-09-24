@@ -1,9 +1,10 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { limitToolOutputForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./tool-call/utils"
 
 const log = getLogger("session")
 
@@ -89,6 +90,10 @@ function renderFallbackHtml(content: string): string {
   return escapeHtml(content).replace(/\n/g, "<br />")
 }
 
+export function getMarkdownTextForRender(content: string): string {
+  return limitToolOutputForRender(content)
+}
+
 interface MarkdownProps {
   part: TextPart
   instanceId?: string
@@ -158,7 +163,7 @@ export function Markdown(props: MarkdownProps) {
   const resolved = createMemo(() => {
     const part = props.part
     const rawText = typeof part.text === "string" ? part.text : ""
-    const text = decodeHtmlEntitiesLocally(rawText)
+    const text = decodeHtmlEntitiesLocally(getMarkdownTextForRender(rawText))
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
     const escapeRawHtml = Boolean(props.escapeRawHtml)
@@ -346,15 +351,31 @@ export function Markdown(props: MarkdownProps) {
   })
 
   return (
-    <div
-      ref={containerRef}
-      class="markdown-body"
-      dir="auto"
-      data-view="markdown"
-      data-part-id={resolved().partId}
-      data-markdown-theme={resolved().themeKey}
-      data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
-      innerHTML={html()}
-    />
+    <>
+      <div
+        ref={containerRef}
+        class="markdown-body"
+        dir="auto"
+        data-view="markdown"
+        data-part-id={resolved().partId}
+        data-markdown-theme={resolved().themeKey}
+        data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
+        innerHTML={html()}
+      />
+      <Show when={(typeof props.part.text === "string" ? props.part.text.length : 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT}>
+        <button
+          type="button"
+          class="message-action-button markdown-source-copy"
+          onClick={() => void copyToClipboard(typeof props.part.text === "string" ? props.part.text : "")}
+          aria-label={t("messageItem.actions.copyTitle")}
+          title={t("messageItem.actions.copyTitle")}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
+      </Show>
+    </>
   )
 }

@@ -81,6 +81,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+const messageLoadControllers = new Map<string, AbortController>()
 let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
@@ -338,13 +339,24 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
   const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
+  messageLoadControllers.set(key, new AbortController())
   return epoch
 }
 
 function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
   return messageLoadEpochs.get(getDraftKey(instanceId, sessionId)) === epoch
+}
+
+function getMessageLoadSignal(instanceId: string, sessionId: string): AbortSignal | undefined {
+  return messageLoadControllers.get(getDraftKey(instanceId, sessionId))?.signal
+}
+
+function finishMessageLoad(instanceId: string, sessionId: string, epoch: number): void {
+  if (!isCurrentMessageLoad(instanceId, sessionId, epoch)) return
+  messageLoadControllers.delete(getDraftKey(instanceId, sessionId))
 }
 
 function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
@@ -360,16 +372,28 @@ function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
   })
 }
 
-function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
-  advanceMessageLoadEpoch(instanceId, sessionId)
-  clearLoadedFlag(instanceId, sessionId)
+function supersedeSessionMessageLoad(instanceId: string, sessionId: string): void {
+  const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
+  messageLoadControllers.delete(key)
+  messageLoadEpochs.set(key, ++nextMessageLoadEpoch)
   clearMessageLoadingFlag(instanceId, sessionId)
+}
+
+function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
+  supersedeSessionMessageLoad(instanceId, sessionId)
+  clearLoadedFlag(instanceId, sessionId)
 }
 
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
 
 function clearInstanceMessageLoads(instanceId: string): void {
   const prefix = `${instanceId}:`
+  for (const [key, controller] of messageLoadControllers) {
+    if (!key.startsWith(prefix)) continue
+    controller.abort()
+    messageLoadControllers.delete(key)
+  }
   for (const key of messageLoadEpochs.keys()) {
     if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
   }
@@ -1256,6 +1280,9 @@ export {
   setSessionListError,
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
+  getMessageLoadSignal,
+  finishMessageLoad,
+  supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
   clearInstanceMessageLoads,
   setSessionMessagesLoadError,

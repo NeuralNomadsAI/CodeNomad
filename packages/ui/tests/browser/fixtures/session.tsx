@@ -91,6 +91,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.text.started", { assistantMessageID: assistantId })
   },
   delta: (delta: string) => emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta }),
+  appendTextPart: (text: string) => {
+    emit("session.text.started", { assistantMessageID: assistantId })
+    emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 1, delta: text })
+    emit("session.text.ended", { assistantMessageID: assistantId, ordinal: 1, text })
+  },
   end: (text: string) => {
     nativeMessages.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: time, completed: time }, content: [{ type: "text", text }] })
     emit("session.text.ended", { assistantMessageID: assistantId, ordinal: 0, text })

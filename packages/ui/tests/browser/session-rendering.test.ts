@@ -79,6 +79,24 @@ test("new-session reply renders live after optimistic-send reordering, and survi
   })
 })
 
+test("a mounted response renders a newly appended consecutive text part without remounting", async () => {
+  await open("session", async page => {
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.start()
+      fixture.delta("First content part")
+      fixture.end("First content part")
+    })
+    const row = page.locator('.message-stream-block[data-message-id="msg_assistant"]')
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("First content part"))
+    await row.evaluate(element => { (window as any).originalMessageRow = element })
+    await page.evaluate(() => (window as any).fixture.appendTextPart("Appended content part"))
+    await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("Appended content part"))
+    assert.equal(await row.evaluate(element => element === (window as any).originalMessageRow), true)
+    assert.ok((await row.textContent())?.includes("First content part"))
+  })
+})
+
 test("long list reaches its actual end, appends beyond the initial range, and stays bounded", async () => {
   await open("navigation", async page => {
     await page.evaluate(() => (window as any).fixture.bottom())

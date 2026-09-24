@@ -325,7 +325,7 @@ describe("message history pagination", () => {
 
       assert.deepEqual(locatorCalls, ["middle", "middle"])
       const source = fs.readFileSync(new URL("./message-section.tsx", import.meta.url), "utf8")
-      assert.match(source, /batch\(\(\) => \{\s*setSearchMatches\(page\.hits\.map[\s\S]*?setActiveSearchIndex\(0\)[\s\S]*?setIsSearchPending\(false\)\s*\}\)/)
+      assert.match(source, /batch\(\(\) => \{\s*setSearchMatches\(page\.hits(?:\.filter\([^)]*\))?\.map[\s\S]*?setActiveSearchIndex\(0\)[\s\S]*?setIsSearchPending\(false\)\s*\}\)/)
       dispose()
     })
   })

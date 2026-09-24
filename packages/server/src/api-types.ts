@@ -13,6 +13,14 @@ import type { OpenCodeEvent } from "@opencode/client"
  * These types are consumed by both the CLI implementation and any UI clients.
  */
 
+export const PROMPT_INLINE_FILE_LIMITS = {
+  maxFileBytes: 5 * 1024 * 1024,
+  maxFiles: 10,
+  maxTotalBytes: 20 * 1024 * 1024,
+  // Covers the aggregate raw-byte budget after base64 expansion plus JSON metadata.
+  maxRequestBodyBytes: 32 * 1024 * 1024,
+} as const
+
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {

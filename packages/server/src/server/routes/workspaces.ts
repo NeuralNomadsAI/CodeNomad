@@ -34,6 +34,7 @@ const WorkspaceCreationReleaseSchema = z.object({
 
 const WorkspaceFilesQuerySchema = z.object({
   path: z.string().optional(),
+  directory: z.string().trim().min(1).optional(),
 })
 
 const WorkspaceFileContentQuerySchema = z.object({
@@ -61,6 +62,7 @@ const WorktreeGitCommitBodySchema = z.object({
 })
 
 const WorkspaceFileSearchQuerySchema = z.object({
+  directory: z.string().trim().min(1).optional(),
   q: z.string().trim().min(1, "Query is required"),
   limit: z.coerce.number().int().positive().max(200).optional(),
   type: z.enum(["all", "file", "directory"]).optional(),
@@ -148,7 +150,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files", async (request, reply) => {
     try {
       const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
-      return await deps.workspaceManager.listFiles(request.params.id, query.path ?? ".")
+      return await deps.workspaceManager.listFiles(request.params.id, query.path ?? ".", query.directory)
     } catch (error) {
       return handleWorkspaceError(error, reply)
     }
@@ -164,7 +166,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         limit: query.limit,
         type: query.type,
         refresh: query.refresh,
-      })
+      }, query.directory)
     } catch (error) {
       if (error instanceof WorkspaceSearchBusyError) {
         reply.header("Retry-After", "1").code(503).type("text/plain").send(error.message)

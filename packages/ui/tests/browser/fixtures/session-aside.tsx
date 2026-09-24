@@ -17,6 +17,7 @@ const [active, setActive] = createSignal(true)
 const [mounted, setMounted] = createSignal(true)
 const sends: unknown[] = [], commands: unknown[] = []
 let interrupts = 0
+let failCommand = false
 const client = getRootClient(instanceId)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
 setActiveInstanceId(instanceId)
@@ -26,10 +27,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={mounted()}><PromptInput instanceId={instanceId} instanceFolder="/fixture" sessionId={session()} isActive={active()}
     isSessionBusy={true} onAbortSession={async () => { interrupts++ }}
     onSend={async (text, attachments, delivery) => { sends.push({ text, attachments, delivery }) }}
-    onCommand={async (name, text) => { commands.push({ name, text }) }} /></Show>
+    onCommand={async (name, text) => { commands.push({ name, text }); if (failCommand) throw new Error("fixture command failed") }} /></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   switch: setSession, active: setActive, unmount: () => setMounted(false),
+  failCommand: () => { failCommand = true },
   attach: () => {
     addAttachment(instanceId, session(), createFileAttachment("/fixture/notes.txt", "notes.txt"))
   },
