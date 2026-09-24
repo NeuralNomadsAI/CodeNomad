@@ -13,7 +13,7 @@ before(async () => {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
-          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection", "scroll-input"].find(name => req.url?.includes(name)) ?? "session"
+          const name = ["tall-append", "nested-scroll", "navigation", "undo", "tool-reprojection", "scroll-input", "timeline-visibility"].find(name => req.url?.includes(name)) ?? "session"
           res.setHeader("Content-Type", "text/html")
           res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/${name}.tsx"></script></body></html>`))
         })
@@ -76,6 +76,22 @@ test("new-session reply renders live after optimistic-send reordering, and survi
     await page.evaluate(() => (window as any).fixture.return())
     await page.waitForFunction(() => document.querySelector(".message-stream")?.textContent?.includes("must remain visible"))
     assert.equal(await page.locator('.message-stream-block[data-message-id="msg_assistant"]').count(), 1)
+  })
+})
+
+test("transcript presence preserves timeline semantics without reading tool payloads", async () => {
+  await open("timeline-visibility", async page => {
+    const cases = await page.evaluate(() => (window as any).fixture.cases())
+    for (const item of cases) {
+      assert.equal(item.present, item.expected, item.name)
+      assert.equal(item.rendered, item.expected, `${item.name}: full projection`)
+    }
+    const work = await page.evaluate(() => (window as any).fixture.payloadReads())
+    assert.equal(work.present, true)
+    assert.deepEqual(work.presenceWork, { serialized: 0, outputReads: 0 }, "Filtering must not serialize or inspect large tool input/output")
+    assert.equal(work.timelineWork.serialized, 1, "The actual timeline still estimates full tool input")
+    assert.ok(work.timelineWork.outputReads > 0)
+    assert.ok(work.totalChars > 2 * 1024 * 1024, "The optimization must not truncate timeline character counts")
   })
 })
 

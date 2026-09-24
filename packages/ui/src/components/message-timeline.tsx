@@ -162,6 +162,24 @@ function formatToolTooltip(
   return truncateText(`${t("messageTimeline.tool.fallbackLabel")}: ${titles.join(", ")}`)
 }
 
+/** Presence check for transcript filtering, without allocating timeline segments
+ * or serializing tool payloads to estimate their character counts. Keep the
+ * reasoning-only distinction shared with buildTimelineSegments: assistant
+ * reasoning needs primary content, while user reasoning can form a segment.
+ */
+export function hasTimelineSegments(
+  instanceId: string,
+  record: MessageRecord,
+  t: (key: string, params?: Record<string, unknown>) => string,
+): boolean {
+  return buildRecordDisplayData(instanceId, record).orderedParts.some((part) => {
+    if (part.type === "tool" || part.type === "compaction") return true
+    if (part.type === "step-start" || part.type === "step-finish" || part.type === "system") return false
+    if (part.type === "reasoning") return record.role === "user" && collectReasoningText(part).trim().length > 0
+    return collectTextFromPart(part, t).trim().length > 0
+  })
+}
+
 export function buildTimelineSegments(
   instanceId: string,
   record: MessageRecord,

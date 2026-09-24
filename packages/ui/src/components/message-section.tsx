@@ -8,7 +8,7 @@ import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
-import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
+import MessageTimeline, { buildTimelineSegments, hasTimelineSegments as recordHasTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
@@ -109,7 +109,7 @@ export default function MessageSection(props: MessageSectionProps) {
         return preferences().systemMessagesVisibility !== "hidden"
       }
 
-      if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
+      if (recordHasTimelineSegments(props.instanceId, record, t)) {
         return true
       }
 
