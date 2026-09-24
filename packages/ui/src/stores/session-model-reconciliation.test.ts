@@ -5,18 +5,20 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import { sendMessage, updateSessionModel } from "./session-actions.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
-import { fetchSessions } from "./session-api.ts"
+import { fetchSessions, hydrateRestoredSessionChain, loadMoreSessions, searchSessions } from "./session-api.ts"
 import { serializeSessionAction } from "./session-action-queue.ts"
 import { reconcileSessionModel } from "./session-model-reconciliation.ts"
-import { sessions, setSessions, setProviders, withSession } from "./session-state.ts"
+import { sessions, setSessions, setProviders, setSessionPage, withSession } from "./session-state.ts"
 import type { Session } from "../types/session.ts"
 
 const instanceId = "model-reconciliation", sessionId = "session"
-const storage = { fetchConfigOwner: serverApi.fetchConfigOwner, fetchStateOwner: serverApi.fetchStateOwner, patchStateOwner: serverApi.patchStateOwner }
+const storage = { fetchConfigOwner: serverApi.fetchConfigOwner, fetchStateOwner: serverApi.fetchStateOwner,
+  patchStateOwner: serverApi.patchStateOwner, fetchWorktrees: serverApi.fetchWorktrees }
 before(() => {
   serverApi.fetchConfigOwner = async () => ({}) as any
   serverApi.fetchStateOwner = async () => ({}) as any
   serverApi.patchStateOwner = async (_owner, patch) => patch as any
+  serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [] }) as any
 })
 after(() => Object.assign(serverApi, storage))
 afterEach(() => {
@@ -69,8 +71,8 @@ function seed() {
 const displayed = () => sessions().get(instanceId)?.get(sessionId)?.model.modelId
 const select = (modelId: string) => updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId })
 
-for (const listFirst of [true, false]) {
-  it(`protects selection from a catalog captured during its write (list settles first: ${listFirst})`, async () => {
+for (const path of ["root", "search", "page"] as const) for (const listFirst of [true, false]) {
+  it(`protects selection from ${path} catalog captured during its write (list settles first: ${listFirst})`, async () => {
     const fixture = seed()
     const mutation = deferred<void>(), writeStarted = deferred<void>()
     const list = deferred<void>(), listStarted = deferred<void>()
@@ -96,7 +98,9 @@ for (const listFirst of [true, false]) {
     }
     const selection = select("new")
     await writeStarted.promise
-    const refreshing = fetchSessions(instanceId)
+    if (path === "page") setSessionPage(instanceId, [], true, true, "next-page")
+    const refreshing = path === "search" ? searchSessions(instanceId, "session")
+      : path === "page" ? loadMoreSessions(instanceId) : fetchSessions(instanceId)
     await listStarted.promise
     if (listFirst) {
       list.resolve()
@@ -118,6 +122,27 @@ for (const listFirst of [true, false]) {
     assert.equal(sessions().get(instanceId)?.get(sessionId)?.modelSelectionPending, undefined)
   })
 }
+
+it("preserves a concurrently introduced selection during restored-chain hydration", async () => {
+  const fixture = seed(), held = deferred<void>(), started = deferred<void>()
+  const saved = sessions()
+  setSessions(new Map())
+  fixture.client.session.get = async () => {
+    const snapshot = fixture.info()
+    started.resolve()
+    await held.promise
+    return snapshot
+  }
+  const restoring = hydrateRestoredSessionChain(instanceId, [sessionId])
+  await started.promise
+  setSessions(saved)
+  await select("new")
+  held.resolve()
+  await restoring
+  assert.equal(displayed(), "new")
+  await sendMessage(instanceId, sessionId, "next")
+  assert.equal(fixture.calls.at(-1), "prompt:new")
+})
 
 it("does not let delayed FIFO echoes overwrite a successful choice or the next prompt", async () => {
   const fixture = seed()
