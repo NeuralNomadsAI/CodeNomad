@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "תמונה {number}",
+  "toolCall.image.unavailable": "לא ניתן להציג את התמונה הזו.",
   "promptInput.btw.title": "/btw — שאלה צדדית",
   "promptInput.btw.commandDescription": "שאל שאלה צדדית בלי להוסיף אותה לשיחה",
   "promptInput.btw.description": "משתמש בהקשר ההפעלה בבקשה נפרדת למודל. השאלה והתשובה אינן מתווספות לשיחה. הקבצים המצורפים נשארים בעורך ההודעה.",
