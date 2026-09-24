@@ -412,6 +412,34 @@ test("instance reload failure reports an error without replaying the mutation an
   } finally { await page.close() }
 })
 
+test("Info reload preserves a dismissed recovery continuation without opening its pending workspace", async () => {
+  const page = await browser.newPage()
+  let reloads = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && route.request().url().endsWith("/api/opencode/service")) {
+      assert.deepEqual(route.request().postDataJSON(), { reload: true })
+      reloads++
+    }
+    return route.fulfill({ json: { ...healthyStatus, canReload: true } })
+  })
+  try {
+    await page.goto(`${url}?info=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click()
+    await page.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.notifications()[0]?.variant === "success")
+    assert.equal(reloads, 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await page.evaluate(() => (window as any).fixture.reopen())
+    await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(reloads, 1, "explicit recovery retains the callback without another reload")
+  } finally { await page.close() }
+})
+
 test("Continue rechecks a service stopped after the recovery screen opened and preserves the workspace retry", async () => {
   const page = await browser.newPage()
   let stopped = false, mutations = 0

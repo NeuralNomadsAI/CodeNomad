@@ -51,7 +51,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
         dismissible: false,
       })
       if (!confirmed || binary !== serverSettings().opencodeBinary || openCodeSetupBusy()) return
-      const status = await runOpenCodeSetup("reload")
+      const status = await runOpenCodeSetup("reload", { resumeWorkspace: false })
       if (status) {
         showToastNotification({
           message: t("settings.opencode.setup.reloaded"),

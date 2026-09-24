@@ -30,6 +30,7 @@ await updatePreferences({ locale: params.get("locale") === "fr" ? "fr" : "en" })
 await setThemePreference(params.get("theme") === "dark" ? "dark" : "light")
 ;(window as any).fixture = {
   open: () => openOpenCodeSetup(async () => { resumed++ }), resumed: () => resumed,
+  reopen: () => openOpenCodeSetup(),
   selectedBinary: () => serverSettings().opencodeBinary,
   refresh: refreshOpenCodeSetup,
   invalidate: invalidateOpenCodeSetup,
