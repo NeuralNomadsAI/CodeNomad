@@ -373,10 +373,10 @@
   display: inline-block;
 }
 
-.session-center-column[data-session-header-density="1"] .session-toolbar-right .status-indicator,
-.session-center-column[data-session-header-density="2"] .session-toolbar-right .status-indicator,
-.session-center-column[data-session-header-density="3"] .session-toolbar-right .status-indicator,
-.session-center-column[data-session-header-density="4"] .session-toolbar-right .status-indicator {
+.session-center-column[data-session-header-density="1"] .session-toolbar-right .status-text,
+.session-center-column[data-session-header-density="2"] .session-toolbar-right .status-text,
+.session-center-column[data-session-header-density="3"] .session-toolbar-right .status-text,
+.session-center-column[data-session-header-density="4"] .session-toolbar-right .status-text {
   display: none;
 }
 
