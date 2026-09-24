@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "तस्बिर {number}",
+  "toolCall.image.unavailable": "यो तस्बिर देखाउन सकिएन।",
   "promptInput.btw.title": "/btw — छुट्टै प्रश्न",
   "promptInput.btw.commandDescription": "कुराकानीमा नथपी छुट्टै प्रश्न सोध्नुहोस्",
   "promptInput.btw.description": "यस सत्रको सन्दर्भ प्रयोग गरी मोडेललाई छुट्टै अनुरोध पठाउँछ। प्रश्न र उत्तर कुराकानीमा थपिँदैनन्। संलग्न फाइलहरू लेखन क्षेत्रमा रहन्छन्।",

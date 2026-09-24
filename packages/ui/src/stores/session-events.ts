@@ -13,6 +13,7 @@ import type {
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
+import { reconcileSessionModel } from "./session-model-reconciliation"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
@@ -104,10 +105,12 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       withSession(instanceId, event.data.sessionID, (session) => { session.agent = event.data.agent })
       return
     case "session.model.selected":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, (session) => {
-        session.model = { providerId: event.data.model.providerID, modelId: event.data.model.id }
-      })
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
+        void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+          .then(() => reconcileSessionModel(instanceId, event.data.sessionID))
+      } else {
+        void reconcileSessionModel(instanceId, event.data.sessionID)
+      }
       return
     case "session.usage.updated":
       withSession(instanceId, event.data.sessionID, (session) => {

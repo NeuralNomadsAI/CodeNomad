@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "Bild {number}",
+  "toolCall.image.unavailable": "Dieses Bild kann nicht angezeigt werden.",
   "promptInput.btw.title": "/btw — Zwischenfrage",
   "promptInput.btw.commandDescription": "Eine Zwischenfrage stellen, ohne sie zum Gespräch hinzuzufügen",
   "promptInput.btw.description": "Verwendet den Sitzungskontext in einer separaten Modellanfrage. Frage und Antwort werden nicht zum Gespräch hinzugefügt. Anhänge bleiben im Eingabefeld.",

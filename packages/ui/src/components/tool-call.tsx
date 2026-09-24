@@ -45,6 +45,8 @@ import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { observeActionOverflow } from "./measured-action-overflow"
 import SpeechActionButton from "./speech-action-button"
+import { ToolOutputImages } from "./tool-call/output-images"
+import { isToolImageContent } from "../lib/tool-content"
 
 const log = getLogger("session")
 
@@ -381,7 +383,13 @@ function ToolCallDetails(props: {
   })
 
   const renderToolBody = () => {
-    return renderer().renderBody(rendererContext)
+    const body = renderer().renderBody(rendererContext)
+    const state = props.toolState()
+    if (state?.status !== "completed" || !state.content?.some(isToolImageContent)) return body
+    return <>{body}<ToolOutputImages state={props.toolState()} onContentRendered={() => {
+      scrollHelpers.restoreAfterRender()
+      props.onContentRendered?.()
+    }} /></>
   }
 
   const outputChrome = createMemo<ToolOutputChrome>(() => renderer().getOutputChrome?.(rendererContext) ?? {})

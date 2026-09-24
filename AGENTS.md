@@ -20,6 +20,7 @@
 - Explicit round exceptions: Yolo and MCP switches (shared `styles/components/switches.css` geometry), overlay drawer navigation buttons, and floating message scroll buttons. Other chrome remains square.
 - Tags and numeric/context/token labels also use rounded geometry via `--chip-radius` (`--pill-radius` is an alias). Register badge variants in `styles/components/badges.css`; use `.badge-shape` for utility-styled labels rather than adding a local radius.
 - The message-content popup and Chat settings share `components/transcript-visibility.ts` and the semantic icons from `components/message-content-icons.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`.
+- Tool-result images retain native `state.content` and render through the shared `components/tool-call/output-images.tsx` surface, including MCP and specialized tools. Keep image bytes out of text projections (copy/search/speech); image styles live in `styles/messaging/tool-call/images.css`.
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css` and preserve compact-layout hiding.
 - Timeline geometry uses the cached structural index independently of transcript/excerpt loading. Aggregate tool markers retain the outline's representative tool name so their icon does not fall back to `other`; preserve that metadata through projection and persisted-index revalidation. Hover/focus previews render bounded Markdown, prefetch visible-nearby excerpts and prioritize the hovered marker through `stores/timeline-previews.ts`; never mount whole message/tool cards or fetch transcript windows for hover. Keep the viewport-bounded surface in `styles/messaging/timeline-preview.css`.
 - Document any new styling conventions or directory additions in this file so future changes remain consistent.
@@ -30,6 +31,8 @@
 - Project and right-panel tabs share `components/tab-scroll.tsx` and `styles/components/tab-scroll.css`. Keep their native scrollbar above upright content without mirrored transforms, negative border overlaps or permanent compositing hints. Validate shared scrollbar styling and adjoining edges at fractional zoom in the browser and isolated Electron renderer fixtures (`tests/browser/tab-chrome.test.ts`).
 
 ## Coding Principles
+
+- Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for the captured failure and override removal criteria.
 
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
 

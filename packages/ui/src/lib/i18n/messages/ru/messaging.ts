@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "Изображение {number}",
+  "toolCall.image.unavailable": "Не удалось отобразить это изображение.",
   "promptInput.btw.title": "/btw — Отдельный вопрос",
   "promptInput.btw.commandDescription": "Задать отдельный вопрос, не добавляя его в разговор",
   "promptInput.btw.description": "Использует контекст сессии в отдельном запросе к модели. Вопрос и ответ не добавляются в разговор. Вложения остаются в поле ввода.",

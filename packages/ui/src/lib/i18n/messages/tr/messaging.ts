@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "Görsel {number}",
+  "toolCall.image.unavailable": "Bu görsel görüntülenemiyor.",
   "promptInput.btw.title": "/btw — Yan soru",
   "promptInput.btw.commandDescription": "Konuşmaya eklemeden yan bir soru sorun",
   "promptInput.btw.description": "Bu oturumun bağlamını ayrı bir model isteğinde kullanır. Soru ve yanıt konuşmaya eklenmez. Ekler yazma alanında kalır.",

@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "画像 {number}",
+  "toolCall.image.unavailable": "この画像を表示できません。",
   "promptInput.btw.title": "/btw — 補足の質問",
   "promptInput.btw.commandDescription": "会話に追加せずに補足の質問をする",
   "promptInput.btw.description": "このセッションのコンテキストを使い、モデルに個別に問い合わせます。質問と回答は会話に追加されません。添付ファイルは入力欄に残ります。",

@@ -12,7 +12,7 @@ import { canonicalContent } from "../../../server/src/opencode/session-pruning/r
 import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
 import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -21,20 +21,10 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
+import { serializeSessionAction } from "./session-action-queue"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
-const sessionAdmissions = new Map<string, Promise<unknown>>()
-
-function serializeSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
-  const key = `${instanceId}:${sessionId}`
-  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(action)
-  const settled = run.finally(() => {
-    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
-  })
-  sessionAdmissions.set(key, settled)
-  return settled
-}
 
 function admitSessionAction<T>(
   instanceId: string,
@@ -412,12 +402,11 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   log.info("abortSession", { instanceId, sessionId })
 
   try {
-    const descendantIds = getDescendantSessions(instanceId, sessionId)
-      .filter((session) => isSessionBusy(instanceId, session.id))
-      .map((session) => session.id)
-    const sessionIds = [...descendantIds, sessionId]
-    log.info("session.interrupt", { instanceId, sessionIds })
-    await Promise.all(sessionIds.map((targetSessionId) => client.session.interrupt({ sessionID: targetSessionId })))
+    // Match the TUI: interrupt the selected execution, not its session tree.
+    // Cancelling background children can publish completion notifications that
+    // wake this parent again after its interruption has already settled.
+    log.info("session.interrupt", { instanceId, sessionId })
+    await client.session.interrupt({ sessionID: sessionId, resume: true })
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
@@ -425,7 +414,14 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   }
 }
 
-async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+// Selection and prompt setup both write native session context. Order the
+// entire operation (including its local snapshot/rollback) with admissions so
+// a prompt waiting on instructions cannot later overwrite a successful choice.
+function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionAgent(instanceId, sessionId, agent))
+}
+
+async function applySessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -475,7 +471,15 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   }
 }
 
-async function updateSessionModel(
+function updateSessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionModel(instanceId, sessionId, model))
+}
+
+async function applySessionModel(
   instanceId: string,
   sessionId: string,
   model: { providerId: string; modelId: string },
@@ -493,16 +497,25 @@ async function updateSessionModel(
 
   withSession(instanceId, sessionId, (current) => {
     current.model = model
+    current.modelSelectionPending = true
   })
 
   const nativeModel = getNativeModel(instanceId, model)
   try {
-    if (!isSessionBusy(instanceId, sessionId)) {
-      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
-    }
+    // Native model selection is supported during execution too. Keeping this
+    // local until the next prompt lets a session refresh restore the old model.
+    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    withSession(instanceId, sessionId, (current) => {
+      // Confirmation is a new selection revision even if its values match the
+      // optimistic choice. Catalog reads started during the write captured that
+      // earlier object and must not publish their pre-write native model later.
+      current.model = { ...model }
+      delete current.modelSelectionPending
+    })
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
-      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false
+      delete current.modelSelectionPending
+      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return
       current.model = session.model
     })
     throw error
