@@ -1102,19 +1102,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       />
                     </div>
                     <Show when={connectionStatus() === "connected"}>
-                      <span class="status-indicator connected">
+                      <span class="status-indicator connected" role="img" aria-label={t("instanceShell.connection.connected")} title={t("instanceShell.connection.connected")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.connected")}</span>
                       </span>
                     </Show>
                     <Show when={connectionStatus() === "connecting"}>
-                      <span class="status-indicator connecting">
+                      <span class="status-indicator connecting" role="img" aria-label={t("instanceShell.connection.connecting")} title={t("instanceShell.connection.connecting")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.connecting")}</span>
                       </span>
                     </Show>
                     <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                      <span class="status-indicator disconnected">
+                      <span class="status-indicator disconnected" role="img" aria-label={t("instanceShell.connection.disconnected")} title={t("instanceShell.connection.disconnected")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                       </span>
