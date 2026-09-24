@@ -623,6 +623,10 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
           setConnectionState("listening")
         }
 
+        if (typeof data.rms === "number" && data.rms > 0.015) {
+          resetDeadmanTimer()
+        }
+
         const base64PCM = arrayBufferToBase64(data.pcm)
 
         if (provider === "gemini") {
@@ -708,9 +712,11 @@ export async function connect(options?: LiveVoiceConnectOptions): Promise<void> 
 
         ws.send(JSON.stringify(sessionUpdate))
       }
+      resetDeadmanTimer()
     }
 
     ws.onmessage = (event: MessageEvent) => {
+      resetDeadmanTimer()
       try {
         const parsed = JSON.parse(event.data as string) as Record<string, unknown>
         if (provider === "gemini") {
@@ -760,6 +766,8 @@ export function disconnect(): void {
     }
     activeWebSocket = null
   }
+
+  clearDeadmanTimer()
 
   if (activeMediaStream) {
     stopTracks(activeMediaStream)
@@ -819,6 +827,29 @@ export function disconnect(): void {
   setConnectionState("disconnected")
 }
 
+const INACTIVITY_DEADMAN_TIMEOUT_MS = 5 * 60 * 1000
+let deadmanTimer: ReturnType<typeof setTimeout> | null = null
+
+export function resetDeadmanTimer(): void {
+  if (deadmanTimer) {
+    clearTimeout(deadmanTimer)
+    deadmanTimer = null
+  }
+  if (connectionState() !== "disconnected" && connectionState() !== "error") {
+    deadmanTimer = setTimeout(() => {
+      console.warn("Live voice session automatically disconnected due to 5-minute inactivity timeout")
+      disconnect()
+    }, INACTIVITY_DEADMAN_TIMEOUT_MS)
+  }
+}
+
+export function clearDeadmanTimer(): void {
+  if (deadmanTimer) {
+    clearTimeout(deadmanTimer)
+    deadmanTimer = null
+  }
+}
+
 /**
  * Live voice session controller bundle for easy importing.
  */
@@ -828,10 +859,11 @@ export const liveVoiceSession = {
   setMuted,
   activeProvider,
   setActiveProvider,
-  transcript,
   analyserNode,
   audioContext,
+  transcript,
   connect,
   disconnect,
   interrupt,
+  resetDeadmanTimer,
 }
