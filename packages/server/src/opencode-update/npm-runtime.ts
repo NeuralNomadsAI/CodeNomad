@@ -10,9 +10,9 @@ export function bundledNpm(execPath = process.execPath): string | undefined {
   return candidates.find(candidate => existsSync(candidate))
 }
 
-export function executeInstaller(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+export function executeInstaller(file: string, args: string[], env: NodeJS.ProcessEnv, cwd?: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { env, windowsHide: true, timeout: 300_000, maxBuffer: 1024 * 1024 }, error => {
+    execFile(file, args, { env, cwd, windowsHide: true, timeout: 300_000, maxBuffer: 1024 * 1024 }, error => {
       // Do not return npm's environment/config diagnostics to the browser.
       if (error) reject(new Error(`OpenCode installation failed (${error.killed ? "timeout" : error.code ?? "execution"})`))
       else resolve()

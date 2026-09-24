@@ -100,12 +100,25 @@ CodeNomad backends; the version is re-probed under that lock. A competing backen
 gets a retryable conflict. A lock left after a crash is deliberately not stolen
 by time/PID heuristics: npm may outlive its backend. The server log gives the lock
 path; remove it only after confirming the installer has exited. External package
-managers do not participate in this lock. Windows checks the executable for write
-access before npm can retire the old package; a mapped or non-writable executable
-defers the update with localized feedback and leaves the package intact. CodeNomad
-never stops the shared daemon to complete an installation. Standard npm's own
-failure semantics apply after this preflight; this is not the old immutable,
-versioned private-package publication scheme.
+managers do not participate in this lock. Verified npm installations at 2.0.15 or
+later use the installed CLI's `upgrade <exact-version> --method npm` for version
+changes. OpenCode owns Windows running-image retention (upstream #50819); opening
+that image for writing first incorrectly rejects supported live upgrades. A private,
+temporary npm command adapter supplies bundled Node/npm and pins the verified prefix
+and registry, including when the desktop runtime has no npm launcher on PATH. It is
+also the command's working directory, preventing cwd from shadowing npm on Windows.
+Native failure is surfaced without replaying the mutation through direct npm.
+First installation, older CLI migration and same-version launcher repair still use
+direct bundled npm with the Windows write preflight. This updater boundary does not
+change the minimum supported runtime. Both paths verify version and launcher after
+installation. CodeNomad never stops or restarts the shared daemon during an update.
+
+`node --import tsx scripts/test-opencode-upgrade-native.mjs` qualifies the actual
+installer against an isolated prefix/home/service. On Windows, 2.0.15 -> 2.0.16
+succeeds while the old write preflight rejects the live image; authenticated
+`/api/info` retains the same 2.0.15 PID and the installed executable reports 2.0.16.
+`CODENOMAD_FIXTURE_NODE` selects a packaged Node with bundled npm. The fixture never
+uses the shared daemon; service cleanup is through the isolated native CLI.
 
 Explicit custom binaries remain selected. WSL and custom installations receive
 execution-host instructions rather than a Windows-side Linux installation.
