@@ -111,6 +111,25 @@ fn committed_local_close_retains_exact_authority_until_consumed() {
 }
 
 #[test]
+fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), true)
+        .unwrap();
+    assert!(coordinator.local_close_in_flight("local-a"));
+    let pending = coordinator
+        .acknowledge_local("local-a", "window-a", generation)
+        .unwrap();
+    assert!(coordinator.commit_local_close("local-a".into(), pending));
+    assert!(coordinator.local_close_in_flight("local-a"));
+    coordinator.take_committed_local_close("local-a").unwrap();
+    coordinator.approve_local_close("local-a".into());
+    assert!(coordinator.local_close_in_flight("local-a"));
+    coordinator.local_window_destroyed("local-a");
+    assert!(!coordinator.local_close_in_flight("local-a"));
+}
+
+#[test]
 fn local_close_dispatch_rollback_reopens_close_authority() {
     let coordinator = ShutdownCoordinator::default();
     let generation = coordinator

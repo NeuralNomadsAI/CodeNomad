@@ -3,7 +3,12 @@ const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
 const test = require("node:test")
-const { resolveNpmTarget, validateServerProductionLock } = require("./desktop-server-resources.cjs")
+const {
+  materializePrebuiltWorkspacePackage,
+  resolveNpmTarget,
+  stagePrebuiltWorkspacePackage,
+  validateServerProductionLock,
+} = require("./desktop-server-resources.cjs")
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
 const { copyPackagedServerResources } = require("./desktop-server-resources.cjs")
 
@@ -27,7 +32,57 @@ test("integrity-pins the full server production closure in the root lock", () =>
   assert.equal(lock.packages["node_modules/undici"].version, "6.28.1")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
+  assert.ok(closure.has("packages/remote-control-protocol"))
   assert.equal(closure.has("node_modules/@opencode/plugin"), false, "the opt-in pruning plugin API is not a server production dependency")
+})
+
+test("stages prebuilt workspace packages without install lifecycle scripts", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-workspace-stage-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, "source")
+  const destination = path.join(root, "destination")
+  fs.mkdirSync(path.join(source, "dist"), { recursive: true })
+  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({
+    name: "@codenomad/example",
+    version: "1.0.0",
+    scripts: { prepare: "npm run build" },
+  }))
+  fs.writeFileSync(path.join(source, "dist", "index.js"), "export {}\n")
+
+  stagePrebuiltWorkspacePackage(source, destination)
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
+  assert.equal(manifest.scripts, undefined)
+  assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export {}\n")
+})
+
+test("materializes workspace packages instead of retaining install links", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-workspace-materialize-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, "source")
+  const linkedSource = path.join(root, "linked-source")
+  const nodeModules = path.join(root, "node_modules")
+  const destination = path.join(nodeModules, "@codenomad", "example")
+  fs.mkdirSync(path.join(source, "dist"), { recursive: true })
+  fs.mkdirSync(linkedSource, { recursive: true })
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({
+    name: "@codenomad/example",
+    version: "1.0.0",
+    scripts: { prepare: "npm run build" },
+  }))
+  fs.writeFileSync(path.join(source, "dist", "index.js"), "export const value = 'packaged'\n")
+  fs.writeFileSync(path.join(linkedSource, "sentinel"), "keep\n")
+  fs.symlinkSync(linkedSource, destination, process.platform === "win32" ? "junction" : "dir")
+
+  assert.equal(fs.lstatSync(destination).isSymbolicLink(), true)
+  assert.equal(materializePrebuiltWorkspacePackage(source, nodeModules), destination)
+
+  assert.equal(fs.lstatSync(destination).isSymbolicLink(), false)
+  assert.equal(fs.readFileSync(path.join(destination, "dist", "index.js"), "utf8"), "export const value = 'packaged'\n")
+  assert.equal(fs.readFileSync(path.join(linkedSource, "sentinel"), "utf8"), "keep\n")
+  const manifest = JSON.parse(fs.readFileSync(path.join(destination, "package.json"), "utf8"))
+  assert.equal(manifest.scripts, undefined)
 })
 
 test("rejects an unpinned production dependency despite an otherwise valid lock", () => {

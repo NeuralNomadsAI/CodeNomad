@@ -27,6 +27,7 @@ if (!uiVersion) {
 }
 
 const uiBuildDir = path.join(repoRoot, "packages/ui/src/renderer/dist")
+const workerAssetsDir = path.join(root, "dist")
 if (!fs.existsSync(uiBuildDir)) {
   console.error(`Missing UI build dir: ${uiBuildDir}. Run UI build first.`)
   process.exit(1)
@@ -49,6 +50,10 @@ try {
     { cwd: root, stdio: "inherit" },
   )
 
+  // Rebuild Worker assets from scratch so obsolete hashed bundles are not
+  // retained across releases.
+  fs.rmSync(workerAssetsDir, { recursive: true, force: true })
+
   // Generate version.json into packages/cloudflare/dist
   console.log("[release-ui] Generating version.json")
   execFileSync(
@@ -63,6 +68,10 @@ try {
       },
     },
   )
+
+  // Remote Control loads the same reviewed UI bundle from the relay origin.
+  // API traffic then travels through the browser-to-host encrypted tunnel.
+  fs.cpSync(uiBuildDir, workerAssetsDir, { recursive: true })
 
   console.log("[release-ui] Deploying worker")
   execFileSync("npx", ["wrangler", "deploy"], {
