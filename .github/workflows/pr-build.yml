@@ -325,6 +325,7 @@ jobs:
           packages/ui/src/stores/permission-lifecycle.test.ts
           packages/ui/src/stores/shell-store-reactivity.test.ts
           packages/ui/src/stores/session-actions.test.ts
+          packages/ui/src/stores/session-model-reconciliation.test.ts
           packages/ui/src/stores/session-pruning-events.test.ts
           packages/ui/src/stores/session-pruning-projection.test.ts
           packages/ui/src/stores/session-pruning-pagination.test.ts

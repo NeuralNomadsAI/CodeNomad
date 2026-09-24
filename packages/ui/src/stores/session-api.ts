@@ -508,7 +508,11 @@ async function hydrateRestoredSessionChainAttempt(
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
             const next = new Map(prev)
             const instanceSessions = new Map(next.get(instanceId) ?? new Map())
-            instanceSessions.set(sessionId, toClientSessionV2(instanceId, apiSession, instanceSessions.get(sessionId)))
+            const latest = instanceSessions.get(sessionId)
+            // This row was absent when the read began. A concurrent event or
+            // selection that introduced it owns its current fields.
+            const merged = mergeFetchedSessionRuntimeState(toClientSessionV2(instanceId, apiSession), undefined, latest)
+            if (merged) instanceSessions.set(sessionId, merged)
             next.set(instanceId, instanceSessions)
             return next
           })
@@ -868,6 +872,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   const isCurrent = () => instances().get(instanceId)?.client === client
     && sessionListRequestIds.get(instanceId) === listRequestId
     && generationCurrent()
+  const capturedSessions = new Map(sessions().get(instanceId) ?? [])
   const [response, activeSessions] = await Promise.all([
     fetchV2Sessions(instanceId, { cursor }),
     getRootClient(instanceId).session.active().catch((error) => {
@@ -891,9 +896,9 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     const current = new Map(next.get(instanceId) ?? [])
     for (const item of pageSessions) {
       if (!deleted.has(item.id)) {
-        const existing = current.get(item.id)
-        const fetched = withActiveSessionState(instanceId, item, existing, activeSessions)
-        const merged = mergeFetchedSessionRuntimeState(fetched, existing, existing, false)
+        const captured = capturedSessions.get(item.id)
+        const fetched = withActiveSessionState(instanceId, item, captured, activeSessions)
+        const merged = mergeFetchedSessionRuntimeState(fetched, captured, current.get(item.id), false)
         if (merged) current.set(item.id, merged)
       }
     }
@@ -926,6 +931,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   const isCurrent = () => isLatestSessionSearch(instanceId, trimmedQuery, requestId)
     && instances().get(instanceId)?.client === client
     && generationCurrent()
+  const capturedSessions = new Map(sessions().get(instanceId) ?? [])
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
@@ -963,8 +969,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
       for (const apiSession of searchResults) {
         if (deletedSessionIds.has(apiSession.id)) continue
-        const existingSession = instanceSessions.get(apiSession.id)
-        instanceSessions.set(apiSession.id, toClientSessionV2(instanceId, apiSession, existingSession))
+        const captured = capturedSessions.get(apiSession.id)
+        const fetched = toClientSessionV2(instanceId, apiSession, captured)
+        const merged = mergeFetchedSessionRuntimeState(fetched, captured, instanceSessions.get(apiSession.id))
+        if (merged) instanceSessions.set(apiSession.id, merged)
       }
 
       next.set(instanceId, instanceSessions)
@@ -1697,7 +1705,7 @@ async function loadMessages(
         if (agentName && providerID && modelID) break
       }
 
-      if (!agentName && !providerID && !modelID) {
+      if (!agentName && !providerID && !modelID && (!session.model.providerId || !session.model.modelId)) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
         if (!isCurrent()) return
         agentName = session.agent
@@ -1714,8 +1722,13 @@ async function loadMessages(
         if (!existingSession) return next
         nextInstanceSessions.set(sessionId, {
           ...existingSession,
-          agent: agentName || existingSession.agent,
-          model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+          // Transcript metadata describes past execution, not the current
+          // selection. Only fill missing values, including when a user or native
+          // selection event changed them while this history request was pending.
+          agent: existingSession.agent || agentName,
+          model: existingSession.model.providerId && existingSession.model.modelId
+            ? existingSession.model
+            : providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
         })
         next.set(instanceId, nextInstanceSessions)
         return next
