@@ -413,6 +413,170 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", location).snapshot, undefined)
   })
 
+  it("retains an event during a hidden mutation until reopening demands reconciliation", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    let reads = 0
+    const location = { directory: "/repo" }
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => ++reads === 1 ? snapshot("known") : snapshot("known", "disabled"),
+      setPluginActivation: () => write.promise,
+    })
+    await cache.load("instance", location)
+    const mutation = cache.mutate("instance", location, "known", "project", false)
+    await tick()
+    cache.invalidateLocation("instance", location)
+    write.resolve(mutationResponse(snapshot("known", "disabled")))
+    await mutation
+
+    assert.equal(cache.state("instance", location).snapshot?.controls[0].project, "disabled", "durable switch feedback is immediate")
+    assert.equal(cache.state("instance", location).stale, true, "PATCH cannot consume the later event")
+    assert.equal(reads, 1, "hidden mutation completion starts no background read")
+    await cache.load("instance", location)
+    assert.equal(reads, 2)
+    assert.equal(cache.state("instance", location).stale, false)
+  })
+
+  it("retains newer completed runtime inventory while publishing the durable mutation rule", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    const location = { directory: "/repo" }
+    const before = withRuntime(snapshot("known"), "known", "removed")
+    const fresh = withRuntime(snapshot("known"), "known", "added")
+    fresh.runtime[0].state = { status: "failed", error: "new load failure" }
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => ++reads === 1 ? before : fresh,
+      setPluginActivation: () => write.promise,
+    })
+    await cache.load("instance", location)
+    const mutation = cache.mutate("instance", location, "known", "project", false)
+    await tick()
+    cache.invalidateInstance("instance")
+    await cache.load("instance", location)
+    const durable = withRuntime(snapshot("known", "disabled"), "known", "removed", "configured")
+    durable.configured.rules.push({ selector: "configured", enabled: false, scope: "project", order: 0, entryIndex: 0 })
+    write.resolve(mutationResponse(durable))
+    await mutation
+
+    const published = cache.state("instance", location)
+    assert.deepEqual(published.snapshot?.runtime, fresh.runtime)
+    assert.deepEqual(published.snapshot?.controls.find((control) => control.id === "known")?.runtime?.state, {
+      status: "failed", error: "new load failure",
+    })
+    assert.equal(published.snapshot?.controls.find((control) => control.id === "known")?.project, "disabled")
+    assert.equal(published.snapshot?.controls.find((control) => control.id === "removed"), undefined)
+    assert.ok(published.snapshot?.controls.some((control) => control.id === "configured"), "exact rules retain controls absent from runtime")
+    assert.equal(published.snapshot?.controls.find((control) => control.id === "configured")?.runtime, undefined)
+    assert.equal(published.snapshot?.controls.find((control) => control.id === "added")?.runtime?.id, "added")
+    assert.equal(published.stale, true)
+    assert.equal(reads, 2, "completed reads do not trigger an eager hidden reconciliation")
+    await cache.load("instance", location)
+    assert.equal(reads, 3)
+    assert.equal(cache.state("instance", location).stale, false)
+  })
+
+  it("keeps a canonical event received before mutation alias adoption for the next visible demand", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const canonical = { directory: "/srv/repo" }
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => { reads++; return { ...snapshot("known", "disabled"), location: canonical } },
+      setPluginActivation: () => write.promise,
+    })
+    const mutation = cache.mutate("instance", host, "known", "project", false)
+    await tick()
+    cache.invalidateLocation("instance", canonical)
+    write.resolve(mutationResponse({ ...snapshot("known", "disabled"), location: canonical }))
+    await mutation
+
+    assert.equal(reads, 0)
+    assert.equal(cache.state("instance", host).stale, true)
+    assert.equal(cache.state("instance", canonical).stale, true)
+    await cache.load("instance", host)
+    assert.equal(reads, 1)
+    assert.equal(cache.state("instance", canonical).stale, false)
+  })
+
+  it("carries a newer canonical snapshot through mutation alias adoption and queued writes", async () => {
+    const first = deferred<ReturnType<typeof mutationResponse>>()
+    const second = deferred<ReturnType<typeof mutationResponse>>()
+    const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const canonical = { directory: "/srv/repo" }
+    const fresh = { ...withRuntime(snapshot("known"), "known"), location: canonical }
+    fresh.runtime[0].state = { status: "failed", error: "canonical reload failure" }
+    const writes: Array<{ location: PluginControlLocation; enabled: boolean }> = []
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => { reads++; return fresh },
+      setPluginActivation: async (_instanceId, request) => {
+        writes.push(request)
+        return writes.length === 1 ? first.promise : second.promise
+      },
+    })
+    const disable = cache.mutate("instance", host, "known", "project", false)
+    const enable = cache.mutate("instance", host, "known", "project", true)
+    await tick()
+    await cache.load("instance", canonical)
+    cache.invalidateLocation("instance", canonical)
+    first.resolve(mutationResponse({ ...snapshot("known", "disabled"), location: canonical }))
+    await disable
+    await tick()
+
+    assert.deepEqual(writes.map((request) => [request.location.directory, request.enabled]), [
+      [host.directory, false], [canonical.directory, true],
+    ])
+    assert.deepEqual(cache.state("instance", host).snapshot?.runtime, fresh.runtime)
+    assert.equal(cache.state("instance", canonical).snapshot?.controls[0].project, "disabled")
+    assert.equal(cache.state("instance", canonical).stale, true)
+    assert.equal(reads, 1)
+
+    // Each queued request captures its own dispatch boundary. A fresh read and
+    // another event during the second write must survive its publication too.
+    await cache.load("instance", canonical)
+    cache.invalidateLocation("instance", canonical)
+    second.resolve(mutationResponse({ ...snapshot("known", "enabled"), location: canonical }))
+    await enable
+    assert.equal(writes.length, 2, "alias adoption never replays a mutation")
+    assert.equal(cache.state("instance", host).snapshot?.controls[0].project, "enabled")
+    assert.deepEqual(cache.state("instance", host).snapshot?.runtime, fresh.runtime)
+    assert.equal(cache.state("instance", host).stale, true)
+    await cache.load("instance", host)
+    assert.equal(reads, 3)
+    assert.equal(cache.state("instance", canonical).stale, false)
+  })
+
+  it("fences an orphaned canonical read when mutation adoption retains its refresh demand", async () => {
+    const write = deferred<ReturnType<typeof mutationResponse>>()
+    const oldRead = deferred<PluginControlsSnapshot>()
+    const host = { directory: "\\\\wsl.localhost\\Ubuntu\\srv\\repo" }
+    const canonical = { directory: "/srv/repo" }
+    const signals: Array<AbortSignal | undefined> = []
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, _location, signal) => {
+        signals.push(signal)
+        return signals.length === 1 ? oldRead.promise : { ...snapshot("known", "disabled"), location: canonical }
+      },
+      setPluginActivation: () => write.promise,
+    })
+    const mutation = cache.mutate("instance", host, "known", "project", false)
+    await tick()
+    const pending = cache.load("instance", canonical)
+    cache.invalidateLocation("instance", canonical)
+    cache.load("instance", canonical)
+    write.resolve(mutationResponse({ ...snapshot("known", "disabled"), location: canonical }))
+    await mutation
+    assert.equal(signals[0]?.aborted, true)
+    assert.equal(cache.state("instance", host).stale, true)
+    oldRead.resolve({ ...snapshot("orphan"), location: canonical })
+    await pending
+    assert.equal(cache.state("instance", canonical).snapshot?.controls[0].id, "known")
+    assert.equal(signals.length, 1, "an orphan's trailing read cannot restart hidden work")
+
+    await cache.load("instance", host)
+    assert.equal(signals.length, 2, "one visible reconciliation serves both aliases")
+    assert.equal(cache.state("instance", canonical).stale, false)
+  })
+
   it("aborts in-flight reads when an instance is cleared", async () => {
     const signals: Array<AbortSignal | undefined> = []
     const cache = new PluginControlsCache({
@@ -491,6 +655,28 @@ function snapshot(id: string, effective: "default" | "enabled" | "disabled" = "d
       { scope: "project", path: "/repo/.opencode/opencode.jsonc", exists: true },
     ],
   }
+}
+
+function mutationResponse(snapshot: PluginControlsSnapshot) {
+  return {
+    snapshot,
+    rule: "-known",
+    target: { scope: "project" as const, path: "/repo/.opencode/opencode.jsonc", exists: true },
+    changed: true,
+    reloadPending: true,
+  }
+}
+
+function withRuntime(value: PluginControlsSnapshot, ...ids: string[]): PluginControlsSnapshot {
+  value.runtime = ids.map((id) => ({
+    id, key: id, source: { type: "package", target: `${id}-package` }, features: {}, state: { status: "active" },
+  }))
+  for (const runtime of value.runtime) {
+    const control = value.controls.find((entry) => entry.id === runtime.id)
+    if (control) control.runtime = runtime
+    else value.controls.push({ id: runtime.id!, builtin: false, effective: "default", global: "default", project: "default", runtime })
+  }
+  return value
 }
 
 function deferred<T>() {

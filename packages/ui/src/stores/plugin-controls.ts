@@ -22,6 +22,8 @@ interface CacheRecord {
   location: PluginControlLocation
   canonicalLocation: boolean
   generation: number
+  invalidationRevision: number
+  snapshotRevision: number
   snapshot?: PluginControlsSnapshot
   loading: boolean
   refreshing: boolean
@@ -42,7 +44,8 @@ const EMPTY_STATE: PluginControlsState = { loading: false, refreshing: false, st
 
 export class PluginControlsCache {
   private readonly records = new Map<string, CacheRecord>()
-  private readonly pendingUnknownInvalidations = new Set<string>()
+  private readonly pendingUnknownInvalidations = new Map<string, number>()
+  private revision = 0
   private readonly stateSignal = createSignal<Map<string, PluginControlsState>>(new Map())
   readonly states = this.stateSignal[0]
   private readonly setStates = this.stateSignal[1]
@@ -71,6 +74,7 @@ export class PluginControlsCache {
       if (!this.isActive(record)) {
         throw new Error("Plugin control location is no longer active")
       }
+      const requestRevision = ++this.revision
       const response = await this.api.setPluginActivation(instanceId, {
         location: record.location,
         pluginId,
@@ -80,11 +84,18 @@ export class PluginControlsCache {
       if (!this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
       // Fence any passive read that started before the mutation became durable.
       record.generation += 1
-      record.snapshot = response.snapshot
+      // A mutation overlays a durable rule onto inventory read BEFORE the write.
+      // Events and completed reads during that write still require reconciliation;
+      // in particular, do not roll newer runtime failures back to that inventory.
+      const newerSnapshot = record.snapshot && record.snapshotRevision > requestRevision
+        ? record.snapshot
+        : undefined
+      record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
+      record.snapshotRevision = Math.max(record.snapshotRevision, requestRevision)
       record.error = undefined
       record.loading = false
       record.refreshing = false
-      record.stale = false
+      record.stale = record.stale || record.invalidationRevision > requestRevision || Boolean(newerSnapshot)
       if (record.inFlight) record.trailing = true
       this.publish(record)
       if (scope === "global") this.invalidateSiblingLocations(record)
@@ -110,6 +121,7 @@ export class PluginControlsCache {
       const records = [...new Set(this.records.values())].filter((record) => record.instanceId === instanceId)
       for (const record of records) {
         record.generation += 1
+        record.invalidationRevision = ++this.revision
         record.stale = true
       }
       this.publishAll(records)
@@ -120,15 +132,16 @@ export class PluginControlsCache {
     if (!target) {
       // Unknown directories match nothing immediately. Remember the canonical
       // key so a WSL alias learned later can still fence its first snapshot.
-      this.pendingUnknownInvalidations.add(key)
+      this.pendingUnknownInvalidations.set(key, ++this.revision)
       while (this.pendingUnknownInvalidations.size > 200) {
-        const oldest = this.pendingUnknownInvalidations.values().next().value
+        const oldest = this.pendingUnknownInvalidations.keys().next().value
         if (oldest === undefined) break
         this.pendingUnknownInvalidations.delete(oldest)
       }
       return
     }
     target.generation += 1
+    target.invalidationRevision = ++this.revision
     target.stale = true
     this.publish(target)
   }
@@ -138,6 +151,7 @@ export class PluginControlsCache {
       .filter((record) => record !== current && record.instanceId === current.instanceId)
     for (const record of siblings) {
       record.generation += 1
+      record.invalidationRevision = ++this.revision
       record.stale = true
     }
     this.publishAll(siblings)
@@ -155,7 +169,7 @@ export class PluginControlsCache {
       }
       changed = true
     }
-    for (const key of [...this.pendingUnknownInvalidations]) {
+    for (const key of this.pendingUnknownInvalidations.keys()) {
       if (key.startsWith(`${JSON.stringify(instanceId)}:`)) this.pendingUnknownInvalidations.delete(key)
     }
     if (!changed) return
@@ -181,6 +195,8 @@ export class PluginControlsCache {
       location: { ...location },
       canonicalLocation: false,
       generation: 0,
+      invalidationRevision: 0,
+      snapshotRevision: 0,
       loading: false,
       refreshing: false,
       stale: false,
@@ -209,6 +225,7 @@ export class PluginControlsCache {
         if (!this.isActive(record) || generation !== record.generation) return
         if (!this.adoptCanonicalLocation(record, snapshot.location)) return
         record.snapshot = snapshot
+        record.snapshotRevision = ++this.revision
         record.error = undefined
       })
       .catch((error) => {
@@ -277,6 +294,17 @@ export class PluginControlsCache {
     let invalidatedAlias = false
     if (existing && existing !== record) {
       if (preferIncoming || !existing.snapshot) {
+        if (preferIncoming) {
+          // A mutation can be the first response to reveal a host/canonical
+          // alias. Carry the canonical record's newer runtime and event demand
+          // across the merge before publishing that mutation's durable rule.
+          record.invalidationRevision = Math.max(record.invalidationRevision, existing.invalidationRevision)
+          record.stale ||= existing.stale || Boolean(existing.inFlight) || existing.trailing
+          if (existing.snapshot && existing.snapshotRevision > record.snapshotRevision) {
+            record.snapshot = existing.snapshot
+            record.snapshotRevision = existing.snapshotRevision
+          }
+        }
         // The canonical record may have consumed an event before this alias
         // was known. Its refresh clears stale at dispatch, so retain the
         // generation as well as queued demand before orphaning that read.
@@ -304,8 +332,16 @@ export class PluginControlsCache {
     record.keys.add(canonicalKey)
     record.location = { ...location }
     record.canonicalLocation = true
-    if (this.pendingUnknownInvalidations.delete(canonicalKey) || invalidatedAlias) {
-      if (preferIncoming) return true
+    const pendingInvalidation = this.pendingUnknownInvalidations.get(canonicalKey)
+    this.pendingUnknownInvalidations.delete(canonicalKey)
+    if (pendingInvalidation !== undefined || invalidatedAlias) {
+      if (pendingInvalidation !== undefined) {
+        record.invalidationRevision = Math.max(record.invalidationRevision, pendingInvalidation)
+      }
+      if (preferIncoming) {
+        record.stale = true
+        return true
+      }
       // A canonical event/demand arrived before the WSL alias was learned.
       // Discard this snapshot and retain one trailing refresh, including when
       // the canonical key already had an in-flight record of its own.
@@ -316,6 +352,26 @@ export class PluginControlsCache {
       return false
     }
     return true
+  }
+}
+
+function retainRuntime(durable: PluginControlsSnapshot, newer: PluginControlsSnapshot): PluginControlsSnapshot {
+  const runtimeById = new Map(newer.runtime.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []))
+  const configuredIds = new Set(durable.configured.rules.map((rule) => rule.selector))
+  const durableIds = new Set(durable.controls.map((control) => control.id))
+  return {
+    ...durable,
+    runtime: newer.runtime,
+    controls: [
+      ...durable.controls.flatMap(({ runtime: previousRuntime, ...control }) => {
+        const runtime = runtimeById.get(control.id)
+        // A removed runtime-only plugin is no longer an inventory control;
+        // exact configured IDs (including the durable rule) remain actionable.
+        if (!runtime && previousRuntime && !configuredIds.has(control.id)) return []
+        return [{ ...control, ...(runtime ? { runtime } : {}) }]
+      }),
+      ...newer.controls.filter((control) => !durableIds.has(control.id)),
+    ],
   }
 }
 
