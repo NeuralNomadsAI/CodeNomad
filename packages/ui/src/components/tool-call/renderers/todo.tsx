@@ -94,7 +94,7 @@ export function TodoListView(props: TodoListViewProps) {
       <Show when={todos.truncated}>
         <div class="tool-call-diagnostic-message">
           <span role="status">{t("toolCall.output.truncated")}</span>
-          <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyToClipboard(getTodoCopyText(props.state))} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
+          <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={() => void copyToClipboard(getTodoCopyText(props.state))} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
             <Copy class="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>

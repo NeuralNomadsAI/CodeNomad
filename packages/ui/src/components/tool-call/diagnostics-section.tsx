@@ -10,7 +10,7 @@ export function DiagnosticsPayloadAccess(props: { diagnostics: DiagnosticsMap; t
       <span class="tool-call-diagnostic-message" role="status">
         {props.t(props.truncated ? "toolCall.output.truncated" : "toolCall.diagnostics.title")}
       </span>
-      <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyToClipboard(formatUnknownForCopy(props.diagnostics)?.text ?? "")} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+      <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={() => void copyToClipboard(formatUnknownForCopy(props.diagnostics)?.text ?? "")} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
         <Copy class="w-3.5 h-3.5" aria-hidden="true" />
       </button>
     </div>

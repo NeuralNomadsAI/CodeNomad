@@ -1079,7 +1079,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                 <span>{t("toolCall.output.truncated")}</span>
                 <button
                   type="button"
-                  class="tool-call-header-icon-button tool-call-header-copy"
+                  class="tool-call-header-icon-button tool-call-io-copy"
                   onClick={() => {
                     const current = props.store().getMessage(resolvedBlock().messageId)
                     if (current) void copyToClipboard(JSON.stringify(orderedMessageParts(current), null, 2))

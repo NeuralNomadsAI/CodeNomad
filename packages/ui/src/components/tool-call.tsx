@@ -405,7 +405,7 @@ function ToolCallDetails(props: {
         <div class="tool-call-error-content">
           <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
           <Show when={truncated}>
-            <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+            <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
               <Copy class="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </Show>
@@ -476,7 +476,7 @@ function ToolCallDetails(props: {
       <Show when={Boolean(options.copyText?.() || options.onCopy)}>
         <button
           type="button"
-          class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
+          class="tool-call-header-icon-button tool-call-io-copy"
           onClick={(event) => options.onCopy ? options.onCopy(event) : void copyIoText(event, options.copyText?.())}
           aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
           title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
