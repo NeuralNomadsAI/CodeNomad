@@ -425,7 +425,14 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   }
 }
 
-async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+// Selection and prompt setup both write native session context. Order the
+// entire operation (including its local snapshot/rollback) with admissions so
+// a prompt waiting on instructions cannot later overwrite a successful choice.
+function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionAgent(instanceId, sessionId, agent))
+}
+
+async function applySessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -475,7 +482,15 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   }
 }
 
-async function updateSessionModel(
+function updateSessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionModel(instanceId, sessionId, model))
+}
+
+async function applySessionModel(
   instanceId: string,
   sessionId: string,
   model: { providerId: string; modelId: string },

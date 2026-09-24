@@ -23,6 +23,7 @@ import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setAgents, setProviders, setSessions, withSession } from "./session-state.ts"
 import { loadMessages } from "./session-api.ts"
+import { handleNativeSessionEvent } from "./session-events.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
@@ -683,6 +684,70 @@ describe("plugin RPC message pruning", () => {
 })
 
 describe("native session selection persistence", () => {
+  for (const blockedAt of ["instructions", "model", "prompt", "agent"] as const) {
+    it(`orders a model choice after pending ${blockedAt} and before the next prompt`, async () => {
+      let release!: () => void
+      const pending = new Promise<void>(resolve => { release = resolve })
+      let entered!: () => void
+      const started = new Promise<void>(resolve => { entered = resolve })
+      let held = false, sequence = 0, nativeModel = "old"
+      const calls: string[] = []
+      const hold = async (stage: string) => {
+        if (stage !== blockedAt || held) return
+        held = true
+        entered()
+        await pending
+      }
+      seed({ session: {
+        instructions: { entry: { put: () => hold("instructions"), remove: async () => {} } },
+        switchAgent: () => hold("agent"),
+        switchModel: async ({ model }: any) => {
+          await hold("model")
+          nativeModel = model.id
+          calls.push(`model:${model.id}`)
+          handleNativeSessionEvent(instanceId, {
+            id: `selection-${++sequence}`, type: "session.model.selected", created: sequence,
+            durable: { aggregateID: sessionId, seq: sequence, version: 1 },
+            data: { sessionID: sessionId, model },
+          } as any)
+        },
+        prompt: async (input: any) => { await hold("prompt"); calls.push(`prompt:${nativeModel}`); return { id: input.id } },
+      } })
+      if (blockedAt !== "agent") withSession(instanceId, sessionId, current => { current.status = "working" })
+      const first = blockedAt === "agent" ? updateSessionAgent(instanceId, sessionId, "plan")
+        : sendMessage(instanceId, sessionId, "first", undefined, { delivery: "steer" })
+      await started
+      const selection = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      const second = sendMessage(instanceId, sessionId, "second")
+      release()
+      await Promise.all([first, selection, second])
+      assert.deepEqual(calls, blockedAt === "agent"
+        ? ["model:old", "model:new", "model:new", "prompt:new"]
+        : ["model:old", "prompt:old", "model:new", "model:new", "prompt:new"])
+      assert.equal(nativeModel, "new")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.model.modelId, "new")
+    })
+  }
+
+  for (const rejectFirst of [false, true]) {
+    it(`orders rapid choices and takes rollback snapshots at admission (first rejected: ${rejectFirst})`, async () => {
+      let release!: () => void
+      const pending = new Promise<void>(resolve => { release = resolve })
+      const calls: string[] = []
+      seed({ session: { switchModel: async ({ model }: any) => {
+        calls.push(model.id)
+        if (calls.length === 1) { await pending; if (rejectFirst) throw new Error("first rejected") }
+      } } })
+      const first = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      const outcome = first.catch(error => { assert.equal(error.message, "first rejected") })
+      const second = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "old" })
+      release()
+      await Promise.all([outcome, second])
+      assert.deepEqual(calls, ["new", "old"])
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.model.modelId, "old")
+    })
+  }
+
   for (const status of ["working", "compacting"] as const) {
     it(`persists one model selection while ${status}`, async () => {
       const inputs: unknown[] = []
