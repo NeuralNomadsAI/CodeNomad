@@ -82,7 +82,12 @@ aborted and one reconciliation read supplies the shared snapshot.
 Configuration events mark the instance's worktrees stale
 because the event does not identify whether the global document changed.
 Hidden surfaces retain their last snapshot without starting background
-OpenCode reads, then refresh on the next visible demand. A successful Global
+OpenCode reads, then refresh on the next visible demand. Scoped demand handles
+follow canonical aliases and are released on deactivation/disposal. A queued
+follow-up starts only while at least one visible consumer remains; otherwise
+its stale state is retained for reopening. Renderer-to-backend SSE reconnection
+invalidates every cached instance/worktree even when the backend's native
+OpenCode subscription stayed connected. A successful Global
 mutation likewise marks sibling worktree snapshots stale without refreshing
 them in the background. Generic instance metadata hydration does not fetch
 `plugin.list`; only a visible activation surface requests plugin inventory.

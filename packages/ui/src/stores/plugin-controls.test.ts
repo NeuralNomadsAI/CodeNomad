@@ -4,7 +4,7 @@ import type { PluginControlLocation, PluginControlsSnapshot } from "../../../ser
 import { PluginControlsCache } from "./plugin-controls"
 
 describe("plugin controls cache", () => {
-  it("shares concurrent reads and coalesces invalidations into one trailing refresh", async () => {
+  it("shares concurrent reads and coalesces invalidations into one trailing refresh", async (t) => {
     const first = deferred<PluginControlsSnapshot>()
     const second = deferred<PluginControlsSnapshot>()
     const responses = [first, second]
@@ -16,6 +16,7 @@ describe("plugin controls cache", () => {
     const location = { directory: "/repo" }
 
     const pending = cache.load("instance", location)
+    t.after(cache.acquireDemand("instance", location))
     assert.equal(cache.state("instance", location).loading, true)
     assert.equal(cache.load("instance", location, { force: true }), pending)
     cache.invalidateInstance("instance")
@@ -133,7 +134,7 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", serviceLocation).error, undefined)
   })
 
-  it("retains canonical invalidations that arrive before a WSL alias is learned", async () => {
+  it("retains canonical invalidations that arrive before a WSL alias is learned", async (t) => {
     const stale = deferred<PluginControlsSnapshot>()
     const fresh = deferred<PluginControlsSnapshot>()
     let reads = 0
@@ -145,6 +146,7 @@ describe("plugin controls cache", () => {
     })
 
     const pending = cache.load("instance", hostLocation)
+    t.after(cache.acquireDemand("instance", hostLocation))
     cache.invalidateLocation("instance", serviceLocation)
     assert.equal(cache.load("instance", hostLocation), pending, "visible demand shares the in-flight read")
     stale.resolve({ ...snapshot("stale"), location: serviceLocation })
@@ -158,7 +160,7 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", serviceLocation).snapshot?.controls[0]?.id, "fresh")
   })
 
-  it("preserves an existing canonical record's invalidation and trailing demand when a host alias resolves first", async () => {
+  it("preserves an existing canonical record's invalidation and trailing demand when a host alias resolves first", async (t) => {
     const hostResponse = deferred<PluginControlsSnapshot>()
     const nativeResponse = deferred<PluginControlsSnapshot>()
     const fresh = deferred<PluginControlsSnapshot>()
@@ -176,6 +178,7 @@ describe("plugin controls cache", () => {
 
     const hostLoad = cache.load("instance", hostLocation)
     const nativeLoad = cache.load("instance", serviceLocation)
+    t.after(cache.acquireDemand("instance", serviceLocation))
     cache.invalidateLocation("instance", serviceLocation)
     cache.load("instance", serviceLocation)
     cache.load("instance", serviceLocation, { force: true })
@@ -199,7 +202,7 @@ describe("plugin controls cache", () => {
     }
   })
 
-  it("retains canonical invalidation after its replacement read has already consumed stale", async () => {
+  it("retains canonical invalidation after its replacement read has already consumed stale", async (t) => {
     const hostResponse = deferred<PluginControlsSnapshot>()
     const oldNativeResponse = deferred<PluginControlsSnapshot>()
     const nativeRefresh = deferred<PluginControlsSnapshot>()
@@ -213,6 +216,7 @@ describe("plugin controls cache", () => {
     })
     const hostLoad = cache.load("instance", hostLocation)
     const nativeLoad = cache.load("instance", serviceLocation)
+    t.after(cache.acquireDemand("instance", serviceLocation))
     cache.invalidateLocation("instance", serviceLocation)
     cache.load("instance", serviceLocation)
     oldNativeResponse.resolve({ ...snapshot("old-native"), location: serviceLocation })
@@ -258,7 +262,7 @@ describe("plugin controls cache", () => {
     assert.equal(reads, 2)
   })
 
-  it("consumes a pending canonical invalidation on mutation without an extra refresh", async () => {
+  it("consumes a pending canonical invalidation on mutation without an extra refresh", async (t) => {
     const stale = deferred<PluginControlsSnapshot>()
     const fresh = deferred<PluginControlsSnapshot>()
     let reads = 0
@@ -276,6 +280,7 @@ describe("plugin controls cache", () => {
     })
 
     const pending = cache.load("instance", hostLocation)
+    t.after(cache.acquireDemand("instance", hostLocation))
     cache.invalidateLocation("instance", serviceLocation)
     stale.resolve({ ...snapshot("stale"), location: serviceLocation })
     await pending
@@ -366,7 +371,7 @@ describe("plugin controls cache", () => {
     assert.equal(state.refreshing, false)
   })
 
-  it("publishes the durable mutation response and fences an older refresh", async () => {
+  it("publishes the durable mutation response and fences an older refresh", async (t) => {
     const stale = deferred<PluginControlsSnapshot>()
     const fresh = deferred<PluginControlsSnapshot>()
     let reads = 0
@@ -382,6 +387,7 @@ describe("plugin controls cache", () => {
     })
     const location = { directory: "/repo" }
     await cache.load("instance", location)
+    t.after(cache.acquireDemand("instance", location))
     const pendingRefresh = cache.load("instance", location, { force: true })
 
     await cache.mutate("instance", location, "acme", "project", false)

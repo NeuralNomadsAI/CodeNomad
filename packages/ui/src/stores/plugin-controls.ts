@@ -18,6 +18,7 @@ export interface PluginControlsState {
 
 interface CacheRecord {
   readonly keys: Set<string>
+  readonly demands: Set<{ record: CacheRecord }>
   readonly instanceId: string
   location: PluginControlLocation
   canonicalLocation: boolean
@@ -54,6 +55,24 @@ export class PluginControlsCache {
 
   state(instanceId: string, location: PluginControlLocation): PluginControlsState {
     return this.states().get(cacheKey(instanceId, location)) ?? EMPTY_STATE
+  }
+
+  /** Own visible refresh demand until deactivation/disposal; aliases share owners. */
+  acquireDemand(instanceId: string, location: PluginControlLocation): () => void {
+    const record = this.record(instanceId, location)
+    const demand = { record }
+    record.demands.add(demand)
+    void this.load(instanceId, location, { force: Boolean(record.error) })
+    return () => {
+      // Canonical adoption can transfer the handle to a different record.
+      const current = demand.record
+      if (!current.demands.delete(demand) || current.demands.size > 0) return
+      if (current.trailing) {
+        current.trailing = false
+        current.stale = true
+        this.publish(current)
+      }
+    }
   }
 
   load(instanceId: string, location: PluginControlLocation, options?: { force?: boolean }): Promise<void> {
@@ -112,6 +131,10 @@ export class PluginControlsCache {
     this.invalidate(instanceId)
   }
 
+  invalidateAll(): void {
+    this.invalidateRecords([...new Set(this.records.values())])
+  }
+
   invalidateLocation(instanceId: string, location: PluginControlLocation): void {
     this.invalidate(instanceId, location)
   }
@@ -119,12 +142,7 @@ export class PluginControlsCache {
   private invalidate(instanceId: string, location?: PluginControlLocation): void {
     if (!location) {
       const records = [...new Set(this.records.values())].filter((record) => record.instanceId === instanceId)
-      for (const record of records) {
-        record.generation += 1
-        record.invalidationRevision = ++this.revision
-        record.stale = true
-      }
-      this.publishAll(records)
+      this.invalidateRecords(records)
       return
     }
     const key = cacheKey(instanceId, location)
@@ -140,21 +158,22 @@ export class PluginControlsCache {
       }
       return
     }
-    target.generation += 1
-    target.invalidationRevision = ++this.revision
-    target.stale = true
-    this.publish(target)
+    this.invalidateRecords([target])
   }
 
   private invalidateSiblingLocations(current: CacheRecord): void {
     const siblings = [...new Set(this.records.values())]
       .filter((record) => record !== current && record.instanceId === current.instanceId)
-    for (const record of siblings) {
+    this.invalidateRecords(siblings)
+  }
+
+  private invalidateRecords(records: readonly CacheRecord[]): void {
+    for (const record of records) {
       record.generation += 1
       record.invalidationRevision = ++this.revision
       record.stale = true
     }
-    this.publishAll(siblings)
+    this.publishAll(records)
   }
 
   clearInstance(instanceId: string): void {
@@ -164,6 +183,7 @@ export class PluginControlsCache {
       record.generation += 1
       record.inFlightController?.abort()
       record.inFlightController = undefined
+      record.demands.clear()
       for (const key of record.keys) {
         if (this.records.get(key) === record) this.records.delete(key)
       }
@@ -191,6 +211,7 @@ export class PluginControlsCache {
     }
     const record: CacheRecord = {
       keys: new Set([key]),
+      demands: new Set(),
       instanceId,
       location: { ...location },
       canonicalLocation: false,
@@ -243,8 +264,9 @@ export class PluginControlsCache {
         const trailing = record.trailing
         record.trailing = false
         if (trailing) {
-          void this.loadRecord(record, true)
-          return
+          // No follow-up may outlive its last visible owner. Keep the demand
+          // as stale display state so reopening performs one reconciliation.
+          record.stale = true
         }
         this.publish(record)
       })
@@ -278,6 +300,9 @@ export class PluginControlsCache {
       }
       return next
     })
+    for (const record of active) {
+      if (record.demands.size > 0 && record.stale) void this.loadRecord(record, true)
+    }
   }
 
   private isActive(record: CacheRecord): boolean {
@@ -311,19 +336,11 @@ export class PluginControlsCache {
         invalidatedAlias = !preferIncoming && (existing.generation > 0 || existing.stale || existing.trailing)
         existing.generation += 1
         existing.inFlightController?.abort()
-        for (const key of existing.keys) {
-          if (this.records.get(key) !== existing) continue
-          this.records.set(key, record)
-          record.keys.add(key)
-        }
+        this.mergeRecord(existing, record)
       } else {
         record.generation += 1
         record.inFlightController?.abort()
-        for (const key of record.keys) {
-          if (this.records.get(key) !== record) continue
-          this.records.set(key, existing)
-          existing.keys.add(key)
-        }
+        this.mergeRecord(record, existing)
         this.publish(existing)
         return false
       }
@@ -352,6 +369,19 @@ export class PluginControlsCache {
       return false
     }
     return true
+  }
+
+  private mergeRecord(source: CacheRecord, target: CacheRecord): void {
+    for (const key of source.keys) {
+      if (this.records.get(key) !== source) continue
+      this.records.set(key, target)
+      target.keys.add(key)
+    }
+    for (const demand of source.demands) {
+      demand.record = target
+      target.demands.add(demand)
+    }
+    source.demands.clear()
   }
 }
 

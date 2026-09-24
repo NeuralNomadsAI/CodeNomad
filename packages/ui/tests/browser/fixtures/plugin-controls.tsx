@@ -17,6 +17,8 @@ let reads = 0
 let mutationGate: Promise<void> | undefined
 let releaseMutation: (() => void) | undefined
 let failMutation = false
+let readGate: Promise<void> | undefined
+let releaseRead: (() => void) | undefined
 const [viewActive, setViewActive] = createSignal(false)
 const [mounted, setMounted] = createSignal(true)
 const [workspaceID, setWorkspaceID] = createSignal("session-one")
@@ -84,6 +86,7 @@ serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.getPluginControls = async (_id, requestedLocation) => {
   reads++
   calls.push({ type: "read", location: requestedLocation.directory })
+  await readGate
   return structuredClone(snapshot)
 }
 serverApi.setPluginActivation = async (_id, request) => {
@@ -141,7 +144,15 @@ await updatePreferences({ locale: "en" })
   show: () => setViewActive(true),
   hide: () => setViewActive(false),
   unmount: () => setMounted(false),
+  remount: () => setMounted(true),
   toastHistory: () => getToastHistory(),
+  holdRead: () => { readGate = new Promise<void>((resolve) => { releaseRead = resolve }) },
+  releaseRead: () => { releaseRead?.(); readGate = undefined },
+  invalidate: () => (serverEvents as any).dispatchBatch([{
+    type: "instance.event",
+    instanceId,
+    event: { id: `event-refresh-${Date.now()}`, created: Date.now(), type: "plugin.updated", data: {}, location },
+  }]),
   holdMutation: () => { mutationGate = new Promise<void>((resolve) => { releaseMutation = resolve }) },
   releaseMutation: () => { releaseMutation?.(); mutationGate = undefined },
   failMutation: () => { failMutation = true },

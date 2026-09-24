@@ -266,3 +266,31 @@ for (const fail of [false, true]) {
     await page.close()
   })
 }
+
+for (const dispose of [false, true]) {
+  test(`queued plugin reads wait for visible demand after hiding, disposed=${dispose}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 520, height: 900 } })
+    await page.goto(url)
+    await page.evaluate(() => (window as any).fixture.show())
+    await page.locator('[data-plugin-id="acme.reviewer"]').waitFor()
+    await page.evaluate(() => { (window as any).fixture.holdRead(); (window as any).fixture.invalidate() })
+    await page.waitForFunction(() => (window as any).fixture.reads() === 2)
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await page.evaluate((dispose) => {
+      const fixture = (window as any).fixture
+      if (dispose) fixture.unmount()
+      else fixture.hide()
+      fixture.releaseRead()
+    }, dispose)
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    assert.equal(await page.evaluate(() => (window as any).fixture.reads()), 2, "a queued read must not start after demand is withdrawn")
+    await page.evaluate((dispose) => {
+      const fixture = (window as any).fixture
+      if (dispose) fixture.remount()
+      else fixture.show()
+    }, dispose)
+    await page.waitForFunction(() => (window as any).fixture.reads() === 3)
+    await page.locator('[data-plugin-id="acme.reviewer"]').waitFor()
+    await page.close()
+  })
+}

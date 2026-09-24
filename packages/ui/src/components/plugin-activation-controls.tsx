@@ -48,7 +48,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const controlsById = createMemo(() => new Map(controls().map((control) => [control.id, control])))
   const controlIds = createMemo(() => [...controlsById().keys()])
   let currentIdentity: string | undefined
-  let demandedIdentity: string | undefined
   let locationGeneration = 0
   // The admitted write may finish after a project tab or visibility wrapper
   // disposes this surface. Only its live owner may publish presentation feedback.
@@ -63,16 +62,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       locationGeneration += 1
       setPending(new Set<string>())
     }
-    const current = state()
-    if (props.active === false) {
-      demandedIdentity = undefined
-      return
-    }
-    const firstDemand = demandedIdentity !== identity
-    demandedIdentity = identity
-    if (current.stale || (!current.snapshot && !current.loading && (!current.error || firstDemand))) {
-      void pluginControlsCache.load(instanceId, location, { force: Boolean(current.error) })
-    }
+    if (props.active === false) return
+    onCleanup(pluginControlsCache.acquireDemand(instanceId, location))
   })
 
   const setPendingPlugin = (scope: PluginControlScope, pluginId: string, value: boolean) => {
