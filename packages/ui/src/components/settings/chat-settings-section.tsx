@@ -1,5 +1,6 @@
 import { Select } from "@kobalte/core/select"
 import { createMemo, For, type Component } from "solid-js"
+import { Dynamic } from "solid-js/web"
 import { ChevronDown } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import {
@@ -13,12 +14,14 @@ import {
   OTHER_TOOL_NAME,
   THINKING_EXPANSION_PRESETS,
 } from "../tool-call/tool-presentation"
+import { getMessageContentIcon } from "../message-content-icons"
 import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows, type TranscriptVisibilityRow as VisibilityRow } from "../transcript-visibility"
 
 const toolExpansionPresetOptions: ToolCallExpansionPreset[] = ["minimal", "balanced", "detailed", "everything"]
 
 const transcriptDetailPresets = {
   minimal: {
+    systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "collapsed",
     toolInputsVisibility: "hidden",
@@ -26,6 +29,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   balanced: {
+    systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
@@ -33,6 +37,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   detailed: {
+    systemMessagesVisibility: "collapsed",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
@@ -40,6 +45,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "expanded",
   },
   everything: {
+    systemMessagesVisibility: "expanded",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "expanded",
@@ -52,6 +58,7 @@ const transcriptDetailPresets = {
     Preferences,
     | "showThinkingBlocks"
     | "diagnosticsExpansion"
+    | "systemMessagesVisibility"
     | "toolInputsVisibility"
     | "showUsageMetrics"
     | "usageMetricsExpansion"
@@ -81,6 +88,7 @@ export const ChatSettingsSection: Component = () => {
     const expectedThinking = detail.showThinkingBlocks ? THINKING_EXPANSION_PRESETS[preset] : "hidden"
     return currentThinkingMode() === expectedThinking &&
       current.diagnosticsExpansion === detail.diagnosticsExpansion &&
+      current.systemMessagesVisibility === detail.systemMessagesVisibility &&
       current.toolInputsVisibility === detail.toolInputsVisibility &&
       current.showUsageMetrics === detail.showUsageMetrics &&
       current.usageMetricsExpansion === detail.usageMetricsExpansion
@@ -148,7 +156,10 @@ export const ChatSettingsSection: Component = () => {
               const selected = createMemo(() => selectedVisibilityOption(rowMode(row)))
               return (
                 <div class="settings-expansion-row" role="row">
-                  <div class="settings-expansion-row-label" role="cell"><code>{row.label}</code></div>
+                  <div class="settings-expansion-row-label flex items-center gap-2" role="cell">
+                    <Dynamic component={getMessageContentIcon(row.key)} class="w-4 h-4 shrink-0 text-secondary" aria-hidden="true" />
+                    <code>{row.label}</code>
+                  </div>
                   <div class="settings-expansion-row-control" role="cell">
                     <Select<SelectOption>
                       value={selected()}

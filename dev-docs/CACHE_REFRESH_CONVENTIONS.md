@@ -23,13 +23,18 @@ where their authority, lifetime or runtime differs.
 
 | Area | Current behaviour | Implementation |
 | --- | --- | --- |
+| Session outline | Structural indexes independent of transcript and excerpts; up to 16 memory snapshots / 200k entries (one larger active index allowed). Restoration persists up to 16 indexes / 200k entries / 16 MiB in optional content-addressed chunks. Saved geometry displays before full checkpoint revalidation; unchanged ranges do not resend entries. The last range grows to 512 rows before another is added. Unchanged session returns make no read; native message changes revalidate checkpoints. Destructive mutation, generation, location/project and undo boundary fence reuse. Paused scans retain cursors. | `packages/ui/src/stores/session-outline.ts`, `session-outline-persistence.ts`, `client-state-outline-partitions.ts` |
+| Timeline previews | At most 512 bounded Markdown excerpts. Visible-nearby batches of 12, hovered ID first; obsolete demand cancels. Thirty-second age prompts on-demand revalidation only. Generation, mutation and undo fence reuse. No transcript-window loads or geometry changes. | `packages/ui/src/stores/timeline-previews.ts` |
 | Providers/models | Retained signals; shared in-flight catalogue load; dirty-bit trailing refresh; instance, location and request-generation checks. No completed-result TTL inside `fetchProviders` itself. | `packages/ui/src/stores/session-api.ts` |
-| Git changes | Filesystem events debounce for 100 ms; one passive refresh plus a pending follow-up; hidden tab marked stale; request versions protect status/diff. Server shares concurrent status requests, not completed results. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
+| Session model selection | Native selection events invalidate rather than overwrite the displayed selection, because SSE echoes can lag successful HTTP writes. Coalesced authoritative reads share the session admission queue with prompts and explicit selections; client/generation and captured-selection checks fence late responses. Catalog merges preserve pending optimistic choices; successful writes publish a fresh model object so pre-confirmation snapshots lose authority. Read failures retain display state until the next event or reconnect refresh. | `stores/session-model-reconciliation.ts`, `stores/session-action-queue.ts`, `stores/session-generation-recovery.ts` |
+| OpenCode setup | Shared in-flight status read plus coalesced trailing refresh for focus/visibility/reconnect demand. Executable changes and explicit actions fence old responses. Failed reads retain version/path diagnostics but revoke the connected claim and stale reload/restart controls; Continue checks again before retrying the pending workspace. Activation requires a successful pre-action status read. | UI `stores/opencode-setup.ts`, `components/settings/opencode-setup-panel.tsx` |
+| Git changes | Filesystem events debounce for 100 ms; one passive refresh plus a pending follow-up; hidden project/panel marked stale. Queued reads cancel on deactivation/disposal and request versions fence late status/diff results. Reads share the secondary HTTP budget. Server shares concurrent status requests, not completed results, and runs status/diff process creation in the Git worker. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
 | Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI requests coalesced. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |
 | Worktree authority | Validated reads await stale-inventory revalidation; family transactions force scans. Ownership misses can bypass a warm inventory once per directory-cache lifetime. Create/remove requires a validated next display read. | server `workspaces/worktree-directory.ts`, `manager.ts` |
+| Git ownership preflight | Concurrent common-directory reads share one pending command per directory. Worktree Git commands run with two process slots in a lazy worker, keeping Windows process creation off the HTTP/SSE thread. Completed/failed reads are removed immediately; Git resolves configuration and a matching identity still requires native inventory validation. | server `workspaces/git-common-directory.ts`, `git-process.ts`, `git-worktrees.ts` |
 | Native event relay | Consume the shared SDK stream before slow I/O; resolve locations FIFO per session/PTY/Shell, then deliver FIFO per entity and recipient. Ownership promises/2 s results are shared by recipient and full native location; another recipient never delays successful delivery. | server `workspaces/instance-events.ts`, `instance-event-queue.ts` |
 | Render cache | Explicit versioned values scoped to instance/session; no network scheduler or TTL policy. | UI `lib/global-cache.ts` |
-| Background HTTP reads | Worktree display, project/status maps and pending-request scans share two browser request slots across instances. Queued scans observe cancellation; per-request timeouts start at dispatch. Session/message and composer catalogue reads stay independent. | UI `lib/background-read-queue.ts`, `lib/sdk-manager.ts`, `stores/instances.ts`, `stores/worktrees.ts` |
+| Background HTTP reads | Worktree display, Git status/diffs, project/location/status maps, composer catalogues, Shell lists and pending-request scans share two browser request slots across instances. Queued scans observe cancellation; per-request timeouts start at dispatch. Session/message reads and mutations stay independent so catalogue fan-out cannot occupy all HTTP/1.1 connections. | UI `lib/background-read-queue.ts`, `lib/sdk-manager.ts`, `stores/instances.ts`, `stores/worktrees.ts` |
 | Virtualized lists | Session list, transcript and timeline use `virtua/solid`; virtualization limits rendered rows, not network refreshes. | UI `session-list.tsx`, `virtual-follow-list.tsx`, `message-timeline.tsx` |
 
 Git updates are regulated, but not incremental: every new server status calculation
@@ -63,14 +68,38 @@ fixtures cover menu updates, focus, old responses and refresh bursts.
 
 ## Initial session hydration
 
+App-tab records retain identity across metadata refreshes, reordering and restoration
+of sibling projects. Their payload getters stay reactive; Solid's identity-keyed
+rendering must not remount existing shells or restart their Git readers on each update.
+Visible Git panels precede queued bulk scans within the same two-request secondary
+budget, so inventory/permission fan-out cannot leave an opened panel waiting behind
+every restored checkout. Deactivation removes queued panel reads.
+The optional SDK status read propagates cancellation into the transport and has a
+dispatch-time deadline. Explicit refresh/mutation continuations retain their panel
+generation and worktree identity; late results cannot reset another draft or launch
+hidden-panel diffs. The server also bounds untracked-numstat submission and admits
+worktree authority commands ahead of pending display commands in the Git worker.
+
 Project identity and worktree discovery start independently. The root-directory
-session page can publish before checkout discovery finishes; complete project-family
+session page can publish before project identity or checkout discovery finishes; complete project-family
 reconciliation still waits for verified worktree membership. Metadata-dependent
 callers retain the combined worktree/project readiness barrier.
 
 Restored selection identity is seeded before HTTP hydration. The saved session and
 composer catalogues load once the client is ready, independently of the complete
 project-family inventory. Supplemental metadata waits for session hydration.
+Creation-ownership release starts alongside saved-session hydration; its HTTP
+acknowledgement must not gate the visible conversation.
+The visible project's first session page, project identity and worktree
+membership bypass the secondary budget, as does saved ancestry. Otherwise a slow
+Git/permission scan can hide every other-worktree conversation until it finishes.
+The first project page publishes verified families additively, without waiting
+for the historical cursor traversal. Only the complete inventory removes absent
+rows. Historical pages and restored chains from other projects share that budget,
+so their parallel hydration cannot queue ahead of the visible transcript.
+Before selection is known, root pages also share the secondary budget. Pending
+root/ancestry reads observe active selection and leave that queue immediately
+when selected, without restarting already dispatched requests (`lib/prioritized-read.ts`).
 Catalogue refreshes recheck client, location and request ownership before dispatch.
 The first native connection can supersede an initial HTTP read without passing
 through the reconnect recovery gate; session lists and catalogues replace those

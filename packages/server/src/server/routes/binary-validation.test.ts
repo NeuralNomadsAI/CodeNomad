@@ -26,10 +26,10 @@ it("validates through HTTP without writing preferences or blocking other request
     assert.equal(completed, false, "HTTP must remain available while the CLI is slow")
     const valid = await validating
     assert.equal(valid.statusCode, 200)
-    assert.deepEqual(valid.json(), { valid: true })
+    assert.deepEqual(valid.json(), { valid: true, version: "custom-build" })
     const invalid = await app.inject({ method: "POST", url: "/api/storage/binaries/validate", payload: { path: legacy.binary } })
     assert.equal(invalid.statusCode, 200)
-    assert.deepEqual(invalid.json(), { valid: false, errorCode: "opencode_v2_required" })
+    assert.deepEqual(invalid.json(), { valid: false, version: "custom-build", errorCode: "opencode_v2_required" })
     assert.deepEqual(compatible.calls(), [["--version"], ["service", "--help"]])
     assert.deepEqual(legacy.calls(), [["--version"], ["service", "--help"]])
     assert.equal((await app.inject({ method: "POST", url: "/api/storage/binaries/validate", payload: { path: 42 } })).statusCode, 400)

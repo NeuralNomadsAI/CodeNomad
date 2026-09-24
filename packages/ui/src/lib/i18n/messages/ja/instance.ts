@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "ファイルの保存に失敗しました",
   "instanceShell.rightPanel.sections.yoloMode": "Yoloモード",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "現在のセッションの権限リクエストを自動承認します。実行中のツールを信頼できる場合にのみ使用してください。",
-  "instanceShell.rightPanel.sections.plan": "計画",
-  "instanceShell.rightPanel.sections.plan.tooltip": "このセッションにおけるエージェントのロードマップ。タスクやサブタスク、および完了状況を追跡します。",
+  "instanceShell.rightPanel.sections.tokens": "トークン",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "このセッションとサブセッションのトークン使用量とコスト。",
   "instanceShell.rightPanel.sections.backgroundProcesses": "バックグラウンドシェル",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "アクティブなワークスペースまたはワークツリーの OpenCode ネイティブバックグラウンドシェル。",
   "instanceShell.backgroundProcesses.loading": "バックグラウンドシェルを読み込み中...",
@@ -220,8 +220,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.force": "強制削除（ローカルの変更を破棄）",
   "instanceShell.worktree.delete.success": "worktree {slug} を削除しました",
 
-  "instanceShell.plan.noSessionSelected": "計画を表示するにはセッションを選択してください。",
-  "instanceShell.plan.empty": "まだ計画はありません。",
 
   "instanceShell.yoloMode.noSessionSelected": "Yoloモードを設定するにはセッションを選択してください。",
   "instanceShell.yoloMode.title": "Yoloモード",
@@ -265,7 +263,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "追加",
   "opencodeBinarySelector.actions.browse": "バイナリを参照…",
   "opencodeBinarySelector.actions.removeTitle": "バイナリを削除",
-  "opencodeBinarySelector.badge.systemPath": "system PATH のバイナリを使用",
+  "opencodeBinarySelector.badge.systemPath": "PATH、ユーザーの npm インストールの順で優先",
   "opencodeBinarySelector.status.checkingVersions": "バージョンを確認中…",
   "opencodeBinarySelector.status.checking": "確認中…",
   "opencodeBinarySelector.dialog.title": "OpenCode バイナリを選択",
@@ -273,6 +271,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "OpenCode バイナリが無効です",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad には OpenCode V2 が必要です。opencode2 バイナリをインストールして選択してください。",
   "opencodeBinarySelector.validation.alreadyValidating": "すでに検証中です",
-  "opencodeBinarySelector.display.systemPath": "{name} (システム PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (自動)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

@@ -1,0 +1,61 @@
+.session-aside-window {
+  position: fixed;
+  z-index: 50;
+  inset-block-start: 15vh;
+  inset-inline-end: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  width: min(36rem, calc(100vw - 2 * var(--space-md)));
+  max-height: 75dvh;
+}
+
+.session-aside-description {
+  margin: 0 0 var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.session-aside-label {
+  display: block;
+  margin-block-end: var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.session-aside-question {
+  display: block;
+  width: 100%;
+  min-height: 4rem;
+  max-height: 25dvh;
+  resize: vertical;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.session-aside-question:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+}
+
+.session-aside-actions,
+.session-aside-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.session-aside-actions {
+  justify-content: flex-end;
+  margin-block: var(--space-sm);
+}
+
+.session-aside-loading {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.session-aside-answer {
+  border-top: 1px solid var(--border-divider);
+  padding-block-start: var(--space-md);
+  overflow-wrap: anywhere;
+}

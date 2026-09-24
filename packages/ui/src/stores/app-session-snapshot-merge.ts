@@ -166,6 +166,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     expandedSessionIds: (source.expandedSessionIds ?? []).filter((id) => unavailable.has(id)),
   }
   if (source.occurrence !== undefined) tab.occurrence = source.occurrence
+  if (source.outlineIndexes) tab.outlineIndexes = keep(source.outlineIndexes)
   if (source.activeParentSessionId && unavailable.has(source.activeParentSessionId)) {
     tab.activeParentSessionId = source.activeParentSessionId
   }
@@ -196,6 +197,10 @@ function mergeWorkspaceState(
     ].filter((id, index, values) => values.indexOf(id) === index),
   }
   const restoreSelection = !authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId
+  if (current.outlineIndexes || preserved.outlineIndexes) {
+    result.outlineIndexes = mergeRecords(current.outlineIndexes ?? {}, preserved.outlineIndexes ?? {}, authority.idleMarkers)
+    for (const id of authority.deletedSessions ?? []) delete result.outlineIndexes[id]
+  }
   if (restoreSelection && preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {
     result.activeParentSessionId = preserved.activeParentSessionId
   }
@@ -303,8 +308,15 @@ export function markPreservedWorkspaceUnavailable(
   current?: RestorableWorkspaceTabState,
   authority?: RestorableWorkspaceRuntimeAuthority,
 ): RestorableSessionPreservation {
-  const index = findWorkspaceSourceIndex(preservation, workspace)
-  if (index === undefined) return preservation
+  let index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index === undefined) {
+    // Workspaces opened after startup are not present in the saved snapshot.
+    if (!current) return preservation
+    index = preservation.sourceTabs.length
+    preservation.sourceTabs.push(current)
+    preservation.results.push({ status: "pending" })
+    preservation.removalRevisions.push(0)
+  }
   if (preservation.results[index]?.status === "removed") return preservation
   const source = preservation.sourceTabs[index]
   if (current) preservation.sourceTabs[index] = source?.kind === "workspace"

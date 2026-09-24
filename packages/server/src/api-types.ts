@@ -101,6 +101,8 @@ export interface WorktreeDescriptor {
   serviceRoot?: string
   /** Exact path registered in Git's worktree inventory. */
   registeredDirectory?: string
+  /** Degraded mode: only this exact physical directory authorizes sessions. */
+  directoryOnly?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -111,6 +113,8 @@ export interface WorktreeDescriptor {
 }
 
 export interface WorktreeListResponse {
+  /** False means directory-only degraded mode; repository membership is unknown. */
+  gitAvailable?: boolean
   worktrees: WorktreeDescriptor[]
   /** Default creation parent in the OpenCode service namespace. */
   defaultDirectory?: string
@@ -373,11 +377,25 @@ export interface BinaryValidationResult {
 }
 
 export interface OpenCodeUpdateStatus {
-  currentVersion: string
+  currentVersion: string | null
   latestVersion: string | null
   updateAvailable: boolean | null
   canUpgrade: boolean
   checkError?: "update_check_failed"
+  minimumVersion: string
+  recommendedVersion: string
+  versionAssessment: "tested" | "untested" | "incompatible"
+  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  state: "missing" | "update_required" | "ready" | "error"
+  binaryPath: string
+  installationSource?: "path" | "user"
+  needsSharedInstallation?: boolean
+  daemonVersion?: string
+  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
+  canReload?: boolean
+  serviceError?: string
+  target: "host" | "wsl"
+  canRestart: boolean
 }
 
 export interface OpenCodeUpdateResponse {

@@ -6,6 +6,8 @@ import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
+import { planSessionTechnicalPartDeletion, executeSessionTechnicalPartDeletion } from "./session-history"
+export type { SessionTechnicalPartDeletionPlan } from "./session-history"
 import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
 import type { ClientPart } from "../types/message"
 
@@ -19,20 +21,10 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
+import { serializeSessionAction } from "./session-action-queue"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
-const sessionAdmissions = new Map<string, Promise<unknown>>()
-
-function serializeSessionAction<T>(instanceId: string, sessionId: string, action: () => Promise<T>): Promise<T> {
-  const key = `${instanceId}:${sessionId}`
-  const run = (sessionAdmissions.get(key) ?? Promise.resolve()).catch(() => undefined).then(action)
-  const settled = run.finally(() => {
-    if (sessionAdmissions.get(key) === settled) sessionAdmissions.delete(key)
-  })
-  sessionAdmissions.set(key, settled)
-  return settled
-}
 
 function admitSessionAction<T>(
   instanceId: string,
@@ -423,7 +415,14 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
   }
 }
 
-async function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+// Selection and prompt setup both write native session context. Order the
+// entire operation (including its local snapshot/rollback) with admissions so
+// a prompt waiting on instructions cannot later overwrite a successful choice.
+function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionAgent(instanceId, sessionId, agent))
+}
+
+async function applySessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -473,7 +472,15 @@ async function updateSessionAgent(instanceId: string, sessionId: string, agent: 
   }
 }
 
-async function updateSessionModel(
+function updateSessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, () => applySessionModel(instanceId, sessionId, model))
+}
+
+async function applySessionModel(
   instanceId: string,
   sessionId: string,
   model: { providerId: string; modelId: string },
@@ -491,16 +498,25 @@ async function updateSessionModel(
 
   withSession(instanceId, sessionId, (current) => {
     current.model = model
+    current.modelSelectionPending = true
   })
 
   const nativeModel = getNativeModel(instanceId, model)
   try {
-    if (!isSessionBusy(instanceId, sessionId)) {
-      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
-    }
+    // Native model selection is supported during execution too. Keeping this
+    // local until the next prompt lets a session refresh restore the old model.
+    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    withSession(instanceId, sessionId, (current) => {
+      // Confirmation is a new selection revision even if its values match the
+      // optimistic choice. Catalog reads started during the write captured that
+      // earlier object and must not publish their pre-write native model later.
+      current.model = { ...model }
+      delete current.modelSelectionPending
+    })
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
-      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false
+      delete current.modelSelectionPending
+      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return
       current.model = session.model
     })
     throw error
@@ -652,56 +668,6 @@ async function deleteTechnicalPartGroup(
   for (const [messageId, partIds] of byMessage) {
     await deleteMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
   }
-}
-
-export interface SessionTechnicalPartDeletionPlan {
-  instanceId: string
-  sessionId: string
-  toolCount: number
-  reasoningCount: number
-  messageIds: string[]
-}
-
-async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string): Promise<SessionTechnicalPartDeletionPlan> {
-  const client = getRootClient(instanceId)
-  const messageIds: string[] = []
-  const seenCursors = new Set<string>()
-  let cursor: string | undefined
-  let toolCount = 0
-  let reasoningCount = 0
-
-  for (;;) {
-    const response = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: "asc" }) })
-    for (const message of response.data) {
-      if (message.type !== "assistant" || !message.time.completed) continue
-      const tools = message.content.filter((part) => part.type === "tool").length
-      const reasoning = message.content.filter((part) => part.type === "reasoning").length
-      if (tools + reasoning === 0) continue
-      toolCount += tools
-      reasoningCount += reasoning
-      messageIds.push(message.id)
-    }
-
-    const next = response.cursor?.next ?? undefined
-    if (!next) break
-    if (seenCursors.has(next)) throw new Error("Repeated message cursor")
-    seenCursors.add(next)
-    cursor = next
-  }
-
-  return { instanceId, sessionId, toolCount, reasoningCount, messageIds }
-}
-
-async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan): Promise<string[]> {
-  const failures: string[] = []
-  for (const messageId of plan.messageIds) {
-    try {
-      await deleteMessageTechnicalParts(plan.instanceId, plan.sessionId, messageId)
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error))
-    }
-  }
-  return failures
 }
 
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {

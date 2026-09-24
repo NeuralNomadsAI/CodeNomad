@@ -13,7 +13,7 @@ describe("bounded read-only binary validation", () => {
       const result = probeOpenCodeBinary(fixture.binary).then((value) => { completed = true; return value })
       await delay(50)
       assert.equal(completed, false, "the probes must not block timers or other requests")
-      assert.deepEqual(await result, { valid: true })
+        assert.deepEqual(await result, { valid: true, version: "custom-build" })
       assert.deepEqual(fixture.calls(), [["--version"], ["service", "--help"]])
     } finally {
       fixture.dispose()
@@ -24,7 +24,7 @@ describe("bounded read-only binary validation", () => {
     for (const stderr of [false, true]) for (const helpExit of [0, 1]) {
       const fixture = binaryProbeFixture({ help: legacyHelp, stderr, helpExit })
       try {
-        assert.deepEqual(await probeOpenCodeBinary(fixture.binary), { valid: false, errorCode: OPENCODE_V2_REQUIRED_ERROR_CODE })
+        assert.deepEqual(await probeOpenCodeBinary(fixture.binary), { valid: false, version: "custom-build", errorCode: OPENCODE_V2_REQUIRED_ERROR_CODE })
         assert.deepEqual(fixture.calls(), [["--version"], ["service", "--help"]])
       } finally {
         fixture.dispose()

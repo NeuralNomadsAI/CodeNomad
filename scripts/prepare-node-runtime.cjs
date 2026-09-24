@@ -139,6 +139,11 @@ function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath) {
   fs.rmSync(destinationRoot, { recursive: true, force: true })
   fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
   fs.copyFileSync(sourceBinary, destinationBinary)
+  const npmRelativePath = binaryRelativePath === "node.exe" ? "node_modules/npm" : "lib/node_modules/npm"
+  const npmSource = path.join(sourceRoot, npmRelativePath)
+  if (!fs.existsSync(path.join(npmSource, "bin/npm-cli.js"))) throw new Error("Node archive is missing npm")
+  fs.cpSync(npmSource, path.join(destinationRoot, npmRelativePath), { recursive: true })
+  fs.copyFileSync(path.join(sourceRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
 }
 
 async function prepareBundledNodeRuntime(options) {
@@ -197,6 +202,7 @@ async function prepareBundledNodeRuntime(options) {
 
 module.exports = {
   MANAGED_NODE_VERSION,
+  pruneForRuntime,
   prepareBundledNodeRuntime,
   normalizeTarget,
   currentTarget,

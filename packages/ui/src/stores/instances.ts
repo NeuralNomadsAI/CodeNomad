@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
+import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -48,6 +48,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -282,7 +283,6 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 
 const MAX_LOG_ENTRIES = 1000
 
-const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
@@ -567,7 +567,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     destroyOpenCodeData(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -904,11 +904,11 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Session hydration can outlive a failed forced worktree read. Observe the
   // rejection immediately while retaining it for metadata-dependent callers.
   void workspaceMetadata.catch((error) => log.warn("Failed to hydrate workspace metadata", { instanceId, error }))
-  // Publish the root directory page without waiting for checkout discovery.
+  // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
-  const sessions = projectMetadata.then(async () => {
+  const sessions = Promise.resolve().then(async () => {
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
@@ -948,44 +948,6 @@ async function hydrateInstanceData(instanceId: string, options?: {
   }
 }
 
-async function postInstanceDispose(instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.proxyPath) {
-    throw new Error("Instance not ready")
-  }
-
-  const baseUrl = buildInstanceBaseUrl(instance.proxyPath)
-  const url = new URL("instance/dispose", baseUrl)
-
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-    },
-  })
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "")
-    throw new Error(message || `Dispose request failed with ${response.status}`)
-  }
-
-  const contentType = response.headers.get("content-type") ?? ""
-  if (contentType.includes("application/json")) {
-    const data = await response.json().catch(() => undefined)
-    if (typeof data === "boolean") return data
-    if (data && typeof data === "object" && "data" in (data as any)) {
-      return Boolean((data as any).data)
-    }
-    return Boolean(data)
-  }
-
-  const text = await response.text().catch(() => "")
-  if (text.trim() === "true") return true
-  if (text.trim() === "false") return false
-  return Boolean(text)
-}
-
 function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
@@ -1014,25 +976,6 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
   })
 
   pendingRehydrations.set(instanceId, promise)
-  return promise
-}
-
-async function disposeInstance(instanceId: string): Promise<boolean> {
-  if (pendingDisposeRequests.has(instanceId)) {
-    return pendingDisposeRequests.get(instanceId)!
-  }
-
-  const promise = (async () => {
-    const ok = await postInstanceDispose(instanceId)
-    if (ok) {
-      await rehydrateInstance(instanceId, { reason: "disposed" })
-    }
-    return ok
-  })().finally(() => {
-    pendingDisposeRequests.delete(instanceId)
-  })
-
-  pendingDisposeRequests.set(instanceId, promise)
   return promise
 }
 
@@ -1995,6 +1938,12 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   }
 }
 
+// Events after which assistant message cost/token totals may have changed.
+const USAGE_EVENT_TYPES = new Set<string>([
+  "session.step.ended",
+  "session.step.failed",
+])
+
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -2021,13 +1970,16 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-    )) projectOpenCodeMessages(
-      instanceId,
-      sessionId,
-      data,
-      preserveOmitted,
-      force || event.type !== "session.inbox.enqueued",
-    )
+    )) {
+      projectOpenCodeMessages(
+        instanceId,
+        sessionId,
+        data,
+        preserveOmitted,
+        force || event.type !== "session.inbox.enqueued",
+      )
+      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+    }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
     projectMessages(data, preserveOmitted)
@@ -2175,7 +2127,6 @@ export {
   setPendingFormAddedHandler,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
-  disposeInstance,
   reconcilePendingSessionIndicators,
   reconcilePendingRequestLiveness,
   syncPendingRequests,

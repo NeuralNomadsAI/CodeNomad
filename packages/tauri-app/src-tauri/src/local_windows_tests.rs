@@ -61,3 +61,40 @@ fn browser_children_are_not_top_level_focus_targets() {
     assert!(is_primary_webview_label(&local, &local));
     assert!(!is_primary_webview_label("browser-registration", &local));
 }
+
+#[test]
+fn menu_toggle_during_native_focus_gap_keeps_view_and_file_commands_enabled() {
+    let windows = LocalWindows::default();
+    let local = windows.registry.lock().unwrap().add(id(1), true).unwrap();
+    let snapshot = |checked| {
+        serde_json::from_value::<crate::view_menu::ViewMenuState>(serde_json::json!({
+            "leftPanel": { "label": "Left", "checked": checked, "enabled": true },
+            "rightPanel": { "label": "Right", "checked": true, "enabled": true },
+            "timeline": { "label": "Timeline", "checked": true, "enabled": true },
+            "timelineTools": { "label": "Tools", "checked": true, "enabled": true }
+        })).unwrap()
+    };
+    windows.set_workspace_menu_enabled(&local.label, true).unwrap();
+    windows.set_view_menu_state(&local.label, Some(snapshot(true))).unwrap();
+    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(true))));
+
+    // The native popup temporarily owns focus, then the renderer publishes the
+    // unchecked panel. Both menus must retain the same target as click dispatch.
+    assert_eq!(windows.menu_state(None), (true, Some(snapshot(true))));
+    windows.set_view_menu_state(&local.label, Some(snapshot(false))).unwrap();
+    assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
+    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
+
+    for non_local in ["remote-profile", crate::preferences_window::LABEL] {
+        assert_eq!(windows.menu_state(Some(non_local)), (false, None));
+    }
+    let other = windows.registry.lock().unwrap().add(id(2), true).unwrap();
+    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
+    assert_eq!(windows.menu_state(None), (false, None), "new MRU has no project");
+    windows.remove_runtime(&other.label);
+    assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
+    windows.set_workspace_menu_enabled(&local.label, false).unwrap();
+    assert_eq!(windows.menu_state(None), (false, None), "reload clears both snapshots");
+    windows.remove_runtime(&local.label);
+    assert_eq!(windows.menu_state(None), (false, None), "closed windows cannot remain targets");
+}

@@ -16,7 +16,7 @@
     "@codenomad/remote-control-protocol": "0.1.0",
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
-    "@opencode/client": "2.0.4",
+    "@opencode/client": "2.0.16",
     "@solidjs/router": "^0.13.0",
     "@suid/icons-material": "^0.9.0",
     "@suid/material": "^0.19.0",

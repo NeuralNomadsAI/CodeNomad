@@ -7,6 +7,7 @@ export type TranscriptVisibilityRow =
   | { kind: "diagnostics"; key: "diagnostics"; label: string }
   | { kind: "inputs"; key: "inputs"; label: string }
   | { kind: "usage"; key: "usage"; label: string }
+  | { kind: "system"; key: "system"; label: string }
 
 export function transcriptVisibilityRows(t: (key: string) => string): TranscriptVisibilityRow[] {
   return [
@@ -14,6 +15,7 @@ export function transcriptVisibilityRows(t: (key: string) => string): Transcript
     { kind: "diagnostics", key: "diagnostics", label: t("settings.behavior.diagnosticsDefault.title") },
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
+    { kind: "system", key: "system", label: t("transcriptFilters.systemMessages") },
     ...getConfigurableToolEntries().map((entry) => ({
       kind: "tool" as const, key: entry.tool, label: entry.labelKey ? t(entry.labelKey) : entry.label,
     })),
@@ -34,17 +36,20 @@ export function transcriptVisibility(current: Preferences, row: TranscriptVisibi
     case "diagnostics": return current.diagnosticsExpansion
     case "inputs": return current.toolInputsVisibility
     case "usage": return current.showUsageMetrics ? current.usageMetricsExpansion : "hidden"
+    case "system": return current.systemMessagesVisibility ?? "hidden"
   }
 }
 
 export function transcriptVisibilityPatch(current: Preferences, row: TranscriptVisibilityRow, mode: VisibilityPreference): Partial<Preferences> {
+  if (row.kind === "system") return { systemMessagesVisibility: mode }
   if (row.kind === "diagnostics") return { diagnosticsExpansion: mode }
   if (row.kind === "inputs") return { toolInputsVisibility: mode }
   if (row.kind === "usage") return {
     showUsageMetrics: mode !== "hidden",
     usageMetricsExpansion: mode === "hidden" ? current.usageMetricsExpansion : mode,
   }
-  // Preserve every effective preset value before switching to per-type overrides.
+  // Preserve every configurable category before switching to per-type overrides.
+  // Retired tools follow "Other tools" and no longer need separate overrides.
   const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
   if (row.kind === "tool") tools[row.key] = mode
   const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : thinkingExpansion(current)

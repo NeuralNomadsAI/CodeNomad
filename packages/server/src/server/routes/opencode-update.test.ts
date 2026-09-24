@@ -4,6 +4,7 @@ import Fastify from "fastify"
 import type { Logger } from "../../logger"
 import type { OpenCodeUpdateService } from "../../opencode-update/service"
 import { registerOpenCodeUpdateRoutes } from "./opencode-update"
+import { InstallationBusyError } from "../../opencode-update/installation-lock"
 
 test("does not pass request-controlled binary paths to the update service", async () => {
   const calls: Array<{ method: string; args: unknown[] }> = []
@@ -36,4 +37,40 @@ test("does not pass request-controlled binary paths to the update service", asyn
     { method: "upgrade", args: [] },
   ])
   await app.close()
+})
+
+test("service activation accepts only exclusive explicit restart/reload intents", async () => {
+  const calls: Array<boolean | "reload"> = []
+  const app = Fastify()
+  registerOpenCodeUpdateRoutes(app, {
+    service: {
+      start: async (restart: boolean) => { calls.push(restart); return { state: "ready" } },
+      reload: async () => { calls.push("reload"); return { state: "ready" } },
+    } as OpenCodeUpdateService,
+    logger: { warn() {} } as unknown as Logger,
+  })
+  try {
+    for (const payload of [{ restart: "true" }, { restart: true, binary: "foreign" }, { command: "stop" }, { reload: "true" }, { reload: true, restart: true }]) {
+      assert.equal((await app.inject({ method: "POST", url: "/api/opencode/service", payload })).statusCode, 400)
+    }
+    for (const payload of [{}, { restart: true }, { reload: true }]) {
+      assert.equal((await app.inject({ method: "POST", url: "/api/opencode/service", payload })).statusCode, 200)
+    }
+    assert.deepEqual(calls, [false, true, "reload"])
+  } finally { await app.close() }
+})
+
+test("installation conflicts expose localized error codes without leaking host paths", async () => {
+  for (const code of ["installation_busy", "installation_in_use"] as const) {
+    const app = Fastify()
+    registerOpenCodeUpdateRoutes(app, {
+      service: { upgrade: async () => { throw new InstallationBusyError(code, "private host path") } } as unknown as OpenCodeUpdateService,
+      logger: { warn() {} } as unknown as Logger,
+    })
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/opencode/update" })
+      assert.equal(response.statusCode, 409)
+      assert.deepEqual(response.json(), { success: false, error: code })
+    } finally { await app.close() }
+  }
 })

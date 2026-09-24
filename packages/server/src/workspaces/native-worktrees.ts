@@ -4,8 +4,9 @@ import path from "node:path"
 import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { WorktreeDescriptor, WorktreeListResponse } from "../api-types"
 import { locationRequestOptions } from "../opencode/compatibility/location"
-import { readCheckout, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
+import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
+import { GitRequiredError } from "./git-requirement"
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -24,7 +25,14 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
 
 export async function listNativeWorktrees(context: NativeWorktreeContext): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
-  const { isGitRepo } = await resolveRepoRoot(workspacePath)
+  let isGitRepo: boolean
+  try {
+    ;({ isGitRepo } = await resolveRepoRoot(workspacePath))
+  } catch (error) {
+    if (!(error instanceof GitRequiredError)) throw error
+    // No repository claim or discovered sibling checkouts without Git.
+    return { gitAvailable: false, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root", directoryOnly: true }] }
+  }
   if (!isGitRepo) return { isGitRepo, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root" }] }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
@@ -37,13 +45,22 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
   const options = locationRequestOptions(location, { includeDirectory: true })
   await client.worktree.refresh({ projectID: current.project.id }, options)
   const native = await client.worktree.list({ projectID: current.project.id }, options)
+  const verifyCheckoutRoot = await createCheckoutRootVerifier(workspacePath)
+  const annotations = new Map<string, Awaited<ReturnType<typeof readWorktreeAnnotations>>[number]>()
+  for (const annotation of await readWorktreeAnnotations(workspacePath)) {
+    const registered = await realpath(annotation.root).catch(error => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (registered) annotations.set(registered, annotation)
+  }
   const paths = servicePaths(location.directory)
   const relative = paths.relative(current.project.directory, current.directory)
   if (paths.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${paths.sep}`)) throw new Error("Workspace is outside its checkout")
   const worktrees: WorktreeDescriptor[] = []
   const seen = new Set<string>()
-  // Large local repositories can contain hundreds of checkouts. Bound process
-  // concurrency, but do not serialize three Git processes per inventory entry.
+  // Validate native entries with bounded filesystem I/O. Branch/HEAD annotations
+  // come from one Git snapshot rather than three processes per checkout.
   const pending = native.values()
   const inspect = async (entry: (typeof native)[number]) => {
     const host = await toHost(entry.directory)
@@ -56,24 +73,27 @@ export async function listNativeWorktrees(context: NativeWorktreeContext): Promi
     }
     // Independent clones can share a native project ID. Git's physical common
     // directory decides local membership; branch names and remote URLs do not.
-    const checkout = await readCheckout(host)
-    if (!await sameDirectory(local.common, checkout.common)) return
     const registeredDirectory = await realpath(host)
-    if (!await sameDirectory(checkout.root, registeredDirectory)) throw new Error("Native worktree entry is not a checkout root")
+    const annotation = annotations.get(registeredDirectory)
+    if (!annotation) return
+    const checkout = await readCheckoutIdentity(host)
+    if (!await sameDirectory(local.common, checkout.common)) return
+    if (!await sameDirectory(checkout.root ?? mainHost, registeredDirectory)) throw new Error("Native worktree entry is not a checkout root")
+    await verifyCheckoutRoot(host)
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
     const root = await sameDirectory(local.root, registeredDirectory)
     worktrees.push({
       slug: root ? "root" : identifier(registeredDirectory),
-      label: checkout.branch ?? `${path.basename(registeredDirectory)} @ ${checkout.head?.slice(0, 7) ?? "HEAD"}`,
+      label: annotation.branch ?? `${path.basename(registeredDirectory)} @ ${annotation.head?.slice(0, 7) ?? "HEAD"}`,
       directory: root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean)),
       serviceDirectory: root ? current.directory : paths.join(entry.directory, relative),
       registeredDirectory,
       serviceRoot: entry.directory,
       kind: root ? "root" : "worktree",
       removable: !root && !await sameDirectory(checkout.gitDirectory, checkout.common),
-      branch: checkout.branch,
-      head: checkout.head,
+      branch: annotation.branch,
+      head: annotation.head,
     })
   }
   await Promise.all(Array.from({ length: Math.min(8, native.length) }, async () => {

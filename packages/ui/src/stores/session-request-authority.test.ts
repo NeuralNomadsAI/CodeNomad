@@ -1303,6 +1303,17 @@ describe("session request authority", () => {
     const instanceId = "bounded-complete-newer-path", sessionId = "session"
     const { client, cleanup } = setup(instanceId)
     const latestPage = 40
+    const originalHistoryWindow = serverApi.fetchHistoryWindow
+    const directRequests: string[] = []
+    serverApi.fetchHistoryWindow = async (_instance, _session, target) => {
+      assert.equal(target.kind, "after")
+      if (!("messageID" in target)) throw new Error("Missing anchor")
+      directRequests.push(target.messageID)
+      const page = Number(target.messageID.slice(5)) + 1
+      return { status: "window", messages: [{ ...apiMessage(`page-${page}`), type: "assistant" }],
+        older: { kind: "before", messageID: `page-${page}` }, newer: page < latestPage ? { kind: "after", messageID: `page-${page}` } : null,
+        resume: target, latest: page === latestPage }
+    }
     ;(client as any).message = { list: async (input: any) => {
       if (!input.cursor) return { data: [apiMessage(`page-${latestPage}`)], cursor: { next: `c${latestPage - 1}` } }
       const page = Number(input.cursor.slice(1))
@@ -1320,7 +1331,9 @@ describe("session request authority", () => {
         assert.ok(visited.length <= latestPage)
       }
       assert.deepEqual(visited, Array.from({ length: latestPage }, (_, index) => `page-${index + 1}`))
+      assert(directRequests.length > 0, "discarded native cursor paths use direct anchors instead of replaying history")
     } finally {
+      serverApi.fetchHistoryWindow = originalHistoryWindow
       cleanup()
     }
   })

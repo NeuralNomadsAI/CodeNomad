@@ -1,4 +1,4 @@
-import { createEffect, createMemo } from "solid-js"
+import { createEffect, createMemo, onCleanup } from "solid-js"
 
 /**
  * Dependencies for {@link useActiveSessionMessageLoad}. Everything is injected
@@ -14,7 +14,10 @@ export interface ActiveSessionMessageLoadDeps {
   /** The current session object (or undefined). Read reactively. */
   session: () => { id: string } | undefined
   /** Loads the messages for a session. */
-  loadMessages: (instanceId: string, sessionId: string) => Promise<void> | void
+  loadMessages: (instanceId: string, sessionId: string, options?: {
+    signal?: AbortSignal
+    registerInvalidation?: (invalidate: () => void) => void
+  }) => Promise<void> | void
   /** Resolves once the instance's workspace metadata has hydrated. */
   waitForHydration: (instanceId: string) => Promise<void>
   /** Optional error sink for a rejected load. */
@@ -43,13 +46,25 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
     const sessionId = activeSessionId()
     if (!sessionId) return
     const instanceId = deps.instanceId()
+    const controller = new AbortController()
+    let invalidate: (() => void) | undefined
+    let settled = false
+    onCleanup(() => {
+      // Release the old request's loading authority synchronously so a rapid
+      // return can start immediately, before the aborted promise settles.
+      if (!settled) invalidate?.()
+      controller.abort()
+    })
     void Promise.resolve(deps.waitForHydration(instanceId))
       .then(() => {
         // Re-check after the async gate: the user may have switched away or to
         // a different session while metadata was hydrating.
-        if (!deps.isActive() || deps.session()?.id !== sessionId) return
-        return deps.loadMessages(instanceId, sessionId)
+        if (controller.signal.aborted || !deps.isActive() || deps.session()?.id !== sessionId) return
+        return deps.loadMessages(instanceId, sessionId, {
+          signal: controller.signal, registerInvalidation: callback => { invalidate = callback },
+        })
       })
-      .catch((error) => deps.onError?.(error))
+      .catch((error) => { if (!controller.signal.aborted) deps.onError?.(error) })
+      .finally(() => { settled = true })
   })
 }
