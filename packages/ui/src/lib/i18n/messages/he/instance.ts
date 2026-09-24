@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "כשלון בשמירת הקובץ",
   "instanceShell.rightPanel.sections.yoloMode": "מצב Yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "מאשר אוטומטית בקשות הרשאה עבור הסשן הנוכחי. השתמשו בזה רק אם אתם סומכים על הכלים שרצים.",
-  "instanceShell.rightPanel.sections.plan": "תוכנית",
-  "instanceShell.rightPanel.sections.plan.tooltip": "מפת הדרכים של הסוכן לסשן זה. עוקב אחר משימות, תת-משימות וסטטוס השלמתן.",
+  "instanceShell.rightPanel.sections.tokens": "טוקנים",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "שימוש בטוקנים ועלות של הסשן הזה ותתי-הסשנים שלו.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "מעטפות רקע",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "מעטפות רקע מקוריות של OpenCode עבור סביבת העבודה או עץ העבודה הפעיל.",
   "instanceShell.backgroundProcesses.loading": "טוען מעטפות רקע...",
@@ -244,8 +244,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "שגיאת המחיקה המסוננת הועתקה",
   "instanceShell.worktree.delete.error.copyFailure": "העתקת שגיאת המחיקה נכשלה",
 
-  "instanceShell.plan.noSessionSelected": "בחר סשן לצפייה בתוכנית.",
-  "instanceShell.plan.empty": "עדיין לא תוכנן דבר.",
 
   "instanceShell.yoloMode.noSessionSelected": "בחרו סשן כדי להגדיר מצב Yolo.",
   "instanceShell.yoloMode.title": "מצב Yolo",

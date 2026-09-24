@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Не удалось сохранить файл",
   "instanceShell.rightPanel.sections.yoloMode": "Режим Yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Автоматически одобряет запросы разрешений для текущей сессии. Включайте только если доверяете запускаемым инструментам.",
-  "instanceShell.rightPanel.sections.plan": "План",
-  "instanceShell.rightPanel.sections.plan.tooltip": "Дорожная карта агента для этой сессии. Отслеживает задачи и их статус выполнения.",
+  "instanceShell.rightPanel.sections.tokens": "Токены",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "Использование токенов и стоимость этой сессии и её подсессий.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Фоновые оболочки",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Нативные фоновые оболочки OpenCode для активного рабочего пространства или worktree.",
   "instanceShell.backgroundProcesses.loading": "Загрузка фоновых оболочек...",
@@ -220,8 +220,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.force": "Удалить принудительно (отбросить локальные изменения)",
   "instanceShell.worktree.delete.success": "Worktree {slug} удалён",
 
-  "instanceShell.plan.noSessionSelected": "Выберите сессию, чтобы просмотреть план.",
-  "instanceShell.plan.empty": "Пока ничего не запланировано.",
 
   "instanceShell.yoloMode.noSessionSelected": "Выберите сессию, чтобы настроить режим Yolo.",
   "instanceShell.yoloMode.title": "Режим Yolo",

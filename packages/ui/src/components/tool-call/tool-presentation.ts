@@ -175,7 +175,10 @@ export function buildToolExpansionPresetDefaults(preset: ToolCallExpansionPreset
 }
 
 export function resolveToolVisibility(preferences: Preferences, toolName: string): VisibilityPreference {
-  const entry = getToolRegistryEntry(toolName)
+  const registered = getToolRegistryEntry(toolName)
+  // Retired tools retain their historical renderers, but follow the visible
+  // "Other tools" control rather than inaccessible saved per-tool overrides.
+  const entry = registered.configurable ? registered : otherToolEntry
   const defaults = preferences.toolCallExpansionDefaults
   const presetMode = defaults.preset === "custom" ? undefined : entry.expansionPresets[defaults.preset]
   const otherPresetMode = defaults.preset === "custom" ? undefined : otherToolEntry.expansionPresets[defaults.preset]

@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "גלול למעלה",
   "infoView.logs.scrollToBottom": "גלול למטה",
 
-  "infoView.dispose.actions.dispose": "בטל מופע",
-  "infoView.dispose.actions.disposing": "מבטל...",
-  "infoView.dispose.confirm.title": "לבטל את המופע?",
-  "infoView.dispose.confirm.message": "פעולה זו מנקה את המצב השמור לפי פרויקט עבור ספרייה זו ומטעינה מחדש את המופע.",
-  "infoView.dispose.confirm.confirmLabel": "בטל",
-  "infoView.dispose.confirm.cancelLabel": "ביטול",
-  "infoView.dispose.toast.success": "המופע בוטל. מטעין מחדש...",
-  "infoView.dispose.toast.error": "ביטול המופע נכשל.",
 } as const
