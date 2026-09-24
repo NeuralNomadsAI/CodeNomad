@@ -498,6 +498,7 @@ async function applySessionModel(
 
   withSession(instanceId, sessionId, (current) => {
     current.model = model
+    current.modelSelectionPending = true
   })
 
   const nativeModel = getNativeModel(instanceId, model)
@@ -505,9 +506,17 @@ async function applySessionModel(
     // Native model selection is supported during execution too. Keeping this
     // local until the next prompt lets a session refresh restore the old model.
     await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    withSession(instanceId, sessionId, (current) => {
+      // Confirmation is a new selection revision even if its values match the
+      // optimistic choice. Catalog reads started during the write captured that
+      // earlier object and must not publish their pre-write native model later.
+      current.model = { ...model }
+      delete current.modelSelectionPending
+    })
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
-      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false
+      delete current.modelSelectionPending
+      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return
       current.model = session.model
     })
     throw error

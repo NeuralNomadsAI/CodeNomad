@@ -39,7 +39,7 @@ export function mergeFetchedSessionRuntimeState(
   if (captured && !latest) return null
   if (!latest) return fetched
   if (latest === captured) {
-    return latest.generationAdmissionToken === undefined ? fetched : { ...fetched, ...latest }
+    return latest.generationAdmissionToken === undefined ? preservePendingModel(fetched, latest) : { ...fetched, ...latest }
   }
   const merged = { ...fetched }
   const keys = new Set<keyof Session>([
@@ -59,5 +59,11 @@ export function mergeFetchedSessionRuntimeState(
       (merged as any)[key] = fetched[key]
     }
   }
-  return merged
+  return preservePendingModel(merged, latest)
+}
+
+function preservePendingModel(fetched: Session, latest: Session): Session {
+  return latest.modelSelectionPending
+    ? { ...fetched, model: latest.model, modelSelectionPending: true }
+    : fetched
 }

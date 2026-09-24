@@ -764,6 +764,7 @@ describe("native session selection persistence", () => {
       await assert.rejects(updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" }), error)
       assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, status)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.modelSelectionPending, undefined)
     })
   }
 

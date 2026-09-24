@@ -5,6 +5,8 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import { sendMessage, updateSessionModel } from "./session-actions.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
+import { fetchSessions } from "./session-api.ts"
+import { serializeSessionAction } from "./session-action-queue.ts"
 import { reconcileSessionModel } from "./session-model-reconciliation.ts"
 import { sessions, setSessions, setProviders, withSession } from "./session-state.ts"
 import type { Session } from "../types/session.ts"
@@ -36,8 +38,11 @@ function seed() {
   const event = (model: string) => ({ id: `event-${++sequence}`, type: "session.model.selected", created: sequence,
     durable: { aggregateID: sessionId, seq: sequence, version: 1 },
     data: { sessionID: sessionId, model: { providerID: "provider", id: model } } })
-  const info = () => ({ model: { providerID: "provider", id: nativeModel } })
+  const info = () => ({ id: sessionId, title: sessionId, agent: "build", parentID: null,
+    model: { providerID: "provider", id: nativeModel }, location: { directory: "/work" }, time: { created: 1, updated: 1 } })
   const client = { session: {
+    list: async (): Promise<any> => ({ data: [info()], cursor: {} }),
+    active: async () => ({ [sessionId]: {} }),
     get: async (_input?: unknown, _options?: unknown): Promise<any> => info(),
     instructions: { entry: { put: async () => {}, remove: async () => {} } },
     switchAgent: async () => {},
@@ -63,6 +68,56 @@ function seed() {
 }
 const displayed = () => sessions().get(instanceId)?.get(sessionId)?.model.modelId
 const select = (modelId: string) => updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId })
+
+for (const listFirst of [true, false]) {
+  it(`protects selection from a catalog captured during its write (list settles first: ${listFirst})`, async () => {
+    const fixture = seed()
+    const mutation = deferred<void>(), writeStarted = deferred<void>()
+    const list = deferred<void>(), listStarted = deferred<void>()
+    const get = deferred<void>(), getStarted = deferred<void>()
+    const switchModel = fixture.client.session.switchModel
+    fixture.client.session.switchModel = async input => {
+      writeStarted.resolve()
+      await mutation.promise
+      await switchModel(input)
+      if (fixture.events.length) fixture.deliver()
+    }
+    fixture.client.session.list = async () => {
+      const snapshot = fixture.info()
+      listStarted.resolve()
+      await list.promise
+      return { data: [snapshot], cursor: {} }
+    }
+    fixture.client.session.get = async () => {
+      const snapshot = fixture.info()
+      getStarted.resolve()
+      await get.promise
+      return snapshot
+    }
+    const selection = select("new")
+    await writeStarted.promise
+    const refreshing = fetchSessions(instanceId)
+    await listStarted.promise
+    if (listFirst) {
+      list.resolve()
+      await refreshing
+      assert.equal(displayed(), "new", "Keep the optimistic choice while its write is pending")
+    }
+    mutation.resolve()
+    await selection
+    await getStarted.promise
+    list.resolve()
+    await refreshing
+    assert.equal(displayed(), "new", "Stale catalog cannot overwrite the confirmed choice")
+    get.resolve()
+    await serializeSessionAction(instanceId, sessionId, async () => {})
+    await sendMessage(instanceId, sessionId, "next")
+    assert.equal(displayed(), "new")
+    assert.equal(fixture.native(), "new")
+    assert.equal(fixture.calls.at(-1), "prompt:new")
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.modelSelectionPending, undefined)
+  })
+}
 
 it("does not let delayed FIFO echoes overwrite a successful choice or the next prompt", async () => {
   const fixture = seed()
