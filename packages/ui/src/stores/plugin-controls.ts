@@ -28,6 +28,7 @@ interface CacheRecord {
   stale: boolean
   error?: unknown
   inFlight?: Promise<void>
+  inFlightController?: AbortController
   trailing: boolean
   mutationTail: Promise<void>
 }
@@ -106,12 +107,12 @@ export class PluginControlsCache {
 
   private invalidate(instanceId: string, location?: PluginControlLocation): void {
     if (!location) {
-      for (const record of new Set(this.records.values())) {
-        if (record.instanceId !== instanceId) continue
+      const records = [...new Set(this.records.values())].filter((record) => record.instanceId === instanceId)
+      for (const record of records) {
         record.generation += 1
         record.stale = true
-        this.publish(record)
       }
+      this.publishAll(records)
       return
     }
     const key = cacheKey(instanceId, location)
@@ -133,12 +134,13 @@ export class PluginControlsCache {
   }
 
   private invalidateSiblingLocations(current: CacheRecord): void {
-    for (const record of new Set(this.records.values())) {
-      if (record === current || record.instanceId !== current.instanceId) continue
+    const siblings = [...new Set(this.records.values())]
+      .filter((record) => record !== current && record.instanceId === current.instanceId)
+    for (const record of siblings) {
       record.generation += 1
       record.stale = true
-      this.publish(record)
     }
+    this.publishAll(siblings)
   }
 
   clearInstance(instanceId: string): void {
@@ -146,6 +148,8 @@ export class PluginControlsCache {
     for (const record of new Set(this.records.values())) {
       if (record.instanceId !== instanceId) continue
       record.generation += 1
+      record.inFlightController?.abort()
+      record.inFlightController = undefined
       for (const key of record.keys) {
         if (this.records.get(key) === record) this.records.delete(key)
       }
@@ -198,7 +202,9 @@ export class PluginControlsCache {
     record.refreshing = Boolean(record.snapshot)
     record.error = undefined
     this.publish(record)
-    const promise = this.api.getPluginControls(record.instanceId, record.location)
+    const controller = new AbortController()
+    record.inFlightController = controller
+    const promise = this.api.getPluginControls(record.instanceId, record.location, controller.signal)
       .then((snapshot) => {
         if (!this.isActive(record) || generation !== record.generation) return
         if (!this.adoptCanonicalLocation(record, snapshot.location)) return
@@ -207,11 +213,14 @@ export class PluginControlsCache {
       })
       .catch((error) => {
         if (!this.isActive(record) || generation !== record.generation) return
+        // An aborted orphan fetch must not surface as a passive read error.
+        if (controller.signal.aborted) return
         record.error = error
       })
       .finally(() => {
         if (!this.isActive(record) || record.inFlight !== promise) return
         record.inFlight = undefined
+        if (record.inFlightController === controller) record.inFlightController = undefined
         record.loading = false
         record.refreshing = false
         const trailing = record.trailing
@@ -227,18 +236,28 @@ export class PluginControlsCache {
   }
 
   private publish(record: CacheRecord): void {
-    if (!this.isActive(record)) return
-    const state: PluginControlsState = {
-      snapshot: record.snapshot,
-      loading: record.loading,
-      refreshing: record.refreshing,
-      stale: record.stale,
-      error: record.error,
+    this.publishAll([record])
+  }
+
+  private publishAll(records: readonly CacheRecord[]): void {
+    const active = records.filter((record) => this.isActive(record))
+    if (active.length === 0) return
+    const states = new Map<CacheRecord, PluginControlsState>()
+    for (const record of active) {
+      states.set(record, {
+        snapshot: record.snapshot,
+        loading: record.loading,
+        refreshing: record.refreshing,
+        stale: record.stale,
+        error: record.error,
+      })
     }
     this.setStates((previous) => {
       const next = new Map(previous)
-      for (const key of record.keys) {
-        if (this.records.get(key) === record) next.set(key, state)
+      for (const [record, state] of states) {
+        for (const key of record.keys) {
+          if (this.records.get(key) === record) next.set(key, state)
+        }
       }
       return next
     })

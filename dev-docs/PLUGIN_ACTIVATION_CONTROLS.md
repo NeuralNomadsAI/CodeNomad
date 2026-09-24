@@ -105,7 +105,24 @@ WSL performs bounded inspect/read/create/chmod/sync/rename operations inside the
 selected distro. Existing native modes such as `0600` are retained rather than
 being inferred from the Windows UNC projection. Shell helpers prefer portable
 fallbacks (`realpath`, `sync`, `sha256sum`/`shasum`) and Ubuntu remains the
-tested distro for minimal busybox images.
+tested distro for minimal busybox images. A WSL toggle costs four `wsl.exe`
+spawns on the happy path (`inspectMany`, `load`, `prepare`, `commit`; cleanup
+runs only when the commit fails), each paying full process cold-start since
+there is no pooling — expect roughly 2–8 s of filesystem time before daemon
+RPCs on slow hosts.
+
+The server keeps no display cache by design: every read and mutation reissues
+`config.get` + `plugin.list` (plus one `location.get` for session-scoped
+locations) and re-resolves targets, so snapshots can never serve stale daemon
+state. Expensive work is bounded instead: one snapshot base per mutation with
+positional overlays (no triple rebuild), per-write-target mutation queues, and
+UI-side coalesced trailing refreshes.
+
+UI cache records live until `workspace.stopped` clears the instance
+(`clearInstance` also aborts in-flight reads). Records are keyed by worktree
+directory plus one canonical alias at most, so retention is bounded in practice
+by the worktree count; only unknown-directory invalidations use a bounded
+(200-entry) pending set.
 
 Daemon-normalized `ConfigEntry` values remain authoritative for inventory and
 activation semantics, including environment substitutions. The raw JSONC is

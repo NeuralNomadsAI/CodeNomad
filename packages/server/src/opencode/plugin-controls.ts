@@ -85,7 +85,7 @@ export class PluginControlsError extends Error {
 }
 
 export class PluginControls {
-  private mutationTail: Promise<void> = Promise.resolve()
+  private readonly mutationTails = new Map<string, Promise<void>>()
 
   constructor(private readonly options: {
     workspaceManager: PluginControlsWorkspaceManager
@@ -99,7 +99,17 @@ export class PluginControls {
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
-    return this.serializeMutation(async () => {
+    // Ordering is only required per write target. The global document is
+    // daemon-wide for one workspace, so all of its global writes share one
+    // queue regardless of which worktree directory requested them; project
+    // writes queue per normalized directory. A fully file-identity-based key
+    // would need async resolution, so a residual cross-workspace global race
+    // stays possible and remains fail-closed with a retryable conflict.
+    const normalizedDirectory = request.location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
+    const tailKey = request.scope === "global"
+      ? `${workspaceId}\nglobal`
+      : `${workspaceId}\nproject\n${normalizedDirectory}`
+    return this.serializeMutation(tailKey, async () => {
       const context = await this.readContext(workspaceId, request.location)
       const target = context.targets.find((candidate) => candidate.scope === request.scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
@@ -118,14 +128,18 @@ export class PluginControls {
         // The daemon's ConfigEntry values have already applied environment and
         // config substitutions. Keep those values authoritative for inventory
         // and state; the raw document is used only for conflict-safe editing.
-        const authoritative = buildSnapshot(context)
+        // The base is built once: authorization, projection, and both
+        // snapshots derive from the same documents and runtime inventory.
+        const base = snapshotBase(context)
+        const authoritative = controlsForDocuments(base, context)
         const projection = mutationTargetPlugins(
-          context,
+          base.documents,
+          context.paths,
           target.path,
           document.plugins,
           authoritative.controls.map((candidate) => candidate.id),
         )
-        const before = buildSnapshot(context, {
+        const before = controlsForDocuments(base, context, {
           servicePath: target.path,
           plugins: projection.plugins,
           scope: request.scope,
@@ -155,7 +169,7 @@ export class PluginControls {
           throw mapDocumentError(error)
         }
         target.exists = true
-        const snapshot = buildSnapshot(context, {
+        const snapshot = controlsForDocuments(base, context, {
           servicePath: target.path,
           plugins: [...projection.plugins, rule],
           scope: request.scope,
@@ -264,26 +278,59 @@ export class PluginControls {
       : [globalTarget, projectTarget]
   }
 
-  private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationTail.then(operation, operation)
-    this.mutationTail = result.then(() => undefined, () => undefined)
+  private serializeMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const tail = this.mutationTails.get(key) ?? Promise.resolve()
+    const result = tail.then(operation, operation)
+    const tracked = result.then(() => undefined, () => undefined)
+    this.mutationTails.set(key, tracked)
+    const forget = () => { if (this.mutationTails.get(key) === tracked) this.mutationTails.delete(key) }
+    result.then(forget, forget)
     return result
   }
+}
+
+interface SnapshotBase {
+  runtime: PluginRuntimeInventoryEntry[]
+  runtimeIds: Set<string>
+  runtimeSourceIds: Map<string, string>
+  runtimeById: Map<string, PluginRuntimeInventoryEntry>
+  documents: ConfigDocumentView[]
+  sourceOrders: number[]
+}
+
+const controlIdCollator = new Intl.Collator("en", { sensitivity: "variant" })
+
+function snapshotBase(context: ReadContext): SnapshotBase {
+  const runtime = context.runtime.map(normalizeRuntimeEntry)
+  const runtimeIds = new Set<string>()
+  const runtimeSourceIds = new Map<string, string>()
+  const runtimeById = new Map<string, PluginRuntimeInventoryEntry>()
+  for (const entry of runtime) {
+    if (!entry.id) continue
+    // Duplicate IDs are invalid daemon output; keep first-wins attachment so a
+    // repeated entry cannot displace the inventory record already published.
+    if (!runtimeById.has(entry.id)) runtimeById.set(entry.id, entry)
+    runtimeIds.add(entry.id)
+    if (entry.source.type === "package") runtimeSourceIds.set(entry.source.target, entry.id)
+    else if (entry.source.type === "local") runtimeSourceIds.set(entry.source.path, entry.id)
+  }
+  return { runtime, runtimeIds, runtimeSourceIds, runtimeById, ...configDocuments(context) }
 }
 
 function buildSnapshot(
   context: ReadContext,
   overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
 ): PluginControlsSnapshot {
-  const runtime = context.runtime.map(normalizeRuntimeEntry)
-  const runtimeIds = new Set(runtime.flatMap((entry) => entry.id ? [entry.id] : []))
-  const runtimeSourceIds = new Map(runtime.flatMap((entry): Array<[string, string]> => {
-    if (!entry.id) return []
-    if (entry.source.type === "package") return [[entry.source.target, entry.id]]
-    if (entry.source.type === "local") return [[entry.source.path, entry.id]]
-    return []
-  }))
-  const documents = configDocuments(context, overlay)
+  return controlsForDocuments(snapshotBase(context), context, overlay)
+}
+
+function controlsForDocuments(
+  base: SnapshotBase,
+  context: ReadContext,
+  overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
+): PluginControlsSnapshot {
+  const { runtime, runtimeIds, runtimeSourceIds, runtimeById } = base
+  const documents = overlay ? applyOverlay(base, context, overlay) : base.documents
   const knownDefinitions = new Set(runtimeIds)
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
@@ -292,7 +339,7 @@ function buildSnapshot(
     document.plugins.forEach((entry, entryIndex) => {
       if (typeof entry !== "string") {
         sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined })
-        const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtime, runtimeSourceIds)
+        const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtimeById, runtimeSourceIds)
         const isFirstRuntimeSourceDeclaration = Boolean(runtimeId && !declaredTargets.has(entry.package))
         const selectsPlugin = entry.package.startsWith("opencode.")
           || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(entry.package))
@@ -315,7 +362,7 @@ function buildSnapshot(
         return
       }
 
-      const runtimeSourceId = runtimeIdForConfiguredTarget(context, document, selector, runtime, runtimeSourceIds)
+      const runtimeSourceId = runtimeIdForConfiguredTarget(context, document, selector, runtimeById, runtimeSourceIds)
       const isFirstRuntimeSourceDeclaration = Boolean(runtimeSourceId && !declaredTargets.has(selector))
       const selectsPlugin = selector === "*" || selector.endsWith(".*") || selector.startsWith("opencode.")
         || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(selector))
@@ -334,11 +381,14 @@ function buildSnapshot(
     })
   }
 
-  const ids = new Set([...runtimeIds, ...rules.flatMap((rule) => isExactSelector(rule.selector) ? [rule.selector] : [])])
-  const controls = [...ids].filter(validPluginId).sort((left, right) => left.localeCompare(right)).map((id) => {
+  const ids = new Set<string>(runtimeIds)
+  for (const rule of rules) {
+    if (isExactSelector(rule.selector)) ids.add(rule.selector)
+  }
+  const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
-    const runtimeEntry = runtime.find((entry) => entry.id === id)
+    const runtimeEntry = runtimeById.get(id)
     return {
       id,
       ...(runtimeEntry ? { runtime: runtimeEntry } : {}),
@@ -359,13 +409,14 @@ function buildSnapshot(
 }
 
 function mutationTargetPlugins(
-  context: ReadContext,
+  documents: readonly ConfigDocumentView[],
+  paths: path.PlatformPath,
   servicePath: string,
   rawPlugins: readonly PluginConfigEntry[],
   authorizedIds: readonly string[],
 ): { plugins: readonly PluginConfigEntry[]; noOpSafe: boolean } {
-  const normalized = configDocuments(context)
-    .filter((document) => Boolean(document.path && samePath(context.paths, document.path, servicePath)))
+  const normalized = documents
+    .filter((document) => Boolean(document.path && samePath(paths, document.path, servicePath)))
     .at(-1)?.plugins ?? []
   const noOpSafe = !rawPlugins.some(containsConfigVariable)
   let normalizedIndex = 0
@@ -376,7 +427,7 @@ function mutationTargetPlugins(
       continue
     }
     if (normalizedIndex < normalized.length) {
-      if (isDeepStrictEqual(entry, normalized[normalizedIndex])) normalizedIndex += 1
+      if (pluginEntriesEqual(entry, normalized[normalizedIndex])) normalizedIndex += 1
       continue
     }
     if (typeof entry !== "string") continue
@@ -385,6 +436,20 @@ function mutationTargetPlugins(
     pendingRules.push(entry)
   }
   return { plugins: [...normalized, ...pendingRules], noOpSafe }
+}
+
+function pluginEntriesEqual(left: PluginConfigEntry, right: PluginConfigEntry | undefined): boolean {
+  if (typeof left !== typeof right) return false
+  if (typeof left === "string" || typeof right === "string") return left === right
+  if (left.package !== (right as { package: string }).package) return false
+  const leftOptions = (left as { options?: Record<string, unknown> }).options
+  const rightOptions = (right as { options?: Record<string, unknown> }).options
+  if (leftOptions === rightOptions) return true
+  if (!leftOptions || !rightOptions) return false
+  // Options objects are user-controlled and unbounded; only pay for a deep
+  // walk when the cheap package and key-count checks already match.
+  if (Object.keys(leftOptions).length !== Object.keys(rightOptions).length) return false
+  return isDeepStrictEqual(leftOptions, rightOptions)
 }
 
 function containsConfigVariable(value: unknown): boolean {
@@ -396,7 +461,7 @@ function containsConfigVariable(value: unknown): boolean {
 function configDocuments(
   context: ReadContext,
   overlay?: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
-): ConfigDocumentView[] {
+): { documents: ConfigDocumentView[]; sourceOrders: number[] } {
   const documents: Array<Omit<ConfigDocumentView, "order"> & { sourceOrder: number }> = []
   let overlaid = false
   let targetDirectoryOrder: number | undefined
@@ -426,9 +491,45 @@ function configDocuments(
       sourceOrder: targetDirectoryOrder === undefined ? lastPhysicalOrder + 0.5 : targetDirectoryOrder - 0.5,
     })
   }
-  return documents
+  const sorted = documents
     .sort((left, right) => left.sourceOrder - right.sourceOrder)
-    .map(({ sourceOrder: _sourceOrder, ...document }, order) => ({ ...document, order }))
+  return {
+    documents: sorted.map(({ sourceOrder: _sourceOrder, ...document }, order) => ({ ...document, order })),
+    sourceOrders: sorted.map((document) => document.sourceOrder),
+  }
+}
+
+function applyOverlay(
+  base: SnapshotBase,
+  context: ReadContext,
+  overlay: { servicePath: string; plugins: readonly PluginConfigEntry[]; scope: PluginControlScope },
+): ConfigDocumentView[] {
+  const matched = base.documents.some((document) => Boolean(document.path && samePath(context.paths, document.path, overlay.servicePath)))
+  if (matched) {
+    return base.documents.map((document) => (
+      document.path && samePath(context.paths, document.path, overlay.servicePath)
+        ? { ...document, scope: overlay.scope, plugins: overlay.plugins }
+        : document
+    ))
+  }
+  // The overlay target has no daemon document yet (missing file or virtual
+  // precedence): insert it where configDocuments would have placed it so
+  // derived snapshots keep daemon precedence without re-walking entries.
+  let targetDirectoryOrder: number | undefined
+  let lastPhysicalOrder = -1
+  context.entries.forEach((entry, sourceOrder) => {
+    if (entry?.type === "directory" && samePath(context.paths, entry.path, context.paths.dirname(overlay.servicePath))) {
+      targetDirectoryOrder = sourceOrder
+    }
+    if (typeof entry?.path === "string") lastPhysicalOrder = sourceOrder
+  })
+  const overlaySourceOrder = targetDirectoryOrder === undefined ? lastPhysicalOrder + 0.5 : targetDirectoryOrder - 0.5
+  const insertAt = base.sourceOrders.filter((order) => order < overlaySourceOrder).length
+  return [
+    ...base.documents.slice(0, insertAt),
+    { path: overlay.servicePath, scope: overlay.scope, plugins: overlay.plugins, order: insertAt },
+    ...base.documents.slice(insertAt).map((document) => ({ ...document, order: document.order + 1 })),
+  ]
 }
 
 function classifyScope(context: ReadContext, servicePath?: string): PluginConfigScope {
@@ -534,7 +635,7 @@ function runtimeIdForConfiguredTarget(
   context: ReadContext,
   document: ConfigDocumentView,
   target: string,
-  runtime: readonly PluginRuntimeInventoryEntry[],
+  runtimeById: ReadonlyMap<string, PluginRuntimeInventoryEntry>,
   direct: ReadonlyMap<string, string>,
 ): string | undefined {
   const exact = direct.get(target)
@@ -552,9 +653,12 @@ function runtimeIdForConfiguredTarget(
     return undefined
   }
   if (!localTarget) return undefined
-  return runtime.find((entry) => entry.id && entry.source.type === "local"
-    && (samePath(context.paths, localTarget, entry.source.path)
-      || containsPath(context.paths, localTarget, entry.source.path)))?.id
+  for (const entry of runtimeById.values()) {
+    if (!entry.id || entry.source.type !== "local") continue
+    if (samePath(context.paths, localTarget, entry.source.path)
+      || containsPath(context.paths, localTarget, entry.source.path)) return entry.id
+  }
+  return undefined
 }
 
 function normalizeLocation(input: PluginControlLocation): LocationRef & PluginControlLocation {

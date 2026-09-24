@@ -150,6 +150,60 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.equal(linter.snapshot.controls.find((entry) => entry.id === "acme.linter")?.project, "disabled")
   })
 
+  it("serializes same-target mutations while letting other scopes proceed", async () => {
+    const fixture = createFixture({
+      globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }],
+      projectPlugins: [],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")],
+    })
+    const manager = (fixture.controls as any).options.workspaceManager
+    const innerIdentity = manager.getWorktreeIdentityForPath.bind(manager)
+    const gate = deferred<void>()
+    let identityCalls = 0
+    let projectSettled = false
+    manager.getWorktreeIdentityForPath = async (...args: [string, string]) => {
+      identityCalls += 1
+      // The first mutation (global scope) is held here; a per-target queue
+      // lets the project-scope mutation overtake it instead of blocking.
+      if (identityCalls === 1) await gate.promise
+      return innerIdentity(...args)
+    }
+
+    const global = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: false })
+    const project = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "project", enabled: false })
+    void project.then(() => { projectSettled = true })
+    const deadline = Date.now() + 5_000
+    while (!projectSettled && Date.now() < deadline) await tick()
+    assert.equal(projectSettled, true)
+    gate.resolve()
+    const [globalResponse, projectResponse] = await Promise.all([global, project])
+
+    assert.equal(globalResponse.changed, true)
+    assert.equal(projectResponse.changed, true)
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [
+      { package: "@acme/reviewer", options: { strict: true } },
+      "-acme.reviewer",
+    ])
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer"])
+  })
+
+  it("serializes global writes from different worktree directories to the same file", async () => {
+    const fixture = createFixture({
+      globalPlugins: [],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer"), activePlugin("acme.linter", "@acme/linter")],
+    })
+    const otherLocation = { directory: path.join(path.dirname(fixture.projectDirectory), "other-worktree") }
+
+    const [reviewer, linter] = await Promise.all([
+      fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: false }),
+      fixture.controls.mutate("workspace", { location: otherLocation, pluginId: "acme.linter", scope: "global", enabled: false }),
+    ])
+
+    assert.equal(reviewer.changed, true)
+    assert.equal(linter.changed, true)
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-acme.reviewer", "-acme.linter"])
+  })
+
   it("appends a later exact rule to re-enable without deleting the disabling rule", async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }],
@@ -606,4 +660,14 @@ function temporaryDirectory(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-plugin-controls-"))
   temporaryDirectories.add(directory)
   return directory
+}
+
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((accept) => { resolve = accept })
+  return { promise, resolve }
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
 }

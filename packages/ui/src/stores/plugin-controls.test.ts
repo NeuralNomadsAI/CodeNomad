@@ -338,6 +338,25 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", location).snapshot, undefined)
   })
 
+  it("aborts in-flight reads when an instance is cleared", async () => {
+    const signals: Array<AbortSignal | undefined> = []
+    const cache = new PluginControlsCache({
+      getPluginControls: async (_instanceId, _location, signal) => {
+        signals.push(signal)
+        await new Promise(() => {})
+        return snapshot("never")
+      },
+      setPluginActivation: async () => { throw new Error("not used") },
+    })
+    const location = { directory: "/repo" }
+    cache.load("instance", location).catch(() => undefined)
+    await tick()
+    assert.equal(signals.length, 1)
+    assert.equal(signals[0]?.aborted, false)
+    cache.clearInstance("instance")
+    assert.equal(signals[0]?.aborted, true)
+  })
+
   it("does not mislabel a mutation failure as a passive refresh failure", async () => {
     const cache = new PluginControlsCache({
       getPluginControls: async () => snapshot("retained"),

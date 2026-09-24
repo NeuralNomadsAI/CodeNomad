@@ -45,6 +45,12 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.equal(await page.locator(".plugin-control-row").count(), 3)
   assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 6)
   assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Project"])
+  assert.equal(await page.locator(".plugin-controls-description").count(), 1)
+  assert.equal(await page.locator(".plugin-controls-footer").count(), 1)
+  assert.equal(await page.getByText("Global — Rule target: /daemon/opencode.jsonc", { exact: false }).count(), 1)
+  assert.equal(await page.getByText("Project — Rule target: /repo/.opencode/opencode.jsonc", { exact: false }).count(), 1)
+  assert.equal(await page.locator('[data-plugin-id="broken.plugin"]').getByText("Failed", { exact: false }).count(), 1)
+  assert.equal(await page.locator('[data-plugin-id="sleeping.plugin"]').getByText("overrides", { exact: false }).count(), 1)
   assert.equal(await page.getByText("Runtime inventory", { exact: true }).count(), 0)
   assert.equal(await page.getByText("Configured entries", { exact: true }).count(), 0)
   assert.equal(await page.getByText("opencode.provider.demo", { exact: true }).count(), 0)
@@ -85,9 +91,12 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
 
   const switchGeometry = await page.evaluate(() => {
     const track = document.querySelector(".plugin-control-row .MuiSwitch-track")!
-    return getComputedStyle(track).borderRadius
+    const root = document.querySelector(".plugin-control-row .MuiSwitch-root") as HTMLElement | null
+    const box = (root ?? track as HTMLElement).getBoundingClientRect()
+    return { radius: getComputedStyle(track).borderRadius, width: Math.round(box.width), height: Math.round(box.height) }
   })
-  assert.notEqual(switchGeometry, "0px")
+  assert.notEqual(switchGeometry.radius, "0px")
+  assert.deepEqual([switchGeometry.width, switchGeometry.height], [40, 24])
 
   const readsBeforeSessionChange = await page.evaluate(() => (window as any).fixture.reads())
   await page.evaluate(() => (window as any).fixture.switchSession())
@@ -129,6 +138,7 @@ test("V2 plugin controls disable Project when it resolves to the Global document
   const row = page.locator('[data-plugin-id="acme.reviewer"]')
   assert.equal(await row.locator('[data-scope="global"] input[type="checkbox"]').isDisabled(), false)
   assert.equal(await row.locator('[data-scope="project"] input[type="checkbox"]').isDisabled(), true)
+  assert.equal(await page.locator(".plugin-controls-notice").count(), 1)
 
   const mutationsBefore = await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.type === "mutation").length)
   await row.locator('[data-scope="project"] input[type="checkbox"]').click({ force: true })
@@ -138,6 +148,11 @@ test("V2 plugin controls disable Project when it resolves to the Global document
     mutationsBefore,
     "a disabled Project switch must not mutate",
   )
+
+  await page.evaluate(() => (window as any).fixture.setNarrow())
+  await page.waitForTimeout(100)
+  const narrowLane = await row.locator('[data-scope="global"]').boundingBox()
+  assert.ok((narrowLane?.width ?? 48) <= 40, "narrow panels compact the switch lanes")
   assert.deepEqual(errors, [])
   await page.close()
 })

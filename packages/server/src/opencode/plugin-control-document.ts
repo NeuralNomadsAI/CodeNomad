@@ -294,6 +294,10 @@ async function readBoundedFile(filePath: string): Promise<{ contents: Buffer; mo
   }
 }
 
+export function encodePluginControlOriginal(document: PluginControlDocument): Buffer {
+  return encodeOriginal(document)
+}
+
 function encodeOriginal(document: PluginControlDocument): Buffer {
   return Buffer.from(`${document.byteOrderMark ? "\uFEFF" : ""}${document.text}`, "utf8")
 }

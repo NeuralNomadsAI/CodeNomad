@@ -127,6 +127,14 @@ await updatePreferences({ locale: "en" })
   isActive: viewActive,
   show: () => setViewActive(true),
   hide: () => setViewActive(false),
+  setNarrow: () => {
+    const main = document.querySelector("main") as HTMLElement | null
+    if (main) {
+      main.style.width = "240px"
+      main.style.margin = "8px"
+      main.style.padding = "8px"
+    }
+  },
   setTargets: (scopes: Array<"global" | "project">) => {
     snapshot.targets = snapshot.targets.filter((target) => scopes.includes(target.scope))
   },

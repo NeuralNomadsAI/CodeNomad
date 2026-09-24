@@ -4,6 +4,7 @@ import path from "node:path"
 import {
   PLUGIN_CONTROL_MAX_CONFIG_BYTES,
   PluginControlDocumentError,
+  encodePluginControlOriginal,
   type PluginControlDocument,
   type PluginControlDocumentFileSystem,
   type PluginControlDocumentLoad,
@@ -52,9 +53,20 @@ printf 'file\0%s\0%s\0' "$target" "$mode"
 cat -- "$target"
 `
 
+const SHELL_LIB = String.raw`
+hash_of() {
+  result=$(sha256sum -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
+  result=$(shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
+  return 1
+}
+mode_of() {
+  stat -c '%a' -- "$1" 2>/dev/null || stat -f '%p' -- "$1" 2>/dev/null || return 1
+}
+`
+
 const PREPARE_SCRIPT = String.raw`# prepare-document
 set -eu
-directory=$1
+${SHELL_LIB}directory=$1
 target=$2
 temporary=$3
 lock=$4
@@ -65,14 +77,6 @@ existed=$8
 expected=$9
 stale=${10}
 deadlineMs=${11}
-hash_of() {
-  result=$(sha256sum -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
-  result=$(shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
-  return 1
-}
-mode_of() {
-  stat -c '%a' -- "$1" 2>/dev/null || stat -f '%p' -- "$1" 2>/dev/null || return 1
-}
 locked=0
 cleanup() {
   rm -f -- "$temporary"
@@ -114,7 +118,7 @@ trap - EXIT
 
 const COMMIT_SCRIPT = String.raw`# commit-document
 set -eu
-target=$1
+${SHELL_LIB}target=$1
 existed=$2
 expected=$3
 temporary=$4
@@ -122,14 +126,6 @@ lock=$5
 nonce=$6
 mode=$7
 expectedMode=$8
-hash_of() {
-  result=$(sha256sum -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
-  result=$(shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1}') && [ -n "$result" ] && printf '%s' "$result" && return 0
-  return 1
-}
-mode_of() {
-  stat -c '%a' -- "$1" 2>/dev/null || stat -f '%p' -- "$1" 2>/dev/null || return 1
-}
 cleanup() {
   rm -f -- "$temporary"
   current=$(cat -- "$lock/owner" 2>/dev/null || true)
@@ -248,7 +244,7 @@ export function createWslPluginControlDocumentFileSystem(
     const lock = `${document.writePath}.codenomad-plugin-controls.lock`
     const nonce = randomBytes(16).toString("hex")
     const mode = document.mode.toString(8).padStart(3, "0")
-    const expected = createHash("sha256").update(encodeOriginal(document)).digest("hex")
+    const expected = createHash("sha256").update(encodePluginControlOriginal(document)).digest("hex")
     let locked = false
     try {
       const prepared = await run(PREPARE_SCRIPT, [
@@ -329,10 +325,6 @@ function changedError(): PluginControlDocumentError {
 
 function filesystemError(message: string, cause?: unknown): PluginControlDocumentError {
   return new PluginControlDocumentError(message, "filesystem", cause === undefined ? undefined : { cause })
-}
-
-function encodeOriginal(document: PluginControlDocument): Buffer {
-  return Buffer.from(`${document.byteOrderMark ? "\uFEFF" : ""}${document.text}`, "utf8")
 }
 
 function executeWslScript(
