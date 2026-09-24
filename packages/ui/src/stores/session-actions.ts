@@ -497,9 +497,9 @@ async function updateSessionModel(
 
   const nativeModel = getNativeModel(instanceId, model)
   try {
-    if (!isSessionBusy(instanceId, sessionId)) {
-      await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
-    }
+    // Native model selection is supported during execution too. Keeping this
+    // local until the next prompt lets a session refresh restore the old model.
+    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
   } catch (error) {
     withSession(instanceId, sessionId, (current) => {
       if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return false

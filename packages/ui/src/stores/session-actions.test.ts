@@ -21,7 +21,8 @@ import {
 } from "./session-actions.ts"
 import { setConversationModeEnabled } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
-import { sessions, setProviders, setSessions } from "./session-state.ts"
+import { sessions, setAgents, setProviders, setSessions, withSession } from "./session-state.ts"
+import { loadMessages } from "./session-api.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
@@ -90,6 +91,9 @@ function seed(client: any): void {
   ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
   addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
   setSessions(new Map([[instanceId, new Map([[sessionId, session]])]]))
+  // Give agent-switch tests a deterministic default independent of recents.
+  setAgents(new Map([[instanceId, [{ id: "plan", name: "Plan", description: "", mode: "primary",
+    model: { providerId: "provider", modelId: "old" } }]]]))
   setProviders(new Map([[instanceId, [{ id: "provider", name: "Provider", models: [
     { id: "old", name: "Old", providerId: "provider", variantKeys: ["high"] },
     { id: "new", name: "New", providerId: "provider", variantKeys: ["high"] },
@@ -108,6 +112,7 @@ afterEach(() => {
   serverApi.pruneSessionMessage = storageMethods.pruneSessionMessage
   setSessions(new Map())
   setProviders(new Map())
+  setAgents(new Map())
   removeInstance(instanceId, { authoritative: false })
   sdkManager.destroyClientsForInstance(instanceId)
   setConversationModeEnabled(instanceId, false)
@@ -678,6 +683,50 @@ describe("plugin RPC message pruning", () => {
 })
 
 describe("native session selection persistence", () => {
+  for (const status of ["working", "compacting"] as const) {
+    it(`persists one model selection while ${status}`, async () => {
+      const inputs: unknown[] = []
+      seed({ session: { switchModel: async (input: unknown) => { inputs.push(input) } } })
+      withSession(instanceId, sessionId, current => { current.status = status })
+      await updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      assert.deepEqual(inputs, [{ sessionID: sessionId, model: { providerID: "provider", id: "new" } }])
+    })
+    it(`rolls back a rejected model switch while ${status}`, async () => {
+      const error = new Error("model switch rejected")
+      seed({ session: { switchModel: async () => { throw error } } })
+      withSession(instanceId, sessionId, current => { current.status = status })
+      await assert.rejects(updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" }), error)
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, status)
+    })
+  }
+
+  for (const duringLoad of [false, true]) {
+    it(`retains the selected model when old transcript history reloads (${duringLoad ? "in-flight selection" : "already selected"})`, async () => {
+      let release!: (value: any) => void
+      const pending = new Promise(resolve => { release = resolve })
+      seed({ session: { switchModel: async () => {} }, message: { list: async () => pending } })
+      const select = () => updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      if (!duringLoad) await select()
+      const loading = loadMessages(instanceId, sessionId, { force: true })
+      if (duringLoad) await select()
+      release({ data: [{ id: "historical-assistant", type: "assistant", agent: "plan",
+        model: { providerID: "provider", id: "old" }, time: { created: 1, completed: 2 }, content: [] }], cursor: {} })
+      await loading
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "new" })
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "build")
+    })
+  }
+
+  it("still hydrates missing selections from the latest transcript", async () => {
+    seed({ message: { list: async () => ({ data: [{ id: "historical-assistant", type: "assistant", agent: "plan",
+      model: { providerID: "provider", id: "old" }, time: { created: 1, completed: 2 }, content: [] }], cursor: {} }) } })
+    withSession(instanceId, sessionId, current => { current.agent = ""; current.model = { providerId: "", modelId: "" } })
+    await loadMessages(instanceId, sessionId, { force: true })
+    assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "plan")
+  })
+
   it("switches the native agent", async () => {
     const inputs: unknown[] = []
     seed({ session: {

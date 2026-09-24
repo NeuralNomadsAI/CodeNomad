@@ -1697,7 +1697,7 @@ async function loadMessages(
         if (agentName && providerID && modelID) break
       }
 
-      if (!agentName && !providerID && !modelID) {
+      if (!agentName && !providerID && !modelID && (!session.model.providerId || !session.model.modelId)) {
         const defaultModel = await getDefaultModel(instanceId, session.agent)
         if (!isCurrent()) return
         agentName = session.agent
@@ -1714,8 +1714,13 @@ async function loadMessages(
         if (!existingSession) return next
         nextInstanceSessions.set(sessionId, {
           ...existingSession,
-          agent: agentName || existingSession.agent,
-          model: providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
+          // Transcript metadata describes past execution, not the current
+          // selection. Only fill missing values, including when a user or native
+          // selection event changed them while this history request was pending.
+          agent: existingSession.agent || agentName,
+          model: existingSession.model.providerId && existingSession.model.modelId
+            ? existingSession.model
+            : providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
         })
         next.set(instanceId, nextInstanceSessions)
         return next
