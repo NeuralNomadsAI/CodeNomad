@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Failed to save file",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo Mode",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Automatically approves permission requests for the current session. Use it only when you trust the tools being run.",
-  "instanceShell.rightPanel.sections.plan": "Plan",
-  "instanceShell.rightPanel.sections.plan.tooltip": "The agent's roadmap for this session. Tracks tasks, subtasks, and their completion status.",
+  "instanceShell.rightPanel.sections.tokens": "Tokens",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "Token usage and cost for this session and its subsessions.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Background Shells",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Native OpenCode background shells for the active workspace or worktree.",
   "instanceShell.backgroundProcesses.loading": "Loading background shells...",
@@ -244,8 +244,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Copied sanitized delete error",
   "instanceShell.worktree.delete.error.copyFailure": "Failed to copy delete error",
 
-  "instanceShell.plan.noSessionSelected": "Select a session to view plan.",
-  "instanceShell.plan.empty": "Nothing planned yet.",
 
   "instanceShell.yoloMode.noSessionSelected": "Select a session to configure Yolo mode.",
   "instanceShell.yoloMode.title": "Yolo mode",

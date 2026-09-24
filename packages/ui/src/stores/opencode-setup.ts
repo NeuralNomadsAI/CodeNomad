@@ -99,7 +99,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
   return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -120,11 +120,14 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
-      const retry = resume()
-      setResume(undefined)
+      // Info-panel maintenance must not resume a workspace-open request left in
+      // a dismissed recovery dialog. Preserve it for explicit recovery instead.
+      const retry = options.resumeWorkspace === false ? undefined : resume()
+      if (options.resumeWorkspace !== false) setResume(undefined)
       if (action === "reload") setOpenCodeSetupFeedback("reloaded")
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
+      return status
     }
   } catch (error) {
     if (epoch === generation) {

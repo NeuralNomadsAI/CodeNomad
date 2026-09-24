@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Datei konnte nicht gespeichert werden",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo-Modus",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Genehmigt Berechtigungsanfragen für die aktuelle Sitzung automatisch. Nur verwenden, wenn Sie den ausgeführten Tools vertrauen.",
-  "instanceShell.rightPanel.sections.plan": "Plan",
-  "instanceShell.rightPanel.sections.plan.tooltip": "Die Roadmap des Agenten für diese Sitzung. Verfolgt Aufgaben, Unteraufgaben und deren Abschlussstatus.",
+  "instanceShell.rightPanel.sections.tokens": "Tokens",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "Token-Nutzung und Kosten dieser Sitzung und ihrer Untersitzungen.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Hintergrund-Shells",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Native OpenCode-Hintergrund-Shells für den aktiven Workspace oder Worktree.",
   "instanceShell.backgroundProcesses.loading": "Hintergrund-Shells werden geladen...",
@@ -244,8 +244,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.error.copySanitizedSuccess": "Bereinigten Löschfehler kopiert",
   "instanceShell.worktree.delete.error.copyFailure": "Löschfehler konnte nicht kopiert werden",
 
-  "instanceShell.plan.noSessionSelected": "Wählen Sie eine Sitzung aus, um den Plan zu sehen.",
-  "instanceShell.plan.empty": "Noch nichts geplant.",
 
   "instanceShell.yoloMode.noSessionSelected": "Wählen Sie eine Sitzung aus, um den Yolo-Modus zu konfigurieren.",
   "instanceShell.yoloMode.title": "Yolo-Modus",
