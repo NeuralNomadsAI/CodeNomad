@@ -1,0 +1,120 @@
+.plugin-controls {
+  --plugin-control-scope-width: 3rem;
+  @apply space-y-2;
+  container-type: inline-size;
+}
+
+.plugin-controls-header,
+.plugin-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, var(--plugin-control-scope-width));
+  align-items: center;
+  direction: ltr;
+}
+
+[dir="rtl"] .plugin-control-name,
+[dir="rtl"] .plugin-control-sub,
+[dir="rtl"] .plugin-controls-description,
+[dir="rtl"] .plugin-controls-footer {
+  direction: rtl;
+  text-align: right;
+}
+
+.plugin-controls .icon-button-compact {
+  @apply inline-flex h-6 w-6 items-center justify-center border;
+  justify-self: start;
+  border-color: var(--border-base);
+  color: var(--text-muted);
+  background-color: var(--surface-base);
+}
+
+.plugin-controls .icon-button-compact:hover:not(:disabled) {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  color: var(--text-primary);
+}
+
+.plugin-controls .icon-button-compact:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+.plugin-controls-description {
+  @apply text-[11px];
+  color: var(--text-muted);
+}
+
+.plugin-controls-notice {
+  @apply break-words text-[11px];
+  color: var(--text-muted);
+  border-inline-start: 2px solid var(--border-base);
+  padding-inline-start: 6px;
+}
+
+.plugin-controls-footer {
+  @apply space-y-0.5 break-words text-[11px];
+  color: var(--text-muted);
+}
+
+.plugin-control-name,
+.plugin-control-sub,
+.plugin-controls-footer {
+  overflow-wrap: anywhere;
+}
+
+.plugin-control-list {
+  @apply space-y-1;
+}
+
+.plugin-control-row {
+  @apply border px-2 py-1;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.plugin-control-name {
+  @apply block min-w-0 text-xs font-medium;
+  color: var(--text-primary);
+}
+
+.plugin-control-sub {
+  @apply flex min-w-0 items-center gap-1 text-[11px];
+  color: var(--text-muted);
+}
+
+.plugin-control-sub > span:last-child {
+  @apply min-w-0 flex-1;
+}
+
+.plugin-control-sub .status-dot {
+  @apply flex-shrink-0;
+}
+
+.plugin-control-scope-label {
+  @apply text-center text-[10px] font-medium uppercase tracking-wide;
+  color: var(--text-muted);
+}
+
+.plugin-control-switch {
+  @apply flex min-w-0 items-center justify-center;
+  padding: 6px 0;
+  margin: -6px 0;
+}
+
+.plugin-control-switch:has(input[aria-busy="true"]) {
+  @apply animate-pulse;
+}
+
+.plugin-controls-warning {
+  @apply mt-1 break-words text-[11px];
+  color: var(--status-error-fg);
+}
+
+.plugin-controls .right-panel-empty-text .button-tertiary {
+  @apply mt-2;
+}
+
+@container (max-width: 300px) {
+  .plugin-controls-header,
+  .plugin-control-row {
+    grid-template-columns: minmax(0, 1fr) repeat(2, 2.5rem);
+  }
+}

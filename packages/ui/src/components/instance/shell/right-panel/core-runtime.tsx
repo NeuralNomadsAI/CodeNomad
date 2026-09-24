@@ -223,6 +223,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         instanceId={options.instanceId}
         instance={options.instance}
         activeSession={options.activeSession}
+        isActive={() => options.isActive() && options.rightPanelTab() === "status"}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}

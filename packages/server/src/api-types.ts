@@ -296,6 +296,90 @@ export interface ConfigFileContentRequest {
   contents: string
 }
 
+export type PluginControlScope = "global" | "project"
+export type PluginConfigScope = PluginControlScope | "other" | "virtual"
+
+export interface PluginControlLocation {
+  directory: string
+  workspaceID?: string
+}
+
+export type PluginRuntimeSource =
+  | { type: "builtin" }
+  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "local"; path: string }
+  | { type: "sdk" }
+
+export interface PluginRuntimeInventoryEntry {
+  key: string
+  id?: string
+  source: PluginRuntimeSource
+  features: { server?: true; tui?: true; rpc?: true }
+  state: { status: "active" } | { status: "failed"; error: string; ref?: string }
+}
+
+export interface PluginConfiguredRule {
+  selector: string
+  enabled: boolean
+  scope: PluginConfigScope
+  path?: string
+  order: number
+  entryIndex: number
+}
+
+export interface PluginConfiguredSource {
+  target: string
+  scope: PluginConfigScope
+  path?: string
+  entryIndex: number
+  hasOptions: boolean
+}
+
+export type PluginScopeRuleState = "default" | "enabled" | "disabled"
+
+export interface PluginActivationControl {
+  id: string
+  runtime?: PluginRuntimeInventoryEntry
+  /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
+  builtin: boolean
+  effective: PluginScopeRuleState
+  global: PluginScopeRuleState
+  project: PluginScopeRuleState
+  controllingRule?: PluginConfiguredRule
+}
+
+export interface PluginControlTarget {
+  scope: PluginControlScope
+  path: string
+  exists: boolean
+}
+
+export interface PluginControlsSnapshot {
+  location: PluginControlLocation
+  runtime: PluginRuntimeInventoryEntry[]
+  configured: {
+    rules: PluginConfiguredRule[]
+    sources: PluginConfiguredSource[]
+  }
+  controls: PluginActivationControl[]
+  targets: PluginControlTarget[]
+}
+
+export interface PluginActivationMutationRequest {
+  location: PluginControlLocation
+  pluginId: string
+  scope: PluginControlScope
+  enabled: boolean
+}
+
+export interface PluginActivationMutationResponse {
+  snapshot: PluginControlsSnapshot
+  rule: string
+  target: PluginControlTarget
+  changed: boolean
+  reloadPending: boolean
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
