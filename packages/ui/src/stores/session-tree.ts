@@ -1,4 +1,4 @@
-import type { Session } from "../types/session"
+import { isSessionPinned, type Session } from "../types/session"
 import { normalizeSessionDirectory } from "./session-list-options"
 
 export type SessionThread = {
@@ -43,6 +43,11 @@ export function projectSessionFamilies(
   })
 
   return [...projected].sort((left, right) => {
+    const leftPinned = isSessionPinned(left.session)
+    const rightPinned = isSessionPinned(right.session)
+    if (leftPinned !== rightPinned) {
+      return leftPinned ? -1 : 1
+    }
     if (options.sort === "activity") {
       return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
     }
@@ -142,6 +147,9 @@ function buildThread(
     if (childThread) children.push(childThread)
   }
   children.sort((a, b) => {
+    const aPinned = isSessionPinned(a.session)
+    const bPinned = isSessionPinned(b.session)
+    if (aPinned !== bPinned) return aPinned ? -1 : 1
     if (b.latestUpdated !== a.latestUpdated) return b.latestUpdated - a.latestUpdated
     return b.session.id.localeCompare(a.session.id)
   })

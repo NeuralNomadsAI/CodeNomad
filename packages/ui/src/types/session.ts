@@ -1,5 +1,6 @@
 import type {
   AgentInfo as SDKAgent,
+  JsonValue,
   LocationRef,
   ModelInfo as SDKModel,
   ProviderInfo as SDKProvider,
@@ -62,8 +63,18 @@ export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined):
   }
 }
 
+export interface SessionMetadata {
+  pinned?: boolean
+  pinnedAt?: number
+  [key: string]: JsonValue | undefined
+}
+
+export function isSessionPinned(session: Session | null | undefined): boolean {
+  return Boolean(session?.metadata && (session.metadata as SessionMetadata).pinned === true)
+}
+
 // Our client-specific Session interface extending SDK Session
-export interface Session extends Omit<SDKSession, "parentID" | "model"> {
+export interface Session extends Omit<SDKSession, "parentID" | "model" | "metadata"> {
   instanceId: string // Client-specific field
   parentId: string | null // Client-specific field (override parentID)
   agent: string // Client-specific field
@@ -72,6 +83,7 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
     modelId: string
   }
   location: LocationRef
+  metadata?: SessionMetadata
   version?: string
   pendingPermission?: boolean // Indicates if session is waiting on user permission
   pendingForm?: boolean // Indicates if session is waiting on a structured form response

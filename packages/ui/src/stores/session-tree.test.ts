@@ -249,4 +249,45 @@ describe("session tree", () => {
       matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
     }).length, 0, "text and directory must match the same session")
   })
+
+  it("prioritizes pinned sessions at root level and among siblings", () => {
+    const sessions = sessionMap([
+      ["root-unpinned", null, 500],
+      ["root-pinned", null, 200],
+      ["child-unpinned", "root-pinned", 400],
+      ["child-pinned", "root-pinned", 100],
+    ])
+    sessions.get("root-pinned")!.metadata = { pinned: true }
+    sessions.get("child-pinned")!.metadata = { pinned: true }
+
+    const threads = buildSessionThreadsFromMap(sessions, ["root-unpinned", "root-pinned"])
+    const projected = projectSessionFamilies(threads, {
+      sort: "activity",
+      getWorktreeLabel: () => "",
+    })
+
+    assert.equal(projected[0].session.id, "root-pinned")
+    assert.equal(projected[1].session.id, "root-unpinned")
+
+    const rootPinnedThread = projected[0]
+    assert.deepEqual(rootPinnedThread.children.map(c => c.session.id), ["child-pinned", "child-unpinned"])
+  })
+
+  it("prioritizes pinned sessions in search results projection", () => {
+    const sessions = sessionMap([
+      ["s-normal", null, 500],
+      ["s-pinned", null, 100],
+    ])
+    sessions.get("s-pinned")!.metadata = { pinned: true }
+
+    const results = projectSessionSearchResults(sessions.values(), {
+      sort: "activity",
+      includeMainSessions: true,
+      includeSubsessions: true,
+      getWorktreeLabel: () => "",
+    })
+
+    assert.equal(results[0].session.id, "s-pinned")
+    assert.equal(results[1].session.id, "s-normal")
+  })
 })

@@ -3,7 +3,7 @@ import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
-import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
+import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Pin, PinOff } from "lucide-solid"
 import KeyboardHint from "./keyboard-hint"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
@@ -12,6 +12,8 @@ import { useSessionRowOverflow } from "./session-row-overflow"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
+import { isSessionPinned } from "../types/session"
+import { parseSessionFilterQuery } from "../lib/session-filter-query"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
@@ -21,6 +23,7 @@ import {
   loadMessages,
   loading,
   renameSession,
+  toggleSessionPinned,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
   toggleSessionExpanded,
@@ -192,9 +195,13 @@ const SessionList: Component<SessionListProps> = (props) => {
       return
     }
 
-    // Always run server search in background for workspace-complete results.
-    // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
-    const queryAtDispatch = query
+    const parsed = parseSessionFilterQuery(query)
+    const queryAtDispatch = parsed.sanitizedQuery
+    if (!queryAtDispatch) {
+      clearSessionSearch(props.instanceId)
+      return
+    }
+
     searchDebounceTimer = setTimeout(() => {
       void searchSessions(props.instanceId, queryAtDispatch)
         .catch((error) => {
@@ -217,14 +224,22 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const sessionMatchesQuery = (sessionId: string, query: string) => {
     if (!query) return true
+    const parsed = parseSessionFilterQuery(query)
+    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
+    if (parsed.pinnedFilter !== undefined) {
+      const pinned = isSessionPinned(session)
+      if (pinned !== parsed.pinnedFilter) return false
+    }
+    if (!parsed.sanitizedQuery) return true
     const label = normalizeSessionLabel(sessionId).toLowerCase()
-    if (label.includes(query)) return true
-    return sessionId.toLowerCase().includes(query)
+    if (label.includes(parsed.sanitizedQuery)) return true
+    return sessionId.toLowerCase().includes(parsed.sanitizedQuery)
   }
 
   const filteredThreads = createMemo<SessionThread[]>(() => {
     const query = normalizedQuery()
-    const hasSearchResults = query && getSessionSearchQuery(props.instanceId) === query && !isSessionSearchLoading(props.instanceId)
+    const parsed = parseSessionFilterQuery(query)
+    const hasSearchResults = parsed.sanitizedQuery && getSessionSearchQuery(props.instanceId) === parsed.sanitizedQuery && !isSessionSearchLoading(props.instanceId)
     const worktrees = getWorktrees(props.instanceId)
     const getWorktreeLabel = (directory: string) => {
       const normalized = normalizeSessionDirectory(directory)
@@ -246,7 +261,9 @@ const SessionList: Component<SessionListProps> = (props) => {
       getWorktreeLabel,
       ...(query && !hasSearchResults
         ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
-        : {}),
+        : parsed.pinnedFilter !== undefined
+          ? { matchesSession: (session) => sessionMatchesQuery(session.id, query) }
+          : {}),
     })
   })
 
@@ -344,8 +361,14 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
 
+    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
+    const isPinned = isSessionPinned(session)
+    const message = isPinned
+      ? t("sessionList.delete.confirmPinnedMessage", { label: normalizeSessionLabel(sessionId) })
+      : t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) })
+
     const confirmed = await showConfirmDialog(
-      t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
+      message,
       {
         title: t("sessionList.delete.title"),
         variant: "warning",
@@ -490,8 +513,18 @@ const SessionList: Component<SessionListProps> = (props) => {
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
 
+    const instanceSessions = sessionStateSessions().get(props.instanceId)
+    const pinnedCount = selected.reduce((count, id) => {
+      const s = instanceSessions?.get(id)
+      return isSessionPinned(s) ? count + 1 : count
+    }, 0)
+
+    const confirmMessage = pinnedCount > 0
+      ? t("sessionList.bulkDelete.confirmPinnedMessage", { pinnedCount, count: selected.length })
+      : t("sessionList.bulkDelete.confirmMessage", { count: selected.length })
+
     const confirmed = await showConfirmDialog(
-      t("sessionList.bulkDelete.confirmMessage", { count: selected.length }),
+      confirmMessage,
       {
         title: t("sessionList.bulkDelete.title"),
         variant: "warning",
@@ -664,7 +697,22 @@ const SessionList: Component<SessionListProps> = (props) => {
     const [rowElement, setRowElement] = createSignal<HTMLDivElement>()
     const actionsOverflow = useSessionRowOverflow(rowElement)
     const compactActions = () => actionsOverflow() || menuSessionId() === sessionId()
+    const isPinned = () => isSessionPinned(rowProps.session)
+    const handleTogglePin = async () => {
+      try {
+        await toggleSessionPinned(props.instanceId, sessionId())
+      } catch (error) {
+        log.error("Failed to toggle session pin:", error)
+      }
+    }
+
     const actionItems: ActionOverflowMenuItem[] = [
+      {
+        key: "pin",
+        get label() { return isPinned() ? t("sessionList.actions.unpin.title") : t("sessionList.actions.pin.title") },
+        get icon() { return isPinned() ? <PinOff class="w-3.5 h-3.5" /> : <Pin class="w-3.5 h-3.5" /> },
+        onSelect: () => handleTogglePin(),
+      },
       {
         key: "copy",
         get label() { return t("sessionList.actions.copyId.title") },
@@ -742,6 +790,11 @@ const SessionList: Component<SessionListProps> = (props) => {
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
             <span class="session-item-badges">
+              <Show when={isPinned()}>
+                <span class="status-indicator session-status-list session-pinned-badge" title={t("sessionList.pin.badgeTooltip")}>
+                  <Pin class="w-3.5 h-3.5" aria-hidden="true" />
+                </span>
+              </Show>
               <Show when={showStatus()}>
                 <span
                   class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}

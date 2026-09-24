@@ -13,6 +13,8 @@ import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, getDescendantSessions, providers, sessions, withSession } from "./session-state"
+import { isSessionPinned } from "../types/session"
+import type { SessionMetadata } from "../types/session"
 import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -544,6 +546,45 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
   })
 }
 
+async function toggleSessionPinned(instanceId: string, sessionId: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  const client = getRootClient(instanceId)
+  const nextPinned = !isSessionPinned(session)
+  const existingMetadata = { ...((session.metadata as Record<string, unknown> | undefined) ?? {}) }
+  const updatedMetadata: Record<string, unknown> = {
+    ...existingMetadata,
+    pinned: nextPinned,
+    ...(nextPinned ? { pinnedAt: Date.now() } : {}),
+  }
+  if (!nextPinned) {
+    delete updatedMetadata.pinnedAt
+  }
+
+  withSession(instanceId, sessionId, (current) => {
+    current.metadata = updatedMetadata as SessionMetadata
+  })
+  updateSessionInfo(instanceId, sessionId)
+
+  try {
+    await client.session.update({ sessionID: sessionId, metadata: updatedMetadata as Record<string, any> })
+  } catch (error) {
+    withSession(instanceId, sessionId, (current) => {
+      current.metadata = existingMetadata as SessionMetadata
+    })
+    updateSessionInfo(instanceId, sessionId)
+    throw error
+  }
+}
+
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
   await getRootClient(instanceId).session.compact({ sessionID: sessionId })
 }
@@ -671,6 +712,7 @@ export {
   executeSessionTechnicalPartDeletion,
   planSessionTechnicalPartDeletion,
   renameSession,
+  toggleSessionPinned,
   runShellCommand,
   sendMessage,
   updateSessionAgent,
