@@ -48,6 +48,7 @@ import {
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -567,7 +568,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     destroyOpenCodeData(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath)
+  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -904,11 +905,11 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Session hydration can outlive a failed forced worktree read. Observe the
   // rejection immediately while retaining it for metadata-dependent callers.
   void workspaceMetadata.catch((error) => log.warn("Failed to hydrate workspace metadata", { instanceId, error }))
-  // Publish the root directory page without waiting for checkout discovery.
+  // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
-  const sessions = projectMetadata.then(async () => {
+  const sessions = Promise.resolve().then(async () => {
     resetSessionPagination(instanceId)
-    await fetchSessions(instanceId).catch((error) => {
+    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
@@ -1995,6 +1996,12 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
   }
 }
 
+// Events after which assistant message cost/token totals may have changed.
+const USAGE_EVENT_TYPES = new Set<string>([
+  "session.step.ended",
+  "session.step.failed",
+])
+
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -2021,13 +2028,16 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
     if (sessionId && (force || event.type.startsWith("session.")) && (
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
-    )) projectOpenCodeMessages(
-      instanceId,
-      sessionId,
-      data,
-      preserveOmitted,
-      force || event.type !== "session.inbox.enqueued",
-    )
+    )) {
+      projectOpenCodeMessages(
+        instanceId,
+        sessionId,
+        data,
+        preserveOmitted,
+        force || event.type !== "session.inbox.enqueued",
+      )
+      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+    }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
     projectMessages(data, preserveOmitted)

@@ -264,7 +264,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "הוסף",
   "opencodeBinarySelector.actions.browse": "עיין אחר קובץ בינארי…",
   "opencodeBinarySelector.actions.removeTitle": "הסר קובץ בינארי",
-  "opencodeBinarySelector.badge.systemPath": "השתמש בקובץ בינארי מנתיב המערכת",
+  "opencodeBinarySelector.badge.systemPath": "עדיפות ל-PATH, אחריו התקנת npm של המשתמש",
   "opencodeBinarySelector.status.checkingVersions": "בודק גרסאות…",
   "opencodeBinarySelector.status.checking": "בודק…",
   "opencodeBinarySelector.dialog.title": "בחר קובץ בינארי של OpenCode",
@@ -272,6 +272,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "קובץ בינארי לא תקין של OpenCode",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad דורש OpenCode V2. יש להתקין ולבחור בקובץ הבינארי opencode2.",
   "opencodeBinarySelector.validation.alreadyValidating": "כבר מאמת",
-  "opencodeBinarySelector.display.systemPath": "{name} (נתיב מערכת)",
+  "opencodeBinarySelector.display.systemPath": "{name} (אוטומטי)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

@@ -9,6 +9,7 @@ import {
 } from "./event-transport"
 import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
+import { authRecovery } from "./auth-recovery"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -32,6 +33,7 @@ class ServerEvents {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
+    authRecovery.onRestored(() => this.restart("authentication restored"))
     void this.connect()
   }
 
@@ -113,6 +115,9 @@ class ServerEvents {
   }
 
   private scheduleReconnect() {
+    // EventSource hides HTTP status. Probe our own auth endpoint so a server
+    // restart is recoverable even when the user has not made another API call.
+    void authRecovery.check()
     if (this.retryTimer) {
       return
     }

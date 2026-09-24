@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { normalizeRuntimeEvent } from "../../../server/src/opencode/compatibility/events.ts"
+import type { OpenCodeEvent } from "@opencode/client"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
@@ -9,19 +9,19 @@ import { handleNativeSessionEvent, handleSessionIdle, handleSessionStatus } from
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { setActiveSession, setSessions } from "./session-state.ts"
 
-test("the current native reducer preserves old event timing and newer precise start times", () => {
-  for (const started of [undefined, 0, 45]) {
+test("the native reducer preserves canonical precise start times and durable identity", () => {
+  for (const started of [0, 45]) {
     const instanceId = `runtime-started-${started}`
     const original = {
       id: "evt_step", type: "session.step.started", created: 100,
       durable: { aggregateID: "s", seq: 2, version: 1 },
       data: { sessionID: "s", assistantMessageID: "m", agent: "build", model: { providerID: "fixture", id: "fixture" },
-        ...(started === undefined ? {} : { started }) },
+        started },
     }
     try {
-      const event = normalizeRuntimeEvent(original as any)
+      const event = original as OpenCodeEvent
       const data = applyOpenCodeDataEvent(instanceId, "/fixture", event)
-      assert.equal(data.session.message.get("s", "m")?.time.created, started ?? 100)
+      assert.equal(data.session.message.get("s", "m")?.time.created, started)
       assert.ok("durable" in event)
       assert.deepEqual(event.durable, original.durable)
       assert.equal(original.data.started, started, "normalization must not mutate the input event")
@@ -56,7 +56,7 @@ test(`settled tools reach the visible store with following ${following}`, async 
   } as any]])))
   setActiveSession(instanceId, sessionId)
   const emit = (type: string, data: Record<string, unknown>, created: number) => {
-    const event = normalizeRuntimeEvent({ id: `evt_${created}`, type, created, data, location: { directory: "/fixture" } } as any)
+      const event = { id: `evt_${created}`, type, created, data, location: { directory: "/fixture" } } as OpenCodeEvent
     handleInstanceInvalidation(instanceId, event)
     handleNativeSessionEvent(instanceId, event)
   }

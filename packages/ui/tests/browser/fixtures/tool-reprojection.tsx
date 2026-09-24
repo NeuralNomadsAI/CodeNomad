@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import ToolCall from "../../../src/components/tool-call"
 import { ConfigProvider } from "../../../src/stores/preferences"
+import { applyUiSettings } from "./ui-settings"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import type { ToolCallPart } from "../../../src/components/tool-call/types"
@@ -13,6 +14,9 @@ const [part, setPart] = createSignal<ToolCallPart>({
 })
 const [version, setVersion] = createSignal(1)
 const originalPart = part()
+// The test expands the output by clicking its header, so the fixture pins
+// shell tools collapsed instead of depending on the preset defaults.
+await applyUiSettings({ toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { bash: "collapsed" } } })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <div style={{ width: "650px", padding: "80px 0" }}>
     <ToolCall toolCall={part()} messageId="message-fixture" instanceId="tool-fixture" sessionId="session-fixture" partVersion={version()} />

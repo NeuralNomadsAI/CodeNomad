@@ -1,0 +1,35 @@
+.opencode-setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  min-width: 0;
+}
+
+.opencode-setup-panel p {
+  margin: 0;
+}
+
+.opencode-setup-panel .settings-info-actions:empty {
+  display: none;
+}
+
+.opencode-setup-details {
+  border-top: 1px solid var(--border-base);
+  padding-top: 0.75rem;
+}
+
+.opencode-setup-details > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.opencode-setup-details > summary:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+
+.opencode-setup-details[open] > summary {
+  margin-bottom: 0.75rem;
+}

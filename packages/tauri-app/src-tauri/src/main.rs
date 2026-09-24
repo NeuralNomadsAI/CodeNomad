@@ -16,6 +16,7 @@ mod native_request;
 mod native_service_start;
 mod preferences_window;
 mod shutdown;
+mod view_menu;
 mod windows_update;
 mod workspace_open;
 
@@ -27,7 +28,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(any(windows, test))]
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -74,6 +75,8 @@ pub struct AppState {
     pub remote_tls_handlers: Mutex<HashMap<String, u64>>,
     pub remote_zoom_levels: Mutex<HashMap<String, f64>>,
     pub workspace_menu_items: Mutex<Option<WorkspaceMenuItems>>,
+    native_menu_popup_active: AtomicBool,
+    native_menu_popup_pending: Arc<AtomicBool>,
     pub webview_data_directory: std::path::PathBuf,
     pub developer_browser_arguments: Option<String>,
     pub scoped_profile: bool,
@@ -145,6 +148,7 @@ pub struct WakeLockState {
     handle: Option<KeepAwake>,
 }
 
+#[derive(Clone)]
 pub struct WorkspaceMenuItems {
     folder: MenuItem<Wry>,
     terminal: MenuItem<Wry>,
@@ -152,20 +156,39 @@ pub struct WorkspaceMenuItems {
 }
 
 fn update_workspace_menu_state(app: &AppHandle) {
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || update_workspace_menu_state_on_main(&main_app)) {
+        eprintln!("[menu] failed to schedule state refresh: {error}");
+    }
+}
+
+// Resolve the target when the queued update runs, not on a worker before a
+// possible focus change. Native menu APIs must never run under our mutexes.
+fn update_workspace_menu_state_on_main(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let enabled = local_windows::focused_window(app)
-        .filter(|window| identity::local_window_id(window.label()).is_ok())
-        .is_some_and(|window| {
-            app.state::<local_windows::LocalWindows>()
-                .workspace_menu_enabled(window.label())
-        });
-    if let Ok(items) = state.workspace_menu_items.lock() {
-        if let Some(items) = items.as_ref() {
-            let _ = items.folder.set_enabled(enabled);
-            let _ = items.terminal.set_enabled(enabled);
-            let _ = items.editor.set_enabled(enabled);
-        }
-    };
+    // TrackPopupMenu dispatches nested focus/IPC callbacks while muda holds a
+    // mutable submenu borrow. Keep renderer snapshots current, but defer native
+    // traversal/mutation until the popup has returned and released that borrow.
+    if state.native_menu_popup_active.load(Ordering::Relaxed) {
+        return;
+    }
+    // Native menu tracking can temporarily take focus away from the window.
+    // State and command dispatch must resolve the same focused-or-MRU target.
+    let window = local_windows::focused_window(app);
+    let (enabled, view_state) = app
+        .state::<local_windows::LocalWindows>()
+        .menu_state(window.as_ref().map(tauri::Webview::label));
+    view_menu::update(app, view_state.as_ref());
+    let items = state
+        .workspace_menu_items
+        .lock()
+        .ok()
+        .and_then(|items| items.clone());
+    if let Some(items) = items {
+        let _ = items.folder.set_enabled(enabled);
+        let _ = items.terminal.set_enabled(enabled);
+        let _ = items.editor.set_enabled(enabled);
+    }
 }
 
 fn is_asset_renderer_origin(url: &Url) -> bool {
@@ -259,11 +282,17 @@ fn set_workspace_menu_enabled(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     enabled: bool,
+    view_state: Option<view_menu::ViewMenuState>,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
+    if let Some(view_state) = &view_state {
+        view_state.validate()?;
+    }
     if !enabled {
         app.state::<local_windows::LocalWindows>()
             .set_workspace_menu_enabled(webview.label(), false)?;
+        app.state::<local_windows::LocalWindows>()
+            .set_view_menu_state(webview.label(), view_state)?;
         update_workspace_menu_state(&app);
         return Ok(());
     }
@@ -278,6 +307,8 @@ fn set_workspace_menu_enabled(
     }
     app.state::<local_windows::LocalWindows>()
         .set_workspace_menu_enabled(webview.label(), enabled)?;
+    app.state::<local_windows::LocalWindows>()
+        .set_view_menu_state(webview.label(), view_state)?;
     update_workspace_menu_state(&app);
     Ok(())
 }
@@ -368,6 +399,14 @@ fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
     }
 }
 
+struct NativeMenuAdmission(Arc<AtomicBool>);
+
+impl Drop for NativeMenuAdmission {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[tauri::command]
 async fn popup_titlebar_menu(
     webview: tauri::Webview,
@@ -376,25 +415,59 @@ async fn popup_titlebar_menu(
     x: f64,
     y: f64,
 ) -> Result<(), String> {
+    identity::local_window_id(webview.label())?;
+    // Reserve before any URL/native getter can wait behind an existing popup.
+    // Admission spans queued work as well as tracking; dropping the closure on
+    // scheduling failure also releases it. Tracking remains a separate flag so
+    // the admitted request can apply its pre-popup refresh.
+    state
+        .native_menu_popup_pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "A native titlebar menu is already open".to_string())?;
+    let admission = NativeMenuAdmission(Arc::clone(&state.native_menu_popup_pending));
     require_local_app_webview(&webview, &state)?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
-    let app_menu = webview
-        .app_handle()
-        .menu()
-        .ok_or_else(|| "Application menu is unavailable".to_string())?;
-    let item = app_menu
-        .get(id)
-        .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
-    let submenu = item
-        .as_submenu()
-        .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
-    webview
-        .window()
-        .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
-        .map_err(|error| error.to_string())
+    let app = webview.app_handle().clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.clone()
+        .run_on_main_thread(move || {
+            let admission = admission;
+            let result = (|| {
+                let state = app.state::<AppState>();
+                require_local_app_webview(&webview, &state)?;
+                if state.native_menu_popup_active.load(Ordering::Relaxed) {
+                    return Err("A native titlebar menu is already open".to_string());
+                }
+                update_workspace_menu_state_on_main(&app);
+                let app_menu = app
+                    .menu()
+                    .ok_or_else(|| "Application menu is unavailable".to_string())?;
+                let item = app_menu
+                    .get(id)
+                    .ok_or_else(|| "Titlebar menu is unavailable".to_string())?;
+                let submenu = item
+                    .as_submenu()
+                    .ok_or_else(|| "Titlebar menu is invalid".to_string())?;
+                state.native_menu_popup_active.store(true, Ordering::Relaxed);
+                let result = webview
+                    .window()
+                    .popup_menu_at(submenu, tauri::LogicalPosition::new(x.max(0.0), y.max(0.0)))
+                    .map_err(|error| error.to_string());
+                state.native_menu_popup_active.store(false, Ordering::Relaxed);
+                update_workspace_menu_state_on_main(&app);
+                result
+            })();
+            drop(admission);
+            let _ = sender.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1578,6 +1651,8 @@ fn main() {
             remote_tls_handlers: Mutex::new(HashMap::new()),
             remote_zoom_levels: Mutex::new(HashMap::new()),
             workspace_menu_items: Mutex::new(None),
+            native_menu_popup_active: AtomicBool::new(false),
+            native_menu_popup_pending: Arc::new(AtomicBool::new(false)),
             webview_data_directory,
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
@@ -1700,7 +1775,11 @@ fn main() {
                 | "open-workspace-editor-vscode"
                 | "open-workspace-editor-cursor"
                 | "open-workspace-editor-zed"
-                | "open-workspace-editor-vscodium") => {
+                | "open-workspace-editor-vscodium"
+                | "view-left-panel"
+                | "view-right-panel"
+                | "view-timeline"
+                | "view-timeline-tools") => {
                     if let Some(window) = local_windows::focused_local_window(app_handle) {
                         let _ = window.emit("menu:action", action);
                     }
@@ -2119,17 +2198,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     submenus.push(edit_menu);
 
     // View menu
-    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View")
-        .item(&reload_item)
-        .item(&force_reload_item)
-        .item(&toggle_devtools_item)
-        .separator()
-        .item(&reset_zoom_item)
-        .item(&zoom_in_item)
-        .item(&zoom_out_item)
-        .separator()
-        .item(&toggle_fullscreen_item)
-        .build()?;
+    let view_menu = SubmenuBuilder::with_id(app, "menu-view", "View").build()?;
+    view_menu::append(app, &view_menu)?;
+    view_menu.append_items(&[
+        &reload_item,
+        &force_reload_item,
+        &toggle_devtools_item,
+        &PredefinedMenuItem::separator(app)?,
+        &reset_zoom_item,
+        &zoom_in_item,
+        &zoom_out_item,
+        &PredefinedMenuItem::separator(app)?,
+        &toggle_fullscreen_item,
+    ])?;
     submenus.push(view_menu);
 
     // Window menu

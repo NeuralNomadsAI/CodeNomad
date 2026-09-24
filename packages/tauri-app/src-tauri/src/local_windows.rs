@@ -19,6 +19,7 @@ pub(crate) struct LocalWindowRecord {
     pending_folders: VecDeque<PendingFolder>,
     renderer_ready: bool,
     workspace_menu_enabled: bool,
+    pub(crate) view_menu_state: Option<crate::view_menu::ViewMenuState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +51,7 @@ impl Registry {
             pending_folders: VecDeque::new(),
             renderer_ready: false,
             workspace_menu_enabled: false,
+            view_menu_state: None,
         };
         self.records.insert(label.clone(), record.clone());
         self.mark_focused(&label);
@@ -137,20 +139,35 @@ impl LocalWindows {
             .get_mut(label)
             .ok_or_else(|| "Unknown local window".to_string())?;
         record.workspace_menu_enabled = enabled;
+        if !enabled {
+            record.view_menu_state = None;
+        }
         Ok(())
     }
 
-    pub(crate) fn workspace_menu_enabled(&self, label: &str) -> bool {
-        self.registry
-            .lock()
-            .ok()
-            .and_then(|registry| {
-                registry
-                    .records
-                    .get(label)
-                    .map(|record| record.workspace_menu_enabled)
-            })
-            .unwrap_or(false)
+    pub(crate) fn set_view_menu_state(
+        &self,
+        label: &str,
+        state: Option<crate::view_menu::ViewMenuState>,
+    ) -> Result<(), String> {
+        let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
+        let record = registry.records.get_mut(label).ok_or("Unknown local window")?;
+        record.view_menu_state = state;
+        Ok(())
+    }
+
+    pub(crate) fn menu_state(
+        &self,
+        focused: Option<&str>,
+    ) -> (bool, Option<crate::view_menu::ViewMenuState>) {
+        let Ok(registry) = self.registry.lock() else {
+            return (false, None);
+        };
+        let label = select_local_label(focused, registry.mru_label().as_deref());
+        let record = label.as_ref().and_then(|label| registry.records.get(label));
+        record
+            .map(|record| (record.workspace_menu_enabled, record.view_menu_state.clone()))
+            .unwrap_or_default()
     }
 
     pub(crate) fn set_backend_target(&self, target: Option<String>) {

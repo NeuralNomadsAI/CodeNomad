@@ -10,16 +10,16 @@ const log = getLogger("sse")
 export function handlePruningEvent(instanceId: string, event: { type: string; data: unknown }): boolean {
   if (event.type === "session.message.content.updated") {
     const data = event.data as { sessionID?: unknown; messageID?: unknown } | null
-    if (typeof data?.sessionID === "string" && typeof data.messageID === "string") refreshContent(instanceId, data.sessionID)
+    if (typeof data?.sessionID === "string" && typeof data.messageID === "string") refreshSessionContent(instanceId, data.sessionID)
     return true
   }
   if (event.type !== PRUNING_EVENT) return false
   const parsed = prunedEventSchema.safeParse(event.data)
   if (!parsed.success) return true
-  return refreshContent(instanceId, parsed.data.sessionID)
+  return refreshSessionContent(instanceId, parsed.data.sessionID)
 }
 
-function refreshContent(instanceId: string, sessionId: string): boolean {
+export function refreshSessionContent(instanceId: string, sessionId: string): boolean {
   if (!sessions().get(instanceId)?.has(sessionId)) return true
   invalidateOpenCodeSessionContent(instanceId, sessionId)
   invalidateSessionMessageLoad(instanceId, sessionId)

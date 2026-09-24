@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import { stat } from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
+import { GitRequiredError } from "../../workspaces/git-requirement"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
   resolveRepoRoot,
@@ -347,6 +348,7 @@ async function assertNoWorktreeBlockers(
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
+  if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   reply.code(error instanceof ProjectSessionError ? error.statusCode : 400)
   return { error: error instanceof Error ? error.message : "Unable to fulfill request" }
 }

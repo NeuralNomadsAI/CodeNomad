@@ -265,7 +265,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "追加",
   "opencodeBinarySelector.actions.browse": "バイナリを参照…",
   "opencodeBinarySelector.actions.removeTitle": "バイナリを削除",
-  "opencodeBinarySelector.badge.systemPath": "system PATH のバイナリを使用",
+  "opencodeBinarySelector.badge.systemPath": "PATH、ユーザーの npm インストールの順で優先",
   "opencodeBinarySelector.status.checkingVersions": "バージョンを確認中…",
   "opencodeBinarySelector.status.checking": "確認中…",
   "opencodeBinarySelector.dialog.title": "OpenCode バイナリを選択",
@@ -273,6 +273,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "OpenCode バイナリが無効です",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad には OpenCode V2 が必要です。opencode2 バイナリをインストールして選択してください。",
   "opencodeBinarySelector.validation.alreadyValidating": "すでに検証中です",
-  "opencodeBinarySelector.display.systemPath": "{name} (システム PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (自動)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

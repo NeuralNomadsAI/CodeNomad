@@ -4,6 +4,7 @@ import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
+import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
@@ -26,6 +27,8 @@ import { loadedRestorableSession } from "./stores/client-state"
 import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import OpenCodeSetup from "./components/opencode-setup"
+import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
@@ -38,7 +41,7 @@ import {
   selectBrowserOpenOwner,
 } from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
-import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
+import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -516,6 +519,10 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        return false
+      }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
       return false
@@ -692,10 +699,12 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Native menus execute the same commands as the command palette.
+  // Native visibility actions share the shell/preferences state; other actions use palette commands.
+  const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
         const instance = activeInstance()
         if (instance) showCommandPalette(instance.id)
@@ -729,14 +738,9 @@ const App: Component = () => {
     onCleanup(() => unsubscribe?.())
   })
 
-  createEffect(() => {
-    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
-      log.warn("Failed to update native workspace menu state", error)
-    })
-  })
-
   return (
     <>
+      <OpenCodeSetup />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}
@@ -895,6 +899,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <AuthRecoveryDialog />
 
         <Toaster
           position="top-right"

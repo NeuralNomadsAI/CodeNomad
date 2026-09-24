@@ -46,6 +46,7 @@ import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
+import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
@@ -233,6 +234,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  registerViewMenuPanels(props.instance.id, {
+    enabled: () => !mobileFullscreen(),
+    leftOpen,
+    rightOpen,
+    toggleLeft: () => leftOpen() ? closeLeftDrawer() : handleLeftAppBarButtonClick(),
+    toggleRight: () => rightOpen() ? closeRightDrawer() : handleRightAppBarButtonClick(),
+  })
 
   // When the user switches away from this instance (e.g., taps a different
   // instance/project tab while a floating drawer is open on phone), close any
@@ -797,6 +806,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
           <RightPanel
+            isActive={() => props.isActiveInstance !== false}
             t={t}
             instanceId={props.instance.id}
             instance={props.instance}
@@ -825,6 +835,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
       >
         <RightPanel
+          isActive={() => props.isActiveInstance !== false && rightOpen()}
           t={t}
           instanceId={props.instance.id}
           instance={props.instance}

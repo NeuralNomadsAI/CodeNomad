@@ -154,14 +154,11 @@ try {
   const client = await sharedService.client({ kind: "lifecycle", identity: "isolated-native", lifecycle })
   const connection = await sharedService.acquire()
   const runtimeFetch = connection.fetch
-  // Recognition follows the actual authenticated schema, not an exact version
-  // allowlist. Exercise this route against every real runtime in the matrix.
+  // Independently verify the authenticated schema even for the known minimum.
+  const { negotiateRuntime } = await tsImport("../packages/server/src/opencode/compatibility/negotiate.ts", import.meta.url)
   const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
   const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
-  const futureEndpoint = { ...connection.endpoint }
-  rememberRuntime(futureEndpoint, { version: "contract-probe", pid: 1, discovery: "status" })
-  const negotiatedClient = OpenCode.make({ baseUrl, fetch: createRuntimeFetch(futureEndpoint) })
-  assert.equal((await negotiatedClient.location.get({ location: { directory: root } })).directory, (await client.location.get({ location: { directory: root } })).directory)
+  assert.equal(await negotiateRuntime(connection.endpoint, fetch, AbortSignal.timeout(10_000)), "modern")
   const makeClient = () => OpenCode.make({ baseUrl, headers: {
     Authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
   }, fetch: runtimeFetch })
@@ -275,6 +272,10 @@ try {
   const messages = (await client.message.list({ sessionID: session.id, limit: 100, order: "asc" })).data
   const target = messages.find(message => message.type === "assistant" && message.content.some(part => part.type === "tool"))
   assert(target)
+  const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
+  await testSessionHistoryNative({ client, location, locationOptions, template: target })
+  const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
+  await testSessionNavigationNative({ client, location, locationOptions, template: target })
   if (ui) {
     const { testPruningUI } = await import("./test-session-pruning-ui.mjs")
     await testPruningUI({ client, connection, baseUrl, root, location, busy: async (sessionID) => {
@@ -314,6 +315,9 @@ try {
   await until(() => requests.slice(beforeBusy).some(item => item.kind === "primary"))
   assert.notEqual(claim(), null)
   assert.deepEqual((await prune()).output, { status: "blocked", reason: "maintenance_required" })
+  const busyBatch = (await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "pruneBatch", location,
+    input: { sessionID: session.id, candidates: [{ messageID: target.id, revision: preview.revision, toolCount: 1, reasoningCount: 1 }] } }, locationOptions)).output
+  assert.deepEqual(busyBatch.results[0].result, { status: "blocked", reason: "maintenance_required" })
   releaseProvider(); held = undefined
   await wait()
   assert.equal(claim(), null)
@@ -344,6 +348,9 @@ try {
   const contextBefore = await client.session.context({ sessionID: fork.id })
   assert(contextBefore.some(message => message.type === "compaction" && message.status === "completed"))
   assert(!contextBefore.some(message => message.id === forkTarget.id))
+  const historicalPage = (await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "history", location,
+    input: { sessionID: fork.id, purpose: "prune", query: "", includeTechnical: true } }, locationOptions)).output
+  assert(historicalPage.candidates.some(candidate => candidate.messageID === forkTarget.id), "whole-session plan includes pre-compaction content")
   const historical = { sessionID: fork.id, messageID: forkTarget.id, revision: revision(forkTarget.content), indexes: [0, 1] }
   assert.equal((await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "prune", location, input: historical }, locationOptions)).output.status, "pruned")
   assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])

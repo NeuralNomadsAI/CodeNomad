@@ -264,7 +264,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "थप्नुहोस्",
   "opencodeBinarySelector.actions.browse": "बाइनरीको लागि ब्राउज गर्नुहोस्...",
   "opencodeBinarySelector.actions.removeTitle": "बाइनरी हटाउनुहोस्",
-  "opencodeBinarySelector.badge.systemPath": "सिस्टम PATH बाट बाइनरी प्रयोग गर्नुहोस्",
+  "opencodeBinarySelector.badge.systemPath": "पहिले PATH, त्यसपछि प्रयोगकर्ताको npm स्थापना",
   "opencodeBinarySelector.status.checkingVersions": "संस्करणहरू जाँच गर्दै...",
   "opencodeBinarySelector.status.checking": "जाँच गर्दै...",
   "opencodeBinarySelector.dialog.title": "OpenCode बाइनरी चयन गर्नुहोस्",
@@ -272,6 +272,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "अमान्य OpenCode बाइनरी",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad लाई OpenCode V2 आवश्यक छ। opencode2 बाइनरी स्थापना गरेर चयन गर्नुहोस्।",
   "opencodeBinarySelector.validation.alreadyValidating": "पहिले नै प्रमाणीकरण गर्दै",
-  "opencodeBinarySelector.display.systemPath": "{name} (system PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (स्वचालित)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

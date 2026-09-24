@@ -264,7 +264,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Hinzufügen",
   "opencodeBinarySelector.actions.browse": "Nach Binärdatei suchen...",
   "opencodeBinarySelector.actions.removeTitle": "Binärdatei entfernen",
-  "opencodeBinarySelector.badge.systemPath": "Binärdatei aus dem System-PATH verwenden",
+  "opencodeBinarySelector.badge.systemPath": "Zuerst PATH, dann npm-Benutzerinstallation",
   "opencodeBinarySelector.status.checkingVersions": "Versionen werden geprüft...",
   "opencodeBinarySelector.status.checking": "Wird geprüft...",
   "opencodeBinarySelector.dialog.title": "OpenCode-Binärdatei auswählen",
@@ -272,6 +272,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "Ungültige OpenCode-Binärdatei",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad benötigt OpenCode V2. Installieren und wählen Sie die opencode2-Binärdatei aus.",
   "opencodeBinarySelector.validation.alreadyValidating": "Wird bereits validiert",
-  "opencodeBinarySelector.display.systemPath": "{name} (System-PATH)",
+  "opencodeBinarySelector.display.systemPath": "{name} (automatisch)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

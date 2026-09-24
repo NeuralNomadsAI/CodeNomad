@@ -1,5 +1,6 @@
 import { render } from "solid-js/web"
 import { createSignal } from "solid-js"
+import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
@@ -38,7 +39,10 @@ setSessionPage(id, [sessionId], false, true)
 await ensureWorktreesLoaded(id)
 let executions = 0
 const escapeStates: boolean[] = []
+const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
+let viewAction: (action: string) => boolean
 function Fixture() {
+  viewAction = useViewMenu(menuInstance)
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   useAppLifecycle({
     setEscapeInDebounce: value => { escapeStates.push(value); setEscapeInDebounce(value) },
@@ -62,6 +66,9 @@ function Fixture() {
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
+  viewAction: (action: string) => viewAction(action),
+  menuInstance: setMenuInstance,
+  setPreferences: updatePreferences,
   executions: () => executions,
   showInfo: () => setActiveSession(id, "info"),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),

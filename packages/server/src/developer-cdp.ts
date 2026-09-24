@@ -23,17 +23,17 @@ export interface DeveloperCdpSelection {
   endpoint: string
   runId: string
   windowId: string
-  sessionId: string
+  sessionId?: string
 }
 
 export interface DeveloperCdpIdentity extends DeveloperCdpSelection {
-  instanceId: string
+  instanceId?: string
 }
 
 export interface DeveloperCdpContext {
   windowId: string
-  instanceId: string
-  sessionId: string
+  instanceId: string | null
+  sessionId: string | null
 }
 
 export interface DeveloperCdpNode {
@@ -108,7 +108,7 @@ interface PendingCommand {
 interface RunState {
   endpoint: string
   windowId: string
-  sessionId: string
+  sessionId?: string
   instanceId?: string
   context?: DeveloperCdpContext
   target?: CdpTarget
@@ -242,6 +242,7 @@ export class DeveloperCdp {
     return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
   }
 
+
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
     const endpoint = discoveryUrl(identity.endpoint)
@@ -260,7 +261,7 @@ export class DeveloperCdp {
     return this.ensureTarget(state)
   }
 
-  private newState(endpoint: string, windowId: string, sessionId: string, instanceId?: string): RunState {
+  private newState(endpoint: string, windowId: string, sessionId?: string, instanceId?: string): RunState {
     return {
       endpoint,
       windowId,
@@ -340,15 +341,16 @@ export class DeveloperCdp {
       returnByValue: true,
     })
     const value = (response.result as { value?: unknown } | undefined)?.value as Partial<DeveloperCdpContext> | undefined
-    if (!value || typeof value.windowId !== "string" || typeof value.instanceId !== "string" || typeof value.sessionId !== "string"
-      || value.windowId.length > 256 || value.instanceId.length > 256 || value.sessionId.length > 256) {
-      throw new Error("CodeNomad page has no active session context")
+    const optionalId = (id: unknown) => id === null || (typeof id === "string" && id.length <= 256)
+    if (!value || typeof value.windowId !== "string" || value.windowId.length > 256
+      || !optionalId(value.instanceId) || !optionalId(value.sessionId)) {
+      throw new Error("CodeNomad page has no valid window context")
     }
-    return { windowId: value.windowId, instanceId: value.instanceId, sessionId: value.sessionId }
+    return { windowId: value.windowId, instanceId: value.instanceId!, sessionId: value.sessionId! }
   }
 
   private matchesContext(state: RunState, context: DeveloperCdpContext): boolean {
-    return context.windowId === state.windowId && context.sessionId === state.sessionId
+    return context.windowId === state.windowId && (state.sessionId === undefined || context.sessionId === state.sessionId)
       && (state.instanceId === undefined || context.instanceId === state.instanceId)
   }
 

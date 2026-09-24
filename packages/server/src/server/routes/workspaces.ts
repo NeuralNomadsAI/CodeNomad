@@ -8,6 +8,8 @@ import { isGitAvailable, resolveRepoRoot } from "../../workspaces/git-worktrees"
 import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
+import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
+import { GitRequiredError } from "../../workspaces/git-requirement"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -83,6 +85,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       return result.created ? result.workspace : { ...result.workspace, reused: true as const }
     } catch (error) {
       request.log.error({ err: error }, "Failed to create workspace")
+      if (error instanceof UnsupportedOpenCodeError) return reply.code(error.statusCode).send({
+        error: error.code, message: error.message, actualVersion: error.actualVersion, minimumVersion: error.minimumVersion, reason: error.reason,
+      })
       const message = error instanceof Error ? error.message : "Failed to create workspace"
       reply.code(400).type("text/plain").send(message)
     }
@@ -345,8 +350,8 @@ async function resolveGitWorktreeDirectory(
 
   const gitAvailable = await isGitAvailable(workspace.path)
   if (!gitAvailable) {
-    reply.code(503)
-    reply.send({ error: "Git is not installed or not available in PATH" })
+    const error = new GitRequiredError()
+    reply.code(error.statusCode).send({ error: error.message, code: error.code })
     return null
   }
 
@@ -375,6 +380,7 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }
