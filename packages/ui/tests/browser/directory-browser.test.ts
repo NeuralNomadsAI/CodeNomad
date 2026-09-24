@@ -91,7 +91,7 @@ after(async () => { await browser?.close(); await server?.close() })
 
 for (const mode of ["directories", "files"] as const) {
   test(`parent is offered once in the address, not repeated in the folder list (${mode})`, async () => {
-    const page = await browser.newPage()
+    const page = await browser.newPage({ locale: "fr-FR" })
     const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, `initialPath=/ws/start&mode=${mode}`)
     try {
       assert.equal(await page.getByRole("button", { name: "Up one level" }).count(), 0)
@@ -105,7 +105,7 @@ for (const mode of ["directories", "files"] as const) {
 }
 
 test("restricted browser offers parent and loaded children without the server-root shortcut", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).focus()
@@ -123,7 +123,7 @@ test("restricted browser offers parent and loaded children without the server-ro
 })
 
 test("typing filters children; arrow and Enter navigate, while Enter with no selection submits the typed path", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).fill("/ws/start/pic")
@@ -143,7 +143,7 @@ test("typing filters children; arrow and Enter navigate, while Enter with no sel
 })
 
 test("Escape restores an unsubmitted edit without dismissing the dialog", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start&mode=directories")
   try {
     await field(page).fill("/ws/unsubmitted")
@@ -155,7 +155,7 @@ test("Escape restores an unsubmitted edit without dismissing the dialog", async 
 })
 
 test("unrestricted relative start is offered by canonical home path after navigating away", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/home/user" }, "initialPath=projects&mode=files")
   try {
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/home/user/projects")
@@ -171,7 +171,7 @@ test("unrestricted relative start is offered by canonical home path after naviga
 })
 
 test("failed start falls back without offering a broken return", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home", rejectedPath: "/missing" }, "initialPath=/missing")
   try {
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".directory-browser-current-path")?.value === "/ws")
@@ -181,7 +181,7 @@ test("failed start falls back without offering a broken return", async () => {
 })
 
 test("reopening clears the previous start destination", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page, { scope: "restricted", rootPath: "/ws", homePath: "/home" }, "initialPath=/ws/start")
   try {
     await page.evaluate(() => (window as any).directoryBrowserFixture.close())
@@ -194,7 +194,7 @@ test("reopening clears the previous start destination", async () => {
 })
 
 test("a navigation finishing after close and reopen cannot replace the new location", async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ locale: "fr-FR" })
   const errors = await openFixture(page,
     { scope: "restricted", rootPath: "/ws", homePath: "/home", delayedPath: "/ws/start/projects" },
     "initialPath=/ws/start")
@@ -216,7 +216,7 @@ test("a navigation finishing after close and reopen cannot replace the new locat
 for (const mode of ["directories", "files"] as const) {
   for (const width of [600, 360]) {
   test(`address dropdown stays inside the dialog and Open occupies its own row at ${width}px (${mode})`, async () => {
-    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    const page = await browser.newPage({ viewport: { width, height: 900 }, locale: "fr-FR" })
     const errors = await openFixture(page, { scope: "unrestricted", rootPath: "/srv", homePath: "/home" }, `initialPath=/srv/start&mode=${mode}`)
     try {
       await field(page).focus()

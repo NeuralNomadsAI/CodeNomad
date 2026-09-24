@@ -1011,6 +1011,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const query = debouncedSearchQuery()
     const workspace = searchWorkspace()
     const technical = includeTechnical()
+    const systemVisibility = preferences().systemMessagesVisibility
     const cursor = searchPageCursor()
     const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
@@ -1047,7 +1048,7 @@ export default function MessageSection(props: MessageSectionProps) {
       frame = requestAnimationFrame(() => {
         if (!isCurrentSearch()) return
         batch(() => {
-          setSearchMatches(page.hits.map(hit => ({
+          setSearchMatches(page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map(hit => ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,

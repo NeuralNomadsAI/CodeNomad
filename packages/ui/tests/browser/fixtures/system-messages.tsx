@@ -43,6 +43,19 @@ serverApi.patchConfigOwner = async (_owner, patch: any) => {
   return config
 }
 serverApi.fetchStateOwner = async () => ({} as any)
+serverApi.querySessionHistory = async (_instanceId, input) => {
+  const query = input.query.trim().toLocaleLowerCase()
+  const hits = query ? nativeMessages.flatMap((message) => {
+    const content = message.type === "assistant"
+      ? message.content?.find((part: any) => part.type === "text")?.text
+      : message.text
+    if (typeof content !== "string" || !content.toLocaleLowerCase().includes(query)) return []
+    return [{ sessionID: sessionId, messageID: message.id, role: message.type, partIndex: 0,
+      kind: "text" as const, excerpt: content }]
+  }) : []
+  return { status: "page" as const, scanned: nativeMessages.length, tools: 0, reasoning: 0,
+    skipped: 0, hits, candidates: [], cursor: null }
+}
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
 setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
