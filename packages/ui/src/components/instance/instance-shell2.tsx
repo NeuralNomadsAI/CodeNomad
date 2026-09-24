@@ -159,7 +159,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessions,
     activeSessionIdForInstance,
     activeSessionForInstance,
-    latestTodoState,
     tokenStats,
     handleSessionSelect,
   } = useInstanceSessionContext({
@@ -812,7 +811,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            latestTodoState={latestTodoState}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -841,7 +839,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          latestTodoState={latestTodoState}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}

@@ -67,9 +67,9 @@ describe("right panel plugin manifests", () => {
       renderStatusTab: render,
     })
     const statusSections = createCoreStatusSectionManifest({
+      renderTokens: render,
       renderYoloModeSection: render,
       renderProviderUsage: render,
-      renderPlanSectionContent: render,
       renderBackgroundProcesses: render,
       renderMcpStatus: render,
       renderPluginStatus: render,
@@ -80,9 +80,9 @@ describe("right panel plugin manifests", () => {
     assert.deepEqual(rightPanelModule.tabs?.map((entry) => entry.id), ["git-changes", "files", "status"])
     assert.equal(rightPanelModule.tabs?.find((entry) => entry.id === "status")?.alwaysVisible, true)
     assert.deepEqual(statusSections.statusSections?.map((entry) => entry.id), [
+      "tokens",
       "yolo-mode",
       "provider-usage",
-      "plan",
       "background-processes",
       "mcp",
       "plugins",

@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, lazy, type Accessor } from "solid-js"
-import type { ToolState } from "../../../../types/tool-state"
 
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
@@ -43,7 +42,6 @@ interface CoreRightPanelRuntimeOptions {
   instance: Instance
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
-  latestTodoState: Accessor<ToolState | null>
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
@@ -224,9 +222,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         t={options.t}
         instanceId={options.instanceId}
         instance={options.instance}
-        activeSessionId={options.activeSessionId}
         activeSession={options.activeSession}
-        latestTodoState={options.latestTodoState}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}
