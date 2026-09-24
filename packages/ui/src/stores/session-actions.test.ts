@@ -284,6 +284,26 @@ describe("session instruction sync", () => {
       }
     })
   }
+
+  for (const action of ["prompt", "command", "shell"] as const) {
+    it(`continues ${action} when voice instruction sync fails`, async () => {
+      const calls: string[] = []
+      seed({ session: {
+        instructions: { entry: {
+          put: async (input: any) => { calls.push(`put:${input.key}`) },
+          remove: async () => { throw new Error("Unexpected status 500") },
+        } },
+        switchAgent: async () => {}, switchModel: async () => {},
+        [action]: async () => { calls.push(action) },
+      } })
+
+      if (action === "prompt") await sendMessage(instanceId, sessionId, "hello")
+      else if (action === "command") await executeCustomCommand(instanceId, sessionId, "review", "")
+      else await runShellCommand(instanceId, sessionId, "pwd")
+
+      assert.deepEqual(calls, ["put:codenomad.session-placement", action])
+    })
+  }
 })
 
 describe("session interruption", () => {

@@ -1,5 +1,4 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Accessor, type Component } from "solid-js"
-import type { ToolState } from "../../../../types/tool-state"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -83,8 +82,6 @@ interface RightPanelProps {
 
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
-
-  latestTodoState: Accessor<ToolState | null>
 
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
@@ -201,7 +198,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         get instance() { return props.instance },
         activeSessionId: props.activeSessionId,
         activeSession: props.activeSession,
-        latestTodoState: props.latestTodoState,
         isPhoneLayout: props.isPhoneLayout,
         rightDrawerWidth: props.rightDrawerWidth,
         rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,

@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Another installation holds the OpenCode installation lock. Retry when it finishes. If it was interrupted, check the server log for the lock location.",
+  "settings.opencode.setup.installation_in_use": "The OpenCode executable is in use or not writable. The update was deferred before changing the installation. Retry once the executable is available.",
+  "settings.opencode.setup.source.path": "Executable found in the server's PATH.",
+  "settings.opencode.setup.source.user": "User npm installation found outside the current PATH.",
+  "settings.opencode.setup.sharedInstall": "Install for the user and configure PATH",
+  "settings.opencode.setup.sharedInstallDescription": "Uses a standard npm installation shared with other clients. Open a new terminal after installation.",
   "settings.opencode.update.available": "OpenCode {version} is available.",
   "settings.opencode.setup.manage": "Manage OpenCode…",
   "settings.opencode.setup.connected": "OpenCode is connected.",

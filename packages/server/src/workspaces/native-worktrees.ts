@@ -6,6 +6,7 @@ import type { WorktreeDescriptor, WorktreeListResponse } from "../api-types"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
+import { GitRequiredError } from "./git-requirement"
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -24,7 +25,14 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
 
 export async function listNativeWorktrees(context: NativeWorktreeContext): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
-  const { isGitRepo } = await resolveRepoRoot(workspacePath)
+  let isGitRepo: boolean
+  try {
+    ;({ isGitRepo } = await resolveRepoRoot(workspacePath))
+  } catch (error) {
+    if (!(error instanceof GitRequiredError)) throw error
+    // No repository claim or discovered sibling checkouts without Git.
+    return { gitAvailable: false, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root", directoryOnly: true }] }
+  }
   if (!isGitRepo) return { isGitRepo, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root" }] }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))

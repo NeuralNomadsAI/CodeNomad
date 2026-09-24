@@ -9,6 +9,7 @@ import { resolveWorktreeDirectory } from "../../workspaces/worktree-directory"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
+import { GitRequiredError } from "../../workspaces/git-requirement"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -349,8 +350,8 @@ async function resolveGitWorktreeDirectory(
 
   const gitAvailable = await isGitAvailable(workspace.path)
   if (!gitAvailable) {
-    reply.code(503)
-    reply.send({ error: "Git is not installed or not available in PATH" })
+    const error = new GitRequiredError()
+    reply.code(error.statusCode).send({ error: error.message, code: error.code })
     return null
   }
 
@@ -379,6 +380,7 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)
     return { error: error.message }

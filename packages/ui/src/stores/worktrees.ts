@@ -150,6 +150,10 @@ function getGitRepoStatus(instanceId: string): boolean | null {
   return gitRepoStatusByInstance().get(instanceId) ?? null
 }
 
+export function getDirectoryOnlyWorktree(instanceId: string): WorktreeDescriptor | undefined {
+  return getWorktrees(instanceId).find(worktree => worktree.slug === "root" && worktree.directoryOnly)
+}
+
 async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
   if (!instanceId) {
     throw new Error("Missing instanceId")

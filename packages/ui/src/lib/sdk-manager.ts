@@ -1,6 +1,7 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
 import { backgroundReads } from "./background-read-queue"
+import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 
@@ -46,9 +47,13 @@ export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_
 export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
-    const relativeUrl = `${requestUrl.pathname.replace(/^\/+/, "")}${requestUrl.search}`
+    const basePath = new URL(baseUrl, requestUrl).pathname.replace(/\/+$/, "") + "/"
+    // The pinned client preserves baseUrl's proxy prefix. Strip it only for
+    // scheduling decisions; forwarding must retain the generated URL unchanged.
+    const apiPath = requestUrl.pathname.startsWith(basePath)
+      ? `/${requestUrl.pathname.slice(basePath.length)}` : requestUrl.pathname
     const read = async () => {
-      const response = await globalThis.fetch(new URL(relativeUrl, baseUrl), {
+      const response = await authenticatedFetch(input, {
         ...init,
         credentials: init?.credentials ?? "include",
       })
@@ -68,13 +73,13 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
     // Project identity gates the visible cross-worktree session list. Promote
     // this dependency with selection rather than leaving it behind Git scans.
-    if (method === "GET" && /^\/api\/location\/?$/.test(requestUrl.pathname)) {
+    if (method === "GET" && /^\/api\/location\/?$/.test(apiPath)) {
       return prioritizedRead(isForeground, init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
     }
     // Catalogues from every restored project used to consume all HTTP/1.1
     // connections before the saved session/message reads could even dispatch.
     // Share the secondary budget with inventory scans, including reconnects.
-    if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(requestUrl.pathname)) {
+    if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(apiPath)) {
       return backgroundReads.run(init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
     }
     return read()

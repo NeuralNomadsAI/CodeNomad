@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Başka bir kurulum OpenCode kurulum kilidini tutuyor. Bittiğinde yeniden deneyin. Kesintiye uğradıysa kilidin konumu için sunucu günlüğüne bakın.",
+  "settings.opencode.setup.installation_in_use": "OpenCode yürütülebilir dosyası kullanımda veya yazılabilir değil. Kurulum değiştirilmeden güncelleme ertelendi. Dosya kullanılabilir olduğunda yeniden deneyin.",
+  "settings.opencode.setup.source.path": "Yürütülebilir dosya sunucunun PATH değişkeninde bulundu.",
+  "settings.opencode.setup.source.user": "Geçerli PATH dışında kullanıcı npm kurulumu bulundu.",
+  "settings.opencode.setup.sharedInstall": "Kullanıcı için kur ve PATH'i yapılandır",
+  "settings.opencode.setup.sharedInstallDescription": "Diğer istemcilerle paylaşılan standart npm kurulumunu kullanır. Kurulumdan sonra yeni terminal açın.",
   "settings.opencode.update.available": "OpenCode {version} kullanılabilir.",
   "settings.opencode.setup.manage": "OpenCode'u yönet…",
   "settings.opencode.setup.connected": "OpenCode bağlı.",

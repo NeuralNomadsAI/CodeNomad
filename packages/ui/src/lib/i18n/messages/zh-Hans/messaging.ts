@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "图片 {number}",
+  "toolCall.image.unavailable": "无法显示此图片。",
   "promptInput.btw.title": "/btw — 旁支问题",
   "promptInput.btw.commandDescription": "提出旁支问题，不添加到对话中",
   "promptInput.btw.description": "使用此会话的上下文单独请求模型。问题和回答不会添加到对话中。附件保留在输入框中。",

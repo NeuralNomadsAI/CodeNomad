@@ -16,6 +16,8 @@ import type { SettingsService } from "../settings/service"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
+import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerConfigFileRoutes } from "./routes/config-files"
@@ -933,20 +935,34 @@ async function proxyWorkspaceRequest(args: {
       const onDisconnect = () => disconnected.abort()
       reply.raw.once("close", onDisconnect)
       try {
-        const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(15_000)])
-        if (reply.raw.destroyed || request.raw.aborted) disconnected.abort()
-        signal.throwIfAborted()
-        const variables = await workspaceManager.getSessionEnvironment(workspaceId, signal)
-        signal.throwIfAborted()
+        try {
+          const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(15_000)])
+          if (reply.raw.destroyed || request.raw.aborted) disconnected.abort()
+          signal.throwIfAborted()
+          const variables = await workspaceManager.getSessionEnvironment(workspaceId, signal)
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+          await (await clientForRequest()).session.environment({ sessionID: sessionId!, variables }, { signal })
+          signal.throwIfAborted()
+          connection?.assertCurrent()
+        } catch {
+          // Never log the SDK error: it can contain the complete environment body.
+          releaseMutation?.()
+          logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
+          return reply.code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
+        }
+        if (!pathname.replace(/\/$/, "").endsWith("/shell")) {
+          try {
+            connection?.assertCurrent()
+            await syncSessionGitContext(await clientForRequest(), sessionId!, disconnected.signal)
+          } catch {
+            // Advisory context must not turn Git recovery into another send blocker.
+            // Do not log SDK bodies (they may include unrelated session context).
+            logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
+          }
+        }
+        disconnected.signal.throwIfAborted()
         connection?.assertCurrent()
-        await (await clientForRequest()).session.environment({ sessionID: sessionId!, variables }, { signal })
-        signal.throwIfAborted()
-        connection?.assertCurrent()
-      } catch {
-        // Never log the SDK error: it can contain the complete environment body.
-        releaseMutation?.()
-        logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
-        return reply.code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
       } finally {
         reply.raw.off("close", onDisconnect)
       }
@@ -1159,6 +1175,9 @@ async function authorizeSessionList(
   if (cursors.length === 1) {
     const scope = decodeSessionListScope(cursors[0])
     if (!scope) return "invalid"
+    // A project cursor embeds its original wide scope; never reinterpret it as
+    // a directory cursor when Git authority is unavailable.
+    if (scope.project && !(await readGitStatus()).available) return "foreign"
     for (const key of ["directory", "location[directory]", "project", "subpath"]) {
       targetUrl.searchParams.delete(key)
     }
@@ -1178,7 +1197,19 @@ async function authorizeSessionList(
   const project = projects[0]
   const subpath = subpaths[0]
   if (!project || (subpath !== undefined && !isSafeRelativePath(subpath))) return "invalid"
-  return ownsSessionListScope(manager, workspaceId, { project, subpath }, client)
+  const ownership = await ownsSessionListScope(manager, workspaceId, { project, subpath }, client)
+  if (ownership !== "allowed") return ownership
+  if (!(await readGitStatus()).available) {
+    if (directory && !await manager.ownsLocation(workspaceId, { directory }, client)) return "foreign"
+    // Narrow the initial query, preserving native directory-scoped pagination.
+    // Unlike a project cursor this request has no already-established scope.
+    const root = manager.getServiceDirectory?.(workspaceId) ?? manager.get(workspaceId)?.path
+    if (!root) return "foreign"
+    targetUrl.searchParams.delete("project")
+    targetUrl.searchParams.delete("subpath")
+    targetUrl.searchParams.set("directory", root)
+  }
+  return "allowed"
 }
 
 function isSafeRelativePath(value: string): boolean {
@@ -1283,6 +1314,7 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/session\/[^/]+\/revert$/],
     ["PUT", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
     ["DELETE", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries\/[^/]+$/],
+    ["GET", /^\/api\/experimental\/session\/[^/]+\/instructions\/entries$/],
     ["POST", /^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/],
     ["POST", /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/],
     ["DELETE", /^\/api\/session\/[^/]+\/form\/[^/]+$/],

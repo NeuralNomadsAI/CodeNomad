@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Otra instalación mantiene el bloqueo de OpenCode. Reintenta cuando termine. Si se interrumpió, consulta la ubicación del bloqueo en el registro del servidor.",
+  "settings.opencode.setup.installation_in_use": "El ejecutable de OpenCode está en uso o no permite escritura. La actualización se aplazó antes de modificar la instalación. Reintenta cuando esté disponible.",
+  "settings.opencode.setup.source.path": "Ejecutable encontrado en el PATH del servidor.",
+  "settings.opencode.setup.source.user": "Instalación npm del usuario encontrada fuera del PATH actual.",
+  "settings.opencode.setup.sharedInstall": "Instalar para el usuario y configurar PATH",
+  "settings.opencode.setup.sharedInstallDescription": "Usa una instalación npm estándar compartida con otros clientes. Abre un terminal nuevo después de instalar.",
   "settings.opencode.update.available": "OpenCode {version} está disponible.",
   "settings.opencode.setup.manage": "Gestionar OpenCode…",
   "settings.opencode.setup.connected": "OpenCode está conectado.",

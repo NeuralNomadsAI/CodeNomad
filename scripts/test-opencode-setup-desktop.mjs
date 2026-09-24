@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdtemp, mkdir, readFile, writeFile, readdir } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, writeFile, readdir, copyFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
@@ -24,9 +24,10 @@ const oldDaemon = process.argv.includes("--old-daemon")
 const compatibleDaemon = process.argv.includes("--compatible-daemon")
 assert.ok(!(oldDaemon && compatibleDaemon), "Choose one daemon scenario")
 const resumeFolder = process.argv.includes("--resume-folder")
+const privateCopy = process.argv.includes("--private-copy")
 const artifacts = {
   electron: path.join(workspace, "packages/electron-app/release/win-unpacked/CodeNomad.exe"),
-  tauri: path.join(workspace, "packages/tauri-app/target/release/codenomad-tauri.exe"),
+  tauri: process.env.CODENOMAD_FIXTURE_TAURI ?? path.join(workspace, "packages/tauri-app/target/release/codenomad-tauri.exe"),
 }
 const results = []
 async function until(fn, message, timeout = 90_000) {
@@ -61,13 +62,23 @@ for (const [host, executable] of Object.entries(artifacts)) {
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_CONFIG_CONTENT: "{}", OPENCODE_DISABLE_MODELS_FETCH: "1",
     CLI_CONFIG: config, CLI_LOG_LEVEL: "debug", ELECTRON_ENABLE_LOGGING: "1", PATH: `${process.env.SystemRoot}\\System32`,
     npm_config_cache: path.join(profile, "npm-cache"), npm_config_userconfig: path.join(profile, "npmrc"),
+    NODE_OPTIONS: `--require="${path.join(workspace, "scripts/fixtures/setup-path-registration.cjs").replaceAll("\\", "/")}"`,
   })
   for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"]) await mkdir(env[key], { recursive: true })
+  if (privateCopy) {
+    const retiredRoot = path.join(profile, ".local/share/codenomad/opencode")
+    const retiredBinary = path.join(retiredRoot, "2.0.15/node_modules/@opencode/cli/bin/opencode.exe")
+    await mkdir(path.dirname(retiredBinary), { recursive: true })
+    await copyFile(bootstrapCli, retiredBinary)
+    await mkdir(path.join(retiredRoot, "selected"))
+    await writeFile(path.join(retiredRoot, "selected/2.0.15"), "")
+    await writeFile(path.join(retiredRoot, "current"), "2.0.15")
+  }
   const reservation = createServer()
   await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve))
   const servicePort = reservation.address().port
   await new Promise(resolve => reservation.close(resolve))
-  const record = { host, executable, profile, servicePort, oldDaemon, compatibleDaemon, sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), checks: [] }
+  const record = { host, executable, profile, servicePort, oldDaemon, compatibleDaemon, privateCopy, sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), checks: [] }
   const resources = path.join(path.dirname(executable), "resources")
   record.packagedFiles = {}
   for (const relative of ["server/dist/opencode-update/service.js", "server/dist/workspaces/opencode-cli-service.js", "server/dist/workspaces/native-service-registration.js", "server/public/index.html", "node/win32-x64/node.exe", "node/win32-x64/node_modules/npm/package.json"]) {
@@ -124,9 +135,16 @@ for (const [host, executable] of Object.entries(artifacts)) {
     page.setDefaultTimeout(90_000)
     observe(page)
     for (const context of browser.contexts()) context.on("page", observe)
+    if (privateCopy) {
+      record.initialStatus = await page.evaluate(async () => (await fetch("/api/opencode/update", { signal: AbortSignal.timeout(30_000) })).json())
+      assert.equal(record.initialStatus.state, "missing", "retired private installation must not satisfy startup discovery")
+      assert.equal(record.initialStatus.binaryPath, "opencode2")
+      record.checks.push("retired private copy ignored, including selected receipt and current marker")
+    }
     await page.getByRole("dialog").waitFor()
     await page.getByText(/^(OpenCode is not installed\.|OpenCode n’est pas installé\.)$/).waitFor()
     await page.screenshot({ path: path.join(profile, "01-missing.png") })
+    await page.getByText(/^(Version details|Détails des versions)$/).click()
     await page.getByText(/introduced the native step-start timestamp|horodatage natif de début d’étape/).waitFor()
     record.checks.push("real missing setup screen with separate technical minimum and recommendation")
     await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
@@ -135,9 +153,11 @@ for (const [host, executable] of Object.entries(artifacts)) {
     record.checks.push("dismiss and persistent recovery reentry")
     await page.getByRole("button", { name: /^(Install and start OpenCode|Installer et démarrer OpenCode)$/ }).click()
     await until(async () => {
-      const versions = await readdir(path.join(profile, ".local/share/codenomad/opencode/selected")).catch(() => [])
-      if (!versions.length) return false
-      cli = path.join(profile, ".local/share/codenomad/opencode", versions[0], "node_modules/@opencode/cli/bin/opencode.exe")
+      const registration = await readFile(path.join(profile, "path-registration.json"), "utf8").catch(() => undefined)
+      if (!registration) return false
+      const { prefix } = JSON.parse(registration)
+      assert.equal(prefix, path.join(env.APPDATA, "npm"))
+      cli = path.join(prefix, "node_modules/@opencode/cli/bin/opencode.exe")
       return cli
     }, `${host}: bundled npm install failed`, 300_000)
     record.checks.push("bundled Node/npm installed real CLI with system Node and opencode absent from PATH")
@@ -166,6 +186,10 @@ for (const [host, executable] of Object.entries(artifacts)) {
     await page.screenshot({ path: path.join(profile, "02-installed-connected.png") })
     record.cliVersion = runCli(cli, ["--version"])
     record.service = runCli(cli, ["service", "status"])
+    // Some CLI builds report stopped for a reachable daemon. Authenticate the
+    // actual isolated endpoint instead of accepting either status text alone.
+    record.connectedDaemon = await daemonInfo()
+    assert.ok(record.connectedDaemon.version)
     record.checks.push("native-parent service activation, supported daemon admission, setup closes")
     if (resumeFolder) {
       record.workspaces = await until(async () => {

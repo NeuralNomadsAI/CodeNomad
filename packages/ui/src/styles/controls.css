@@ -1,6 +1,7 @@
 @import "./components/buttons.css";
 @import "./components/switches.css";
 @import "./components/window.css";
+@import "./components/auth-recovery.css";
 @import "./components/session-aside.css";
 @import "./components/history-search.css";
 @import "./components/native-titlebar.css";
@@ -12,6 +13,7 @@
 @import "./components/selector.css";
 @import "./components/env-vars.css";
 @import "./components/directory-browser.css";
+@import "./components/directory-browser-address.css";
 @import "./components/remote-access.css";
 @import "./components/permission-notification.css";
 @import "./components/form-request.css";

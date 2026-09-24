@@ -1,5 +1,4 @@
 import { createMemo, type Accessor } from "solid-js"
-import type { ToolState } from "../../../types/tool-state"
 import type { Session } from "../../../types/session"
 import {
   activeParentSessionId,
@@ -12,7 +11,7 @@ import {
   setActiveSessionFromList,
 } from "../../../stores/sessions"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
-import type { LatestTodoSnapshot, SessionUsageState } from "../../../stores/message-v2/types"
+import type { SessionUsageState } from "../../../stores/message-v2/types"
 
 type InstanceSessionContextOptions = {
   instanceId: Accessor<string>
@@ -31,10 +30,6 @@ type InstanceSessionContextState = {
   activeSessionUsage: Accessor<SessionUsageState | null>
   activeSessionInfoDetails: Accessor<ReturnType<typeof getSessionInfo> | null>
   tokenStats: Accessor<{ used: number; avail: number | null }>
-
-  // Todo state
-  latestTodoSnapshot: Accessor<LatestTodoSnapshot | null>
-  latestTodoState: Accessor<ToolState | null>
 
   // Controller
   handleSessionSelect: (sessionId: string) => void
@@ -94,30 +89,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     }
   })
 
-  const latestTodoSnapshot = createMemo(() => {
-    const sessionId = activeSessionIdForInstance()
-    if (!sessionId || sessionId === "info") return null
-    const store = messageStore()
-    if (!store) return null
-    const snapshot = store.getLatestTodoSnapshot(sessionId)
-    return snapshot ?? null
-  })
-
-  const latestTodoState = createMemo<ToolState | null>(() => {
-    const snapshot = latestTodoSnapshot()
-    if (!snapshot) return null
-    const store = messageStore()
-    if (!store) return null
-    const message = store.getMessage(snapshot.messageId)
-    if (!message) return null
-    const partRecord = message.parts?.[snapshot.partId]
-    const part = partRecord?.data as { type?: string; tool?: string; state?: ToolState }
-    if (!part || part.type !== "tool" || part.tool !== "todowrite") return null
-    const state = part.state
-    if (!state || state.status !== "completed") return null
-    return state
-  })
-
   const handleSessionSelect = (sessionId: string) => {
     const instanceId = options.instanceId()
     if (sessionId === "info") {
@@ -139,8 +110,6 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     activeSessionUsage,
     activeSessionInfoDetails,
     tokenStats,
-    latestTodoSnapshot,
-    latestTodoState,
     handleSessionSelect,
   }
 }

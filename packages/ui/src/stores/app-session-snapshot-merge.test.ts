@@ -40,6 +40,21 @@ function workspaceAt(state: RestorableSessionState, index = 0): RestorableWorksp
 }
 
 describe("app session snapshot merge", () => {
+  it("preserves a live workspace opened after the startup snapshot when the backend loses it", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/old")]))
+    const current = workspace("/new", 0, { drafts: { prompt: "fresh draft" }, attachments: { prompt: [attachment("file")] } })
+    const unavailable = { runtimeTabId: "instance:live", folder: "/new", occurrence: 0 }
+    markPreservedWorkspaceUnavailable(preservation, unavailable, current)
+    const merged = mergeRestorableSessionState(empty(), preservation)
+    assert.equal(workspaceAt(merged, 1).drafts.prompt, "fresh draft")
+    const reopened = { ...unavailable, runtimeTabId: "instance:reopened" }
+    assert.deepEqual(getPreservedWorkspaceReopenTarget(preservation, reopened)?.snapshot.attachments, current.attachments)
+    markPreservedWorkspaceReopened(preservation, reopened)
+    assert.equal(hasRestoredTabBinding(preservation, 1, reopened.runtimeTabId), true)
+    markPreservedWorkspaceRemoved(preservation, reopened)
+    assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 1, "Explicit removal still wins")
+  })
+
   for (const settled of [false, true]) it(`does not rebind a ${settled ? "settled" : "pending"} restored window to a later global folder occurrence`, () => {
     const saved = session([workspace("C:\\work", 3, {
       activeSessionId: "selected", activeParentSessionId: "selected", drafts: { selected: "window draft" },

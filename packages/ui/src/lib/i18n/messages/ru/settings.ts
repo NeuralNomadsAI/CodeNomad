@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Другая установка удерживает блокировку OpenCode. Повторите после её завершения. Если она прервана, путь блокировки указан в журнале сервера.",
+  "settings.opencode.setup.installation_in_use": "Исполняемый файл OpenCode используется или недоступен для записи. Обновление отложено до изменения установки. Повторите, когда файл станет доступен.",
+  "settings.opencode.setup.source.path": "Исполняемый файл найден в PATH сервера.",
+  "settings.opencode.setup.source.user": "Пользовательская установка npm найдена вне текущего PATH.",
+  "settings.opencode.setup.sharedInstall": "Установить для пользователя и настроить PATH",
+  "settings.opencode.setup.sharedInstallDescription": "Используется стандартная установка npm, общая с другими клиентами. После установки откройте новый терминал.",
   "settings.opencode.update.available": "Доступна версия OpenCode {version}.",
   "settings.opencode.setup.manage": "Управление OpenCode…",
   "settings.opencode.setup.connected": "OpenCode подключён.",

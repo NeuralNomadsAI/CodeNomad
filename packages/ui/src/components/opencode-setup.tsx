@@ -5,6 +5,7 @@ import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { sseManager } from "../lib/sse-manager"
 import { OpenCodeSetupPanel } from "./settings/opencode-setup-panel"
+import { OpenCodeExecutableCard } from "./settings/opencode-executable-card"
 import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupOpen, openCodeSetupStatus,
   openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
 
@@ -45,9 +46,9 @@ export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
       <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface w-full max-w-2xl max-h-[85vh] overflow-auto">
-            <header class="window-header"><Dialog.Title class="window-title">{t("settings.opencode.update.title")}</Dialog.Title>
+            <header class="window-header"><Dialog.Title class="window-title">{t("settings.opencode.setup.required")}</Dialog.Title>
               <Dialog.CloseButton class="window-action" aria-label={t("app.launchError.close")}>{t("app.launchError.close")}</Dialog.CloseButton></header>
-            <div class="window-body"><OpenCodeSetupPanel /></div>
+            <div class="window-body"><OpenCodeSetupPanel><OpenCodeExecutableCard /></OpenCodeSetupPanel></div>
           </Dialog.Content>
         </div>
       </Dialog.Portal>

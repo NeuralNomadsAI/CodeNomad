@@ -4,6 +4,7 @@ import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
+import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
@@ -898,6 +899,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <AuthRecoveryDialog />
 
         <Toaster
           position="top-right"

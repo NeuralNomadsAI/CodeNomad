@@ -35,6 +35,7 @@ import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from 
 import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
+import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -371,11 +372,13 @@ export class WorkspaceManager {
   }
 
   async createWorktree(id: string, branch: string, fromSlug?: string) {
+    await requireHostGit()
     try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
     finally { this.invalidateWorktrees("blocking") }
   }
 
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
+    await requireHostGit()
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
     finally { this.invalidateWorktrees("blocking") }
   }
@@ -408,8 +411,16 @@ export class WorkspaceManager {
     // The explicitly opened folder is already authority. Do not require native
     // discovery (or a second connection) to authorize that exact local directory.
     if (target && target === root) {
-      const { repoRoot } = await resolveRepoRoot(root)
-      return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+      try {
+        const { repoRoot } = await resolveRepoRoot(root)
+        return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+      } catch (error) {
+        if (!(error instanceof GitRequiredError)) throw error
+        // Without Git only the explicitly opened physical folder is authority.
+        // The deletion fence compares ancestor/descendant identities as well,
+        // covering a checkout parent even if Git disappears or returns mid-send.
+        return { slug: "root", directory: target, worktreeDirectory: root }
+      }
     }
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
     return resolveOwnedWorktreePath({

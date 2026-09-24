@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.opencode.setup.installation_busy": "Eine andere Installation hält die OpenCode-Installationssperre. Nach deren Abschluss erneut versuchen. Bei einem Abbruch steht der Sperrpfad im Serverprotokoll.",
+  "settings.opencode.setup.installation_in_use": "Die OpenCode-Datei wird verwendet oder ist nicht beschreibbar. Das Update wurde vor Änderungen zurückgestellt. Erneut versuchen, sobald die Datei verfügbar ist.",
+  "settings.opencode.setup.source.path": "Programm im PATH des Servers gefunden.",
+  "settings.opencode.setup.source.user": "npm-Benutzerinstallation außerhalb des aktuellen PATH gefunden.",
+  "settings.opencode.setup.sharedInstall": "Für den Benutzer installieren und PATH konfigurieren",
+  "settings.opencode.setup.sharedInstallDescription": "Verwendet eine normale npm-Installation gemeinsam mit anderen Clients. Danach ein neues Terminal öffnen.",
   "settings.opencode.update.available": "OpenCode {version} ist verfügbar.",
   "settings.opencode.setup.manage": "OpenCode verwalten…",
   "settings.opencode.setup.connected": "OpenCode ist verbunden.",

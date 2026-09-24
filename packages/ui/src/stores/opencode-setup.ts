@@ -6,23 +6,28 @@ export const [openCodeSetupStatus, setOpenCodeSetupStatus] = createSignal<OpenCo
 export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
+export const [openCodeSetupCheckError, setOpenCodeSetupCheckError] = createSignal(false)
+export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<"installation_busy" | "installation_in_use">()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
 export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
 export const [openCodeSetupChecking, setOpenCodeSetupChecking] = createSignal(false)
 export const [openCodeSetupFeedback, setOpenCodeSetupFeedback] = createSignal<"checked" | "reloaded">()
 let generation = 0
 let notifiedGeneration = -1
-let pending: Promise<void> | undefined
+let pending: { promise: Promise<void>; again: boolean; announce: boolean } | undefined
 const [resume, setResume] = createSignal<(() => Promise<unknown>)>()
 export const canContinueOpenCodeSetup = () => Boolean(resume())
 
 export function isOpenCodeConnected(status = openCodeSetupStatus()): boolean {
-  return status?.serviceState === "ready" || status?.serviceState === "restart_available"
+  return !openCodeSetupCheckError() && (status?.serviceState === "ready" || status?.serviceState === "restart_available")
 }
 
 export async function continueOpenCodeSetup() {
-  if (!isOpenCodeConnected() || openCodeSetupBusy()) return
+  if (!isOpenCodeConnected() || openCodeSetupBusy() || openCodeSetupChecking()) return
+  const epoch = generation
   const retry = resume()
+  await refreshOpenCodeSetup()
+  if (epoch !== generation || openCodeSetupBusy() || !isOpenCodeConnected() || resume() !== retry) return
   setResume(undefined)
   setOpenCodeSetupOpen(false)
   await retry?.()
@@ -52,27 +57,49 @@ export function invalidateOpenCodeSetup() {
   // Its callback resolves the current settings again; old mutations stay fenced.
   setOpenCodeSetupStatus(undefined)
   setOpenCodeSetupFeedback(undefined)
+  setOpenCodeSetupCheckError(false)
+  setOpenCodeSetupError(false)
+  setOpenCodeInstallationError(undefined)
   void refreshOpenCodeSetup()
 }
 
 export function refreshOpenCodeSetup(afterMutation = false, announce = false): Promise<void> {
   if (openCodeSetupBusy() && !afterMutation) return Promise.resolve()
-  if (pending) return pending
+  if (pending) {
+    pending.again = true
+    pending.announce ||= announce
+    return pending.promise
+  }
   const epoch = generation
-  setOpenCodeSetupChecking(true)
-  if (announce) setOpenCodeSetupFeedback(undefined)
-  const request = serverApi.fetchOpenCodeUpdateStatus().then(status => {
-    if (epoch !== generation) return
-    setOpenCodeSetupStatus(status)
-    setOpenCodeSetupError(false)
-    if (announce) setOpenCodeSetupFeedback("checked")
-  }).catch(() => { if (epoch === generation) setOpenCodeSetupError(true) })
-    .finally(() => { if (pending === request) { pending = undefined; setOpenCodeSetupChecking(false) } })
+  const request = { promise: Promise.resolve(), again: false, announce }
   pending = request
-  return request
+  setOpenCodeSetupChecking(true)
+  setOpenCodeSetupFeedback(undefined)
+  request.promise = (async () => {
+    do {
+      request.again = false
+      try {
+        const status = await serverApi.fetchOpenCodeUpdateStatus()
+        if (epoch !== generation) return
+        setOpenCodeSetupStatus(status)
+        setOpenCodeSetupCheckError(false)
+        setOpenCodeSetupError(false)
+        setOpenCodeInstallationError(undefined)
+        if (!request.again && request.announce && !status.checkError && !status.serviceError && status.state !== "error") {
+          setOpenCodeSetupFeedback("checked")
+        }
+      } catch {
+        if (epoch !== generation) return
+        setOpenCodeSetupCheckError(true)
+      }
+    } while (request.again && epoch === generation)
+  })().finally(() => {
+    if (pending === request) { pending = undefined; setOpenCodeSetupChecking(false) }
+  })
+  return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -80,26 +107,37 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction) {
   setOpenCodeSetupAction(action)
   setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupError(false)
+  setOpenCodeInstallationError(undefined)
   try {
     if (action === "install") await serverApi.updateOpenCode()
     if (epoch !== generation) return
     // Installation can leave an older shared daemon running. Re-read first so
     // restart remains a separate explicit action, never an implicit interruption.
     await refreshOpenCodeSetup(true)
-    if (epoch !== generation) return
+    if (epoch !== generation || openCodeSetupCheckError()) return
     if (action !== "restart" && (openCodeSetupStatus()?.serviceState === "restart_required" || openCodeSetupStatus()?.serviceState === "incompatible")) return
     const status = action === "reload" ? await serverApi.reloadOpenCodeConfiguration() : await serverApi.startOpenCode(action === "restart")
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
-      const retry = resume()
-      setResume(undefined)
+      // Info-panel maintenance must not resume a workspace-open request left in
+      // a dismissed recovery dialog. Preserve it for explicit recovery instead.
+      const retry = options.resumeWorkspace === false ? undefined : resume()
+      if (options.resumeWorkspace !== false) setResume(undefined)
       if (action === "reload") setOpenCodeSetupFeedback("reloaded")
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
+      return status
     }
-  } catch {
-    if (epoch === generation) { await refreshOpenCodeSetup(true); setOpenCodeSetupError(true) }
+  } catch (error) {
+    if (epoch === generation) {
+      await refreshOpenCodeSetup(true)
+      if (epoch !== generation) return
+      setOpenCodeSetupError(true)
+      if (error instanceof Error && (error.message === "installation_busy" || error.message === "installation_in_use")) {
+        setOpenCodeInstallationError(error.message)
+      }
+    }
   } finally {
     setOpenCodeSetupBusy(false)
     setOpenCodeSetupAction(undefined)

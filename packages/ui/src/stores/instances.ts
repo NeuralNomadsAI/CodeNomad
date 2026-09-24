@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import { buildInstanceBaseUrl, sdkManager } from "../lib/sdk-manager"
+import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -283,7 +283,6 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 
 const MAX_LOG_ENTRIES = 1000
 
-const pendingDisposeRequests = new Map<string, Promise<boolean>>()
 const pendingRehydrations = new Map<string, Promise<void>>()
 const initialHydrations = new Map<string, Promise<void>>()
 const initialSessionHydrations = new Map<string, Promise<void>>()
@@ -949,44 +948,6 @@ async function hydrateInstanceData(instanceId: string, options?: {
   }
 }
 
-async function postInstanceDispose(instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.proxyPath) {
-    throw new Error("Instance not ready")
-  }
-
-  const baseUrl = buildInstanceBaseUrl(instance.proxyPath)
-  const url = new URL("instance/dispose", baseUrl)
-
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-    },
-  })
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "")
-    throw new Error(message || `Dispose request failed with ${response.status}`)
-  }
-
-  const contentType = response.headers.get("content-type") ?? ""
-  if (contentType.includes("application/json")) {
-    const data = await response.json().catch(() => undefined)
-    if (typeof data === "boolean") return data
-    if (data && typeof data === "object" && "data" in (data as any)) {
-      return Boolean((data as any).data)
-    }
-    return Boolean(data)
-  }
-
-  const text = await response.text().catch(() => "")
-  if (text.trim() === "true") return true
-  if (text.trim() === "false") return false
-  return Boolean(text)
-}
-
 function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
@@ -1015,25 +976,6 @@ async function rehydrateInstance(instanceId: string, options?: { reason?: string
   })
 
   pendingRehydrations.set(instanceId, promise)
-  return promise
-}
-
-async function disposeInstance(instanceId: string): Promise<boolean> {
-  if (pendingDisposeRequests.has(instanceId)) {
-    return pendingDisposeRequests.get(instanceId)!
-  }
-
-  const promise = (async () => {
-    const ok = await postInstanceDispose(instanceId)
-    if (ok) {
-      await rehydrateInstance(instanceId, { reason: "disposed" })
-    }
-    return ok
-  })().finally(() => {
-    pendingDisposeRequests.delete(instanceId)
-  })
-
-  pendingDisposeRequests.set(instanceId, promise)
   return promise
 }
 
@@ -2185,7 +2127,6 @@ export {
   setPendingFormAddedHandler,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
-  disposeInstance,
   reconcilePendingSessionIndicators,
   reconcilePendingRequestLiveness,
   syncPendingRequests,

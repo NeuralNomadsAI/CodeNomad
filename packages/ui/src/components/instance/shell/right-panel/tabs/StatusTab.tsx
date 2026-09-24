@@ -1,6 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
 import type { LocationRef, ShellInfo } from "@opencode/client"
-import type { ToolState } from "../../../../../types/tool-state"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -20,7 +19,6 @@ import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
-import { TodoListView } from "../../../../tool-call/renderers/todo"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
@@ -37,12 +35,9 @@ interface StatusTabProps {
   instanceId: string
   instance: Instance
 
-  activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
 
-  latestTodoState: Accessor<ToolState | null>
   isActive: Accessor<boolean>
-
   expandedItems: Accessor<string[]>
   onExpandedItemsChange: (values: string[]) => void
   customization: Accessor<RightPanelCustomization>
@@ -123,26 +118,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         </div>
       </div>
     )
-  }
-
-  const renderPlanSectionContent = () => {
-    const sessionId = props.activeSessionId()
-    if (!sessionId || sessionId === "info") {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.plan.noSessionSelected")}</span>
-        </div>
-      )
-    }
-    const todoState = props.latestTodoState()
-    if (!todoState) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.plan.empty")}</span>
-        </div>
-      )
-    }
-    return <TodoListView state={todoState} emptyLabel={props.t("instanceShell.plan.empty")} showStatusLabel={false} />
   }
 
   const removeShell = async (shellId: string, command: string, running: boolean) => {
@@ -244,9 +219,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
     const sections = createCoreStatusSectionManifest({
+      renderTokens: () => (
+        <Show when={props.activeSession()?.id}>
+          <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} />
+        </Show>
+      ),
       renderYoloModeSection,
       renderProviderUsage,
-      renderPlanSectionContent,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
@@ -289,10 +268,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()?.id}>
-        <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} class="status-tab-context-panel" />
-      </Show>
-
       <Accordion.Root
         class="right-panel-accordion"
         collapsible
