@@ -530,6 +530,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-windows-input-fixture"
+version = "0.1.0"
+dependencies = [
+ "tao",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4127,8 +4135,6 @@ dependencies = [
 [[package]]
 name = "tao"
 version = "0.34.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e06d52c379e63da659a483a958110bbde891695a0ecb53e48cc7786d5eda7bb"
 dependencies = [
  "bitflags 2.11.0",
  "block2",
