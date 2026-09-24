@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "All projects using this daemon",
   "instanceServiceStatus.plugins.scope.project": "Project",
   "instanceServiceStatus.plugins.scope.project.detail": "This active project location",
-  "instanceServiceStatus.plugins.scope.unavailable": "Project is unavailable because it resolves to the global configuration.",
+  "instanceServiceStatus.plugins.scope.unavailable": "Project controls are unavailable: the configuration target is shared with Global or resolves outside this project location.",
   "instanceServiceStatus.plugins.target.existing": "Rule target: {path}",
   "instanceServiceStatus.plugins.target.new": "Will create: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "Runtime inventory",

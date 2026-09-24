@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "Alle Projekte dieses Daemons",
   "instanceServiceStatus.plugins.scope.project": "Projekt",
   "instanceServiceStatus.plugins.scope.project.detail": "Dieser aktive Projektort",
-  "instanceServiceStatus.plugins.scope.unavailable": "Die Projektsteuerung ist nicht verfügbar, da sie auf dieselbe Konfiguration wie die globale Steuerung verweist.",
+  "instanceServiceStatus.plugins.scope.unavailable": "Die Projektsteuerung ist nicht verfügbar: Das Konfigurationsziel wird mit dem Bereich „Global“ geteilt oder verweist auf einen Ort außerhalb dieses Projekts.",
   "instanceServiceStatus.plugins.target.existing": "Regelziel: {path}",
   "instanceServiceStatus.plugins.target.new": "Wird erstellt: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "Runtime-Inventar",

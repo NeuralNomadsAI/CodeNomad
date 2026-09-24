@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "Bu daemon'u kullanan tüm projeler",
   "instanceServiceStatus.plugins.scope.project": "Proje",
   "instanceServiceStatus.plugins.scope.project.detail": "Bu etkin proje konumu",
-  "instanceServiceStatus.plugins.scope.unavailable": "Proje denetimleri, genel denetimlerle aynı yapılandırmaya işaret ettiği için kullanılamıyor.",
+  "instanceServiceStatus.plugins.scope.unavailable": "Proje denetimleri kullanılamıyor: yapılandırma hedefi «Genel» kapsamıyla paylaşılıyor veya bu projenin konumunun dışına işaret ediyor.",
   "instanceServiceStatus.plugins.target.existing": "Kural hedefi: {path}",
   "instanceServiceStatus.plugins.target.new": "Oluşturulacak: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "Çalışma zamanı envanteri",

@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "使用此守护进程的所有项目",
   "instanceServiceStatus.plugins.scope.project": "项目",
   "instanceServiceStatus.plugins.scope.project.detail": "当前活动项目位置",
-  "instanceServiceStatus.plugins.scope.unavailable": "项目配置与全局配置指向同一位置，因此项目控件不可用。",
+  "instanceServiceStatus.plugins.scope.unavailable": "项目控件不可用：配置目标与“全局”共用，或指向此项目位置之外。",
   "instanceServiceStatus.plugins.target.existing": "规则目标：{path}",
   "instanceServiceStatus.plugins.target.new": "将创建：{path}",
   "instanceServiceStatus.plugins.runtime.heading": "运行时清单",

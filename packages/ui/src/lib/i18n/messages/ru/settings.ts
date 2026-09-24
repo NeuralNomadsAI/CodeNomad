@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "Все проекты этого демона",
   "instanceServiceStatus.plugins.scope.project": "Проект",
   "instanceServiceStatus.plugins.scope.project.detail": "Текущее расположение проекта",
-  "instanceServiceStatus.plugins.scope.unavailable": "Управление на уровне проекта недоступно, поскольку конфигурация проекта совпадает с глобальной.",
+  "instanceServiceStatus.plugins.scope.unavailable": "Управление на уровне проекта недоступно: целевой путь конфигурации общий с областью «Глобально» или ведёт за пределы расположения этого проекта.",
   "instanceServiceStatus.plugins.target.existing": "Файл правила: {path}",
   "instanceServiceStatus.plugins.target.new": "Будет создан: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "Инвентарь среды выполнения",

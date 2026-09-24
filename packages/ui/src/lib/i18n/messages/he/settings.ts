@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "כל הפרויקטים המשתמשים בתהליך זה",
   "instanceServiceStatus.plugins.scope.project": "פרויקט",
   "instanceServiceStatus.plugins.scope.project.detail": "מיקום הפרויקט הפעיל הזה",
-  "instanceServiceStatus.plugins.scope.unavailable": "פקדי הפרויקט אינם זמינים משום שהם מפנים לאותה תצורה כמו הפקדים הכלליים.",
+  "instanceServiceStatus.plugins.scope.unavailable": "פקדי הפרויקט אינם זמינים: יעד התצורה משותף עם ההיקף «כללי» או מפנה אל מחוץ למיקום של פרויקט זה.",
   "instanceServiceStatus.plugins.target.existing": "יעד הכלל: {path}",
   "instanceServiceStatus.plugins.target.new": "ייווצר: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "מלאי זמן ריצה",

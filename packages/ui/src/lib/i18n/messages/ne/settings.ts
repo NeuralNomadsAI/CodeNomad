@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "यो daemon प्रयोग गर्ने सबै परियोजना",
   "instanceServiceStatus.plugins.scope.project": "परियोजना",
   "instanceServiceStatus.plugins.scope.project.detail": "यो सक्रिय परियोजना स्थान",
-  "instanceServiceStatus.plugins.scope.unavailable": "परियोजनाको कन्फिगरेसन र विश्वव्यापी कन्फिगरेसनको स्थान एउटै भएकाले परियोजना नियन्त्रण उपलब्ध छैन।",
+  "instanceServiceStatus.plugins.scope.unavailable": "परियोजना नियन्त्रण उपलब्ध छैन: कन्फिगरेसनको लक्ष्य स्थान «विश्वव्यापी» दायरासँग साझा छ वा यस परियोजनाको स्थानभन्दा बाहिर पर्छ।",
   "instanceServiceStatus.plugins.target.existing": "नियम लक्ष्य: {path}",
   "instanceServiceStatus.plugins.target.new": "सिर्जना गरिनेछ: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "रनटाइम सूची",

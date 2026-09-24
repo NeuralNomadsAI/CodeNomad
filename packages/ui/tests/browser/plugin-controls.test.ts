@@ -165,6 +165,11 @@ test("V2 plugin controls disable Project when it resolves to the Global document
   await page.waitForTimeout(100)
   const narrowLane = await row.locator('[data-scope="global"]').boundingBox()
   assert.ok((narrowLane?.width ?? 48) <= 40, "narrow panels compact the switch lanes")
+  assert.equal(await page.locator(".plugin-controls-notice").evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true)
+  if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {
+    await mkdir(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, { recursive: true })
+    await page.screenshot({ path: join(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, "plugins-unavailable-narrow.png"), fullPage: true })
+  }
   assert.deepEqual(errors, [])
   await page.close()
 })

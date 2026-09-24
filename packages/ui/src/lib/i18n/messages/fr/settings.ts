@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "Tous les projets de ce daemon",
   "instanceServiceStatus.plugins.scope.project": "Projet",
   "instanceServiceStatus.plugins.scope.project.detail": "Cet emplacement de projet actif",
-  "instanceServiceStatus.plugins.scope.unavailable": "Projet indisponible car il correspond à la configuration globale.",
+  "instanceServiceStatus.plugins.scope.unavailable": "Les contrôles du projet sont indisponibles : la cible de configuration est partagée avec la portée « Global » ou pointe en dehors de l’emplacement de ce projet.",
   "instanceServiceStatus.plugins.target.existing": "Cible de la règle : {path}",
   "instanceServiceStatus.plugins.target.new": "Sera créé : {path}",
   "instanceServiceStatus.plugins.runtime.heading": "Inventaire runtime",

@@ -79,7 +79,7 @@ export const settingsMessages = {
   "instanceServiceStatus.plugins.scope.global.detail": "このデーモンを使うすべてのプロジェクト",
   "instanceServiceStatus.plugins.scope.project": "プロジェクト",
   "instanceServiceStatus.plugins.scope.project.detail": "現在のプロジェクト場所",
-  "instanceServiceStatus.plugins.scope.unavailable": "プロジェクト設定がグローバル設定と同じ場所を参照しているため、プロジェクトの操作は利用できません。",
+  "instanceServiceStatus.plugins.scope.unavailable": "プロジェクトの操作は利用できません。設定先が「グローバル」と共有されているか、このプロジェクトの場所の外部を参照しています。",
   "instanceServiceStatus.plugins.target.existing": "ルールの保存先: {path}",
   "instanceServiceStatus.plugins.target.new": "作成予定: {path}",
   "instanceServiceStatus.plugins.runtime.heading": "ランタイムインベントリ",
