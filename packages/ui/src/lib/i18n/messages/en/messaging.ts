@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "Image {number}",
+  "toolCall.image.unavailable": "Unable to display this image.",
   "promptInput.btw.title": "/btw — Side question",
   "promptInput.btw.commandDescription": "Ask a side question without adding to the conversation",
   "promptInput.btw.description": "Uses this session's context in a separate model request. Questions and answers are not added to the conversation. Attachments stay in the composer.",

@@ -1,0 +1,32 @@
+.tool-call-output-images {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  min-width: 0;
+}
+
+.tool-call-output-image {
+  margin: 0;
+  min-width: 0;
+}
+
+.tool-call-output-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 32rem;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.tool-call-output-image figcaption,
+.tool-call-output-image p {
+  margin: var(--space-xs) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.tool-call-output-image figcaption span {
+  color: var(--text-muted);
+}

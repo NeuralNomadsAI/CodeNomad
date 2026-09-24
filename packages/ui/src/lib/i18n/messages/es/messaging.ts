@@ -1,4 +1,6 @@
 export const messagingMessages = {
+  "toolCall.image.label": "Imagen {number}",
+  "toolCall.image.unavailable": "No se puede mostrar esta imagen.",
   "promptInput.btw.title": "/btw — Pregunta aparte",
   "promptInput.btw.commandDescription": "Hacer una pregunta aparte sin añadirla a la conversación",
   "promptInput.btw.description": "Usa el contexto de esta sesión en una solicitud independiente al modelo. La pregunta y la respuesta no se añaden a la conversación. Los adjuntos permanecen en el editor.",

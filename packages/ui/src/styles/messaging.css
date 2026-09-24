@@ -10,6 +10,7 @@
 @import "./messaging/timeline-scrollbar.css";
 @import "./messaging/session-timeline-rail.css";
 @import "./messaging/tool-call.css";
+@import "./messaging/tool-call/images.css";
 @import "./messaging/log-view.css";
 @import './messaging/timeline-virtual-list.css';
 @import './messaging/timeline-preview.css';
