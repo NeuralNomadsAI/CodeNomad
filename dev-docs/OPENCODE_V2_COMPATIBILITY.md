@@ -136,8 +136,26 @@ fixes and runtime read/subagent improvements. These are upstream runtime changes
 this qualification does not expose additional proxy APIs or introduce new media,
 provider-authentication or transcript UI workflows. The shared npm native-upgrade
 boundary stays at 2.0.15; installer activation remains separate from daemon restart.
-Record completed native, migration, browser and build evidence in the qualification
-PR/CI; do not treat unchanged wire types as proof of runtime behavior.
+Windows qualification with Node 24.20.0 passes 98 server tests, 75 UI tests,
+25 setup/auth-recovery browser scenarios and three tool-image browser scenarios,
+plus server/UI/Electron typechecks and production server/UI/plugin builds. All
+four historical migrations (2.0.3 and beta-19271 to 2.0.7 and 2.0.16) pass.
+The 2.0.16 native pruning/UI suite passes through concurrency, persistence and
+restart. The isolated npm upgrade advances the installed CLI to 2.0.16 while
+preserving the running 2.0.15 daemon's version and PID.
+
+Native suites pass on both 2.0.7 and 2.0.16 with the 2.0.16 dependencies:
+automation/discovery, relay/proxy/ownership, worktrees, Forms/permissions,
+history/pruning/concurrency, per-send environment, inclusive forks, idle/busy
+side questions and blank-session cleanup. The Git-degraded scenario passes on
+2.0.16 and on the isolated minimum-runtime rerun described below.
+
+The minimum-runtime Git-degraded fixture initially retained the advisory after
+PATH recovery; its isolated rerun passes without code changes. Preserve that
+failure as unresolved intermittent evidence, not a corrected regression. The
+independent gatekeeper reports zero actionable findings. Detailed native suite
+completion and cross-platform qualification belong in the PR/CI; do not treat
+unchanged wire types or a passing rerun as proof of untested behavior.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
