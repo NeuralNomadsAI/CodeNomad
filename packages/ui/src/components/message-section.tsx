@@ -1355,6 +1355,7 @@ export default function MessageSection(props: MessageSectionProps) {
               messageId={messageId}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
+              isActive={isActive}
               store={store}
               messageIndex={index()}
               showThinking={() => preferences().showThinkingBlocks}

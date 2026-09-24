@@ -376,6 +376,7 @@ function MessageContentItem(props: MessageContentItemProps) {
 interface ToolCallItemProps {
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   store: () => InstanceMessageStore
   messageId: string
   partId: string
@@ -476,6 +477,7 @@ function ToolCallItem(props: ToolCallItemProps) {
             partVersion={partVersion()}
             instanceId={props.instanceId}
             sessionId={props.sessionId}
+            isActive={props.isActive}
             onContentRendered={props.onContentRendered}
             headerAction={isBackgroundableTool(toolPart()) ? (
               <button
@@ -558,6 +560,7 @@ interface MessageBlockProps {
   messageId: string
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   store: () => InstanceMessageStore
   messageIndex: number
   showThinking: () => boolean
@@ -687,17 +690,18 @@ export default function MessageBlock(props: MessageBlockProps) {
 
       const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
-      if (!cached) {
+      const partIds = pendingParts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
+      // Index rows observe item identity, not mutations to this plain cached
+      // object. Publish changed selections so appended/tail parts reach the row.
+      if (!cached || cached.partIds.length !== partIds.length || cached.partIds.some((id, index) => id !== partIds[index])) {
         cached = {
           type: "content",
           key: segmentKey,
           messageId: current.id,
           startPartId,
-          partIds: pendingParts.flatMap((part) => typeof part.id === "string" ? [part.id] : []),
+          partIds,
         }
         sessionCache.messageItems.set(segmentKey, cached)
-      } else {
-        cached.partIds = pendingParts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
       }
 
       items.push(cached)
@@ -963,6 +967,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       <ToolCallItem
                         instanceId={props.instanceId}
                         sessionId={props.sessionId}
+                        isActive={props.isActive}
                         store={props.store}
                         messageId={(item() as ToolDisplayItem).messageId}
                         partId={(item() as ToolDisplayItem).partId}
@@ -982,6 +987,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       completed={(item() as ExplorationDisplayItem).completed}
                       instanceId={props.instanceId}
                       sessionId={props.sessionId}
+                      isActive={props.isActive}
                       store={props.store}
                       pendingFormToolTargets={pendingFormToolTargets()}
                       activePartId={activeSearchMatch()?.partId}
@@ -1099,6 +1105,7 @@ interface ExplorationGroupProps {
   completed: boolean
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   store: () => InstanceMessageStore
   pendingFormToolTargets: ReadonlySet<string>
   activePartId?: string
@@ -1200,6 +1207,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
       <ToolCallItem
         instanceId={props.instanceId}
         sessionId={props.sessionId}
+        isActive={props.isActive}
         store={props.store}
         messageId={item.messageId}
         partId={item.partId}

@@ -310,6 +310,9 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
+          packages/ui/src/components/instance/shell/useSessionCache.test.ts
+          packages/ui/src/components/permission-diff-review.test.ts
+          packages/ui/src/components/tool-call/renderers/task-copy.test.ts
           packages/ui/src/components/tool-call/renderer-copy.test.ts
           packages/ui/src/components/tool-call/diff-payload.test.ts
           packages/ui/src/components/tool-call/renderers/edit.test.ts
@@ -326,7 +329,9 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/message-v2/bus.test.ts
+          packages/ui/src/stores/message-v2/transcript-eviction.test.ts
           packages/ui/src/stores/opencode-data.test.ts
+          packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
           packages/ui/src/stores/message-v2/empty-content.test.ts
           packages/ui/src/stores/permission-lifecycle.test.ts

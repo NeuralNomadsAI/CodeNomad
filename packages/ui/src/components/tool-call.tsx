@@ -79,6 +79,7 @@ interface ToolCallProps {
   partVersion?: number
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   onContentRendered?: () => void
   /**
    * When true, tool call starts collapsed regardless of user preferences.
@@ -123,6 +124,7 @@ function ToolCallDetails(props: {
   toolCallIdentifier: () => string
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   messageId?: string
   messageVersion?: number
   partVersion?: number
@@ -333,6 +335,7 @@ function ToolCallDetails(props: {
     toolName: props.toolName,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    isActive: () => props.isActive?.() ?? true,
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
@@ -350,6 +353,7 @@ function ToolCallDetails(props: {
           partVersion={options.partVersion}
           instanceId={props.instanceId}
           sessionId={options.sessionId}
+          isActive={rendererContext.isActive}
           onContentRendered={props.onContentRendered}
           forceCollapsed={options.forceCollapsed}
         />
@@ -1030,6 +1034,7 @@ export default function ToolCall(props: ToolCallProps) {
           toolCallIdentifier={toolCallIdentifier}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          isActive={props.isActive}
           messageId={props.messageId}
           messageVersion={props.messageVersion}
           partVersion={props.partVersion}

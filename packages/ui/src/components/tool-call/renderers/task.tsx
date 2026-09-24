@@ -15,7 +15,8 @@ import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
 import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
-import { getMessageWindowPageKey, loadCompleteMessageHistory } from "../../message-history-pagination"
+import { getMessageWindowPageKey } from "../../message-history-pagination"
+import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
 import { describeTaskTitle, readSubagentName } from "./task-title"
 
@@ -176,7 +177,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input, toolName())
   },
-  renderBody({ toolState, instanceId, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
+  renderBody({ toolState, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const childSessionId = createMemo(() => {
@@ -198,12 +199,12 @@ export const taskRenderer: ToolRenderer = {
 
     function retryChildSessionLoad() {
       const id = childSessionId()
-      if (!id) return
+      if (!id || isActive?.() === false) return
       void loadMessages(instanceId, id, { force: true }).catch(() => {})
     }
 
     useActiveSessionMessageLoad({
-      isActive: () => Boolean(childSessionId()),
+      isActive: () => Boolean(childSessionId()) && isActive?.() !== false,
       instanceId: () => instanceId,
       session: () => {
         const id = childSessionId()
@@ -219,8 +220,8 @@ export const taskRenderer: ToolRenderer = {
 
     createEffect(() => {
       const id = childSessionId()
-      if (!id) return
-      setSessionTranscriptVisible(instanceId, id, true)
+      if (!id || isActive?.() === false) return
+      untrack(() => setSessionTranscriptVisible(instanceId, id, true))
       onCleanup(() => setSessionTranscriptVisible(instanceId, id, false))
     })
 
@@ -449,30 +450,17 @@ export const taskRenderer: ToolRenderer = {
     const childSourceActive = () => childToolKeys().length > 0 || childTranscriptTruncated()
     const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childTranscriptTruncated(), legacySummary().truncated)
 
-    async function copyChildTaskSteps() {
-      const id = childSessionId()
-      if (!id) return
-      const release = beginMessageHistoryTraversal(instanceId, id)
-      try {
-        const steps = await loadCompleteMessageHistory({
-          getPageKey: () => getMessageWindowPageKey(store.getMessageWindow(id)),
-          isCurrent: () => childSessionId() === id,
-          isLatest: () => isLatestMessageWindow(instanceId, id),
-          loadOldest: async () => { await loadOldestMessageWindow(instanceId, id) },
-          loadNewer: async () => { await loadNewerMessageWindow(instanceId, id) },
-          visit: () => collectChildTaskSteps(store.getSessionMessageIds(id), store.getMessage)
-            .map((step) => JSON.stringify(step, null, 2)),
-        })
-        if (steps) {
-          const chunks = ["[\n"]
-          steps.forEach((step, index) => chunks.push(index === 0 ? step : `,\n${step}`))
-          chunks.push("\n]")
-          await copyTextChunksToClipboard(chunks)
-        }
-      } finally {
-        release()
-      }
-    }
+    const childTaskCopy = useTaskStepCopy({
+      childSessionId,
+      isActive: () => isActive?.() ?? true,
+      beginTraversal: id => beginMessageHistoryTraversal(instanceId, id),
+      getPageKey: id => getMessageWindowPageKey(store.getMessageWindow(id)),
+      isLatest: id => isLatestMessageWindow(instanceId, id),
+      loadOldest: (id, signal) => loadOldestMessageWindow(instanceId, id, signal),
+      loadNewer: (id, signal) => loadNewerMessageWindow(instanceId, id, signal),
+      readSteps: id => collectChildTaskSteps(store.getSessionMessageIds(id), store.getMessage),
+      copy: copyTextChunksToClipboard,
+    })
 
     createEffect(() => {
       const childCount = childToolKeys().length
@@ -526,12 +514,12 @@ export const taskRenderer: ToolRenderer = {
                   {t("toolCall.task.steps.count", { count: stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length })}
                 </span>
                 <Show when={childTranscriptTruncated()}>
-                  <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyChildTaskSteps().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" disabled={childTaskCopy.pending()} onClick={() => void childTaskCopy.copy().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
                 <Show when={childToolKeys().length === 0 && legacySummary().truncated}>
-                  <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyToClipboard(stringifyLegacyTaskSummary(legacySummary().entries))} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={() => void copyToClipboard(stringifyLegacyTaskSummary(legacySummary().entries))} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                 </Show>
@@ -576,7 +564,7 @@ export const taskRenderer: ToolRenderer = {
                               <span class="tool-call-task-text">{description}</span>
                               <Show when={copyTitle}>
                                 {(title) => (
-                                  <button type="button" class="tool-call-header-icon-button tool-call-header-copy" onClick={() => void copyToClipboard(title())} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
+                                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={() => void copyToClipboard(title())} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
                                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                                   </button>
                                 )}

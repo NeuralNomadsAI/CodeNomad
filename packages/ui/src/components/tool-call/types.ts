@@ -59,6 +59,8 @@ export interface ToolRendererContext {
   toolName: Accessor<string>
   instanceId: string
   sessionId: string
+  /** Activity of the owning conversation, inherited by nested child-session tools. */
+  isActive?: Accessor<boolean>
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
