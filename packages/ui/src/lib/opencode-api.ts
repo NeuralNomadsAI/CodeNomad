@@ -14,10 +14,9 @@ export function getOpencodeErrorMessage(error: unknown, fallback: string): strin
     const nested = extract(candidate.cause) ?? extract(candidate.error) ?? extract(candidate.body)
     if (nested) return nested
 
-    // The generated client reports undeclared HTTP statuses as a bare reason
-    // (for example "UnexpectedStatus" with { status: 500 } as the cause),
-    // which hides the real failure in send dialogs. Surface the status code
-    // only when no deeper detail exists.
+    // Classify undeclared HTTP statuses by structured reason/cause, independently
+    // of the client's message formatting (2.0.16 adds detail to that message).
+    // Surface the status code only when no deeper detail exists.
     if (candidate.reason === "UnexpectedStatus") {
       const status = Number(candidate.cause?.status)
       if (Number.isInteger(status) && status >= 100 && status <= 599) return `Unexpected status ${status}`

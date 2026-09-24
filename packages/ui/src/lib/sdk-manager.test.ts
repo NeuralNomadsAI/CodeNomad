@@ -4,6 +4,7 @@ import { OpenCode } from "@opencode/client"
 
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "./sdk-manager.ts"
 import { tGlobal } from "./i18n"
+import { getOpencodeErrorMessage } from "./opencode-api"
 
 afterEach(() => {
   sdkManager.destroyClientsForInstance("instance-a")
@@ -11,6 +12,39 @@ afterEach(() => {
 })
 
 describe("SDKManager", () => {
+  it("keeps detailed client failures actionable without replaying a mutation", async () => {
+    const original = globalThis.fetch
+    const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test/tenant")
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+    const cases = [
+      { response: () => new Response("private upstream body", { status: 500 }), reason: "UnexpectedStatus",
+        message: "UnexpectedStatus: 500", display: "Unexpected status 500" },
+      { response: () => new Response("private HTML", { headers: { "content-type": "text/html" } }), reason: "UnsupportedContentType",
+        message: "UnsupportedContentType: text/html", display: "UnsupportedContentType: text/html" },
+      { response: () => { throw new TypeError("Fixture connection refused") }, reason: "Transport",
+        message: "Transport: Fixture connection refused", display: "Fixture connection refused" },
+    ]
+    try {
+      for (const fixture of cases) {
+        let calls = 0
+        globalThis.fetch = async (input, init) => {
+          calls++
+          assert.equal(String(input), `${baseUrl}api/session/owned/prompt`)
+          assert.equal(init?.method, "POST")
+          assert.equal(init?.credentials, "include")
+          return fixture.response()
+        }
+        await assert.rejects(client.session.prompt({ sessionID: "owned", text: "fixture" }), error => {
+          assert.ok(error instanceof Error)
+          assert.equal((error as Error & { reason: string }).reason, fixture.reason)
+          assert.equal(error.message, fixture.message)
+          assert.equal(getOpencodeErrorMessage(error, "fallback"), fixture.display)
+          return true
+        })
+        assert.equal(calls, 1)
+      }
+    } finally { globalThis.fetch = original }
+  })
   it("preserves the generated client's proxy prefix exactly once for instructions and declared errors", async () => {
     const original = globalThis.fetch
     const requests: string[] = []
