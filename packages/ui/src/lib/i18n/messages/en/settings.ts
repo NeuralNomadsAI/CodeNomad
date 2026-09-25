@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "Installing OpenCode…",
+  "settings.opencode.setup.elapsed": "Elapsed: {elapsed}",
+  "settings.opencode.setup.keepOpen": "Downloading and installing can take several minutes. Keep CodeNomad open until setup finishes.",
   "settings.opencode.setup.installation_busy": "Another installation holds the OpenCode installation lock. Retry when it finishes. If it was interrupted, check the server log for the lock location.",
   "settings.opencode.setup.installation_in_use": "The OpenCode executable is in use or not writable. The update was deferred before changing the installation. Retry once the executable is available.",
   "settings.opencode.setup.source.path": "Executable found in the server's PATH.",

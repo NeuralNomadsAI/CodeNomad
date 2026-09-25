@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "正在安装 OpenCode…",
+  "settings.opencode.setup.elapsed": "已用时间：{elapsed}",
+  "settings.opencode.setup.keepOpen": "下载和安装可能需要几分钟。请保持 CodeNomad 打开，直到设置完成。",
   "settings.opencode.setup.installation_busy": "另一个安装进程持有 OpenCode 安装锁。请在其完成后重试。如果安装已中断，请在服务器日志中查看锁的位置。",
   "settings.opencode.setup.installation_in_use": "OpenCode 可执行文件正在使用或不可写。更新已在更改安装之前推迟。请在文件可用后重试。",
   "settings.opencode.setup.source.path": "已在服务器 PATH 中找到可执行文件。",
