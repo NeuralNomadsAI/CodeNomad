@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "Loading MCP servers...",
   "instanceServiceStatus.mcp.empty": "No MCP servers detected.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "Toggle {name} MCP server",
-  "instanceServiceStatus.plugins.name": "Name",
   "instanceServiceStatus.plugins.loading": "Loading plugins...",
   "instanceServiceStatus.plugins.empty": "No plugins available for activation.",
   "instanceServiceStatus.plugins.description": "V2 activation controls write ordered rules only. Installation, updates, and options remain in OpenCode configuration or the CLI.",

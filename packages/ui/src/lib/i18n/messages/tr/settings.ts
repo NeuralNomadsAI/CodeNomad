@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "MCP sunucuları yükleniyor...",
   "instanceServiceStatus.mcp.empty": "Algılanan MCP sunucusu yok.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP sunucusunu aç/kapat",
-  "instanceServiceStatus.plugins.name": "Ad",
   "instanceServiceStatus.plugins.loading": "Eklentiler yükleniyor...",
   "instanceServiceStatus.plugins.empty": "Etkinleştirilebilecek eklenti yok.",
   "instanceServiceStatus.plugins.description": "V2 etkinleştirme denetimleri yalnızca sıralı kurallar yazar. Kurulum, güncellemeler ve seçenekler OpenCode yapılandırmasında veya CLI'da kalır.",

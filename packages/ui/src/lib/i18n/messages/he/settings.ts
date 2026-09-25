@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "טוען שרתי MCP...",
   "instanceServiceStatus.mcp.empty": "לא זוהו שרתי MCP.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "הפעל/כבה שרת MCP {name}",
-  "instanceServiceStatus.plugins.name": "שם",
   "instanceServiceStatus.plugins.loading": "טוען תוספים...",
   "instanceServiceStatus.plugins.empty": "אין תוספים זמינים להפעלה.",
   "instanceServiceStatus.plugins.description": "פקדי ההפעלה של V2 כותבים כללים מסודרים בלבד. התקנה, עדכונים ואפשרויות נשארים בתצורת OpenCode או ב-CLI.",

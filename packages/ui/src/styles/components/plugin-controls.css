@@ -16,6 +16,23 @@
   padding-inline: 9px;
 }
 
+.plugin-controls .icon-button-compact {
+  @apply inline-flex h-6 w-6 items-center justify-center border;
+  justify-self: start;
+  border-color: var(--border-base);
+  color: var(--text-muted);
+  background-color: var(--surface-base);
+}
+
+.plugin-controls .icon-button-compact:hover:not(:disabled) {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  color: var(--text-primary);
+}
+
+.plugin-controls .icon-button-compact:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
 [dir="rtl"] .plugin-control-name {
   direction: rtl;
   text-align: right;

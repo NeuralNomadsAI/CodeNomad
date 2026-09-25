@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "MCP サーバーを読み込み中...",
   "instanceServiceStatus.mcp.empty": "MCP サーバーが検出されませんでした。",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP サーバーを切り替え",
-  "instanceServiceStatus.plugins.name": "名前",
   "instanceServiceStatus.plugins.loading": "プラグインを読み込み中...",
   "instanceServiceStatus.plugins.empty": "有効化できるプラグインはありません。",
   "instanceServiceStatus.plugins.description": "V2 の有効化コントロールは順序付きルールのみを書き込みます。インストール、更新、オプションは OpenCode 設定または CLI で管理します。",

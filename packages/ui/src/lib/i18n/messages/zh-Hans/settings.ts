@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "正在加载 MCP 服务器...",
   "instanceServiceStatus.mcp.empty": "未检测到 MCP 服务器。",
   "instanceServiceStatus.mcp.toggleAriaLabel": "切换 {name} MCP 服务器",
-  "instanceServiceStatus.plugins.name": "名称",
   "instanceServiceStatus.plugins.loading": "正在加载插件...",
   "instanceServiceStatus.plugins.empty": "没有可供激活的插件。",
   "instanceServiceStatus.plugins.description": "V2 激活控件只写入有序规则。安装、更新和选项仍由 OpenCode 配置或 CLI 管理。",

@@ -71,7 +71,6 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "Загрузка MCP-серверов…",
   "instanceServiceStatus.mcp.empty": "MCP-серверы не обнаружены.",
   "instanceServiceStatus.mcp.toggleAriaLabel": "Переключить MCP-сервер {name}",
-  "instanceServiceStatus.plugins.name": "Название",
   "instanceServiceStatus.plugins.loading": "Загрузка плагинов…",
   "instanceServiceStatus.plugins.empty": "Нет плагинов, доступных для активации.",
   "instanceServiceStatus.plugins.description": "Элементы управления V2 записывают только упорядоченные правила активации. Установка, обновления и параметры остаются в конфигурации OpenCode или CLI.",

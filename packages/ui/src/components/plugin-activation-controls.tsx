@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Component } from "solid-js"
 import { Tooltip } from "@kobalte/core/tooltip"
+import { RefreshCw } from "lucide-solid"
 import Switch from "@suid/material/Switch"
 import type {
   PluginActivationControl,
@@ -195,7 +196,17 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       </Show>
 
       <div class="plugin-controls-header">
-        <span class="text-[10px] font-medium text-muted uppercase tracking-wide">{t("instanceServiceStatus.plugins.name")}</span>
+        <button
+          type="button"
+          class="icon-button-compact"
+          title={t("instanceServiceStatus.plugins.refresh")}
+          aria-label={t("instanceServiceStatus.plugins.refresh")}
+          aria-busy={state().loading || state().refreshing}
+          disabled={state().loading || state().refreshing}
+          onClick={() => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })}
+        >
+          <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
+        </button>
         <span id={globalLabelId} class="plugin-control-scope-label">{scopeLabel("global")}</span>
         <span id={projectLabelId} class="plugin-control-scope-label">{scopeLabel("project")}</span>
       </div>
