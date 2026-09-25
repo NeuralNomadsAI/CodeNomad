@@ -57,6 +57,23 @@ function createHarness(requestOpen: (sessionID: string, url: string, requestID: 
 }
 
 describe("BrowserController", () => {
+  it("cleans registrations after native window destruction without reading its getters", () => {
+    const harness = createHarness()
+    let destroyed = false
+    const window = new EventEmitter()
+    Object.defineProperty(window, "webContents", { get() {
+      if (destroyed) throw new TypeError("Object has been destroyed")
+      return harness.owner
+    } })
+    harness.controller.observeOwner(window as unknown as BrowserWindow)
+    const { guest } = createGuest({ id: 30, owner: harness.owner })
+    harness.add(guest, "closed-window")
+    assert.deepEqual(harness.controller.probe("session"), { available: true })
+    destroyed = true
+    assert.doesNotThrow(() => window.emit("closed"))
+    assert.throws(() => harness.controller.probe("session"), /No visible local browser target/)
+  })
+
   it("serializes debugger commands for each guest", async () => {
     const harness = createHarness()
     let releaseTree!: () => void
