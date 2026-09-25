@@ -1644,7 +1644,7 @@ function ReasoningGroupCard(props: {
       messageId={item.messageId}
       status={props.status}
       showAgentMeta={props.showAgentMeta}
-      defaultExpanded
+      defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
       onContentRendered={props.onContentRendered}
       forceExpanded={props.activePartId === item.partId}
       technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))}
