@@ -681,9 +681,68 @@ jobs:
       - name: Verify bundled Node resource (Tauri Linux)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@linux-x64
 
-      - name: Build Debian package (Tauri)
+      - name: Build Debian package and AppImage (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build --bundles deb
+        run: npm exec -- tauri build --bundles deb,appimage
+
+      - name: Package and verify Tauri AppImage
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle/appimage"
+          ARTIFACT_DIR="packages/tauri-app/release-tauri"
+          VERSION_TO_USE="${VERSION:-}"
+          if [ -z "$VERSION_TO_USE" ]; then
+            VERSION_TO_USE=$(node -p "require('./packages/tauri-app/package.json').version")
+          fi
+          rm -rf "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
+          shopt -s nullglob
+
+          appimages=("$BUNDLE_ROOT"/*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "Expected one Tauri AppImage under $BUNDLE_ROOT, found ${#appimages[@]}" >&2
+            exit 1
+          fi
+
+          artifact="$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.AppImage"
+          cp "${appimages[0]}" "$artifact"
+          chmod 0755 "$artifact"
+
+          # linuxdeploy must have produced a self-contained image with the runtime
+          # and the bundled server reachable from AppRun.
+          extract_dir=$(mktemp -d)
+          trap 'rm -rf "$extract_dir"' EXIT
+          (cd "$extract_dir" && "$artifact" --appimage-extract >/dev/null)
+          root="$extract_dir/squashfs-root"
+          for required in AppRun codenomad-tauri \
+            usr/lib/CodeNomad/resources/node/linux-x64/bin/node \
+            usr/lib/CodeNomad/resources/server/dist/bin.js \
+            usr/lib/CodeNomad/resources/ui-loading/loading.html; do
+            if [ ! -e "$root/$required" ]; then
+              echo "Missing path in Tauri AppImage: $required" >&2
+              exit 1
+            fi
+          done
+          if [ ! -x "$root/AppRun" ] || [ ! -x "$root/codenomad-tauri" ]; then
+            echo "Tauri AppImage entry point is not executable" >&2
+            exit 1
+          fi
+          desktop_entries=$(find "$root" -maxdepth 1 -name '*.desktop' | wc -l)
+          if [ "$desktop_entries" -ne 1 ]; then
+            echo "Expected exactly one desktop entry in the Tauri AppImage, found $desktop_entries" >&2
+            exit 1
+          fi
+          node scripts/smoke-packaged-resources.cjs \
+            --resources "$root/usr/lib/CodeNomad/resources" \
+            --loading "$root/usr/lib/CodeNomad/resources/ui-loading" \
+            --target linux-x64
+
+          ldd "$root/codenomad-tauri" | tee /tmp/codenomad-tauri-appimage-ldd.txt
+          if grep -q "not found" /tmp/codenomad-tauri-appimage-ldd.txt; then
+            echo "Tauri AppImage binary has unresolved shared libraries" >&2
+            exit 1
+          fi
 
       - name: Package and verify Tauri deb
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -695,8 +754,6 @@ jobs:
           if [ -z "$VERSION_TO_USE" ]; then
             VERSION_TO_USE=$(node -p "require('./packages/tauri-app/package.json').version")
           fi
-          rm -rf "$ARTIFACT_DIR"
-          mkdir -p "$ARTIFACT_DIR"
           shopt -s nullglob
 
           debs=("$BUNDLE_ROOT"/*.deb)
