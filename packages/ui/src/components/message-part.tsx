@@ -165,6 +165,7 @@ export default function MessagePart(props: MessagePartProps) {
               isDark={isDark()}
               size="base"
               escapeRawHtml
+              literalRawHtml={props.messageType === "user"}
               onRendered={props.onRendered}
             />
           </div>
@@ -195,6 +196,7 @@ export default function MessagePart(props: MessagePartProps) {
                     isDark={isDark()}
                     size={isAssistantMessage() ? "tight" : "base"}
                     escapeRawHtml
+                    literalRawHtml={props.messageType === "user"}
                     onRendered={props.onRendered}
                   />
                 </Show>
@@ -214,6 +216,7 @@ export default function MessagePart(props: MessagePartProps) {
                           isDark={isDark()}
                           size="base"
                           escapeRawHtml
+                          literalRawHtml
                           onRendered={props.onRendered}
                         />
                       )

@@ -661,7 +661,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   onMouseLeave={() => scheduleClose()}
                 >
                    <Markdown part={{ type: "text", text: data() }} instanceId={props.instanceId} sessionId={props.sessionId}
-                     size="sm" disableHighlight escapeRawHtml />
+                     size="sm" disableHighlight escapeRawHtml literalRawHtml={hoveredSegment()?.type === "user"} />
                 </div>
               </Portal>
             )
