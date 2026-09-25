@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Component } from "solid-js"
+import { Tooltip } from "@kobalte/core/tooltip"
 import { RefreshCw } from "lucide-solid"
 import Switch from "@suid/material/Switch"
 import type {
@@ -17,7 +18,6 @@ import "../stores/plugin-controls-events"
 interface PluginActivationControlsProps {
   instanceId: string
   location: PluginControlLocation
-  showHeading?: boolean
   active?: boolean
 }
 
@@ -81,18 +81,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const requestGeneration = locationGeneration
     setPendingPlugin(scope, control.id, true)
     try {
-      const response = await pluginControlsCache.mutate(props.instanceId, requestLocation(), control.id, scope, enabled)
-      if (requestGeneration !== locationGeneration || props.active === false) return
-      const base = t(response.changed
-        ? "instanceServiceStatus.plugins.toast.ruleSaved"
-        : "instanceServiceStatus.plugins.toast.ruleUnchanged", {
-        name: control.id,
-        scope: scopeLabel(scope),
-      })
-      showToastNotification({
-        variant: "success",
-        message: response.changed && response.reloadPending ? `${base} ${t("instanceServiceStatus.plugins.toast.reloadNote")}` : base,
-      })
+      await pluginControlsCache.mutate(props.instanceId, requestLocation(), control.id, scope, enabled)
     } catch (error) {
       log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
       if (requestGeneration === locationGeneration && props.active !== false) {
@@ -127,11 +116,19 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const overridden = () => Boolean(control() && control()?.project !== "default")
     const isAvailable = (scope: PluginControlScope): boolean =>
       snapshot()?.targets.some((target) => target.scope === scope) === true
-    const scopeReason = (scope: PluginControlScope): string => isAvailable(scope)
-      ? t(`instanceServiceStatus.plugins.scope.${scope}.detail`)
-      : scope === "project"
-        ? t("instanceServiceStatus.plugins.scope.unavailable")
-        : t(`instanceServiceStatus.plugins.scope.${scope}.detail`)
+    const details = () => {
+      const current = control()
+      const lines = [pluginId]
+      if (current?.runtime) lines.push(sourceLabel(current.runtime.source))
+      if (failed()) lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${failureMessage() ?? ""}`)
+      else if (overridden()) lines.push(t("instanceServiceStatus.plugins.globalOverridden"))
+      for (const target of snapshot()?.targets ?? []) {
+        lines.push(`${scopeLabel(target.scope)} — ${target.path}`)
+      }
+      if (!isAvailable("project")) lines.push(t("instanceServiceStatus.plugins.scope.unavailable"))
+      if (state().error) lines.push(t("instanceServiceStatus.plugins.errors.refresh"))
+      return lines.map(bidi).join("\n")
+    }
     const renderSwitch = (scope: PluginControlScope) => {
       const checked = () => {
         const current = control()
@@ -142,16 +139,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       const describedBy = () => available()
         ? (scope === "global" ? globalLabelId : projectLabelId)
         : `${scope === "global" ? globalLabelId : projectLabelId} ${noticeId}`
-      // Native tooltips do not fire on disabled inputs and disabled inputs
-      // leave the tab order, so the reason lives on the hoverable wrapper and
-      // in screen-reader text instead of the input title. Available switches
-      // already describe themselves through the header labels, so only
-      // unavailable lanes carry a tooltip.
       return (
         <div
           class="plugin-control-switch"
           data-scope={scope}
-          title={available() ? undefined : scopeReason(scope)}
         >
           <Switch
             checked={checked()}
@@ -183,26 +174,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const nameId = `${headingId}-name-${pluginId}`
     return (
       <div class="plugin-control-row" data-plugin-id={pluginId} role="group" aria-labelledby={nameId}>
-        <div class="min-w-0">
-          <span id={nameId} class="plugin-control-name"><bdi>{pluginId}</bdi></span>
-          <div class="plugin-control-sub">
-            <Show when={failed()} fallback={
-              <Show when={overridden()} fallback={
-                <Show when={control()?.runtime} fallback={
-                  <span>{t(`instanceServiceStatus.plugins.ruleState.${control()?.effective ?? "default"}`)}</span>
-                }>
-                  {(runtime) => <span>{sourceLabel(runtime().source)}</span>}
-                </Show>
-              }>
-                <span class={`status-dot ${control()?.effective === "enabled" ? "ready" : "stopped"}`} aria-hidden="true" />
-                <span>{t("instanceServiceStatus.plugins.globalOverridden")}</span>
-              </Show>
-            }>
-              <span class="status-dot error" aria-hidden="true" />
-              <span><bdi>{t("instanceServiceStatus.plugins.runtime.failed")}{failureMessage() ? ` — ${failureMessage()}` : ""}</bdi></span>
-            </Show>
-          </div>
-        </div>
+        <Tooltip placement="top-start" openDelay={300}>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{pluginId}</bdi></Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -212,17 +189,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   return (
     <section
       class="plugin-controls"
-      aria-labelledby={props.showHeading !== false ? headingId : undefined}
-      aria-label={props.showHeading === false ? t("instanceServiceStatus.sections.plugins") : undefined}
+      aria-label={t("instanceServiceStatus.sections.plugins")}
     >
-      <Show when={props.showHeading !== false}>
-        <div id={headingId} class="text-xs font-medium text-muted uppercase tracking-wide">
-          {t("instanceServiceStatus.sections.plugins")}
-        </div>
-      </Show>
-      <p class="plugin-controls-description">{t("instanceServiceStatus.plugins.description")}</p>
       <Show when={snapshot() && !snapshot()?.targets.some((target) => target.scope === "project")}>
-        <p id={noticeId} class="plugin-controls-notice" role="note">{t("instanceServiceStatus.plugins.scope.unavailable")}</p>
+        <span id={noticeId} class="sr-only">{t("instanceServiceStatus.plugins.scope.unavailable")}</span>
       </Show>
 
       <div class="plugin-controls-header">
@@ -231,20 +201,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           class="icon-button-compact"
           title={t("instanceServiceStatus.plugins.refresh")}
           aria-label={t("instanceServiceStatus.plugins.refresh")}
+          aria-busy={state().loading || state().refreshing}
           disabled={state().loading || state().refreshing}
           onClick={() => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })}
         >
           <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
         </button>
-        <span class="sr-only">{t("instanceServiceStatus.plugins.scope.legend")}</span>
-        <span id={globalLabelId} class="plugin-control-scope-label" title={t("instanceServiceStatus.plugins.scope.global.detail")}>{scopeLabel("global")}</span>
-        <span
-          id={projectLabelId}
-          class="plugin-control-scope-label"
-          title={!snapshot() || snapshot()?.targets.some((target) => target.scope === "project")
-            ? t("instanceServiceStatus.plugins.scope.project.detail")
-            : t("instanceServiceStatus.plugins.scope.unavailable")}
-        >{scopeLabel("project")}</span>
+        <span id={globalLabelId} class="plugin-control-scope-label">{scopeLabel("global")}</span>
+        <span id={projectLabelId} class="plugin-control-scope-label">{scopeLabel("project")}</span>
       </div>
 
       <Show when={snapshot()} fallback={
@@ -254,15 +218,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             : state().error
               ? t("instanceServiceStatus.plugins.errors.load")
               : t("instanceServiceStatus.plugins.loading")}</p>
-          <Show when={!state().loading && state().error}>
-            <button
-              type="button"
-              class="button-tertiary"
-              onClick={() => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })}
-            >
-              {t("instanceServiceStatus.plugins.refresh")}
-            </button>
-          </Show>
         </div>
       }>
         <Show when={controls().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
@@ -270,22 +225,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <For each={controlIds()}>{renderControl}</For>
           </div>
         </Show>
-        <div class="plugin-controls-footer">
-          <For each={snapshot()?.targets ?? []}>{(target) => {
-            const line = () => `${scopeLabel(target.scope)} — ${target.exists
-              ? t("instanceServiceStatus.plugins.target.existing", { path: target.path })
-              : t("instanceServiceStatus.plugins.target.new", { path: target.path })}`
-            return (
-              <div>
-                {bidi(line())}
-              </div>
-            )
-          }}</For>
-        </div>
-      </Show>
-
-      <Show when={state().error && snapshot()}>
-        <div class="plugin-controls-warning" role="status">{t("instanceServiceStatus.plugins.errors.refresh")}</div>
       </Show>
     </section>
   )
