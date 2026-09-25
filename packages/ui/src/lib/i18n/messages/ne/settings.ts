@@ -71,6 +71,7 @@ export const settingsMessages = {
   "instanceServiceStatus.mcp.loading": "MCP सर्भरहरू लोड गर्दै...",
   "instanceServiceStatus.mcp.empty": "कुनै MCP सर्भरहरू फेला परेनन्।",
   "instanceServiceStatus.mcp.toggleAriaLabel": "{name} MCP सर्भर टगल गर्नुहोस्",
+  "instanceServiceStatus.plugins.name": "नाम",
   "instanceServiceStatus.plugins.loading": "प्लगइनहरू लोड गर्दै...",
   "instanceServiceStatus.plugins.empty": "सक्रिय गर्न मिल्ने कुनै प्लगइन उपलब्ध छैन।",
   "instanceServiceStatus.plugins.description": "V2 सक्रियता नियन्त्रणले क्रमबद्ध नियम मात्र लेख्छ। स्थापना, अद्यावधिक र विकल्पहरू OpenCode कन्फिगरेसन वा CLI मै रहन्छन्।",

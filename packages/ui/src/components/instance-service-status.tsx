@@ -190,7 +190,6 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
           <PluginActivationControls
             instanceId={instance().id}
             location={pluginLocation()}
-            showHeading={showHeadings()}
             active={props.pluginsActive}
           />
         </Show>
