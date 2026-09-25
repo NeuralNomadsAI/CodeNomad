@@ -83,8 +83,9 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
         if (epoch !== generation) return
         setOpenCodeSetupStatus(status)
         setOpenCodeSetupCheckError(false)
-        setOpenCodeSetupError(false)
-        setOpenCodeInstallationError(undefined)
+        // A successful status read does not mean the preceding install/action
+        // succeeded. Keep its failure visible across refreshes and reopening;
+        // a new explicit action or executable selection clears it.
         if (!request.again && request.announce && !status.checkError && !status.serviceError && status.state !== "error") {
           setOpenCodeSetupFeedback("checked")
         }
