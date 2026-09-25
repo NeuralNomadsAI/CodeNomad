@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preferences-window-ready"
+description = "Enables the preferences_window_ready command without any pre-configured scope."
+commands.allow = ["preferences_window_ready"]
+
+[[permission]]
+identifier = "deny-preferences-window-ready"
+description = "Denies the preferences_window_ready command without any pre-configured scope."
+commands.deny = ["preferences_window_ready"]

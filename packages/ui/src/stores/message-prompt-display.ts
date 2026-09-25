@@ -1,10 +1,21 @@
 import type { PromptDisplayMetadata } from "../lib/prompt-display-metadata"
+import { estimateRetainedBytes } from "../lib/retained-size"
 
 const STORAGE_KEY = "codenomad:prompt-display:v3"
 const LEGACY_STORAGE_KEY = "codenomad:prompt-display:v2"
+const ENTRY_LIMIT = 512
+const BYTE_LIMIT = 1024 * 1024
+const ENTRY_BYTE_LIMIT = 64 * 1024
 
 let loaded = false
 const promptDisplayOverrides = new Map<string, PromptDisplayMetadata>()
+const promptDisplayOverrideBytes = new Map<string, number>()
+let retainedBytes = 0
+
+function storageKey(): string {
+  const windowId = typeof window === "undefined" ? "" : window.__CODENOMAD_WINDOW_ID__?.trim()
+  return windowId ? `${STORAGE_KEY}:${windowId}` : STORAGE_KEY
+}
 
 function makeKey(_instanceId: string, sessionId: string, messageId: string): string {
   return `${sessionId}:${messageId}`
@@ -40,27 +51,61 @@ function ensureLoaded(): void {
   if (!storage) return
 
   try {
-    const raw = storage.getItem(STORAGE_KEY)
+    const key = storageKey()
+    const raw = storage.getItem(key)
     if (raw) {
       loadStoredEntries(JSON.parse(raw) as Record<string, PromptDisplayMetadata>, false)
     }
-    const legacyRaw = storage.getItem(LEGACY_STORAGE_KEY)
-    if (legacyRaw) {
-      loadStoredEntries(JSON.parse(legacyRaw) as Record<string, PromptDisplayMetadata>, true)
+    const migrateIntoScopedKey = key !== STORAGE_KEY && !raw
+    const legacyV3Raw = migrateIntoScopedKey ? storage.getItem(STORAGE_KEY) : null
+    if (legacyV3Raw) {
+      loadStoredEntries(JSON.parse(legacyV3Raw) as Record<string, PromptDisplayMetadata>, false)
     }
-    if (!raw && !legacyRaw) return
-    if (persist() && legacyRaw) storage.removeItem(LEGACY_STORAGE_KEY)
+    const legacyV2Raw = key === STORAGE_KEY || migrateIntoScopedKey
+      ? storage.getItem(LEGACY_STORAGE_KEY)
+      : null
+    if (legacyV2Raw) {
+      loadStoredEntries(JSON.parse(legacyV2Raw) as Record<string, PromptDisplayMetadata>, true)
+    }
+    if (!legacyV3Raw && !legacyV2Raw) return
+    if (!persist()) return
+    if (legacyV3Raw) storage.removeItem(STORAGE_KEY)
+    if (legacyV2Raw) storage.removeItem(LEGACY_STORAGE_KEY)
   } catch {
     promptDisplayOverrides.clear()
+    promptDisplayOverrideBytes.clear()
+    retainedBytes = 0
   }
 }
 
 function loadStoredEntries(parsed: Record<string, PromptDisplayMetadata>, migrateLegacyKeys: boolean): void {
   for (const [key, value] of Object.entries(parsed)) {
-    if (isPromptDisplayMetadata(value)) {
-      promptDisplayOverrides.set(migrateLegacyKeys ? migrateStoredKey(key) : key, value)
-    }
+    if (isPromptDisplayMetadata(value)) setEntry(migrateLegacyKeys ? migrateStoredKey(key) : key, value)
   }
+}
+
+function deleteEntry(key: string): boolean {
+  const bytes = promptDisplayOverrideBytes.get(key)
+  if (bytes === undefined) return false
+  retainedBytes -= bytes
+  promptDisplayOverrideBytes.delete(key)
+  promptDisplayOverrides.delete(key)
+  return true
+}
+
+function setEntry(key: string, value: PromptDisplayMetadata): boolean {
+  const bytes = key.length * 2 + estimateRetainedBytes(value, ENTRY_BYTE_LIMIT)
+  if (bytes > ENTRY_BYTE_LIMIT) return false
+  deleteEntry(key)
+  promptDisplayOverrides.set(key, value)
+  promptDisplayOverrideBytes.set(key, bytes)
+  retainedBytes += bytes
+  while (promptDisplayOverrides.size > ENTRY_LIMIT || retainedBytes > BYTE_LIMIT) {
+    const oldest = promptDisplayOverrides.keys().next().value
+    if (oldest === undefined) break
+    deleteEntry(oldest)
+  }
+  return promptDisplayOverrides.has(key)
 }
 
 function persist(): boolean {
@@ -68,7 +113,7 @@ function persist(): boolean {
   if (!storage) return false
 
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(promptDisplayOverrides)))
+    storage.setItem(storageKey(), JSON.stringify(Object.fromEntries(promptDisplayOverrides)))
     return true
   } catch {
     // Ignore persistence failures.
@@ -96,7 +141,13 @@ export function getPromptDisplayOverride(
   messageId: string,
 ): PromptDisplayMetadata | undefined {
   ensureLoaded()
-  return promptDisplayOverrides.get(makeKey(instanceId, sessionId, messageId))
+  const key = makeKey(instanceId, sessionId, messageId)
+  const value = promptDisplayOverrides.get(key)
+  if (value) {
+    promptDisplayOverrides.delete(key)
+    promptDisplayOverrides.set(key, value)
+  }
+  return value
 }
 
 export function setPromptDisplayOverride(
@@ -111,10 +162,9 @@ export function setPromptDisplayOverride(
   if (displayMetadata && isPromptDisplayMetadata(displayMetadata)) {
     const serialized = JSON.stringify(displayMetadata)
     if (previous && JSON.stringify(previous) === serialized) return
-    promptDisplayOverrides.set(key, displayMetadata)
+    if (!setEntry(key, displayMetadata)) return
   } else {
-    if (!promptDisplayOverrides.has(key)) return
-    promptDisplayOverrides.delete(key)
+    if (!deleteEntry(key)) return
   }
   persist()
 }
@@ -127,14 +177,14 @@ export function movePromptDisplayOverride(instanceId: string, sessionId: string,
 
   const newKey = makeKey(instanceId, sessionId, newMessageId)
   if (oldKey === newKey) return
-  promptDisplayOverrides.delete(oldKey)
-  promptDisplayOverrides.set(newKey, nextValue)
+  if (!setEntry(newKey, nextValue)) return
+  deleteEntry(oldKey)
   persist()
 }
 
 export function clearPromptDisplayOverride(instanceId: string, sessionId: string, messageId: string): void {
   ensureLoaded()
-  if (!promptDisplayOverrides.delete(makeKey(instanceId, sessionId, messageId))) {
+  if (!deleteEntry(makeKey(instanceId, sessionId, messageId))) {
     return
   }
   persist()
@@ -147,7 +197,7 @@ export function clearPromptDisplayOverridesForSession(instanceId: string, sessio
   let changed = false
   for (const key of promptDisplayOverrides.keys()) {
     if (key.startsWith(stablePrefix) || key.startsWith(legacyPrefix)) {
-      promptDisplayOverrides.delete(key)
+      deleteEntry(key)
       changed = true
     }
   }
@@ -162,7 +212,7 @@ export function clearPromptDisplayOverridesForInstance(instanceId: string, sessi
     const shouldDeleteStableKey = sessionIds.some((sessionId) => key.startsWith(`${sessionId}:`))
     const shouldDeleteLegacyKey = key.startsWith(`${instanceId}:`)
     if (shouldDeleteStableKey || shouldDeleteLegacyKey) {
-      promptDisplayOverrides.delete(key)
+      deleteEntry(key)
       changed = true
     }
   }
@@ -173,4 +223,6 @@ export function clearPromptDisplayOverridesForInstance(instanceId: string, sessi
 export function resetPromptDisplayOverrideStateForTests(): void {
   loaded = false
   promptDisplayOverrides.clear()
+  promptDisplayOverrideBytes.clear()
+  retainedBytes = 0
 }

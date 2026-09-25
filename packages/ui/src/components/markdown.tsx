@@ -1,9 +1,10 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import type { TextPart, RenderCache } from "../types/message"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { limitToolOutputForRender, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "./tool-call/utils"
 
 const log = getLogger("session")
 
@@ -15,6 +16,7 @@ interface ResolvedMarkdownSnapshot {
   themeKey: string
   highlightEnabled: boolean
   escapeRawHtml: boolean
+  literalRawHtml: boolean
   defaultCodeBlockWrap: boolean
   partId: string | undefined
   cacheId: string
@@ -89,6 +91,10 @@ function renderFallbackHtml(content: string): string {
   return escapeHtml(content).replace(/\n/g, "<br />")
 }
 
+export function getMarkdownTextForRender(content: string): string {
+  return limitToolOutputForRender(content)
+}
+
 interface MarkdownProps {
   part: TextPart
   instanceId?: string
@@ -97,6 +103,8 @@ interface MarkdownProps {
   size?: "base" | "sm" | "tight"
   disableHighlight?: boolean
   escapeRawHtml?: boolean
+  /** Display user-authored HTML as source text, rather than sanitized elements. */
+  literalRawHtml?: boolean
   defaultCodeBlockWrap?: boolean
   onRendered?: () => void
 }
@@ -158,7 +166,9 @@ export function Markdown(props: MarkdownProps) {
   const resolved = createMemo(() => {
     const part = props.part
     const rawText = typeof part.text === "string" ? part.text : ""
-    const text = decodeHtmlEntitiesLocally(rawText)
+    const literalRawHtml = Boolean(props.literalRawHtml)
+    const boundedText = getMarkdownTextForRender(rawText)
+    const text = literalRawHtml ? boundedText : decodeHtmlEntitiesLocally(boundedText)
     const themeKey = Boolean(props.isDark) ? "dark" : "light"
     const highlightEnabled = !props.disableHighlight
     const escapeRawHtml = Boolean(props.escapeRawHtml)
@@ -166,13 +176,14 @@ export function Markdown(props: MarkdownProps) {
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
     const version = resolvePartVersion(part, text)
-    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}:${version}`
+    const requestKey = `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}:${version}`
     return {
       part,
       text,
       themeKey,
       highlightEnabled,
       escapeRawHtml,
+      literalRawHtml,
       defaultCodeBlockWrap,
       partId,
       cacheId,
@@ -186,8 +197,8 @@ export function Markdown(props: MarkdownProps) {
     sessionId: () => props.sessionId,
     scope: "markdown",
     cacheId: () => {
-      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, defaultCodeBlockWrap } = resolved()
-      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
+      const { cacheId, themeKey, highlightEnabled, escapeRawHtml, literalRawHtml, defaultCodeBlockWrap } = resolved()
+      return `${cacheId}:${themeKey}:${highlightEnabled ? 1 : 0}:${literalRawHtml ? "literal" : escapeRawHtml ? 1 : 0}:${defaultCodeBlockWrap ? 1 : 0}`
     },
     version: () => resolved().version,
   })
@@ -201,7 +212,7 @@ export function Markdown(props: MarkdownProps) {
       text: snapshot.text,
       html: renderedHtml,
       theme: snapshot.themeKey,
-      mode: `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
+      mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
     }
     setHtml(renderedHtml)
     if (options?.cache ?? true) {
@@ -216,6 +227,7 @@ export function Markdown(props: MarkdownProps) {
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
+      literalRawHtml: snapshot.literalRawHtml,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
     })
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
@@ -228,7 +240,7 @@ export function Markdown(props: MarkdownProps) {
   createEffect(() => {
     const snapshot = resolved()
     latestRequestKey = snapshot.requestKey
-    const cacheMode = `${snapshot.version}:${snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
+    const cacheMode = `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`
 
     const cacheMatches = (cache: RenderCache | undefined) => {
       if (!cache) return false
@@ -346,15 +358,31 @@ export function Markdown(props: MarkdownProps) {
   })
 
   return (
-    <div
-      ref={containerRef}
-      class="markdown-body"
-      dir="auto"
-      data-view="markdown"
-      data-part-id={resolved().partId}
-      data-markdown-theme={resolved().themeKey}
-      data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
-      innerHTML={html()}
-    />
+    <>
+      <div
+        ref={containerRef}
+        class="markdown-body"
+        dir="auto"
+        data-view="markdown"
+        data-part-id={resolved().partId}
+        data-markdown-theme={resolved().themeKey}
+        data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
+        innerHTML={html()}
+      />
+      <Show when={(typeof props.part.text === "string" ? props.part.text.length : 0) > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT}>
+        <button
+          type="button"
+          class="message-action-button markdown-source-copy"
+          onClick={() => void copyToClipboard(typeof props.part.text === "string" ? props.part.text : "")}
+          aria-label={t("messageItem.actions.copyTitle")}
+          title={t("messageItem.actions.copyTitle")}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
+      </Show>
+    </>
   )
 }

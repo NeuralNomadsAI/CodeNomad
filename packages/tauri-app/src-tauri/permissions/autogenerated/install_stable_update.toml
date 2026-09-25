@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-stable-update"
+description = "Enables the install_stable_update command without any pre-configured scope."
+commands.allow = ["install_stable_update"]
+
+[[permission]]
+identifier = "deny-install-stable-update"
+description = "Denies the install_stable_update command without any pre-configured scope."
+commands.deny = ["install_stable_update"]

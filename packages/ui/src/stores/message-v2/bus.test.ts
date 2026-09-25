@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { messageStoreBus } from "./bus.ts"
-import { invalidateSessionMessageLoad, messagesLoaded, setMessagesLoaded } from "../session-state.ts"
+import { messagesLoaded, setMessagesLoaded } from "../session-state.ts"
 
 describe("message store scroll snapshots", () => {
   it("seeds an unregistered instance without claiming runtime authority", () => {
@@ -67,13 +67,22 @@ describe("message store scroll snapshots", () => {
     setMessagesLoaded((prev) => new Map(prev).set(instanceId, new Set(["session-1"])))
     try {
       store.restoreScrollSnapshot("session-1", "message-stream", snapshot)
-      invalidateSessionMessageLoad(instanceId, "session-1")
-      store.clearSession("session-1", { preserveScroll: true, notify: false })
+      store.clearSession("session-1", { preserveScroll: true })
       assert.deepEqual(store.getScrollSnapshot("session-1", "message-stream"), snapshot)
       assert.equal(messagesLoaded().get(instanceId)?.has("session-1") ?? false, false)
     } finally {
       messageStoreBus.unregisterInstance(instanceId)
     }
+  })
+
+  it("clears loaded transcript authority when an instance id is unregistered", () => {
+    const instanceId = "reused-message-authority"
+    messageStoreBus.getOrCreate(instanceId)
+    setMessagesLoaded((prev) => new Map(prev).set(instanceId, new Set(["session-1"])))
+
+    messageStoreBus.unregisterInstance(instanceId)
+
+    assert.equal(messagesLoaded().has(instanceId), false)
   })
 
   it("does not replace newer runtime scroll with a late native seed", () => {

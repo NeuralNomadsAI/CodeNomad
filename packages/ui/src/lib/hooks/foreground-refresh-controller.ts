@@ -60,6 +60,10 @@ export function createForegroundRefreshController(
   }
 
   return {
+    invalidate() {
+      dirtyGeneration += 1
+      void runRefresh()
+    },
     handle(status: WorkspaceEventTransportStatus) {
       if (status === "disconnected") {
         connected = false

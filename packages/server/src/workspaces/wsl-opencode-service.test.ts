@@ -1,0 +1,396 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+import { legacyHelp } from "./__tests__/binary-probe-fixture"
+
+import {
+  WslOpenCodeService,
+  type WslOpenCodeServiceDependencies,
+} from "./wsl-opencode-service"
+
+type ExecCall = {
+  file: string
+  args: string[]
+  options: Parameters<WslOpenCodeServiceDependencies["execFile"]>[2]
+}
+
+const url = "http://127.0.0.1:4321"
+
+describe("WslOpenCodeService", () => {
+  it("preserves the V1 diagnosis for Linux CLIs regardless of wrapper exit status", async () => {
+    for (const code of [0, 1]) for (const stream of ["stdout", "stderr"]) {
+      const test = harness({}, {
+        execFile: async (file, args) => {
+          assert.equal(file, "wsl.exe")
+          assert.deepEqual(args, ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "status"])
+          const output = { stdout: "", stderr: "", [stream]: legacyHelp }
+          if (code) throw Object.assign(new Error("Command failed"), { code, ...output })
+          return output
+        },
+        fetch: async () => { throw new Error("Legacy discovery must not contact a daemon") },
+      })
+      await assert.rejects(test.service.discover(), /^Error: opencode_v2_required: WSL/)
+    }
+  })
+
+  it("discovers stopped and running services with exact CLI arguments and no shell", async () => {
+    const stopped = harness({ status: "stopped\n" })
+    assert.equal(await stopped.service.discover(), undefined)
+    assert.equal(stopped.calls.length, 4)
+    assert.deepEqual(stopped.calls[0]?.args, [
+      "--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "status",
+    ])
+
+    const running = harness({ status: `${url}\n`, password: "secret\n" })
+    assert.deepEqual(await running.service.discover(), {
+      url,
+      auth: { type: "basic", username: "opencode", password: "secret" },
+    })
+    assert.deepEqual(running.calls.map((call) => call.args.slice(4)), [
+      ["service", "status"],
+      ["service", "get", "password"],
+    ])
+    for (const call of running.calls) {
+      assert.equal(call.file, "wsl.exe")
+      assert.equal(call.options.shell, false)
+      assert.equal(call.options.windowsHide, true)
+      assert.equal(call.options.maxBuffer, 64 * 1024)
+      assert.ok(call.options.timeout > 0 && call.options.timeout <= 500)
+      assert.equal("cwd" in call.options, false)
+    }
+  })
+
+  it("starts through the Linux CLI, fetches the password, and authenticates Windows status", async () => {
+    let statusRequest: { url: string; authorization: string | null } | undefined
+    const test = harness({ start: `${url}\r\n`, password: "start-secret\r\n" }, {
+      fetch: async (input, init) => {
+        statusRequest = {
+          url: String(input),
+          authorization: new Headers(init?.headers).get("authorization"),
+        }
+        return Response.json({ version: "2.0.4", pid: 987654, urls: [url] })
+      },
+    })
+
+    const endpoint = await test.service.ensure()
+
+    assert.deepEqual(test.calls.map((call) => call.args.slice(4)), [
+      ...stoppedDiscovery,
+      ["service", "start"],
+      ["service", "get", "password"],
+    ])
+    assert.deepEqual(statusRequest, {
+      url: `${url}/api/status`,
+      authorization: `Basic ${Buffer.from("opencode:start-secret").toString("base64")}`,
+    })
+    assert.deepEqual(endpoint, {
+      url,
+      auth: { type: "basic", username: "opencode", password: "start-secret" },
+    })
+    assert.equal("pid" in endpoint, false)
+  })
+
+  it("passes startup environment only through wsl --exec env for a missing service", async () => {
+    const test = harness(
+      { status: "stopped\n", start: `${url}\n`, password: "secret\n" },
+      {},
+      500,
+      { PROVIDER_TOKEN: "value with spaces", NODE_EXTRA_CA_CERTS: "/ca.pem" },
+    )
+
+    assert.equal(await test.service.discover(), undefined)
+    await test.service.ensure()
+    assert.deepEqual(test.calls.map((call) => call.args), [
+      ...[...stoppedDiscovery, ...stoppedDiscovery].map(args => ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", ...args]),
+      [
+        "--distribution", "Ubuntu", "--exec", "env",
+        "NODE_EXTRA_CA_CERTS=/ca.pem", "PROVIDER_TOKEN=value with spaces",
+        "/home/dev/opencode2", "service", "start",
+      ],
+      ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "get", "password"],
+    ])
+  })
+
+  it("rejects malformed, multiline, non-loopback, and path-bearing service URLs", async () => {
+    for (const invalid of [
+      "not-a-url\n",
+      `${url}\nhttp://127.0.0.1:4322\n`,
+      "http://192.0.2.1:4321\n",
+      `${url}/private\n`,
+      `http://user:pass@127.0.0.1:4321\n`,
+      `${url}?private=true\n`,
+      `${url}#private\n`,
+      ` ${url}\n`,
+    ]) {
+      await assert.rejects(harness({ status: invalid }).service.discover(), /invalid loopback URL|multiline|malformed/)
+    }
+  })
+
+  it("rejects empty and multiline passwords", async () => {
+    await assert.rejects(harness({ status: `${url}\n`, password: "\n" }).service.discover(), /empty password/)
+    await assert.rejects(
+      harness({ status: `${url}\n`, password: "first\nsecond\n" }).service.discover(),
+      /multiline password/,
+    )
+  })
+
+  it("fails closed with actionable forwarding or status failures", async () => {
+    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => { throw new Error("ECONNREFUSED") },
+    }).service.discover(), /Enable WSL localhost forwarding/)
+
+    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => new Response(null, { status: 401 }),
+    }).service.discover(), /authentication failed.*401/)
+
+    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => new Response(null, { status: 503 }),
+    }).service.discover(), /status check failed.*503/)
+
+    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => Response.json({ version: "2.0.4", pid: 12 }),
+    }).service.discover(), /invalid status response/)
+  })
+
+  it("falls back to authenticated Windows health for an older WSL V2 service", async () => {
+    const requests: string[] = []
+    const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async (input, init) => {
+        requests.push(String(input))
+        assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
+        return requests.length === 1 ? new Response(null, { status: 404 })
+          : Response.json({ healthy: true, version: "0.0.0-beta-19271", pid: 123 })
+      },
+    }).service.discover()
+    assert.equal(endpoint?.url, url)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+  })
+
+  it("falls back to authenticated Windows info for a current WSL V2 service", async () => {
+    const requests: string[] = []
+    const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async (input, init) => {
+        requests.push(String(input))
+        assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
+        assert.equal(init?.redirect, "error")
+        return requests.length < 3 ? new Response(null, { status: 404 })
+          : Response.json({ version: "2.0.7", pid: 123, urls: [url] })
+      },
+    }).service.discover()
+    assert.equal(endpoint?.url, url)
+    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+  })
+
+  it("rejects missing, unauthenticated, malformed and oversized fallback health responses", async () => {
+    for (const [response, expected] of [
+      [() => new Response(null, { status: 404 }), /info check failed.*404/],
+      [() => new Response(null, { status: 401 }), /authentication failed.*401/],
+      [() => new Response(null, { status: 503 }), /health check failed.*503/],
+      [() => new Response("invalid JSON"), /invalid health response/],
+      ...[
+        { healthy: false, version: "2.0.3", pid: 123 },
+        { healthy: true, version: " ", pid: 123 },
+        { healthy: true, version: "2.0.3", pid: 0 },
+        { healthy: true, version: "2.0.3", pid: 1.5 },
+        { version: "2.0.4", pid: 123, urls: [url] },
+      ].map(value => [() => Response.json(value), /invalid health response/] as const),
+      [() => new Response(" ".repeat(64 * 1024 + 1)), /invalid health response/],
+    ] as const) {
+      const requests: string[] = []
+      await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+        fetch: async (input) => {
+          requests.push(String(input))
+          return requests.length === 1 ? new Response(null, { status: 404 }) : response()
+        },
+      }).service.discover(), expected)
+      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, ...(response().status === 404 ? [`${url}/api/info`] : [])])
+    }
+  })
+
+  it("requires the complete compatible status shape", async () => {
+    for (const status of [
+      { pid: 1, urls: [url] },
+      { version: "", pid: 1, urls: [url] },
+      { version: "   ", pid: 1, urls: [url] },
+      { version: "2.0.4", pid: -1, urls: [url] },
+      { version: "2.0.4", pid: 1.5, urls: [url] },
+      { version: "2.0.4", pid: Number.MAX_SAFE_INTEGER + 1, urls: [url] },
+      { version: "2.0.4", pid: 1 },
+      { version: "2.0.4", pid: 1, urls: [1] },
+    ]) {
+      await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+        fetch: async () => Response.json(status),
+      }).service.discover(), /invalid status response/)
+    }
+  })
+
+  it("streams at most 64 KiB of status data and cancels an oversized body", async () => {
+    const valid = JSON.stringify({ version: "2.0.4", pid: 123, urls: [url] }).padEnd(64 * 1024, " ")
+    await harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => new Response(valid),
+    }).service.discover()
+
+    let cancelled = false
+    const oversized = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024))
+        controller.enqueue(new Uint8Array([1]))
+      },
+      cancel() { cancelled = true },
+    })
+    await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
+      fetch: async () => new Response(oversized),
+    }).service.discover(), /invalid status response/)
+    assert.equal(cancelled, true)
+  })
+
+  it("redacts every error field from password retrieval failures and timeouts", async () => {
+    const secret = "PASSWORD_SENTINEL_DO_NOT_LEAK"
+    const failure = Object.assign(new Error(secret), {
+      name: secret,
+      stack: secret,
+      code: secret,
+      stdout: secret,
+      stderr: secret,
+      cause: secret,
+      signal: secret,
+      cmd: secret,
+    })
+    const failed = harness({}, {
+      execFile: async (_file, args) => {
+        if (args[args.length - 1] === "status") return { stdout: `${url}\n`, stderr: "" }
+        throw failure
+      },
+    })
+    await assert.rejects(failed.service.discover(), (error: Error) => {
+      assert.match(error.message, /password retrieval failed/)
+      assert.equal(error.message.includes(secret), false)
+      return true
+    })
+
+    const nonzero = harness({}, {
+      execFile: async (_file, args) => {
+        if (args[args.length - 1] === "status") return { stdout: `${url}\n`, stderr: "" }
+        throw Object.assign(new Error(secret), { code: 7, stdout: secret, stderr: secret })
+      },
+    })
+    await assert.rejects(nonzero.service.discover(), (error: Error) => {
+      assert.match(error.message, /password retrieval failed \(exit code 7\)/)
+      assert.equal(error.message.includes(secret), false)
+      return true
+    })
+
+    const timeout = harness({}, {
+      execFile: async (_file, args) => args[args.length - 1] === "status"
+        ? { stdout: `${url}\n`, stderr: "" }
+        : new Promise(() => {}),
+    }, 15)
+    await assert.rejects(timeout.service.discover(), (error: Error) => {
+      assert.match(error.message, /password retrieval failed/)
+      assert.equal(error.message.includes(secret), false)
+      return true
+    })
+  })
+
+  it("bounds shared deadlines and nonzero command errors", async () => {
+    const commandTimeouts: number[] = []
+    const shared = harness({}, {
+      execFile: async (_file, args, options) => {
+        commandTimeouts.push(options.timeout)
+        if (args[args.length - 1] === "status") {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { stdout: `${url}\n`, stderr: "" }
+        }
+        return { stdout: "secret\n", stderr: "" }
+      },
+    }, 100)
+    await shared.service.discover()
+    assert.ok((commandTimeouts[1] ?? 100) < (commandTimeouts[0] ?? 0))
+
+    const timeout = harness({}, {
+      execFile: async () => new Promise(() => {}),
+    }, 15)
+    await assert.rejects(timeout.service.discover(), /timed out after 15ms/)
+
+    const output = "x".repeat(100_000)
+    const failure = Object.assign(new Error(output), { code: 7, stdout: output, stderr: output })
+    const nonzero = harness({}, {
+      execFile: async () => { throw failure },
+    })
+    await assert.rejects(nonzero.service.discover(), (error: Error) => {
+      assert.match(error.message, /code 7/)
+      assert.ok(error.message.length < 1_200)
+      return true
+    })
+  })
+
+  it("shares an absolute deadline across discover and ensure", async () => {
+    const commandTimeouts: number[] = []
+    const test = harness({}, {
+      execFile: async (_file, args, options) => {
+        commandTimeouts.push(options.timeout)
+        if (args[args.length - 1] === "status") {
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { stdout: "stopped\n", stderr: "" }
+        }
+        return { stdout: args[args.length - 1] === "start" ? `${url}\n` : "secret\n", stderr: "" }
+      },
+    }, 200)
+    const deadlineAt = Date.now() + 200
+
+    assert.equal(await test.service.discover(deadlineAt), undefined)
+    await test.service.ensure(deadlineAt)
+
+    assert.ok((commandTimeouts[1] ?? 200) < (commandTimeouts[0] ?? 0))
+    assert.ok((commandTimeouts[2] ?? 200) <= (commandTimeouts[1] ?? 0))
+  })
+
+  it("uses only status, start, and password service commands", async () => {
+    const test = harness({ status: `${url}\n`, start: `${url}\n`, password: "secret\n" })
+    await test.service.discover()
+    await test.service.ensure()
+
+    const tokens = test.calls.flatMap((call) => call.args)
+    for (const prohibited of [
+      "stop", "restart", "serve", "--service", "--port", "--state", "--db", "pid", "process.kill",
+    ]) {
+      assert.equal(tokens.includes(prohibited), false, prohibited)
+    }
+    assert.deepEqual(test.calls.map((call) => call.args.slice(4)), [
+      ["service", "status"],
+      ["service", "get", "password"],
+      ["service", "status"],
+      ["service", "get", "password"],
+    ])
+  })
+})
+
+function harness(
+  output: Partial<Record<"status" | "start" | "password", string>>,
+  overrides: Partial<WslOpenCodeServiceDependencies> = {},
+  timeoutMs = 500,
+  startupEnvironment: NodeJS.ProcessEnv = {},
+) {
+  const calls: ExecCall[] = []
+  const dependencies: WslOpenCodeServiceDependencies = {
+    execFile: async (file, args, options) => {
+      calls.push({ file, args, options })
+      const operation = args[args.length - 1]
+      const key = operation === "status" || operation === "start" ? operation : "password"
+      return { stdout: output[key] ?? (key === "status" ? "stopped\n" : "secret\n"), stderr: "" }
+    },
+    fetch: async () => Response.json({ version: "2.0.4", pid: 123, urls: [url] }),
+    readRegistration: async () => undefined,
+    ...overrides,
+  }
+  return {
+    calls,
+    service: new WslOpenCodeService({
+      distro: "Ubuntu",
+      binary: "/home/dev/opencode2",
+      startupEnvironment,
+      timeoutMs,
+    }, dependencies),
+  }
+}
+
+const stoppedDiscovery = [["service", "status"], ["service", "get", "password"], ["debug", "paths", "state"], ["debug", "paths", "config"]]

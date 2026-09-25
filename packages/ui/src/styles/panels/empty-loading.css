@@ -49,7 +49,7 @@
 .empty-state-content code {
   background-color: var(--surface-code);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-family: var(--font-family-mono);
   font-size: 13px;
 }

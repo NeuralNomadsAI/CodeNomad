@@ -5,13 +5,14 @@ import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager } from "./client-state"
 import { ClientStateNavigationController, shouldResetRendererAccessTokenForNavigation } from "./client-state-navigation"
+import { SerializedLifecycle } from "./serialized-lifecycle"
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 function window(executeJavaScript: () => Promise<unknown> = async () => {}) {
   return { isDestroyed: () => false, webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:3000/app", executeJavaScript } }
 }
-function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolean }, report: (error: unknown) => void = (error) => assert.fail(String(error))) {
-  return new ClientStateNavigationController(win as never, { clientStateManager: manager, isTrustedOrigin: () => true, reportFlushError: report })
+function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolean }, report: (error: unknown) => void = (error) => assert.fail(String(error)), lifecycle?: SerializedLifecycle) {
+  return new ClientStateNavigationController(win as never, { clientStateManager: manager, isTrustedOrigin: () => true, reportFlushError: report, lifecycle })
 }
 function managerHarness(t: test.TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-navigation-"))
@@ -86,4 +87,54 @@ test("queued navigation preserves order and distinct generations", async () => {
   release()
   await Promise.all([first, second])
   assert.deepEqual(calls, ["start-1", "end-1", "run-2"])
+})
+
+test("queued navigation exposes whether work was invalidated before it mutates navigation state", async () => {
+  const calls: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const navigation = controller(window(), { isPrimary: true })
+  const first = navigation.navigate(async (_window, generation) => {
+    await gate
+    if (navigation.isCurrent(generation)) calls.push("stale")
+  })
+  const second = navigation.navigate((_window, generation) => {
+    if (navigation.isCurrent(generation)) calls.push("current")
+  })
+  release()
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ["current"])
+})
+
+test("shutdown authority cancels navigation dispatch after an in-flight renderer flush", async () => {
+  const calls: string[] = []
+  let flushStarted!: () => void, releaseFlush!: () => void
+  const started = new Promise<void>((resolve) => { flushStarted = resolve })
+  const gate = new Promise<void>((resolve) => { releaseFlush = resolve })
+  const lifecycle = new SerializedLifecycle()
+  const navigation = controller(window(async () => { calls.push("navigation-flush"); flushStarted(); await gate }), { isPrimary: true }, undefined, lifecycle)
+  const pending = navigation.navigate(() => { calls.push("reload") })
+  await started
+
+  const shutdown = lifecycle.stop(async () => { calls.push("shutdown-flush") })
+  releaseFlush()
+  await Promise.all([pending, shutdown])
+
+  assert.deepEqual(calls, ["navigation-flush", "shutdown-flush"])
+})
+
+test("shutdown skips renderer flushes for navigation still queued", async () => {
+  const calls: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const lifecycle = new SerializedLifecycle()
+  const navigation = controller(window(async () => { calls.push("flush") }), { isPrimary: true }, undefined, lifecycle)
+  const first = lifecycle.enqueue(() => gate)
+  const pending = navigation.navigate(() => { calls.push("reload") })
+  const shutdown = lifecycle.stop(async () => { calls.push("shutdown") })
+
+  release()
+  await Promise.all([first, pending, shutdown])
+
+  assert.deepEqual(calls, ["shutdown"])
 })

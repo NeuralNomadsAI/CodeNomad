@@ -1,7 +1,9 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
+import useMediaQuery from "@suid/material/useMediaQuery"
+import type { LocationRef } from "@opencode/client"
 import { Settings, Bell, ChevronDown, FileCog, Globe, Info, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
-import { createMemo, For, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
   activeSettingsSection,
@@ -24,6 +26,8 @@ import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
+import { NativeTitlebar } from "./native-titlebar"
+import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -31,8 +35,18 @@ type SettingsSectionOption = {
   label: string
 }
 
-export const SettingsScreen: Component = () => {
+interface SettingsScreenProps {
+  standalone?: boolean
+  providerContext?: { instanceId?: string; location?: LocationRef }
+  onClose?: () => void | Promise<void>
+  onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
+  scrollPosition?: { scrollTop?: number }
+  onScrollPositionChange?: (top: number) => void
+}
+
+export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
+  const phoneQuery = useMediaQuery("(max-width: 640px)")
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -47,7 +61,7 @@ export const SettingsScreen: Component = () => {
       { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
-    if (canOpenRemoteWindows()) {
+    if (props.standalone || canOpenRemoteWindows()) {
       items.splice(4, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     }
     return items
@@ -64,16 +78,16 @@ export const SettingsScreen: Component = () => {
       case "speech":
         return <SpeechSettingsSection />
       case "remote":
-        return canOpenRemoteWindows() ? (
+        return props.standalone || canOpenRemoteWindows() ? (
           <div class="settings-section-stack">
             <RemoteAccessSettingsSection />
             <SavedRemoteServersCard />
           </div>
-        ) : <GeneralSettingsSection />
+        ) : <GeneralSettingsSection showStartupState />
       case "opencode":
         return <OpenCodeSettingsSection />
       case "providers":
-        return <ProvidersSettingsSection />
+        return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":
@@ -84,31 +98,75 @@ export const SettingsScreen: Component = () => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection />
+        return <GeneralSettingsSection showStartupState={!props.standalone} />
     }
   }
 
   const handleSectionChange = async (sectionId: SettingsSectionId) => {
     if (sectionId === activeSettingsSection()) return
     if (!(await confirmSettingsDiscard())) return
+    await props.onSectionChange?.(sectionId)
     setActiveSettingsSection(sectionId)
+    settingsScroll?.scrollTo({ top: 0 })
   }
 
   const handleCloseSettings = async () => {
     if (!(await confirmSettingsDiscard())) return
-    closeSettings()
+    if (props.onClose) await props.onClose()
+    else closeSettings()
   }
 
-  return (
-    <Dialog open={settingsOpen()} onOpenChange={(open) => !open && void handleCloseSettings()}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="modal-overlay" />
-        <div class="settings-screen-frame">
-          <Dialog.Content class="modal-surface settings-screen-shell">
-            <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
+  const [windowPosition, setWindowPosition] = createSignal({ x: 0, y: 0 })
+  createEffect(() => {
+    if (phoneQuery()) setWindowPosition({ x: 0, y: 0 })
+  })
+  let settingsShell: HTMLDivElement | undefined
+  let settingsScroll: HTMLDivElement | undefined
+  createSettingsScrollRestoration(() => settingsScroll, () => {
+    activeSettingsSection()
+    return props.scrollPosition
+  }, top => props.onScrollPositionChange?.(top))
+  let dragStart: { x: number; y: number; pointerX: number; pointerY: number; minX: number; maxX: number; minY: number; maxY: number } | undefined
+
+  const handleDragStart = (event: PointerEvent) => {
+    if (props.standalone || phoneQuery() || event.button !== 0 || (event.target as Element).closest("button, input, select, textarea, a")) return
+    if (!settingsShell) return
+
+    const position = windowPosition()
+    const rect = settingsShell.getBoundingClientRect()
+    dragStart = {
+      ...position,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      minX: position.x + 16 - rect.left,
+      maxX: position.x + window.innerWidth - 16 - rect.right,
+      minY: position.y + 16 - rect.top,
+      maxY: position.y + window.innerHeight - 16 - rect.bottom,
+    }
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  const handleDragMove = (event: PointerEvent) => {
+    if (!dragStart) return
+    setWindowPosition({
+      x: Math.min(dragStart.maxX, Math.max(dragStart.minX, dragStart.x + event.clientX - dragStart.pointerX)),
+      y: Math.min(dragStart.maxY, Math.max(dragStart.minY, dragStart.y + event.clientY - dragStart.pointerY)),
+    })
+  }
+
+  const handleDragEnd = (event: PointerEvent) => {
+    dragStart = undefined
+    const target = event.currentTarget as HTMLElement
+    if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
+  }
+
+  const content = () => (
+    <>
+            <Show when={props.standalone}><h1 class="sr-only">{t("settings.title")}</h1></Show>
 
             <aside class="settings-screen-nav">
-              <div class="settings-screen-compact-bar">
+              <div class="window-toolbar settings-screen-compact-bar">
                 <span class="settings-screen-compact-icon-wrap">
                   <Settings class="settings-screen-nav-icon" />
                 </span>
@@ -156,24 +214,30 @@ export const SettingsScreen: Component = () => {
                     </Select.Portal>
                   </Select>
                 </div>
-                <button
+                <Show when={!props.standalone}><button
                   type="button"
-                  class="selector-button selector-button-secondary settings-screen-close settings-screen-compact-close"
+                  class="window-icon-button settings-screen-close settings-screen-compact-close"
                   onClick={() => void handleCloseSettings()}
                   aria-label={t("settings.close")}
                   title={t("settings.close")}
                 >
                   <X class="w-4 h-4" />
-                </button>
+                </button></Show>
               </div>
 
-              <div class="settings-screen-nav-header">
+              <div
+                class="window-header settings-screen-nav-header settings-screen-drag-handle"
+                onPointerDown={handleDragStart}
+                onPointerMove={handleDragMove}
+                onPointerUp={handleDragEnd}
+                onPointerCancel={handleDragEnd}
+              >
                 <div class="settings-screen-nav-title-row">
                   <span class="settings-screen-nav-icon-wrap">
                     <Settings class="settings-screen-nav-icon" />
                   </span>
                   <div>
-                    <h2 class="settings-screen-title">{t("settings.title")}</h2>
+                    <h2 class="window-title settings-screen-title">{t("settings.title")}</h2>
                   </div>
                 </div>
               </div>
@@ -200,26 +264,58 @@ export const SettingsScreen: Component = () => {
             </aside>
 
             <div class="settings-screen-content">
-              <header class="settings-screen-content-header">
+              <header
+                class="window-header settings-screen-content-header settings-screen-drag-handle"
+                onPointerDown={handleDragStart}
+                onPointerMove={handleDragMove}
+                onPointerUp={handleDragEnd}
+                onPointerCancel={handleDragEnd}
+              >
                 <div class="settings-screen-content-header-title-group">
                   <p class="settings-screen-content-eyebrow">{t("settings.content.eyebrow")}</p>
-                  <h1 class="settings-screen-content-title">
+                  <h1 class="window-title settings-screen-content-title">
                     {activeSection()?.label}
                   </h1>
                 </div>
-                <button
+                <Show when={!props.standalone}><button
                   type="button"
-                  class="selector-button selector-button-secondary settings-screen-close"
+                  class="window-icon-button settings-screen-close"
                   onClick={() => void handleCloseSettings()}
                   aria-label={t("settings.close")}
                   title={t("settings.close")}
                 >
                   <X class="w-4 h-4" />
-                </button>
+                </button></Show>
               </header>
 
-              <div class="settings-screen-scroll">{renderSection()}</div>
+              <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
             </div>
+    </>
+  )
+
+  if (props.standalone) {
+    return (
+      <div class="settings-window-root">
+        <NativeTitlebar title={t("settings.title")} onClose={handleCloseSettings} />
+        <div ref={settingsShell} class="modal-surface window-shell settings-screen-shell">
+          {content()}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <Dialog modal={phoneQuery()} preventScroll={phoneQuery()} open={settingsOpen()} onOpenChange={(open) => !open && void handleCloseSettings()}>
+      <Dialog.Portal>
+        <div class="settings-screen-frame">
+          <Dialog.Content
+            ref={settingsShell}
+            class="modal-surface window-shell settings-screen-shell"
+            style={{ transform: `translate(${windowPosition().x}px, ${windowPosition().y}px)` }}
+            onInteractOutside={(event) => event.preventDefault()}
+          >
+            <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
+            {content()}
           </Dialog.Content>
         </div>
       </Dialog.Portal>

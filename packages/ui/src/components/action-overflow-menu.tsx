@@ -5,10 +5,10 @@ import { MoreHorizontal } from "lucide-solid"
 export interface ActionOverflowMenuItem {
   key: string
   label: string
+  description?: string
   icon?: JSXElement
   disabled?: boolean
   checked?: boolean
-  destructive?: boolean
   onSelect: () => void | Promise<void>
   onMouseEnter?: () => void
   onMouseLeave?: () => void
@@ -19,9 +19,11 @@ interface ActionOverflowMenuProps {
   label: string
   triggerClass?: string
   minItems?: number
+  onOpenChange?: (open: boolean) => void
 }
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
+  let selectedAction: ActionOverflowMenuItem["onSelect"] | undefined
   const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
   const enabledItems = () => props.items.filter((item) => !item.disabled)
   const hasItems = () => props.items.length >= (props.minItems ?? 1)
@@ -36,7 +38,10 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
 
   return (
     <Show when={hasItems()}>
-      <DropdownMenu placement="bottom-end" gutter={4} onOpenChange={(open) => { if (!open) clearHoveredItem() }}>
+      <DropdownMenu placement="bottom-end" gutter={4} onOpenChange={(open) => {
+        if (!open) clearHoveredItem()
+        props.onOpenChange?.(open)
+      }}>
         <DropdownMenu.Trigger
           class={`action-overflow-trigger ${props.triggerClass ?? ""}`.trim()}
           aria-label={props.label}
@@ -47,15 +52,22 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="action-overflow-content">
+          <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
+            // Kobalte restores the trigger after this callback. Launch selected
+            // actions afterwards so a newly opened window keeps its autofocus.
+            const action = selectedAction
+            selectedAction = undefined
+            if (action) queueMicrotask(() => { void action() })
+          }}>
             <For each={props.items}>
               {(item) => (
                 <DropdownMenu.Item
                   class="action-overflow-item"
-                  data-destructive={item.destructive ? "true" : undefined}
                   role={typeof item.checked === "boolean" ? "menuitemcheckbox" : undefined}
                   aria-checked={typeof item.checked === "boolean" ? item.checked : undefined}
                   disabled={item.disabled}
+                  aria-description={item.description}
+                  title={item.description}
                   onPointerEnter={() => {
                     if (item.disabled) return
                     const previous = hoveredItem()
@@ -70,7 +82,7 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                   }}
                   onSelect={() => {
                     clearHoveredItem()
-                    void item.onSelect()
+                    selectedAction = item.onSelect
                   }}
                 >
                   <Show when={item.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>

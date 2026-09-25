@@ -1,14 +1,18 @@
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { CODENOMAD_API_BASE } from "./api-client"
+import { backgroundReads } from "./background-read-queue"
+import { authenticatedFetch } from "./auth-recovery"
+import { prioritizedRead } from "./prioritized-read"
+import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 
 class SDKManager {
-  private clients = new Map<string, OpencodeClient>()
+  private clients = new Map<string, OpenCodeClient>()
 
   private key(instanceId: string, proxyPath: string): string {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
   }
 
-  createClient(instanceId: string, proxyPath: string): OpencodeClient {
+  createClient(instanceId: string, proxyPath: string, isForeground: () => boolean = () => false): OpenCodeClient {
     const key = this.key(instanceId, proxyPath)
     const existing = this.clients.get(key)
     if (existing) {
@@ -16,19 +20,11 @@ class SDKManager {
     }
 
     const baseUrl = buildInstanceBaseUrl(proxyPath)
-    const client = createOpencodeClient({ baseUrl })
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground) })
 
     this.clients.set(key, client)
 
     return client
-  }
-
-  getClient(instanceId: string, proxyPath: string): OpencodeClient | null {
-    return this.clients.get(this.key(instanceId, proxyPath)) ?? null
-  }
-
-  destroyClient(instanceId: string, proxyPath: string): void {
-    this.clients.delete(this.key(instanceId, proxyPath))
   }
 
   destroyClientsForInstance(instanceId: string): void {
@@ -38,18 +34,56 @@ class SDKManager {
       }
     }
   }
-
-  destroyAll(): void {
-    this.clients.clear()
-  }
 }
 
-export type { OpencodeClient }
+export type { OpenCodeClient }
 
-export function buildInstanceBaseUrl(proxyPath: string): string {
+export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_BASE): string {
   const normalized = normalizeProxyPath(proxyPath)
-  const base = stripTrailingSlashes(CODENOMAD_API_BASE)
+  const base = stripTrailingSlashes(apiBase ?? "")
   return `${base}${normalized}/`
+}
+
+export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false): typeof globalThis.fetch {
+  return (input, init) => {
+    const requestUrl = new URL(input instanceof Request ? input.url : input)
+    const basePath = new URL(baseUrl, requestUrl).pathname.replace(/\/+$/, "") + "/"
+    // The pinned client preserves baseUrl's proxy prefix. Strip it only for
+    // scheduling decisions; forwarding must retain the generated URL unchanged.
+    const apiPath = requestUrl.pathname.startsWith(basePath)
+      ? `/${requestUrl.pathname.slice(basePath.length)}` : requestUrl.pathname
+    const read = async () => {
+      const response = await authenticatedFetch(input, {
+        ...init,
+        credentials: init?.credentials ?? "include",
+      })
+      if (response.status === 426) {
+        const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
+        reportOpenCodeSetupRequired()
+      }
+      if (response.status === 502) {
+        const body = await response.clone().json().catch(() => undefined)
+        if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {
+          const { tGlobal } = await import("./i18n")
+          throw new Error(tGlobal("envEditor.applyFailed"))
+        }
+      }
+      return response
+    }
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    // Project identity gates the visible cross-worktree session list. Promote
+    // this dependency with selection rather than leaving it behind Git scans.
+    if (method === "GET" && /^\/api\/location\/?$/.test(apiPath)) {
+      return prioritizedRead(isForeground, init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+    }
+    // Catalogues from every restored project used to consume all HTTP/1.1
+    // connections before the saved session/message reads could even dispatch.
+    // Share the secondary budget with inventory scans, including reconnects.
+    if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(apiPath)) {
+      return backgroundReads.run(init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+    }
+    return read()
+  }
 }
 
 function normalizeProxyPath(proxyPath: string): string {

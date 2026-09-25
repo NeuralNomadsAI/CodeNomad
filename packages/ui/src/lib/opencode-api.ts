@@ -1,15 +1,3 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
-
-export class OpencodeApiError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message)
-    this.name = "OpencodeApiError"
-    if (options && "cause" in options) {
-      ;(this as any).cause = options.cause
-    }
-  }
-}
-
 export function getOpencodeErrorMessage(error: unknown, fallback: string): string {
   const seen = new Set<unknown>()
 
@@ -26,35 +14,17 @@ export function getOpencodeErrorMessage(error: unknown, fallback: string): strin
     const nested = extract(candidate.cause) ?? extract(candidate.error) ?? extract(candidate.body)
     if (nested) return nested
 
+    // Classify undeclared HTTP statuses by structured reason/cause, independently
+    // of the client's message formatting (2.0.16 adds detail to that message).
+    // Surface the status code only when no deeper detail exists.
+    if (candidate.reason === "UnexpectedStatus") {
+      const status = Number(candidate.cause?.status)
+      if (Number.isInteger(status) && status >= 100 && status <= 599) return `Unexpected status ${status}`
+    }
+
     if (typeof candidate.message === "string" && candidate.message.trim()) return candidate.message.trim()
     return undefined
   }
 
   return extract(error) ?? fallback
 }
-
-type RequestResultLike<T> =
-  | {
-      data: T
-      error?: undefined
-    }
-  | {
-      data?: undefined
-      error: unknown
-    }
-
-export async function requestData<T>(
-  promise: Promise<RequestResultLike<T> | undefined>,
-  label: string,
-): Promise<T> {
-  const result = await promise
-  if (!result) {
-    throw new OpencodeApiError(`${label} returned no result`)
-  }
-  if ((result as any).error) {
-    throw new OpencodeApiError(`${label} failed`, { cause: (result as any).error })
-  }
-  return (result as any).data as T
-}
-
-export type { OpencodeClient }

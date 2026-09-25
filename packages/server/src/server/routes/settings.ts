@@ -1,9 +1,11 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { probeBinaryVersion } from "../../workspaces/spawn"
+import type { BinaryValidationResult } from "../../api-types"
+import { probeOpenCodeBinary } from "../../workspaces/spawn"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
 import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-config"
+import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
 
 interface RouteDeps {
   settings: SettingsService
@@ -14,9 +16,8 @@ const ValidateBinarySchema = z.object({
   path: z.string(),
 })
 
-function validateBinaryPath(binaryPath: string): { valid: boolean; version?: string; error?: string } {
-  const result = probeBinaryVersion(binaryPath)
-  return { valid: result.valid, version: result.version, error: result.error }
+function validateBinaryPath(binaryPath: string): Promise<BinaryValidationResult> {
+  return probeOpenCodeBinary(binaryPath)
 }
 
 export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: unknown): unknown {
@@ -120,7 +121,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/storage/binaries/validate", async (request, reply) => {
     try {
       const body = ValidateBinarySchema.parse(request.body ?? {})
-      return validateBinaryPath(body.path)
+      return validateBinaryPath(body.path === "opencode2" || body.path === "opencode" ? resolveDefaultInstallation().path : body.path)
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to validate binary")
       reply.code(400)

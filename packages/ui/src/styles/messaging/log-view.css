@@ -17,7 +17,7 @@
 }
 
 .log-entry {
-  @apply flex gap-3 py-0.5 px-2 -mx-2 rounded transition-colors;
+  @apply flex gap-3 py-0.5 px-2 -mx-2 transition-colors;
 }
 
 .log-entry:hover {
@@ -57,7 +57,7 @@
 .log-paused-state {
   @apply flex flex-col items-center justify-center gap-3 text-center py-10 px-6;
   border: 1px dashed var(--border-base);
-  border-radius: 12px;
+  border-radius: 0;
   background-color: var(--surface-base);
 }
 
@@ -88,7 +88,7 @@
   @apply inline-flex items-center justify-center;
   width: 2.75rem;
   height: 2.75rem;
-  border-radius: 9999px;
+  border-radius: 0;
   border: 1px solid var(--border-base);
   background-color: var(--surface-base);
   color: var(--text-primary);

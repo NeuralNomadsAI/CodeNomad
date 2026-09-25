@@ -1,14 +1,13 @@
 import { createSignal, type Component } from "solid-js"
-import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { showPromptDialog } from "../stores/alerts"
-import type { SessionPreviewRecord } from "../stores/session-previews"
+import { showAlertDialog, showPromptDialog } from "../stores/alerts"
+import { openSessionPreview, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
+import { getPreviewFrameSource } from "./browser-frame-security"
+import { runtimeEnv } from "../lib/runtime-env"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
-  onBackToChat: () => void
-  onClose: () => void
   onInsertComment: (markdown: string) => void
 }
 
@@ -33,7 +32,16 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
   const [commentMode, setCommentMode] = createSignal(false)
-  const target = () => new URL(props.preview.targetUrl)
+  function showNavigationError(error: unknown) {
+    showAlertDialog(t("sessionPreview.open.title"), {
+      title: t("sessionPreview.open.title"),
+      detail: error instanceof Error ? error.message : String(error),
+      variant: "error",
+    })
+  }
+
+  const frameSource = (preview: SessionPreviewRecord = props.preview) =>
+    getPreviewFrameSource(runtimeEnv, preview, window.location.href)
 
   async function handleCommentTarget(elementTarget: BrowserFrameElementTarget) {
     const comment = await showPromptDialog(t("sessionPreview.comment.prompt"), {
@@ -49,29 +57,26 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
 
   return (
     <div class="flex h-full min-h-0 flex-col bg-surface">
-      <div class="flex shrink-0 items-center justify-between gap-3 px-3 py-2" style={{ "border-bottom": "1px solid var(--border-base)" }}>
-        <div class="min-w-0">
-          <div class="text-sm font-medium text-primary truncate">{t("sessionPreview.title")}</div>
-          <div class="text-xs text-muted truncate">{props.preview.targetUrl}</div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button type="button" class="selector-button selector-button-secondary" onClick={props.onBackToChat}>
-            {t("sessionPreview.backToChat")}
-          </button>
-          <button type="button" class="new-tab-button" onClick={props.onClose} aria-label={t("sessionPreview.close")} title={t("sessionPreview.close")}>
-            <X class="h-4 w-4" />
-          </button>
-        </div>
-      </div>
       <BrowserFrame
+        sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
-        initialUrl={props.preview.proxyUrl}
+        initialUrl={frameSource()}
+        initialAddress={props.preview.targetUrl}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
-        lockedBaseLabel={target().host}
+        addressMode="url"
+        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.storageKey))}
+        onNavigationError={showNavigationError}
+        onFrameLocation={(path) => {
+          const target = new URL(path, props.preview.targetUrl)
+          updateSessionPreviewLocation(props.preview.storageKey, target.href)
+          return target.href
+        }}
+        commentBridge
         labels={{
           back: t("sidecars.back"),
           refresh: t("sidecars.refresh"),
-          path: t("sidecars.path"),
+          path: t("sessionPreview.open.label"),
+          invalidUrl: t("sessionPreview.open.invalidUrl"),
           go: t("sidecars.go"),
           viewport: t("browserFrame.viewport"),
           viewportResponsive: t("browserFrame.viewport.responsive"),

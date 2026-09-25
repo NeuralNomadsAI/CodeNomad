@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-needs-local-certificate-install"
+description = "Enables the needs_local_certificate_install command without any pre-configured scope."
+commands.allow = ["needs_local_certificate_install"]
+
+[[permission]]
+identifier = "deny-needs-local-certificate-install"
+description = "Denies the needs_local_certificate_install command without any pre-configured scope."
+commands.deny = ["needs_local_certificate_install"]

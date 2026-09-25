@@ -120,7 +120,7 @@ The MVP (Minimum Viable Product) is about proving the concept and getting feedba
 
 **Simple approach:**
 
-- Direct SDK calls
+- Direct generated Promise client calls
 - Basic error handling
 - Simple retry (if at all)
 

@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
+import { isLoopbackHost, isWildcardHost } from "../network-host"
  
 
 interface RouteDeps {
@@ -18,7 +19,7 @@ function buildMetaResponse(meta: ServerMeta): ServerMeta {
     ...meta,
     localPort,
     remotePort: remote?.port,
-    listeningMode: meta.host === "0.0.0.0" || !isLoopbackHost(meta.host) ? "all" : "local",
+    listeningMode: isWildcardHost(meta.host) || !isLoopbackHost(meta.host) ? "all" : "local",
   }
 }
 
@@ -47,10 +48,6 @@ function resolveRemote(meta: ServerMeta): { protocol: "http" | "https"; port: nu
   } catch {
     return null
   }
-}
-
-function isLoopbackHost(host: string): boolean {
-  return host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 }
 
 // NetworkAddress shape is resolved in ../network-addresses

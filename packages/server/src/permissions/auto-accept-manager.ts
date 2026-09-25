@@ -16,15 +16,10 @@ import { AutoAcceptStore, type AutoAcceptSessionInfo } from "./auto-accept-store
  *     so the UI stays a pure view
  */
 
-export type PermissionSource = "v2" | "legacy"
-export type PermissionReplyValue = "once"
-
 export interface AutoAcceptReply {
   instanceId: string
   permissionId: string
   sessionId: string
-  source: PermissionSource
-  reply: PermissionReplyValue
 }
 
 export type PermissionReplier = (reply: AutoAcceptReply) => Promise<void>
@@ -32,7 +27,6 @@ export type PermissionReplier = (reply: AutoAcceptReply) => Promise<void>
 interface PendingPermission {
   permissionId: string
   sessionId: string
-  source: PermissionSource
 }
 
 interface AutoAcceptManagerDeps {
@@ -44,33 +38,27 @@ interface AutoAcceptManagerDeps {
 
 export interface PersistedAutoAcceptSession extends AutoAcceptSessionInfo {
   yoloEnabled: boolean
-  workspaceId?: string
 }
 
 export interface AutoAcceptPersistence {
   loadSessions(instanceId: string): Promise<PersistedAutoAcceptSession[]>
-  persist(instanceId: string, rootSessionId: string, enabled: boolean, workspaceId?: string): Promise<void>
+  loadSession?(instanceId: string, sessionId: string): Promise<PersistedAutoAcceptSession | null>
+  persist(instanceId: string, rootSessionId: string, enabled: boolean): Promise<void>
 }
-
-const PERMISSION_ASK_TYPES = new Set(["permission.v2.asked", "permission.asked", "permission.updated"])
-const PERMISSION_REPLIED_TYPES = new Set(["permission.v2.replied", "permission.replied"])
-const SESSION_UPSERT_TYPES = new Set(["session.updated", "session.created"])
-const SESSION_REMOVE_TYPES = new Set(["session.deleted"])
 
 export class AutoAcceptManager {
   private static readonly MAX_REPLY_ATTEMPTS = 3
   private readonly store = new AutoAcceptStore()
-  /** instanceId:permissionId entries currently being replied, to dedupe re-emissions */
+  /** Native permission ids currently being replied, including duplicate logical workspace emissions. */
   private readonly inFlight = new Set<string>()
   /** instanceId -> (permissionId -> pending permission) awaiting a reply */
   private readonly pending = new Map<string, Map<string, PendingPermission>>()
-  /** instanceId:permissionId -> failure count, to stop retrying stuck permissions */
+  /** Native permission id -> failure count, to stop retrying stuck permissions. */
   private readonly replyAttempts = new Map<string, number>()
   private readonly hydratedInstances = new Set<string>()
   private readonly hydration = new Map<string, Promise<void>>()
   private readonly queuedEvents = new Map<string, InstanceStreamPayload[]>()
   private readonly instanceGeneration = new Map<string, number>()
-  private readonly sessionWorkspaces = new Map<string, Map<string, string>>()
   private readonly mutations = new Map<string, Promise<boolean>>()
   private unsubscribe?: () => void
 
@@ -134,12 +122,9 @@ export class AutoAcceptManager {
     const pending = this.deps.persistence.loadSessions(instanceId).then((sessions) => {
       if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return
       this.store.clearInstance(instanceId)
-      const workspaces = new Map<string, string>()
       for (const session of sessions) {
         this.store.upsertSession(instanceId, session)
-        if (session.workspaceId) workspaces.set(session.id, session.workspaceId)
       }
-      this.sessionWorkspaces.set(instanceId, workspaces)
       for (const session of sessions) {
         if (!session.yoloEnabled || this.store.familyRoot(instanceId, session.id) !== session.id) continue
         this.store.setEnabled(instanceId, session.id, true)
@@ -177,6 +162,12 @@ export class AutoAcceptManager {
       if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
         return this.store.isEnabled(instanceId, sessionId)
       }
+      const session = await this.deps.persistence!.loadSession?.(instanceId, sessionId)
+      if (!session) throw new Error(`Session ${sessionId} does not belong to workspace ${instanceId}`)
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
+        return this.store.isEnabled(instanceId, sessionId)
+      }
+      this.store.upsertSession(instanceId, session)
       const rootSessionId = this.store.familyRoot(instanceId, sessionId)
       const traversedRootSessionIds = new Set([rootSessionId])
       const enabled = !this.store.isEnabled(instanceId, rootSessionId)
@@ -184,7 +175,6 @@ export class AutoAcceptManager {
         instanceId,
         rootSessionId,
         enabled,
-        this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
       )
       if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) {
         return this.store.isEnabled(instanceId, rootSessionId)
@@ -197,14 +187,12 @@ export class AutoAcceptManager {
           instanceId,
           currentRootSessionId,
           enabled,
-          this.sessionWorkspaces.get(instanceId)?.get(currentRootSessionId),
         )
         if (enabled) {
           await this.deps.persistence!.persist(
             instanceId,
             persistedRootSessionId,
             false,
-            this.sessionWorkspaces.get(instanceId)?.get(persistedRootSessionId),
           )
         }
         persistedRootSessionId = currentRootSessionId
@@ -236,68 +224,68 @@ export class AutoAcceptManager {
     this.hydratedInstances.delete(instanceId)
     this.hydration.delete(instanceId)
     this.queuedEvents.delete(instanceId)
-    this.sessionWorkspaces.delete(instanceId)
     this.mutations.delete(instanceId)
     this.store.clearInstance(instanceId)
     this.pending.delete(instanceId)
-    const prefix = `${instanceId}:`
-    for (const key of Array.from(this.inFlight.keys())) {
-      if (key.startsWith(prefix)) this.inFlight.delete(key)
-    }
-    for (const key of Array.from(this.replyAttempts.keys())) {
-      if (key.startsWith(prefix)) this.replyAttempts.delete(key)
-    }
   }
 
   handleInstanceEvent(instanceId: string, event: InstanceStreamPayload): void {
     if (!event || typeof event.type !== "string") return
 
-    if (SESSION_UPSERT_TYPES.has(event.type)) {
-      this.ingestSession(instanceId, event.properties)
+    if (event.type === "session.created") {
+      this.ingestSession(instanceId, event.data)
       return
     }
-    if (SESSION_REMOVE_TYPES.has(event.type)) {
-      const info = (event.properties as { info?: SessionProperties } | undefined)?.info
-      const id = readString(info?.id) ?? readString(event.properties?.id)
+    if (event.type === "session.forked") {
+      this.ingestSessionForked(instanceId, event.data)
+      return
+    }
+    if (event.type === "session.deleted") {
+      const data = event.data as SessionProperties | undefined
+      const id = readString(data?.sessionID) ?? readString(data?.id)
       if (id) {
         this.store.removeSession(instanceId, id)
         this.removePendingForSession(instanceId, id)
       }
       return
     }
-    if (PERMISSION_REPLIED_TYPES.has(event.type)) {
-      this.handlePermissionReplied(instanceId, event.properties)
+    if (event.type === "permission.replied") {
+      this.handlePermissionReplied(instanceId, event.data)
       return
     }
-    if (PERMISSION_ASK_TYPES.has(event.type)) {
-      this.handlePermissionRequest(instanceId, event.type, event.properties)
+    if (event.type === "permission.asked") {
+      this.handlePermissionRequest(instanceId, event.data)
     }
   }
 
-  private ingestSession(instanceId: string, properties: unknown): void {
-    // OpenCode wraps session records under `properties.info` for
-    // session.created/updated/deleted (see SDK EventSessionUpdated). Accept a
-    // flat fallback only for defensive compatibility.
-    const info = (properties as { info?: SessionProperties } | SessionProperties | undefined)
-    const session = (info && typeof info === "object" && "info" in info ? info.info : info) as
-      | SessionProperties
-      | undefined
-    if (!session || typeof session.id !== "string") return
+  private ingestSession(instanceId: string, data: unknown): void {
+    const session = data as SessionProperties | undefined
+    const sessionId = readString(session?.sessionID) ?? readString(session?.id)
+    if (!session || !sessionId) return
     const parentId = session.parentID ?? session.parentId ?? null
-    const revert = session.revert ?? undefined
     const enabledBefore = this.store.enabledRoots(instanceId)
-    this.store.upsertSession(instanceId, { id: session.id, parentId, revert })
-    if (typeof session.workspaceID === "string" && session.workspaceID) {
-      const workspaces = this.sessionWorkspaces.get(instanceId) ?? new Map<string, string>()
-      workspaces.set(session.id, session.workspaceID)
-      this.sessionWorkspaces.set(instanceId, workspaces)
-    }
+    this.store.upsertSession(instanceId, { id: sessionId, parentId, fork: session.fork })
     this.persistRootMigration(instanceId, enabledBefore, this.store.enabledRoots(instanceId))
-    // Session ancestry may have changed (parent discovered, revert toggled).
+    // Session ancestry may have changed as parents are discovered.
     // Re-drain pending permissions whose family root may have migrated into
     // an enabled family — mirrors the old UI's drainAutoAcceptPermissions-
-    // ForInstance trigger on session.updated (#497).
-    this.drainPending(instanceId, session.id)
+    // ForInstance trigger from the previous UI implementation (#497).
+    this.drainPending(instanceId, sessionId)
+  }
+
+  private ingestSessionForked(instanceId: string, properties: unknown): void {
+    const value = properties as { sessionID?: unknown; parentID?: unknown; boundary?: unknown } | undefined
+    const sessionId = readString(value?.sessionID)
+    const parentId = readString(value?.parentID)
+    if (!sessionId || !parentId || !value?.boundary) return
+    const enabledBefore = this.store.enabledRoots(instanceId)
+    this.store.upsertSession(instanceId, {
+      id: sessionId,
+      parentId,
+      fork: { sessionID: parentId, boundary: value.boundary },
+    })
+    this.persistRootMigration(instanceId, enabledBefore, this.store.enabledRoots(instanceId))
+    this.drainPending(instanceId, sessionId)
   }
 
   private persistRootMigration(instanceId: string, before: readonly string[], after: readonly string[]): void {
@@ -312,14 +300,14 @@ export class AutoAcceptManager {
       for (const rootSessionId of added) {
         if (!enabledRoots.has(rootSessionId)) continue
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, true, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, true,
         )
       }
       for (const rootSessionId of removed) {
         if (enabledRoots.has(rootSessionId)) continue
         if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation) return false
         await this.deps.persistence!.persist(
-          instanceId, rootSessionId, false, this.sessionWorkspaces.get(instanceId)?.get(rootSessionId),
+          instanceId, rootSessionId, false,
         )
       }
       return false
@@ -333,29 +321,36 @@ export class AutoAcceptManager {
     })
   }
 
-  private handlePermissionRequest(instanceId: string, eventType: string, permission: unknown): void {
+  private handlePermissionRequest(instanceId: string, permission: unknown): void {
     const request = permission as PermissionProperties | undefined
     if (!request) return
     const permissionId = readString(request.id)
     const sessionId = readString(request.sessionID) ?? readString(request.sessionId)
     if (!permissionId || !sessionId) return
 
-    // Infer source from the event type, but prefer the already-tracked source
-    // for permission.updated (which may belong to a v2 permission).
-    const existing = this.pending.get(instanceId)?.get(permissionId)
-    const source: PermissionSource = eventType === "permission.v2.asked" ? "v2" : (existing?.source ?? "legacy")
+    this.addPending(instanceId, { permissionId, sessionId })
 
-    // `permission.updated` represents a detail change for a permission that
-    // is *already* pending. If it is no longer in our pending set it was
-    // already replied to (by us or the user) — skip to avoid a duplicate reply.
-    if (eventType === "permission.updated" && !this.pending.get(instanceId)?.has(permissionId)) {
+    if (!this.store.hasSession(instanceId, sessionId)) {
+      void this.hydrateSession(instanceId, sessionId)
       return
     }
-
-    this.addPending(instanceId, { permissionId, sessionId, source })
-
     if (!this.store.isEnabled(instanceId, sessionId)) return
-    this.tryAutoAccept(instanceId, permissionId, sessionId, source)
+    this.tryAutoAccept(instanceId, permissionId, sessionId)
+  }
+
+  private async hydrateSession(instanceId: string, sessionId: string): Promise<void> {
+    try {
+      const session = await this.deps.persistence?.loadSession?.(instanceId, sessionId)
+      if (!session || !Array.from(this.pending.get(instanceId)?.values() ?? []).some((entry) => entry.sessionId === sessionId)) return
+      this.ingestPersistedSession(instanceId, session)
+      this.drainPending(instanceId, sessionId)
+    } catch (error) {
+      this.deps.logger.warn({ instanceId, sessionId, err: error }, "Failed to hydrate Yolo permission session")
+    }
+  }
+
+  private ingestPersistedSession(instanceId: string, session: PersistedAutoAcceptSession): void {
+    this.store.upsertSession(instanceId, session)
   }
 
   private handlePermissionReplied(instanceId: string, properties: unknown): void {
@@ -373,27 +368,26 @@ export class AutoAcceptManager {
     instanceId: string,
     permissionId: string,
     sessionId: string,
-    source: PermissionSource,
   ): void {
-    const key = `${instanceId}:${permissionId}`
+    const key = permissionId
     if (this.inFlight.has(key)) return
     const attempts = this.replyAttempts.get(key) ?? 0
     if (attempts >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) return
     this.inFlight.add(key)
     this.replyAttempts.set(key, attempts + 1)
 
-    const reply: AutoAcceptReply = { instanceId, permissionId, sessionId, source, reply: "once" }
+    const reply: AutoAcceptReply = { instanceId, permissionId, sessionId }
 
     void this.deps.replier(reply)
       .then(() => {
         this.replyAttempts.delete(key)
-        this.removePending(instanceId, permissionId)
+        this.removePendingFromAllInstances(permissionId)
         this.deps.eventBus.publish({ type: "yolo.autoAccepted", instanceId, sessionId, permissionId })
       })
       .catch((error) => {
         this.deps.logger.error({ instanceId, permissionId, err: error, attempt: attempts + 1 }, "Yolo auto-accept reply failed")
         if (attempts + 1 >= AutoAcceptManager.MAX_REPLY_ATTEMPTS) {
-          this.removePending(instanceId, permissionId)
+          this.removePendingFromAllInstances(permissionId)
         }
       })
       .finally(() => {
@@ -407,8 +401,8 @@ export class AutoAcceptManager {
     if (!instancePending || instancePending.size === 0) return
     const root = this.store.familyRoot(instanceId, sessionId)
     for (const entry of Array.from(instancePending.values())) {
-      if (this.store.familyRoot(instanceId, entry.sessionId) === root) {
-        this.tryAutoAccept(instanceId, entry.permissionId, entry.sessionId, entry.source)
+      if (this.store.hasSession(instanceId, entry.sessionId) && this.store.familyRoot(instanceId, entry.sessionId) === root) {
+        this.tryAutoAccept(instanceId, entry.permissionId, entry.sessionId)
       }
     }
   }
@@ -425,9 +419,13 @@ export class AutoAcceptManager {
   private removePending(instanceId: string, permissionId: string): void {
     const instancePending = this.pending.get(instanceId)
     if (instancePending?.delete(permissionId)) {
-      this.replyAttempts.delete(`${instanceId}:${permissionId}`)
+      this.replyAttempts.delete(permissionId)
       if (instancePending.size === 0) this.pending.delete(instanceId)
     }
+  }
+
+  private removePendingFromAllInstances(permissionId: string): void {
+    for (const instanceId of Array.from(this.pending.keys())) this.removePending(instanceId, permissionId)
   }
 
   private removePendingForSession(instanceId: string, sessionId: string): void {
@@ -436,7 +434,7 @@ export class AutoAcceptManager {
     for (const [permId, entry] of Array.from(instancePending)) {
       if (entry.sessionId === sessionId) {
         instancePending.delete(permId)
-        this.replyAttempts.delete(`${instanceId}:${permId}`)
+        this.replyAttempts.delete(permId)
       }
     }
     if (instancePending.size === 0) this.pending.delete(instanceId)
@@ -445,15 +443,15 @@ export class AutoAcceptManager {
 
 interface InstanceStreamPayload {
   type?: string
-  properties?: Record<string, unknown>
+  data?: unknown
 }
 
 interface SessionProperties {
   id?: string
+  sessionID?: string
   parentID?: string | null
   parentId?: string | null
-  revert?: unknown
-  workspaceID?: string
+  fork?: unknown
 }
 
 interface PermissionProperties {

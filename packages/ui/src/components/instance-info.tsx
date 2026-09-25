@@ -5,27 +5,28 @@ import InstanceServiceStatus from "./instance-service-status"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
-import { disposeInstance } from "../stores/instances"
+import { openCodeSetupAction, openCodeSetupBusy, runOpenCodeSetup } from "../stores/opencode-setup"
 import { showToastNotification } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 
 interface InstanceInfoProps {
   instance: Instance
+  active?: boolean
   compact?: boolean
-  showDisposeButton?: boolean
+  showReloadButton?: boolean
 }
 
 const log = getLogger("actions")
 
 const InstanceInfo: Component<InstanceInfoProps> = (props) => {
   const { t } = useI18n()
-  const { isSecureEnvVar } = useConfig()
+  const { isSecureEnvVar, serverSettings } = useConfig()
   const metadataContext = useOptionalInstanceMetadataContext()
   const isLoadingMetadata = metadataContext?.isLoading ?? (() => false)
   const instanceAccessor = metadataContext?.instance ?? (() => props.instance)
   const metadataAccessor = metadataContext?.metadata ?? (() => props.instance.metadata)
 
-  const [isDisposing, setIsDisposing] = createSignal(false)
+  const [reloadPending, setReloadPending] = createSignal(false)
 
   const currentInstance = () => instanceAccessor()
   const metadata = () => metadataAccessor()
@@ -36,44 +37,42 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
     return env ? Object.entries(env) : []
   })
 
-  const disposeEnabled = createMemo(() => Boolean(currentInstance()?.client) && !isDisposing())
+  const reloadEnabled = createMemo(() => Boolean(currentInstance()?.client) && !reloadPending() && !openCodeSetupBusy())
 
-  const handleDisposeInstance = async () => {
-    if (!disposeEnabled()) return
-
-    const confirmed = await showConfirmDialog(t("infoView.dispose.confirm.message"), {
-      title: t("infoView.dispose.confirm.title"),
-      variant: "warning",
-      confirmLabel: t("infoView.dispose.confirm.confirmLabel"),
-      cancelLabel: t("infoView.dispose.confirm.cancelLabel"),
-      dismissible: false,
-    })
-
-    if (!confirmed) return
-
-    setIsDisposing(true)
+  const handleReloadConfiguration = async () => {
+    if (!reloadEnabled()) return
+    const binary = serverSettings().opencodeBinary
+    setReloadPending(true)
     try {
-      const ok = await disposeInstance(currentInstance().id)
-      if (ok) {
+      const confirmed = await showConfirmDialog(t("settings.opencode.setup.reloadDescription"), {
+        title: t("settings.opencode.setup.reload"),
+        variant: "warning",
+        confirmLabel: t("settings.opencode.setup.reload"),
+        cancelLabel: t("alertDialog.actions.cancel"),
+        dismissible: false,
+      })
+      if (!confirmed || binary !== serverSettings().opencodeBinary || openCodeSetupBusy()) return
+      const status = await runOpenCodeSetup("reload", { resumeWorkspace: false })
+      if (status) {
         showToastNotification({
-          message: t("infoView.dispose.toast.success"),
+          message: t("settings.opencode.setup.reloaded"),
           variant: "success",
           duration: 8000,
         })
       } else {
         showToastNotification({
-          message: t("infoView.dispose.toast.error"),
+          message: t("settings.opencode.setup.actionFailed"),
           variant: "error",
         })
       }
     } catch (error) {
-      log.error("Failed to dispose instance", error)
+      log.error("Failed to reload OpenCode configuration", error)
       showToastNotification({
-        message: t("infoView.dispose.toast.error"),
+        message: t("settings.opencode.setup.actionFailed"),
         variant: "error",
       })
     } finally {
-      setIsDisposing(false)
+      setReloadPending(false)
     }
   }
 
@@ -85,7 +84,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       <div class="panel-body space-y-3">
         <div>
           <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("instanceInfo.labels.folder")}</div>
-          <div dir="ltr" class="text-xs text-primary font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base">
+          <div dir="ltr" class="text-xs text-primary font-mono break-all px-2 py-1.5 border bg-surface-secondary border-base">
             {currentInstance().folder}
           </div>
         </div>
@@ -97,7 +96,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
                 <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
                   {t("instanceInfo.labels.project")}
                 </div>
-                <div dir="ltr" class="text-xs font-mono px-2 py-1.5 rounded border truncate bg-surface-secondary border-base text-primary">
+                <div dir="ltr" class="text-xs font-mono px-2 py-1.5 border truncate bg-surface-secondary border-base text-primary">
                   {project().id}
                 </div>
               </div>
@@ -129,7 +128,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               {t("instanceInfo.labels.opencodeVersion")}
             </div>
-            <div class="text-xs px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div class="text-xs px-2 py-1.5 border bg-surface-secondary border-base text-primary">
               v{binaryVersion()}
             </div>
           </div>
@@ -140,7 +139,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
               {t("instanceInfo.labels.binaryPath")}
             </div>
-            <div dir="ltr" class="text-xs font-mono break-all px-2 py-1.5 rounded border bg-surface-secondary border-base text-primary">
+            <div dir="ltr" class="text-xs font-mono break-all px-2 py-1.5 border bg-surface-secondary border-base text-primary">
               {currentInstance().binaryPath}
             </div>
           </div>
@@ -154,7 +153,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
             <div class="space-y-1">
               <For each={environmentEntries()}>
                 {([key, value]) => (
-                  <div dir="ltr" class="flex items-center gap-2 px-2 py-1.5 rounded border bg-surface-secondary border-base">
+                  <div dir="ltr" class="flex items-center gap-2 px-2 py-1.5 border bg-surface-secondary border-base">
                     <span class="text-xs font-mono font-medium flex-1 text-primary" title={key}>
                       {key}
                     </span>
@@ -168,7 +167,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </Show>
 
-        <InstanceServiceStatus initialInstance={props.instance} class="space-y-3" />
+        <InstanceServiceStatus initialInstance={props.instance} pluginsActive={props.active} class="space-y-3" />
 
         <Show when={isLoadingMetadata()}>
           <div class="text-xs text-muted py-1">
@@ -209,15 +208,16 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </div>
 
-        <Show when={props.showDisposeButton}>
+        <Show when={props.showReloadButton}>
           <div class="pt-3 border-t border-base">
+            <p class="text-xs text-secondary mb-2">{t("settings.opencode.setup.reloadDescription")}</p>
             <button
               type="button"
-              class="button-danger button-small w-full"
-              onClick={handleDisposeInstance}
-              disabled={!disposeEnabled()}
+              class="settings-pill-button w-full"
+              onClick={handleReloadConfiguration}
+              disabled={!reloadEnabled()}
             >
-              {isDisposing() ? t("infoView.dispose.actions.disposing") : t("infoView.dispose.actions.dispose")}
+              {openCodeSetupAction() === "reload" ? t("settings.opencode.setup.progress.reload") : t("settings.opencode.setup.reload")}
             </button>
           </div>
         </Show>

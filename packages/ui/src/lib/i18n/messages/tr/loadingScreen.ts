@@ -1,0 +1,16 @@
+export const loadingScreenMessages = {
+  "loadingScreen.logoAlt": "CodeNomad logosu",
+  "loadingScreen.status.issue": "Bir sorunla karşılaşıldı",
+  "loadingScreen.actions.showAnother": "Başka bir tane göster",
+  "loadingScreen.errors.missingRoot": "Yükleme kök elemanı bulunamadı",
+  "loadingScreen.phrases.neurons": "AI nöronları ısınıyor…",
+  "loadingScreen.phrases.daydreaming": "AI'yi hayal kurmayı bırakmaya ikna ediyoruz…",
+  "loadingScreen.phrases.goggles": "AI'nın kod gözlüklerini parlatıyoruz…",
+  "loadingScreen.phrases.reorganizingFiles": "AI'dan dosyalarınızı yeniden düzenlemeyi bırakmasını istiyoruz…",
+  "loadingScreen.phrases.coffee": "AI'ya ek kahve veriyoruz…",
+  "loadingScreen.phrases.nodeModules": "AI'a node_modules silmemeyi öğretiyoruz (yine)…",
+  "loadingScreen.phrases.actNatural": "Siz gelmeden doğal davranması için AI'ya söylüyoruz…",
+  "loadingScreen.phrases.rewritingHistory": "AI'dan geçmişi yeniden yazmayı bırakmasını rica ediyoruz…",
+  "loadingScreen.phrases.stretch": "AI'nın kod sprintinden önce esnemesine izin veriyoruz…",
+  "loadingScreen.phrases.keyboardControl": "AI'yi klavye kontrolünü size vermeye ikna ediyoruz…",
+} as const

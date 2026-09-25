@@ -1,9 +1,5 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import {
-  readUseTauriNativeEventTransportPreference,
-  writeUseTauriNativeEventTransportPreference,
-} from "../lib/desktop-event-transport-preference"
 import { storage, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import {
@@ -14,6 +10,23 @@ import {
 import { getLogger } from "../lib/logger"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
+import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
+import {
+  isColorSchemeColors,
+  normalizeColorScheme,
+  toColorSchemeMergePatch,
+  type ColorSchemeColors,
+  type ColorSchemeId,
+  type NormalizedColorScheme,
+} from "../lib/theme-scheme"
+import {
+  createColorSchemePresetId,
+  MAX_COLOR_SCHEME_PRESETS,
+  normalizeColorSchemeOverrides,
+  isDefaultCustomColors,
+  normalizeColorSchemePresets,
+  type UserColorSchemePresets,
+} from "../lib/color-scheme-presets"
 import {
   normalizeModelVisibilityPreference,
   normalizeModelVisibilityPreferences,
@@ -37,6 +50,7 @@ export interface ModelPreference {
 }
 
 export type DiffViewMode = "split" | "unified"
+export type FollowUpBehavior = "steer" | "queue"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type VisibilityPreference = "hidden" | ExpansionPreference
 export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
@@ -98,17 +112,21 @@ export interface UiSettings {
   showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
+  followUpBehavior: FollowUpBehavior
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
+  systemMessagesVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
+  showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
 
   // OS notifications
@@ -138,6 +156,8 @@ export type ThemePreference = "light" | "dark" | "system"
 
 interface UiConfigBucket {
   theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
   settings?: Partial<UiSettings>
 }
 
@@ -151,6 +171,13 @@ interface ServerConfigBucket {
 }
 
 interface UiStateBucket {
+  appearancePreferences?: unknown
+  theme?: ThemePreference
+  colorScheme?: unknown
+  customColorScheme?: unknown
+  colorSchemeOverrides?: unknown
+  colorSchemePresets?: unknown
+  activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
@@ -184,22 +211,26 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 
 const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
-  showKeyboardShortcutHints: true,
+  showKeyboardShortcutHints: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
-  showTimelineTools: true,
+  showTimelineTools: false,
   holdLongAssistantReplies: true,
-  promptSubmitOnEnter: false,
+  promptSubmitOnEnter: true,
+  followUpBehavior: "steer",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
+  systemMessagesVisibility: "hidden",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   usageMetricsExpansion: "collapsed",
+  showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
-  keepUnseenSubagentIdleStatus: false,
+  keepUnseenSubagentIdleStatus: true,
+  focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
 
   osNotificationsEnabled: false,
@@ -286,6 +317,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
+    followUpBehavior:
+      sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
+        ? sanitized.followUpBehavior
+        : defaultUiSettings.followUpBehavior,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
@@ -295,6 +330,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.diagnosticsExpansion,
       defaultUiSettings.diagnosticsExpansion,
     ),
+    systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
@@ -304,9 +340,12 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.usageMetricsExpansion,
       usageMetricsFallback,
     ),
+    showProviderUsageCreditBalance:
+      sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
@@ -454,7 +493,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   }
 }
 
-function normalizeServerConfig(
+export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
 ): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
   const source = input ?? {}
@@ -463,7 +502,9 @@ function normalizeServerConfig(
     source.logLevel === "INFO" || source.logLevel === "WARN" || source.logLevel === "ERROR" || source.logLevel === "DEBUG"
       ? source.logLevel
       : "DEBUG"
-  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() ? source.opencodeBinary : "opencode"
+  const opencodeBinary = typeof source.opencodeBinary === "string" && source.opencodeBinary.trim() && source.opencodeBinary !== "opencode"
+    ? source.opencodeBinary
+    : "opencode2"
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
@@ -493,7 +534,8 @@ function buildRecentFolderList(folderPath: string, source: RecentFolder[], alias
   return folders.slice(0, MAX_RECENT_FOLDERS)
 }
 
-function buildBinaryList(binaryPath: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
+export function buildBinaryList(binaryPath: string, version: string | undefined, source: OpenCodeBinary[]): OpenCodeBinary[] {
+  if (binaryPath === "opencode" || binaryPath === "opencode2") return source
   const timestamp = Date.now()
   const existing = source.find((b) => b.path === binaryPath)
   if (existing) {
@@ -548,12 +590,53 @@ const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
-const [useTauriNativeEventTransport, setUseTauriNativeEventTransportSignal] = createSignal(
-  readUseTauriNativeEventTransportPreference(),
-)
 
 const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
-const themePreference = createMemo<ThemePreference>(() => uiConfigBucket().theme ?? "system")
+const legacyThemePreference = createMemo<ThemePreference>(() => uiStateBucket().theme ?? uiConfigBucket().theme ?? "system")
+const colorSchemeOverrides = createMemo(() => normalizeColorSchemeOverrides(uiStateBucket().colorSchemeOverrides))
+const colorSchemePreference = createMemo(() => {
+  const scheme = normalizeColorScheme(uiStateBucket().colorScheme ?? uiConfigBucket().colorScheme, legacyThemePreference())
+  if (scheme.id === "custom") {
+    return scheme.appearance === "dark" && !uiStateBucket().activeColorSchemePresetId && isDefaultCustomColors(scheme.colors)
+      ? normalizeColorScheme("basalt")
+      : scheme
+  }
+  if (scheme.id === "system") return scheme
+  const colors = colorSchemeOverrides()[scheme.id]
+  return colors ? normalizeColorScheme({ ...scheme, colors }) : scheme
+})
+const customColorSchemePreference = createMemo(() => {
+  const state = uiStateBucket()
+  const config = uiConfigBucket()
+  const custom = state.customColorScheme
+    ?? config.customColorScheme
+    ?? (colorSchemePreference().id === "custom" && !state.activeColorSchemePresetId ? state.colorScheme ?? config.colorScheme : undefined)
+  const value = typeof custom === "object" && custom !== null && !Array.isArray(custom)
+    ? { ...(custom as Record<string, unknown>), id: "custom" }
+    : { id: "custom" }
+  return normalizeColorScheme(value)
+})
+const colorSchemePresets = createMemo<UserColorSchemePresets>(() => normalizeColorSchemePresets(uiStateBucket().colorSchemePresets))
+const activeColorSchemePresetId = createMemo(() => {
+  const id = uiStateBucket().activeColorSchemePresetId
+  return typeof id === "string" && colorSchemePresets()[id] ? id : undefined
+})
+const appearancePreferences = createMemo(() => normalizeAppearancePreferences(
+  uiStateBucket().appearancePreferences, colorSchemePreference(), activeColorSchemePresetId(),
+))
+const themePreference = createMemo(() => appearancePreferences().mode)
+function getAppearancePalette(appearance: Appearance): NormalizedColorScheme {
+  const slot = appearancePreferences()[appearance]
+  const preset = slot.presetId ? colorSchemePresets()[slot.presetId] : undefined
+  if (preset?.appearance === appearance) return normalizeColorScheme({ id: "custom", ...preset })
+  const scheme = slot.scheme
+  const colors = scheme.id !== "custom" && scheme.id !== "system" ? colorSchemeOverrides()[scheme.id] : undefined
+  return colors ? normalizeColorScheme({ ...scheme, colors }) : scheme
+}
+function getAppearancePresetId(appearance: Appearance): string | undefined {
+  const id = appearancePreferences()[appearance].presetId
+  return id && colorSchemePresets()[id]?.appearance === appearance ? id : undefined
+}
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
 const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
 
@@ -599,30 +682,13 @@ async function patchConfigOwner(owner: string, patch: unknown) {
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
-function setUseTauriNativeEventTransport(enabled: boolean): void {
-  if (useTauriNativeEventTransport() === enabled) {
-    return
-  }
-
-  setUseTauriNativeEventTransportSignal(enabled)
-  writeUseTauriNativeEventTransportPreference(enabled)
-
-  void import("../lib/server-events")
-    .then(({ serverEvents }) => {
-      serverEvents.restart("desktop transport preference changed")
-    })
-    .catch((error) => {
-      log.error("Failed to restart backend events stream after desktop transport preference change", error)
-    })
-}
-
 async function patchStateOwner(owner: string, patch: unknown) {
   await ensureLoaded()
   const updated = await storage.patchStateOwner(owner, patch)
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
-function updateUiSettings(updates: Partial<UiSettings>) {
+function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
   const current = uiConfigBucket()
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
   const patch = {
@@ -630,11 +696,17 @@ function updateUiSettings(updates: Partial<UiSettings>) {
       Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
     ),
   }
-  void patchConfigOwner("ui", patch).catch((error) => log.error("Failed to patch ui settings", error))
+  return patchConfigOwner("ui", patch).then(
+    () => true,
+    (error) => {
+      log.error("Failed to patch ui settings", error)
+      return false
+    },
+  )
 }
 
-function updatePreferences(updates: Partial<UiSettings>): void {
-  updateUiSettings(updates)
+function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  return updateUiSettings(updates)
 }
 
 const modelVisibilityWriteQueues = new Map<string, Promise<void>>()
@@ -698,9 +770,107 @@ async function setProviderModelVisibility(providerId: string, preference: ModelV
   await write
 }
 
-function setThemePreference(preference: ThemePreference): void {
-  if (themePreference() === preference) return
-  void patchConfigOwner("ui", { theme: preference }).catch((error) => log.error("Failed to set theme", error))
+function setThemePreference(preference: ThemePreference): Promise<void> {
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    appearancePreferences: { ...appearancePreferences(), mode: preference }, theme: preference,
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write
+}
+
+let colorSchemeWriteQueue = Promise.resolve()
+
+function paletteSelectionPatch(scheme: NormalizedColorScheme, presetId: string | null = null) {
+  return {
+    appearancePreferences: selectAppearancePalette(appearancePreferences(), scheme, presetId),
+    theme: scheme.appearance === "system" ? "system" : themePreference(),
+  }
+}
+
+function setColorSchemePreference(preference: NormalizedColorScheme): Promise<void> {
+  const normalized = normalizeColorScheme(preference)
+  const legacyTheme: ThemePreference = normalized.appearance === "system" ? "system" : normalized.appearance
+  const patch = {
+    theme: legacyTheme,
+    colorScheme: toColorSchemeMergePatch(normalized),
+    ...(normalized.id === "custom" ? { customColorScheme: normalized } : {}),
+    activeColorSchemePresetId: null,
+  }
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", { ...patch, ...paletteSelectionPatch(normalized) }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined).catch((error) => {
+    log.error("Failed to set color scheme", error)
+    throw error
+  })
+}
+
+function selectColorSchemePreset(id: string): Promise<void> {
+  const preset = colorSchemePresets()[id]
+  if (!preset) return Promise.resolve()
+  const scheme = normalizeColorScheme({ id: "custom", appearance: preset.appearance, colors: preset.colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorScheme: scheme,
+    activeColorSchemePresetId: id,
+    ...paletteSelectionPatch(scheme, id),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function saveColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>): Promise<void> {
+  if (!isColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme override"))
+  if (id === "system") return setColorSchemePreference(normalizeColorScheme({ id: "custom", appearance, colors }))
+  const scheme = normalizeColorScheme({ id, appearance, colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorScheme: scheme,
+    colorSchemeOverrides: { [id]: { ...colors } },
+    activeColorSchemePresetId: null,
+    ...paletteSelectionPatch(scheme),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function resetColorSchemeOverride(id: Exclude<ColorSchemeId, "custom">): Promise<void> {
+  const scheme = normalizeColorScheme(id)
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorScheme: toColorSchemeMergePatch(scheme),
+    colorSchemeOverrides: { [id]: null },
+    activeColorSchemePresetId: null,
+    ...paletteSelectionPatch(scheme),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
+}
+
+function saveColorSchemePreset(name: string, appearance: "light" | "dark", colors: Readonly<ColorSchemeColors>, presetId?: string): Promise<string> {
+  const trimmedName = name.trim().slice(0, 80)
+  if (!trimmedName || !isColorSchemeColors(colors)) return Promise.reject(new Error("Invalid color scheme preset"))
+  if (!presetId && Object.keys(colorSchemePresets()).length >= MAX_COLOR_SCHEME_PRESETS) return Promise.reject(new Error("Color scheme preset limit reached"))
+  if (presetId && !colorSchemePresets()[presetId]) return Promise.reject(new Error("Unknown color scheme preset"))
+  const id = presetId ?? createColorSchemePresetId()
+  const scheme = normalizeColorScheme({ id: "custom", appearance, colors })
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorScheme: scheme,
+    colorSchemePresets: { [id]: { name: trimmedName, appearance, colors: { ...colors } } },
+    activeColorSchemePresetId: id,
+    ...paletteSelectionPatch(scheme, id),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => id)
+}
+
+function deleteColorSchemePreset(id: string): Promise<void> {
+  if (!colorSchemePresets()[id]) return Promise.resolve()
+  const write = colorSchemeWriteQueue.then(() => patchStateOwner("ui", {
+    colorSchemePresets: { [id]: null },
+    appearancePreferences: Object.fromEntries((["light", "dark"] as const)
+      .filter((appearance) => appearancePreferences()[appearance].presetId === id)
+      .map((appearance) => [appearance, { scheme: getAppearancePalette(appearance), presetId: null }])),
+    ...(activeColorSchemePresetId() === id ? { activeColorSchemePresetId: null } : {}),
+  }))
+  colorSchemeWriteQueue = write.then(() => undefined, () => undefined)
+  return write.then(() => undefined)
 }
 
  async function setListeningMode(mode: ListeningMode): Promise<void> {
@@ -763,7 +933,7 @@ function toggleSecureEnvVar(key: string): void {
 }
 
 function updateLastUsedBinary(path: string): void {
-  const target = path && path.trim().length > 0 ? path : "opencode"
+  const target = path && path.trim().length > 0 ? path : "opencode2"
   void patchConfigOwner("server", { opencodeBinary: target }).catch((error) => log.error("Failed to set default binary", error))
 
   // also bump lastUsed in state ui.opencodeBinaries
@@ -796,7 +966,7 @@ function removeOpenCodeBinary(path: string): void {
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to remove binary", error))
 
   if (serverSettings().opencodeBinary === path) {
-    void patchConfigOwner("server", { opencodeBinary: "opencode" }).catch((error) =>
+    void patchConfigOwner("server", { opencodeBinary: "opencode2" }).catch((error) =>
       log.error("Failed to reset default binary", error),
     )
   }
@@ -847,16 +1017,11 @@ function removeRemoteServerProfile(id: string): void {
   void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
-function recordWorkspaceLaunch(folderPath: string, binaryPath?: string, aliasPath?: string): void {
-  const targetBinary = binaryPath && binaryPath.trim().length > 0 ? binaryPath : serverSettings().opencodeBinary
+function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
   const nextFolders = buildRecentFolderList(folderPath, recentFolders(), aliasPath)
-  const nextBinaries = buildBinaryList(targetBinary, undefined, opencodeBinaries())
 
-  void patchStateOwner("ui", { recentFolders: nextFolders, opencodeBinaries: nextBinaries }).catch((error) =>
+  void patchStateOwner("ui", { recentFolders: nextFolders }).catch((error) =>
     log.error("Failed to update ui state on launch", error),
-  )
-  void patchConfigOwner("server", { opencodeBinary: targetBinary }).catch((error) =>
-    log.error("Failed to persist selected binary", error),
   )
 }
 
@@ -1016,14 +1181,25 @@ void ensureLoaded().catch((error: unknown) => {
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   preferences: typeof preferences
-  useTauriNativeEventTransport: typeof useTauriNativeEventTransport
-  setUseTauriNativeEventTransport: typeof setUseTauriNativeEventTransport
   updatePreferences: typeof updatePreferences
   setProviderModelVisibility: typeof setProviderModelVisibility
   getProviderModelVisibilityPreference: typeof getProviderModelVisibilityPreference
   providerModelVisibilitySaveFailed: typeof providerModelVisibilitySaveFailed
   themePreference: typeof themePreference
   setThemePreference: typeof setThemePreference
+  getAppearancePalette: typeof getAppearancePalette
+  getAppearancePresetId: typeof getAppearancePresetId
+  colorSchemePreference: typeof colorSchemePreference
+  customColorSchemePreference: typeof customColorSchemePreference
+  colorSchemeOverrides: typeof colorSchemeOverrides
+  colorSchemePresets: typeof colorSchemePresets
+  activeColorSchemePresetId: typeof activeColorSchemePresetId
+  setColorSchemePreference: typeof setColorSchemePreference
+  selectColorSchemePreset: typeof selectColorSchemePreset
+  saveColorSchemeOverride: typeof saveColorSchemeOverride
+  resetColorSchemeOverride: typeof resetColorSchemeOverride
+  saveColorSchemePreset: typeof saveColorSchemePreset
+  deleteColorSchemePreset: typeof deleteColorSchemePreset
 
   // server-owned stable config
   serverSettings: typeof serverSettings
@@ -1082,14 +1258,25 @@ const ConfigContext = createContext<ConfigContextValue>()
 const configContextValue: ConfigContextValue = {
   isLoaded,
   preferences,
-  useTauriNativeEventTransport,
-  setUseTauriNativeEventTransport,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,
   providerModelVisibilitySaveFailed,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  getAppearancePalette,
+  getAppearancePresetId,
+  customColorSchemePreference,
+  colorSchemeOverrides,
+  colorSchemePresets,
+  activeColorSchemePresetId,
+  setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemeOverride,
+  resetColorSchemeOverride,
+  saveColorSchemePreset,
+  deleteColorSchemePreset,
   serverSettings,
   setListeningMode,
   updateEnvironmentVariables,
@@ -1176,14 +1363,25 @@ export function useConfig(): ConfigContextValue {
 
 export {
   preferences,
-  useTauriNativeEventTransport,
-  setUseTauriNativeEventTransport,
   uiState,
   serverSettings,
   recentFolders,
   opencodeBinaries,
   themePreference,
   setThemePreference,
+  colorSchemePreference,
+  getAppearancePalette,
+  getAppearancePresetId,
+  customColorSchemePreference,
+  colorSchemeOverrides,
+  colorSchemePresets,
+  activeColorSchemePresetId,
+  setColorSchemePreference,
+  selectColorSchemePreset,
+  saveColorSchemeOverride,
+  resetColorSchemeOverride,
+  saveColorSchemePreset,
+  deleteColorSchemePreset,
   updatePreferences,
   setProviderModelVisibility,
   getProviderModelVisibilityPreference,

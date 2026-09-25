@@ -80,7 +80,7 @@ const ProjectRenameDialog: Component<ProjectRenameDialogProps> = (props) => {
                   value={name()}
                   onInput={(event) => setName(event.currentTarget.value)}
                   placeholder={t("projectRenameDialog.input.placeholder")}
-                  class="w-full px-3 py-2 text-sm bg-surface-base border border-base rounded text-primary focus-ring-accent"
+                  class="w-full px-3 py-2 text-sm bg-surface-base border border-base text-primary focus-ring-accent"
                 />
               </div>
 

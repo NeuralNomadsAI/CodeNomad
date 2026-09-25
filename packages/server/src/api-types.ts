@@ -6,11 +6,20 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
+import type { OpenCodeEvent } from "@opencode/client"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
  * These types are consumed by both the CLI implementation and any UI clients.
  */
+
+export const PROMPT_INLINE_FILE_LIMITS = {
+  maxFileBytes: 5 * 1024 * 1024,
+  maxFiles: 10,
+  maxTotalBytes: 20 * 1024 * 1024,
+  // Covers the aggregate raw-byte budget after base64 expansion plus JSON metadata.
+  maxRequestBodyBytes: 32 * 1024 * 1024,
+} as const
 
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
@@ -40,9 +49,7 @@ export interface WorkspaceDescriptor {
 export interface WorkspaceCreateRequest {
   path: string
   name?: string
-  binaryPath?: string
   requestId?: string
-  forceNew?: boolean
 }
 
 export interface WorkspaceCloneRequest {
@@ -56,7 +63,7 @@ export interface WorkspaceCloneResponse {
 }
 
 export type WorkspaceCreateResponse = WorkspaceDescriptor & {
-  /** True when an active workspace with the same canonical path was returned. */
+  /** True when this request did not own creation of the returned workspace. */
   reused?: true
 }
 export type WorkspaceListResponse = WorkspaceDescriptor[]
@@ -92,31 +99,52 @@ export type WorktreeKind = "root" | "worktree"
 export interface WorktreeDescriptor {
   /** Stable identifier used by CodeNomad + clients ("root" for the selected workspace folder). */
   slug: string
+  /** Presentation only; the worktree identifier does not change with its branch. */
+  label?: string
   /** Absolute directory path on the server host. */
   directory: string
+  /** Equivalent path in the OpenCode service namespace (notably WSL). */
+  serviceDirectory?: string
+  /** Native checkout root (before mirroring a nested workspace folder). */
+  serviceRoot?: string
+  /** Exact path registered in Git's worktree inventory. */
+  registeredDirectory?: string
+  /** Degraded mode: only this exact physical directory authorizes sessions. */
+  directoryOnly?: boolean
   kind: WorktreeKind
+  /** False for the opened folder and Git's main checkout. */
+  removable?: boolean
   /** Optional VCS branch name when available. */
   branch?: string
+  /** Commit recorded by the Git worktree inventory. */
+  head?: string
 }
 
 export interface WorktreeListResponse {
+  /** False means directory-only degraded mode; repository membership is unknown. */
+  gitAvailable?: boolean
   worktrees: WorktreeDescriptor[]
+  /** Default creation parent in the OpenCode service namespace. */
+  defaultDirectory?: string
   /** True when the workspace folder resolves to a Git repository. */
   isGitRepo?: boolean
 }
 
 export interface WorktreeCreateRequest {
   slug: string
+  fromSlug?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
 }
 
-export interface WorktreeMap {
-  version: 1
-  /** Default worktree to use for new sessions and as fallback. */
-  defaultWorktreeSlug: string
-  /** Mapping of *parent* session IDs to a worktree slug. */
-  parentSessionWorktreeSlug: Record<string, string>
+export interface WorktreeSessionMoveRequest {
+  worktreeSlug: string
+}
+
+export interface WorktreeSessionMoveResponse {
+  rootSessionId: string
+  sessionIds: string[]
+  worktreeSlug: string
 }
 
 export type GitChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "unmerged"
@@ -268,6 +296,90 @@ export interface ConfigFileContentRequest {
   contents: string
 }
 
+export type PluginControlScope = "global" | "project"
+export type PluginConfigScope = PluginControlScope | "other" | "virtual"
+
+export interface PluginControlLocation {
+  directory: string
+  workspaceID?: string
+}
+
+export type PluginRuntimeSource =
+  | { type: "builtin" }
+  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "local"; path: string }
+  | { type: "sdk" }
+
+export interface PluginRuntimeInventoryEntry {
+  key: string
+  id?: string
+  source: PluginRuntimeSource
+  features: { server?: true; tui?: true; rpc?: true }
+  state: { status: "active" } | { status: "failed"; error: string; ref?: string }
+}
+
+export interface PluginConfiguredRule {
+  selector: string
+  enabled: boolean
+  scope: PluginConfigScope
+  path?: string
+  order: number
+  entryIndex: number
+}
+
+export interface PluginConfiguredSource {
+  target: string
+  scope: PluginConfigScope
+  path?: string
+  entryIndex: number
+  hasOptions: boolean
+}
+
+export type PluginScopeRuleState = "default" | "enabled" | "disabled"
+
+export interface PluginActivationControl {
+  id: string
+  runtime?: PluginRuntimeInventoryEntry
+  /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
+  builtin: boolean
+  effective: PluginScopeRuleState
+  global: PluginScopeRuleState
+  project: PluginScopeRuleState
+  controllingRule?: PluginConfiguredRule
+}
+
+export interface PluginControlTarget {
+  scope: PluginControlScope
+  path: string
+  exists: boolean
+}
+
+export interface PluginControlsSnapshot {
+  location: PluginControlLocation
+  runtime: PluginRuntimeInventoryEntry[]
+  configured: {
+    rules: PluginConfiguredRule[]
+    sources: PluginConfiguredSource[]
+  }
+  controls: PluginActivationControl[]
+  targets: PluginControlTarget[]
+}
+
+export interface PluginActivationMutationRequest {
+  location: PluginControlLocation
+  pluginId: string
+  scope: PluginControlScope
+  enabled: boolean
+}
+
+export interface PluginActivationMutationResponse {
+  snapshot: PluginControlsSnapshot
+  rule: string
+  target: PluginControlTarget
+  changed: boolean
+  reloadPending: boolean
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
@@ -287,11 +399,7 @@ export interface InstanceData {
 
 export type InstanceStreamStatus = "connecting" | "connected" | "error" | "disconnected"
 
-export interface InstanceStreamEvent {
-  type: string
-  properties?: Record<string, unknown>
-  [key: string]: unknown
-}
+export type InstanceStreamEvent = OpenCodeEvent
 
 export type SideCarKind = "port"
 
@@ -350,18 +458,36 @@ export interface BinaryUpdateRequest {
   makeDefault?: boolean
 }
 
+export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
+export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
+
 export interface BinaryValidationResult {
   valid: boolean
   version?: string
   error?: string
+  errorCode?: typeof OPENCODE_V2_REQUIRED_ERROR_CODE
 }
 
 export interface OpenCodeUpdateStatus {
-  currentVersion: string
+  currentVersion: string | null
   latestVersion: string | null
   updateAvailable: boolean | null
   canUpgrade: boolean
   checkError?: "update_check_failed"
+  minimumVersion: string
+  recommendedVersion: string
+  versionAssessment: "tested" | "untested" | "incompatible"
+  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  state: "missing" | "update_required" | "ready" | "error"
+  binaryPath: string
+  installationSource?: "path" | "user"
+  needsSharedInstallation?: boolean
+  daemonVersion?: string
+  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
+  canReload?: boolean
+  serviceError?: string
+  target: "host" | "wsl"
+  canRestart: boolean
 }
 
 export interface OpenCodeUpdateResponse {
@@ -407,16 +533,8 @@ export interface SpeechSynthesisResponse {
   mimeType: string
 }
 
-export interface VoiceModeStateResponse {
-  enabled: boolean
-}
-
 export interface YoloStateResponse {
   enabled: boolean
-}
-
-export interface SessionMetadataResponse {
-  metadata: Record<string, unknown>
 }
 
 export interface RemoteServerProfile {
@@ -461,6 +579,7 @@ export type WorkspaceEventType =
   | "workspace.error"
   | "workspace.stopped"
   | "workspace.log"
+  | "workspace.worktreesChanged"
   | "sidecar.updated"
   | "sidecar.removed"
   | "storage.configChanged"
@@ -477,13 +596,14 @@ export type WorkspaceEventPayload =
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
+  | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "sidecar.updated"; sidecar: SideCar }
   | { type: "sidecar.removed"; sidecarId: string }
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
-  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; reason?: string }
+  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
 
@@ -545,37 +665,6 @@ export interface ServerMeta {
   update?: LatestReleaseInfo | null
 }
 
-export type BackgroundProcessStatus = "running" | "stopped" | "error"
-
-export type BackgroundProcessTerminalReason = "finished" | "failed" | "user_stopped" | "user_terminated"
-
-export interface BackgroundProcess {
-  id: string
-  workspaceId: string
-  title: string
-  command: string
-  cwd: string
-  status: BackgroundProcessStatus
-  pid?: number
-  startedAt: string
-  stoppedAt?: string
-  exitCode?: number
-  outputSizeBytes?: number
-  terminalReason?: BackgroundProcessTerminalReason
-  notifyEnabled?: boolean
-}
-
-export interface BackgroundProcessListResponse {
-  processes: BackgroundProcess[]
-}
-
-export interface BackgroundProcessOutputResponse {
-  id: string
-  content: string
-  truncated: boolean
-  sizeBytes: number
-}
-
 export type {
   Preferences,
   ModelPreference,
@@ -583,3 +672,4 @@ export type {
   RecentFolder,
   OpenCodeBinary,
 }
+export type { PruneRequest, PruneResult } from "./opencode/session-pruning/contract"

@@ -1,11 +1,11 @@
 use super::ClientState;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Manager};
 use url::Url;
 
-static NAVIGATIONS: LazyLock<Mutex<NavigationQueue<NavigationOperation>>> =
-    LazyLock::new(|| Mutex::new(NavigationQueue::default()));
+static NAVIGATIONS: LazyLock<Mutex<HashMap<String, NavigationQueue<NavigationOperation>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 type Operation = Box<dyn FnOnce(AppHandle) -> Result<(), String> + Send + 'static>;
 type NavigationGuard = Box<dyn Fn() -> bool + Send + 'static>;
@@ -19,6 +19,7 @@ pub(crate) enum NavigationKind {
 
 struct NavigationOperation {
     app: AppHandle,
+    window_label: String,
     target_url: Option<Url>,
     is_current: NavigationGuard,
     navigate: Operation,
@@ -108,26 +109,30 @@ impl<T> NavigationQueue<T> {
     }
 }
 
-pub(crate) fn before_main_window_navigation(
+pub(crate) fn before_window_navigation(
     app: &AppHandle,
+    window_label: String,
     kind: NavigationKind,
     target_url: Option<Url>,
     navigate: impl FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 ) {
-    before_main_window_navigation_if(app, kind, target_url, || true, navigate);
+    before_window_navigation_if(app, window_label, kind, target_url, || true, navigate);
 }
 
-pub(crate) fn before_main_window_navigation_if(
+pub(crate) fn before_window_navigation_if(
     app: &AppHandle,
+    window_label: String,
     kind: NavigationKind,
     target_url: Option<Url>,
     is_current: impl Fn() -> bool + Send + 'static,
     navigate: impl FnOnce(AppHandle) -> Result<(), String> + Send + 'static,
 ) {
+    let queue_label = window_label.clone();
     let request = QueuedNavigation::new(
         kind,
         NavigationOperation {
             app: app.clone(),
+            window_label,
             target_url,
             is_current: Box::new(is_current),
             navigate: Box::new(navigate),
@@ -136,59 +141,75 @@ pub(crate) fn before_main_window_navigation_if(
     let start_worker = NAVIGATIONS
         .lock()
         .unwrap_or_else(|err| err.into_inner())
+        .entry(queue_label.clone())
+        .or_default()
         .enqueue(request);
     if start_worker {
-        std::thread::spawn(run_navigation_queue);
+        std::thread::spawn(move || run_navigation_queue(queue_label));
     }
 }
 
-fn run_navigation_queue() {
+fn complete_active(window_label: &str) {
+    if let Some(queue) = NAVIGATIONS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .get_mut(window_label)
+    {
+        queue.complete_active();
+    }
+}
+
+fn run_navigation_queue(window_label: String) {
     loop {
-        let request = NAVIGATIONS
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .next();
+        let request = {
+            let mut queues = NAVIGATIONS.lock().unwrap_or_else(|err| err.into_inner());
+            let request = queues
+                .get_mut(&window_label)
+                .and_then(NavigationQueue::next);
+            if request.is_none() {
+                queues.remove(&window_label);
+            }
+            request
+        };
         let Some(request) = request else {
             return;
         };
 
         let NavigationOperation {
             app,
+            window_label,
             target_url,
             is_current,
             navigate,
         } = request.value;
         if !is_current() {
-            NAVIGATIONS
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .complete_active();
+            complete_active(&window_label);
             continue;
         }
-        if let Some(state) = app.try_state::<ClientState>() {
-            state.wait_for_renderer_flush(&app, true);
+        let window_id = crate::identity::local_window_id(&window_label).ok();
+        if let (Some(state), Some(window_id)) =
+            (app.try_state::<ClientState>(), window_id.as_deref())
+        {
+            state.wait_for_renderer_flush(&app, &window_label, window_id, true);
         }
         if !is_current() {
-            NAVIGATIONS
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .complete_active();
+            complete_active(&window_label);
             continue;
         }
         let result = crate::shutdown::with_navigation_authority(&app, || {
             let state = app.try_state::<ClientState>();
-            execute_navigation(state.as_deref(), target_url.as_ref(), || {
-                navigate(app.clone())
-            })
+            execute_navigation_for(
+                state.as_deref(),
+                window_id.as_deref(),
+                target_url.as_ref(),
+                || navigate(app.clone()),
+            )
         });
         if let Some(Err(err)) = result {
             eprintln!("[client-state] navigation failed: {err}");
         }
 
-        NAVIGATIONS
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .complete_active();
+        complete_active(&window_label);
     }
 }
 
@@ -197,8 +218,23 @@ fn execute_navigation(
     target_url: Option<&Url>,
     navigate: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
+    let window_id = state.map(ClientState::active_window_id).transpose()?;
+    execute_navigation_for(state, window_id.as_deref(), target_url, navigate)
+}
+
+fn execute_navigation_for(
+    state: Option<&ClientState>,
+    window_id: Option<&str>,
+    target_url: Option<&Url>,
+    navigate: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     let pending = state
-        .map(|state| state.renderer_access.begin_navigation(target_url))
+        .zip(window_id)
+        .map(|(state, window_id)| {
+            state
+                .renderer_access
+                .begin_navigation_for(window_id, target_url)
+        })
         .transpose()?;
     let result = navigate();
     if result.is_err() {
@@ -263,14 +299,36 @@ mod tests {
     }
 
     #[test]
+    fn identical_actions_in_different_window_queues_do_not_coalesce() {
+        let mut queues: HashMap<&str, NavigationQueue<&str>> = HashMap::new();
+        assert!(queues
+            .entry("local-one")
+            .or_default()
+            .enqueue(queued(NavigationKind::Reload, "one")));
+        assert!(queues
+            .entry("local-two")
+            .or_default()
+            .enqueue(queued(NavigationKind::Reload, "two")));
+        assert_eq!(
+            queues.get_mut("local-one").unwrap().next().unwrap().value,
+            "one"
+        );
+        assert_eq!(
+            queues.get_mut("local-two").unwrap().next().unwrap().value,
+            "two"
+        );
+    }
+
+    #[test]
     fn failed_navigation_preserves_renderer_access_and_runs_once() {
         let directory = tempfile::tempdir().unwrap();
         let state = ClientState::initialize_at(directory.path()).unwrap();
         let renderer_url = url::Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+        let window_id = state.active_window_id().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         state
             .renderer_access
-            .claim("current-renderer", &renderer_url)
+            .claim_for(&window_id, "current-renderer", &renderer_url)
             .unwrap();
 
         let calls_for_navigation = Arc::clone(&calls);
@@ -283,7 +341,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         state
             .renderer_access
-            .validate("current-renderer", &renderer_url)
+            .validate_for(&window_id, "current-renderer", &renderer_url)
             .unwrap();
     }
 
@@ -293,29 +351,32 @@ mod tests {
         let state = ClientState::initialize_at(directory.path()).unwrap();
         let outgoing_url = url::Url::parse("http://127.0.0.1:43123/workspace").unwrap();
         let incoming_url = url::Url::parse("http://127.0.0.1:43124/workspace").unwrap();
+        let window_id = state.active_window_id().unwrap();
         state
             .renderer_access
-            .claim("outgoing-renderer", &outgoing_url)
+            .claim_for(&window_id, "outgoing-renderer", &outgoing_url)
             .unwrap();
 
         execute_navigation(Some(&state), Some(&incoming_url), || Ok(())).unwrap();
 
         state
             .renderer_access
-            .validate("outgoing-renderer", &outgoing_url)
-            .unwrap();
-        assert!(state.renderer_access.allows_claim_origin(&outgoing_url));
-        state
-            .renderer_access
-            .claim("incoming-renderer", &incoming_url)
+            .validate_for(&window_id, "outgoing-renderer", &outgoing_url)
             .unwrap();
         assert!(state
             .renderer_access
-            .validate("outgoing-renderer", &outgoing_url)
+            .allows_claim_origin_for(&window_id, &outgoing_url));
+        state
+            .renderer_access
+            .claim_for(&window_id, "incoming-renderer", &incoming_url)
+            .unwrap();
+        assert!(state
+            .renderer_access
+            .validate_for(&window_id, "outgoing-renderer", &outgoing_url)
             .is_err());
         state
             .renderer_access
-            .validate("incoming-renderer", &incoming_url)
+            .validate_for(&window_id, "incoming-renderer", &incoming_url)
             .unwrap();
     }
 }

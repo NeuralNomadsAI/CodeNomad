@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   restrict-non-dev-prs:
-    if: ${{ github.event.pull_request.base.ref != 'dev' }}
+    if: ${{ github.event.pull_request.base.ref != 'dev' && github.event.pull_request.base.ref != 'DEV-v2' }}
     runs-on: ubuntu-latest
     env:
       ALLOWED_ACTORS: ${{ vars.ALLOWED_NON_DEV_PR_ACTORS }}
@@ -39,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment "$PR_NUMBER" --body "Thanks for the contribution. PRs need to target \`dev\` branch. Please retarget this PR to the dev branch"
+          gh pr comment "$PR_NUMBER" --body "Thanks for the contribution. PRs need to target the \`dev\` or \`DEV-v2\` branch. Please retarget this PR to an authorized development branch."
 
       - name: Close unauthorized PR
         if: ${{ steps.auth.outputs.authorized != 'true' }}

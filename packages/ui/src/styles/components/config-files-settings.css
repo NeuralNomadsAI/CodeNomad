@@ -70,6 +70,8 @@
 }
 
 .config-files-editor-shell {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   margin-top: 0.75rem;
@@ -92,7 +94,8 @@
 
 .config-files-editor-empty {
   height: 100%;
-  min-height: 420px;
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -132,7 +135,4 @@
     white-space: normal;
   }
 
-  .config-files-editor-empty {
-    min-height: 360px;
-  }
 }

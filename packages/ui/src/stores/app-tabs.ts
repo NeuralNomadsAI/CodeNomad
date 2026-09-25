@@ -3,6 +3,14 @@ import type { Instance } from "../types/instance"
 import { activeInstanceId, claimRestoreCreatedInstanceForUser, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
+import {
+  attachInstanceTabMembership,
+  detachInstanceTabMembership,
+  onInstanceTabCloseRequested,
+  openInstanceTabIds,
+} from "./app-tab-membership"
+import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 
 export interface InstanceAppTab {
   id: string
@@ -56,17 +64,22 @@ function rememberTabOrder(tabId: string) {
   setTabOrder((prev) => (prev.includes(tabId) ? prev : [...prev, tabId]))
 }
 
-const appTabs = createMemo<AppTabRecord[]>(() => {
+const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
+  // Solid's <For> keys by object identity. Metadata refreshes and opening another
+  // project must not remount every shell (and restart their Git/status reads).
+  const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
-    ...Array.from(instances().values()).map((instance) => ({
-      id: getInstanceAppTabId(instance.id),
-      kind: "instance" as const,
-      instance,
-    })),
-    ...sidecarTabs().map((sidecarTab) => ({
+    ...Array.from(instances().values())
+      .filter((instance) => openInstanceTabIds().has(instance.id))
+      .map((instance) => previousById.get(getInstanceAppTabId(instance.id)) ?? ({
+        id: getInstanceAppTabId(instance.id),
+        kind: "instance" as const,
+        get instance() { return instances().get(instance.id) ?? instance },
+      })),
+    ...sidecarTabs().map((sidecarTab) => previousById.get(getSidecarAppTabId(sidecarTab.token)) ?? ({
       id: getSidecarAppTabId(sidecarTab.token),
       kind: "sidecar" as const,
-      sidecarTab,
+      get sidecarTab() { return sidecarTabs().find((tab) => tab.token === sidecarTab.token) ?? sidecarTab },
     })),
   ]
 
@@ -88,8 +101,14 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   if (options?.source !== "restore") setAppTabSelectionRevision((revision) => revision + 1)
   if (!tabId) {
     setActiveAppTabId(null)
+    setActiveInstanceId(null)
     setActiveSidecarToken(null)
     return
+  }
+
+  if (options?.source === "restore" && tabId.startsWith("instance:")) {
+    const instanceId = tabId.slice("instance:".length)
+    if (instances().has(instanceId)) attachInstanceTabMembership(instanceId)
   }
 
   const tab = appTabs().find((entry) => entry.id === tabId)
@@ -110,8 +129,44 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
 }
 
 function selectInstanceTab(instanceId: string) {
+  if (!instances().has(instanceId)) return
+  attachInstanceTab(instanceId)
   selectAppTab(getInstanceAppTabId(instanceId))
 }
+
+function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId: string): void {
+  const instance = instances().get(instanceId)
+  if (!instance) return
+  const folder = normalizeWorkspacePath(instance.folder)
+  const occurrence = Array.from(instances().values())
+    .filter((candidate) => normalizeWorkspacePath(candidate.folder) === folder)
+    .findIndex((candidate) => candidate.id === instanceId)
+  if (occurrence >= 0) publishInstanceLifecycleAuthority({ type, instanceId, folder: instance.folder, occurrence })
+}
+
+function attachInstanceTab(instanceId: string, options?: { source?: "restore" }): void {
+  if (!instances().has(instanceId) || openInstanceTabIds().has(instanceId)) return
+  attachInstanceTabMembership(instanceId)
+  if (options?.source !== "restore") publishLocalInstanceTabLifecycle("opened", instanceId)
+}
+
+function closeInstanceTab(instanceId: string, options?: { forceFallbackSelection?: boolean }): void {
+  if (!openInstanceTabIds().has(instanceId)) return
+  const tabId = getInstanceAppTabId(instanceId)
+  const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
+  detachInstanceTabMembership(instanceId)
+  publishLocalInstanceTabLifecycle("removed", instanceId)
+  setTabOrder((previous) => previous.filter((id) => id !== tabId))
+  setAppTabSelectionRevision((revision) => revision + 1)
+  setAppTabOrderRevision((revision) => revision + 1)
+  if (activeAppTabId() !== tabId) return
+  setActiveAppTabId(null)
+  setActiveInstanceId(null)
+  if (options?.forceFallbackSelection) selectAppTab(fallbackTabId)
+  else ensureActiveAppTab(fallbackTabId)
+}
+
+onInstanceTabCloseRequested((instanceId) => closeInstanceTab(instanceId, { forceFallbackSelection: true }))
 
 function selectSidecarTab(token: string) {
   selectAppTab(getSidecarAppTabId(token))
@@ -206,6 +261,8 @@ export {
   appTabSelectionRevision,
   activeAppTab,
   appTabs,
+  attachInstanceTab,
+  closeInstanceTab,
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,

@@ -1,10 +1,115 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
-export const ANCHOR_RESTORE_MAX_FRAMES = 150
+export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
 export const ANCHOR_RESTORE_TOLERANCE_PX = 1
+
+export function isMiddleButtonScrollIntent(button: number): boolean {
+  return button === 1
+}
+
+export function getPrimaryPointerDragDirection(previousY: number, nextY: number, buttons: number): ScrollDirection {
+  if ((buttons & 1) === 0 || previousY === nextY) return null
+  return nextY < previousY ? "up" : "down"
+}
+
+export type KeyboardScrollIntent =
+  | { type: "top" }
+  | { type: "bottom" }
+  | { type: "direction"; direction: "up" | "down" }
+
+export function getKeyboardScrollIntent(input: {
+  key: string
+  shiftKey: boolean
+  interactive: boolean
+  textEditing: boolean
+}): KeyboardScrollIntent | null {
+  if (input.textEditing) return null
+  if (input.key === "End") return { type: "bottom" }
+  if (input.key === "Home") return { type: "top" }
+  if (input.interactive && input.key !== "PageUp" && input.key !== "PageDown") return null
+  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && (input.key === " " || input.key === "Spacebar"))) {
+    return { type: "direction", direction: "up" }
+  }
+  if (input.key === "ArrowDown" || input.key === "PageDown" || input.key === " " || input.key === "Spacebar") {
+    return { type: "direction", direction: "down" }
+  }
+  return null
+}
+
+export function isScrollRestoreMeasurementReady(input: {
+  hasHandle: boolean
+  itemCount: number
+  scrollSize: number
+  viewportSize: number
+}) {
+  return input.itemCount === 0 || (input.hasHandle && input.scrollSize > 0 && input.viewportSize > 0)
+}
+
+export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDelta: number): number {
+  return Math.max(0, offset + viewportHeightDelta)
+}
+
+export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boolean {
+  return maxOffset > offset + 1
+}
+
+export interface BottomPinSettlementState {
+  stableFrames: number
+  lastMaxOffset: number | null
+}
+
+export function advanceBottomPinSettlement(
+  state: BottomPinSettlementState,
+  input: { ready: boolean; maxOffset: number | null; requiredStableFrames: number },
+): BottomPinSettlementState & { settled: boolean } {
+  const stableFrames = input.ready && input.maxOffset === state.lastMaxOffset
+    ? state.stableFrames + 1
+    : 0
+  return {
+    stableFrames,
+    lastMaxOffset: input.maxOffset,
+    settled: input.ready && stableFrames >= input.requiredStableFrames,
+  }
+}
+
+export function canScrollInDirection(
+  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  direction: "up" | "down",
+): boolean {
+  if (direction === "up") return metrics.scrollTop > 0
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+}
+
+export function shouldNavigateAtBoundary(input: {
+  atBoundary: boolean
+  restoring: boolean
+  programmatic: boolean
+  hasFreshIntent: boolean
+  intent: "up" | "down" | null
+  direction: "up" | "down"
+}): boolean {
+  return input.atBoundary
+    && !input.restoring
+    && !input.programmatic
+    && input.hasFreshIntent
+    && input.intent === input.direction
+}
+
+export function classifyVirtualItemKeyChange(previous: string[], next: string[]) {
+  const sharedLength = Math.min(previous.length, next.length)
+  const keepsPrefix = previous.slice(0, sharedLength).every((key, index) => key === next[index])
+  const shiftedStartCount = next.length > 0 ? previous.indexOf(next[0]) : -1
+  const keepsShiftedSuffix = shiftedStartCount > 0
+    && previous.slice(shiftedStartCount).every((key, index) => key === next[index])
+  return {
+    resetMeasurements: previous.length > 0 && (next.length === 0 || (!keepsPrefix && !keepsShiftedSuffix)),
+    endChanged: previous.length > 0 && previous.at(-1) !== next.at(-1),
+    shiftedStartCount: keepsShiftedSuffix ? shiftedStartCount : 0,
+  }
+}
 
 export interface ViewportAnchorCandidate {
   key: string
@@ -49,7 +154,12 @@ export class AnchorRestoreStabilizer {
 
   nextFrame(input: { targetExists: boolean; mounted: boolean; delta?: number }): AnchorRestoreFrameResult {
     this.elapsedFrames += 1
-    if (!input.targetExists) return { type: "fallback" }
+    if (!input.targetExists) {
+      this.stableFrames = 0
+      return this.elapsedFrames >= ANCHOR_RESTORE_MAX_FRAMES
+        ? { type: "fallback" }
+        : { type: "retry", reissueIndex: false }
+    }
 
     if (input.mounted && typeof input.delta === "number") {
       if (Math.abs(input.delta) > ANCHOR_RESTORE_TOLERANCE_PX) {
@@ -180,8 +290,13 @@ export function resolveAutoPinHoldElement(
   return resolved === undefined ? itemWrapper : resolved
 }
 
-export function isSnapshotAutoFollowing(snapshot: { atBottom: boolean; followModeType?: FollowMode["type"] } | null | undefined) {
+export function isSnapshotAutoFollowing(snapshot: {
+  atBottom: boolean
+  followModeType?: FollowMode["type"]
+  windowIsLatest?: boolean
+} | null | undefined) {
   if (!snapshot) return true
+  if (snapshot.windowIsLatest === false) return false
   return snapshot.atBottom && snapshot.followModeType !== "escaped"
 }
 
@@ -337,14 +452,22 @@ export class VirtualScrollController {
       return this.setFollow(false)
     }
 
-    const direction = actualDirection ?? this.state.userIntentDirection
-
-    if (!hasFreshIntent && (!actualDirection || programmatic)) {
+    if (!hasFreshIntent) {
+      if (this.isAutoFollowing() && !atBottom && !this.state.restoring) {
+        return this.result({ type: "scroll-bottom", immediate: true })
+      }
       return this.result(noFollowEffect)
     }
 
-    if (direction === "up" && (!programmatic || hasFreshIntent)) {
+    const direction = this.state.userIntentDirection ?? actualDirection
+    if (direction === "up") {
       return this.setFollow(false)
+    }
+
+    // Explicit bottom commands enter follow mode through jumpBottom. A
+    // measured programmatic move alone must never rejoin an escaped viewport.
+    if (programmatic && this.state.mode.type === "escaped" && this.state.userIntentDirection !== "down") {
+      return this.result(noFollowEffect)
     }
 
     const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })

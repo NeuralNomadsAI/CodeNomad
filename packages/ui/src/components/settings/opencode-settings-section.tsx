@@ -1,17 +1,16 @@
 import { Select } from "@kobalte/core/select"
-import { createEffect, createMemo, createSignal, type Component } from "solid-js"
-import { ChevronDown, Terminal } from "lucide-solid"
-import OpenCodeBinarySelector from "../opencode-binary-selector"
+import { createMemo, type Component } from "solid-js"
+import { ChevronDown } from "lucide-solid"
 import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
+import { OpenCodeExecutableCard } from "./opencode-executable-card"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
 export const OpenCodeSettingsSection: Component = () => {
   const { t } = useI18n()
-  const { serverSettings, updateLastUsedBinary, updateLogLevel } = useConfig()
-  const [selectedBinary, setSelectedBinary] = createSignal(serverSettings().opencodeBinary || "opencode")
+  const { serverSettings, updateLogLevel } = useConfig()
   const logLevelOptions = createMemo<LogLevelOption[]>(() => [
     { value: "DEBUG", label: t("settings.opencode.logLevel.option.debug") },
     { value: "INFO", label: t("settings.opencode.logLevel.option.info") },
@@ -22,33 +21,9 @@ export const OpenCodeSettingsSection: Component = () => {
     () => logLevelOptions().find((option) => option.value === serverSettings().logLevel) ?? logLevelOptions()[0],
   )
 
-  createEffect(() => {
-    const binary = serverSettings().opencodeBinary || "opencode"
-    setSelectedBinary((current) => (current === binary ? current : binary))
-  })
-
-  const handleBinaryChange = (binary: string) => {
-    setSelectedBinary(binary)
-    updateLastUsedBinary(binary)
-  }
-
   return (
     <div class="settings-section-stack">
-      <div class="settings-card">
-        <div class="settings-card-header">
-          <div class="settings-card-heading-with-icon">
-            <Terminal class="settings-card-heading-icon" />
-            <div>
-              <h3 class="settings-card-title">{t("settings.opencode.runtime.title")}</h3>
-              <p class="settings-card-subtitle">{t("settings.opencode.runtime.subtitle")}</p>
-            </div>
-          </div>
-          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
-        </div>
-
-        <OpenCodeBinarySelector selectedBinary={selectedBinary()} onBinaryChange={handleBinaryChange} isVisible />
-      </div>
-
+      <OpenCodeExecutableCard />
       <OpenCodeUpdateCard />
 
       <div class="settings-card">

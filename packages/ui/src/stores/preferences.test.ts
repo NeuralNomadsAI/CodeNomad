@@ -1,7 +1,24 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { buildSpeechPatch } from "../lib/speech-patch"
-import type { SpeechSettingsUpdate } from "./preferences"
+import { buildBinaryList, normalizeServerConfig, type SpeechSettingsUpdate } from "./preferences"
+
+describe("buildBinaryList", () => {
+  it("does not add built-in commands to custom binary history", () => {
+    const custom = { path: "C:/tools/opencode.exe", lastUsed: 1 }
+    const source = [{ path: "opencode2", lastUsed: 2 }, custom]
+
+    assert.deepEqual(buildBinaryList("opencode", undefined, source), source)
+    assert.deepEqual(buildBinaryList("opencode2", undefined, source), source)
+  })
+})
+
+describe("normalizeServerConfig", () => {
+  it("maps the legacy system command to opencode2", () => {
+    assert.equal(normalizeServerConfig({ opencodeBinary: "opencode" }).opencodeBinary, "opencode2")
+    assert.equal(normalizeServerConfig({ opencodeBinary: "C:/tools/opencode2.exe" }).opencodeBinary, "C:/tools/opencode2.exe")
+  })
+})
 
 describe("buildSpeechPatch", () => {
   it("only includes fields that are explicitly provided", () => {

@@ -33,6 +33,16 @@ describe("foreground refresh controller", () => {
     controller.dispose()
   })
 
+  it("refreshes when the internal stream generation changes", async () => {
+    let calls = 0
+    const controller = createForegroundRefreshController(() => { calls += 1 })
+    controller.handle("connected")
+    controller.invalidate()
+    await tick()
+    assert.equal(calls, 1)
+    controller.dispose()
+  })
+
   it("runs a trailing refresh when another gap happens during recovery", async () => {
     const first = deferred()
     let calls = 0

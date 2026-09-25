@@ -11,18 +11,19 @@ import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { getSessions, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
-import { showAlertDialog } from "../../stores/alerts"
+import { showAlertDialog, showConfirmDialog } from "../../stores/alerts"
 import type { Instance } from "../../types/instance"
 import type { MessageRecord } from "../../stores/message-v2/types"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
-import { requestData } from "../opencode-api"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
 import { tGlobal } from "../i18n"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
+import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
+import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
 
 const log = getLogger("actions")
 
@@ -36,8 +37,6 @@ function splitKeywords(key: string): string[] {
 
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
-  useTauriNativeEventTransport: Accessor<boolean>
-  setUseTauriNativeEventTransport: (next: boolean) => void
   toggleShowThinkingBlocks: () => void
   toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
@@ -53,7 +52,7 @@ export interface UseCommandsOptions {
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
   handleCloseActiveTab: () => Promise<void>
-  handleCloseInstance: (instanceId: string) => Promise<void>
+  handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   getActiveInstance: () => Instance | null
@@ -133,6 +132,19 @@ export function useCommands(options: UseCommandsOptions) {
       shortcut: { key: "W", meta: true },
       action: async () => {
         await options.handleCloseActiveTab()
+      },
+    })
+
+    commandRegistry.register({
+      id: "stop-instance",
+      label: () => tGlobal("commands.stopInstance.label"),
+      description: () => tGlobal("commands.stopInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.stopInstance.keywords"),
+      disabled: () => !activeInstance(),
+      action: async () => {
+        const instance = activeInstance()
+        if (instance) await options.handleStopInstance(instance.id)
       },
     })
 
@@ -316,14 +328,7 @@ export function useCommands(options: UseCommandsOptions) {
         if (!session) return
 
         try {
-          await requestData(
-            instance.client.session.summarize({
-              sessionID: sessionId,
-              providerID: session.model.providerId,
-              modelID: session.model.modelId,
-            }),
-            "session.summarize",
-          )
+          await compactSession(instance.id, sessionId)
         } catch (error) {
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
@@ -333,6 +338,63 @@ export function useCommands(options: UseCommandsOptions) {
           })
         }
 
+      },
+    })
+
+    commandRegistry.register({
+      id: "remove-session-tools-and-reasoning",
+      label: () => tGlobal("commands.removeSessionTechnicalParts.label"),
+      description: () => tGlobal("commands.removeSessionTechnicalParts.description"),
+      category: "Session",
+      keywords: () => splitKeywords("commands.removeSessionTechnicalParts.keywords"),
+      disabled: () => {
+        const sessionId = activeSessionIdForInstance()
+        return !activeInstance() || !sessionId || sessionId === "info"
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return
+        const progress = beginSessionCleanup(instance.id, sessionId)
+        if (!progress) return
+        try {
+          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId, { signal: progress.signal, progress: progress.planning })
+          if (plan.candidates.length === 0) {
+            if (plan.skipped) throw new Error(tGlobal("history.skipped", { count: plan.skipped }))
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
+              title: tGlobal("commands.removeSessionTechnicalParts.empty.title"),
+              variant: "info",
+            })
+            return
+          }
+          const confirmed = await showConfirmDialog(tGlobal("commands.removeSessionTechnicalParts.confirm.message", {
+            toolCount: plan.toolCount,
+            reasoningCount: plan.reasoningCount,
+          }) + (plan.skipped ? `\n${tGlobal("history.skipped", { count: plan.skipped })}` : ""), {
+            title: tGlobal("commands.removeSessionTechnicalParts.confirm.title"),
+            confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
+            variant: "warning",
+          })
+          if (!confirmed) return
+          progress.signal.throwIfAborted()
+          progress.pruning(0, plan.candidates.length)
+          const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
+          if (failed.length > 0 || plan.skipped) {
+            showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length + plan.skipped }), {
+              title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+              detail: [...new Set(failed), ...(plan.skipped ? [tGlobal("history.skipped", { count: plan.skipped })] : [])].join("\n"),
+              variant: "error",
+            })
+          }
+        } catch (error) {
+          if (progress.signal.aborted) return
+          showAlertDialog(error instanceof Error ? error.message : String(error), {
+            title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
+            variant: "error",
+          })
+        } finally {
+          progress.finish()
+        }
       },
     })
 
@@ -407,13 +469,7 @@ export function useCommands(options: UseCommandsOptions) {
         }
 
         try {
-          await requestData(
-            instance.client.session.revert({
-              sessionID: sessionId,
-              messageID,
-            }),
-            "session.revert",
-          )
+          await stageSessionRevert(instance.id, sessionId, messageID)
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)
@@ -436,6 +492,35 @@ export function useCommands(options: UseCommandsOptions) {
           })
         }
 
+      },
+    })
+
+    commandRegistry.register({
+      id: "redo",
+      label: () => tGlobal("commands.redoLastMessage.label"),
+      description: () => tGlobal("commands.redoLastMessage.description"),
+      category: "Session",
+      keywords: () => ["/redo", ...splitKeywords("commands.redoLastMessage.keywords")],
+      disabled: () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance || !sessionId || sessionId === "info") return true
+        const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
+        return !(messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session?.revert)
+      },
+      action: async () => {
+        const instance = activeInstance()
+        const sessionId = activeSessionIdForInstance()
+        if (!instance?.client || !sessionId || sessionId === "info") return
+        try {
+          await instance.client.session.revert.clear({ sessionID: sessionId })
+        } catch (error) {
+          log.error("Failed to clear session revert", error)
+          showAlertDialog(tGlobal("commands.redoLastMessage.failed.message"), {
+            title: tGlobal("commands.redoLastMessage.failed.title"),
+            variant: "error",
+          })
+        }
       },
     })
 
@@ -496,8 +581,6 @@ export function useCommands(options: UseCommandsOptions) {
 
     registerBehaviorCommands((command) => commandRegistry.register(command), {
       preferences: options.preferences,
-      useTauriNativeEventTransport: options.useTauriNativeEventTransport,
-      setUseTauriNativeEventTransport: options.setUseTauriNativeEventTransport,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
       toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
       toggleShowMessageTimeline: options.toggleShowMessageTimeline,

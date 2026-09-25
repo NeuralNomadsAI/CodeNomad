@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, VirtualScrollController, isAutoFollowing, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { BOTTOM_FOLLOW_EPSILON_PX, VirtualScrollController, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 
 const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
 const DEFAULT_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
@@ -58,6 +58,16 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   function markUserScrollIntent(direction: "up" | "down" | null) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     scrollController.setUserIntent(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS))
+    if (direction === "up") {
+      // Take ownership immediately, even if native middle-button autoscroll
+      // waits longer than the intent deadline before its first scroll event.
+      scrollController.setFollow(false)
+      setAutoScroll(false)
+      suppressNextScrollHandling = false
+      if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
+      if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
+      pendingScrollFrame = pendingAnchorScroll = null
+    }
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement) {
@@ -67,7 +77,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     }
     const intentKeys = options.intentKeys ?? DEFAULT_SCROLL_INTENT_KEYS
     const handlePointerIntent = (event: WheelEvent | PointerEvent | TouchEvent) => {
-      markUserScrollIntent(event instanceof WheelEvent ? (event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null) : null)
+      const direction = event instanceof WheelEvent
+        ? (event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
+        : event instanceof PointerEvent && isMiddleButtonScrollIntent(event.button) ? "up" : null
+      markUserScrollIntent(direction)
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (intentKeys.has(event.key)) {
@@ -101,6 +114,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     }
     pendingAnchorScroll = requestAnimationFrame(() => {
       pendingAnchorScroll = null
+      if (!autoScroll() || scrollContainerRef !== container) return
       const containerRect = container.getBoundingClientRect()
       const sentinelRect = sentinel.getBoundingClientRect()
       const delta = sentinelRect.bottom - containerRect.bottom
@@ -168,19 +182,14 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const result = scrollController.observeViewport(getMetrics(container), now, false)
     setAutoScroll(isAutoFollowing(result.state.mode))
-    const hasFreshUpwardEscape = now <= result.state.userIntentUntil && result.state.userIntentDirection === "up" && result.state.mode.type === "escaped"
-    if (hasFreshUpwardEscape) {
-      requestAnimationFrame(() => {
-        restoreScrollPosition(false)
-      })
-      return
-    }
-
     // Never let a render-time caller force follow mode back on after the user
     // has already escaped it. Staying pinned should depend on the current
-    // follow state, not on a caller opting into forceBottom.
-    const shouldFollow = autoScroll()
-    requestAnimationFrame(() => {
+    // follow state at execution, not a value captured before pointer input.
+    if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
+    pendingScrollFrame = requestAnimationFrame(() => {
+      pendingScrollFrame = null
+      if (scrollContainerRef !== container) return
+      const shouldFollow = autoScroll()
       restoreScrollPosition(shouldFollow)
       if (shouldFollow) {
         scheduleAnchorScroll(true)

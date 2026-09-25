@@ -1,5 +1,5 @@
 import type { Accessor, JSXElement } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
+import type { ToolState } from "../../types/tool-state"
 import type { TextPart } from "../../types/message"
 import { Markdown } from "../markdown"
 import type { MarkdownRenderOptions, ToolScrollHelpers } from "./types"
@@ -50,12 +50,12 @@ export function createMarkdownContentRenderer(params: {
     }
 
     const cacheKey = typeof options.cacheKey === "string" && options.cacheKey.length > 0 ? options.cacheKey : undefined
-    const markdownPart: TextPart = {
+    const markdownPart = (): TextPart => ({
       id: cacheKey ? `${params.partId()}:${cacheKey}` : params.partId(),
       type: "text",
       text: options.content,
       version: params.partVersion?.(),
-    }
+    })
 
     const handleMarkdownRendered = () => {
       params.handleScrollRendered()
@@ -69,7 +69,7 @@ export function createMarkdownContentRenderer(params: {
         onScroll={disableScrollTracking ? undefined : params.scrollHelpers.handleScroll}
       >
         <Markdown
-          part={markdownPart}
+          part={markdownPart()}
           instanceId={params.instanceId}
           sessionId={params.sessionId}
           isDark={params.isDark()}

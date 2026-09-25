@@ -14,9 +14,10 @@ export default function SpeechActionButton(props: SpeechActionButtonProps) {
   return (
     <button
       type={props.type ?? "button"}
-      class={props.class}
+      class={`${props.class ?? ""} icon-toggle`}
       onClick={props.onClick}
       aria-label={props.title}
+      aria-pressed={props.isPlaying}
       title={props.title}
     >
       {props.isLoading ? (

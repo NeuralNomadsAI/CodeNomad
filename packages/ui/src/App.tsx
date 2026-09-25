@@ -4,32 +4,44 @@ import { Toaster } from "solid-toast"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
+import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { showConfirmDialog } from "./stores/alerts"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
+import { NativeTitlebar } from "./components/native-titlebar"
 import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
+import { reloadWorktrees } from "./stores/worktrees"
 
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { loadedRestorableSession } from "./stores/client-state"
-import { shouldShowAppHomeOverlay, shouldShowEmptyAppHome } from "./stores/app-session-restore-gate"
+import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
+import OpenCodeSetup from "./components/opencode-setup"
+import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
+import {
+  claimNativeBrowserOpen,
+  onNativeBrowserOpen,
+  releaseNativeBrowserOpen,
+  selectBrowserOpenOwner,
+} from "./lib/native/browser"
 import { resolveResolvable } from "./lib/commands"
-import { setWorkspaceMenuEnabled } from "./lib/workspace-open"
+import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
@@ -43,6 +55,10 @@ import {
   stopInstance,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  reconcilePendingSessionIndicators,
+  reconcilePendingRequestLiveness,
+  refreshVolatileInstanceState,
+  syncLoadedSessionInboxes,
   syncPendingRequests,
 } from "./stores/instances"
 import {
@@ -54,14 +70,17 @@ import {
   createSession,
   fetchSessions,
   loadMessages,
+  setActiveSessionFromList,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
+import { openSessionPreview } from "./stores/session-previews"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
+import { showCommandPalette } from "./stores/command-palette"
 import {
   closeSidecarTab,
   ensureSidecarsLoaded,
@@ -71,6 +90,7 @@ import {
   activeAppTab,
   activeAppTabId,
   appTabs,
+  closeInstanceTab,
   ensureActiveAppTab,
   getAdjacentAppTabId,
   getAppTabById,
@@ -110,8 +130,6 @@ const App: Component = () => {
   const {
     preferences,
     recentFolders,
-    useTauriNativeEventTransport,
-    setUseTauriNativeEventTransport,
     serverSettings,
     recordWorkspaceLaunch,
     toggleShowThinkingBlocks,
@@ -150,7 +168,7 @@ const App: Component = () => {
   }
 
   const enterMobileFullscreen = async () => {
-    if (!isPhoneLayout()) return
+    if (runtimeEnv.platform !== "mobile") return
     setMobileFullscreenMode(true)
     if (!fullscreenSupported()) return
     try {
@@ -174,7 +192,7 @@ const App: Component = () => {
   createEffect(() => {
     if (typeof document === "undefined") return
     const shouldShow =
-      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? true)
+      !isWebHost() && runtimeEnv.platform !== "mobile" && (preferences().showKeyboardShortcutHints ?? false)
     document.documentElement.dataset.keyboardHints = shouldShow ? "show" : "hide"
   })
 
@@ -227,13 +245,6 @@ const App: Component = () => {
     lastBrowserFullscreen = active
   })
 
-  // If we leave phone layout (rotation / resize), restore chrome.
-  createEffect(() => {
-    if (!isPhoneLayout() && mobileFullscreenMode()) {
-      void exitMobileFullscreen()
-    }
-  })
-
   createEffect(() => {
     initReleaseNotifications()
   })
@@ -263,11 +274,69 @@ const App: Component = () => {
   })
 
   onMount(() => {
+    let disposed = false
+    let browserOpenUnsubscribe = () => {}
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
     window.addEventListener("resize", handleResize)
-    onCleanup(() => window.removeEventListener("resize", handleResize))
+    const livenessTimer = window.setInterval(() => {
+      for (const instance of instances().values()) {
+        if (instance.status === "ready" && instance.client) void reconcilePendingRequestLiveness(instance.id).catch((error) => {
+          log.warn("Failed to reconcile pending request liveness", { instanceId: instance.id, error })
+        })
+      }
+    }, 30_000)
+    const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
+      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      let owners = findOwners()
+      if (owners.length === 0) {
+        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        owners = findOwners()
+      }
+      const activeTab = activeAppTab()
+      const owner = selectBrowserOpenOwner(
+        owners,
+        activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+      )
+      if (disposed || !owner) {
+        if (!disposed) log.warn("Failed to route agent-requested web preview", {
+          sessionID,
+          owners: owners.map((instance) => instance.id),
+          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
+        })
+        return
+      }
+      if (!await claimNativeBrowserOpen(requestID)) return
+      try {
+        const instance = owner
+        await openSessionPreview(sessionID, url, instance.folder)
+        if (disposed) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
+        setShowFolderSelection(false)
+        selectInstanceTab(instance.id)
+        setActiveSessionFromList(instance.id, sessionID)
+      } catch (error) {
+        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
+        })
+        throw error
+      }
+    }
+    void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
+      void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else browserOpenUnsubscribe = cleanup
+    }).catch((error) => log.warn("Failed to listen for native browser open requests", { error }))
+    onCleanup(() => {
+      disposed = true
+      browserOpenUnsubscribe()
+      window.removeEventListener("resize", handleResize)
+      window.clearInterval(livenessTimer)
+    })
   })
 
   createEffect(() => {
@@ -304,13 +373,24 @@ const App: Component = () => {
           let invalidateSessions = () => {}
           let invalidatePendingRequests = () => {}
           return withForegroundRefreshTimeout(
-            Promise.all([
-              fetchSessions(id, {
-                strictStatus: true,
-                registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
-              }),
-              syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
-            ]),
+            (async () => {
+              let sessionError: unknown
+              try {
+                await fetchSessions(id, {
+                  strictStatus: true,
+                  registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
+                })
+              } catch (error) {
+                sessionError = error
+              }
+              await Promise.all([
+                reloadWorktrees(id),
+                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
+                refreshVolatileInstanceState(id),
+                syncLoadedSessionInboxes(id),
+              ])
+              if (sessionError) throw sessionError
+            })(),
             `Foreground refresh for ${id}`,
             () => {
               invalidateSessions()
@@ -321,6 +401,7 @@ const App: Component = () => {
       )
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
+        reconcilePendingSessionIndicators(instanceIds[i])
         if (result.status === "rejected") {
           failedInstanceIds.push(instanceIds[i])
           log.error("Foreground refresh: fetchSessions failed", { instanceId: instanceIds[i], error: result.reason })
@@ -386,8 +467,8 @@ const App: Component = () => {
 
   const launchErrorPath = () => {
     const value = launchError()?.binaryPath
-    if (!value) return "opencode"
-    return value.trim() || "opencode"
+    if (!value) return "opencode2"
+    return value.trim() || "opencode2"
   }
 
   const launchErrorMessage = () => launchError()?.message ?? ""
@@ -402,24 +483,24 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string, binaryPath?: string, options?: { forceNew?: boolean }) {
+  async function handleSelectFolder(folderPath: string): Promise<boolean> {
     if (!folderPath) {
-      return
+      return false
     }
 
-    const selectedBinary = binaryPath || serverSettings().opencodeBinary || "opencode"
+    const selectedBinary = serverSettings().opencodeBinary || "opencode2"
     const projectName = getProjectNameForFolder(folderPath)
     clearLaunchError()
 
     setIsSelectingFolder(true)
     try {
-      const result = await createInstance(folderPath, selectedBinary, projectName, { forceNew: options?.forceNew })
-      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, selectedBinary, folderPath)
+      const result = await createInstance(folderPath, projectName)
+      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
-        return
+        return true
       }
 
       selectInstanceTab(result.instanceId)
@@ -429,24 +510,33 @@ const App: Component = () => {
         instanceId: result.instanceId,
         port: instances().get(result.instanceId)?.port,
       })
+      return true
     } catch (error) {
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
         t("app.launchError.invalidConfig"),
+        t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
+      if (missingBinary || message.includes("opencode_update_required")) {
+        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        return false
+      }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
       log.error("Failed to create instance", error)
+      return false
     } finally {
       setIsSelectingFolder(false)
     }
   }
 
-  function handleSelectExistingInstance(instanceId: string, recentPath: string, binaryPath: string) {
+  useDesktopFolderLaunch(handleSelectFolder)
+
+  function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
     if (!instance) return
-    recordWorkspaceLaunch(instance.folder, binaryPath, recentPath)
+    recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
@@ -487,14 +577,16 @@ const App: Component = () => {
   }
 
   async function handleDisconnectedInstanceClose() {
+    const instanceId = disconnectedInstance()?.id
     try {
       await acknowledgeDisconnectedInstance()
+      if (instanceId) closeInstanceTab(instanceId)
     } catch (error) {
       log.error("Failed to finalize disconnected instance", error)
     }
   }
 
-  async function handleCloseInstance(instanceId: string) {
+  async function handleStopInstance(instanceId: string) {
     const confirmed = await showConfirmDialog(
       t("app.stopInstance.confirmMessage"),
       {
@@ -507,7 +599,7 @@ const App: Component = () => {
 
     if (!confirmed) return
 
-    stopInstance(instanceId)
+    await stopInstance(instanceId)
   }
 
   async function handleNewSession(instanceId: string) {
@@ -547,7 +639,7 @@ const App: Component = () => {
     const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
 
     if (tab.kind === "instance") {
-      await handleCloseInstance(tab.instance.id)
+      closeInstanceTab(tab.instance.id)
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -573,8 +665,6 @@ const App: Component = () => {
 
   const { commands: paletteCommands, executeCommand } = useCommands({
     preferences,
-    useTauriNativeEventTransport,
-    setUseTauriNativeEventTransport,
     toggleAutoCleanupBlankSessions,
     toggleShowThinkingBlocks,
     toggleKeyboardShortcutHints,
@@ -590,7 +680,7 @@ const App: Component = () => {
     setToolInputsVisibility,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
-    handleCloseInstance,
+    handleStopInstance,
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,
@@ -601,7 +691,6 @@ const App: Component = () => {
     setEscapeInDebounce,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
-    handleCloseInstance,
     handleNewSession,
     handleCloseSession,
     showFolderSelection,
@@ -610,10 +699,17 @@ const App: Component = () => {
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
 
-  // Native menus execute the same commands as the command palette.
+  // Native visibility actions share the shell/preferences state; other actions use palette commands.
+  const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (executeViewMenuAction(action)) return
+      if (action === "open-command-palette") {
+        const instance = activeInstance()
+        if (instance) showCommandPalette(instance.id)
+        return
+      }
       const command = paletteCommands().find((candidate) => candidate.id === action)
       if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
     }
@@ -642,14 +738,9 @@ const App: Component = () => {
     onCleanup(() => unsubscribe?.())
   })
 
-  createEffect(() => {
-    void setWorkspaceMenuEnabled(Boolean(activeInstance())).catch((error) => {
-      log.warn("Failed to update native workspace menu state", error)
-    })
-  })
-
   return (
     <>
+      <OpenCodeSetup />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}
@@ -670,13 +761,13 @@ const App: Component = () => {
                </div>
 
                <div class={`flex flex-col gap-4 ${launchErrorMessage() ? "flex-1 min-h-0" : ""}`}>
-                 <div class="rounded-lg border border-base bg-surface-secondary p-4 flex-shrink-0">
+                 <div class="border border-base bg-surface-secondary p-4 flex-shrink-0">
                    <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">{t("app.launchError.binaryPathLabel")}</p>
                    <p class="text-sm font-mono text-primary break-all">{launchErrorPath()}</p>
                  </div>
 
                  <Show when={launchErrorMessage()}>
-                   <div class="rounded-lg border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
+                   <div class="border border-base bg-surface-secondary p-4 flex flex-col gap-2 flex-1 min-h-0">
                      <p class="text-xs font-medium text-muted uppercase tracking-wide">{t("app.launchError.errorOutputLabel")}</p>
                      <pre class="text-sm font-mono text-primary whitespace-pre-wrap break-words overflow-auto flex-1 min-h-0">{launchErrorMessage()}</pre>
                    </div>
@@ -702,7 +793,10 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
-        <Show when={isPhoneLayout() && mobileFullscreenMode()}>
+        <Show when={runtimeEnv.windowContext === "local" && runtimeEnv.host !== "web"}>
+          <NativeTitlebar title={t("window.title.main")} menus />
+        </Show>
+        <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
             <button
               type="button"
@@ -719,7 +813,7 @@ const App: Component = () => {
           when={appTabs().length === 0}
           fallback={
             <>
-              <Show when={!isPhoneLayout() || !mobileFullscreenMode()}>
+              <Show when={!mobileFullscreenMode()}>
                 <InstanceTabs
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
@@ -753,8 +847,8 @@ const App: Component = () => {
                           handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
                           handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
                           onExecuteCommand={executeCommand}
-                          tabBarOffset={isPhoneLayout() && mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={isPhoneLayout() && mobileFullscreenMode()}
+                          tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                          mobileFullscreenMode={mobileFullscreenMode()}
                           onEnterMobileFullscreen={() => void enterMobileFullscreen()}
                           onExitMobileFullscreen={() => void exitMobileFullscreen()}
                         />
@@ -777,14 +871,12 @@ const App: Component = () => {
             </>
           }
         >
-          <Show when={shouldShowEmptyAppHome(loadedRestorableSession())}>
-            <FolderSelectionView
-              onSelectFolder={handleSelectFolder}
-              onSelectExistingInstance={handleSelectExistingInstance}
-              isLoading={isSelectingFolder()}
-              onOpenSidecar={handleOpenSidecarPicker}
-            />
-          </Show>
+          <FolderSelectionView
+            onSelectFolder={handleSelectFolder}
+            onSelectExistingInstance={handleSelectExistingInstance}
+            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
+            onOpenSidecar={handleOpenSidecarPicker}
+          />
         </Show>
 
         <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
@@ -807,6 +899,7 @@ const App: Component = () => {
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
+        <AuthRecoveryDialog />
 
         <Toaster
           position="top-right"

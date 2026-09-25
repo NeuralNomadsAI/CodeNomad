@@ -1,17 +1,18 @@
-import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
-import type { File as GitFileStatus } from "@opencode-ai/sdk/v2/client"
+import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
 import { getRootClient } from "../../../../stores/opencode-client"
-import { getOpenCodeWorkspaceIdForWorktree } from "../../../../stores/opencode-workspaces"
-import { requestData } from "../../../../lib/opencode-api"
+import { instances } from "../../../../stores/instances"
+import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
-import { serverEvents } from "../../../../lib/server-events"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
+import { backgroundReads } from "../../../../lib/background-read-queue"
 
 type UseGitChangesOptions = {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
   instanceId: string
   rightPanelTab: Accessor<RightPanelTab>
@@ -36,11 +37,39 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const [gitCommitSubmitting, setGitCommitSubmitting] = createSignal(false)
   let gitStatusRequestVersion = 0
   let gitDiffRequestVersion = 0
-  let passiveGitRefreshInFlight = false
+  let passiveGitRefresh: object | null = null
+  let statusController: AbortController | undefined
+  let diffController: AbortController | undefined
+  let lifecycle = 0
+  let disposed = false
+  let commitOperation: object | null = null
   let pendingGitPassiveRefreshOptions: { forceReloadSelectedDiff?: boolean } | null = null
   let previousGitChangesActivationKey: string | null = null
+  let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+  const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
+  const cancelGitReads = () => {
+    lifecycle += 1
+    gitStatusRequestVersion += 1
+    gitDiffRequestVersion += 1
+    statusController?.abort()
+    diffController?.abort()
+    passiveGitRefresh = null
+    pendingGitPassiveRefreshOptions = null
+  }
+  onCleanup(() => { disposed = true; cancelGitReads() })
+  const captureGitContext = () => {
+    const generation = lifecycle, slug = options.worktreeSlug()
+    return { slug, current: () => !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() }
+  }
+
+  const gitLocation = (slug: string) => {
+    const directory = getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug)?.directory
+      ?? (slug === "root" ? instances().get(options.instanceId)?.folder : undefined)
+    if (!directory) throw new Error(`Missing directory for worktree ${slug}`)
+    return { directory }
+  }
 
   const clearGitBulkSelection = () => {
     setGitBulkSelectedItemIds((current) => (current.size === 0 ? current : new Set<string>()))
@@ -165,40 +194,50 @@ export function useGitChanges(options: UseGitChangesOptions) {
   })
 
   const loadGitStatus = async (force = false) => {
-    if (!force && gitStatusEntries() !== null) return
+    if (disposed || !gitActive()) return false
+    if (!force && gitStatusEntries() !== null) return true
     const slug = options.worktreeSlug()
     const client = getRootClient(options.instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForWorktree(options.instanceId, slug)
     const requestVersion = ++gitStatusRequestVersion
+    statusController?.abort()
+    const controller = statusController = new AbortController()
+    const sdkController = new AbortController()
+    const abortSdk = () => sdkController.abort()
+    controller.signal.addEventListener("abort", abortSdk, { once: true })
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
-      const sdkStatusPromise = requestData<GitFileStatus[]>(client.file.status({ ...(workspace ? { workspace } : {}) }), "file.status")
-      const detailList = await serverApi.fetchWorktreeGitStatus(options.instanceId, slug)
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
-
-      const sdkResult = await Promise.race([
-        sdkStatusPromise.then((value) => ({ kind: "fulfilled" as const, value })),
-        new Promise<{ kind: "timeout" }>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), 1500)),
-      ]).catch(() => null)
-
-      const sdkList = sdkResult && sdkResult.kind === "fulfilled" ? sdkResult.value : null
+      const location = gitLocation(slug)
+      const sdkStatusPromise = backgroundReads.run(sdkController.signal, async () => {
+        const timeout = setTimeout(abortSdk, 1500)
+        try { return (await client.vcs.status({ location }, { signal: sdkController.signal })).data }
+        finally { clearTimeout(timeout) }
+      }, "visible").catch(() => null)
+      const detailList = await backgroundReads.run(controller.signal, () =>
+        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal),
+        "visible",
+      )
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      const sdkList = await sdkStatusPromise
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
       setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
+      return true
     } catch (error) {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
+      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
-      setGitStatusEntries([])
+      return false
     } finally {
-      if (requestVersion !== gitStatusRequestVersion) return
-      if (slug !== options.worktreeSlug()) return
-      setGitStatusLoading(false)
+      abortSdk()
+      controller.signal.removeEventListener("abort", abortSdk)
+      if (requestVersion === gitStatusRequestVersion && slug === options.worktreeSlug()) setGitStatusLoading(false)
     }
   }
 
   async function openGitFile(itemId: string) {
+    if (disposed || !gitActive()) return
     const requestVersion = ++gitDiffRequestVersion
+    diffController?.abort()
+    const controller = diffController = new AbortController()
     setGitSelectedItemId(itemId)
     setGitSelectedLoading(true)
     clearSelectedGitDiff()
@@ -215,11 +254,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
 
     try {
-      const diff = await serverApi.fetchWorktreeGitDiff(options.instanceId, options.worktreeSlug(), {
+      const slug = options.worktreeSlug()
+      const diff = await backgroundReads.run(controller.signal, () => serverApi.fetchWorktreeGitDiff(options.instanceId, slug, {
         path: item.path,
         originalPath: item.originalPath ?? null,
         scope: item.section,
-      })
+      }, controller.signal), "visible")
       if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
         setGitSelectedError(options.t("instanceShell.gitChanges.binaryViewer"))
@@ -237,8 +277,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const passiveRefreshGitStatus = async (optionsArg?: { forceReloadSelectedDiff?: boolean }) => {
-    if (options.rightPanelTab() !== "git-changes") return
-    if (passiveGitRefreshInFlight) {
+    if (!gitActive()) return
+    if (passiveGitRefresh) {
       pendingGitPassiveRefreshOptions = {
         forceReloadSelectedDiff:
           pendingGitPassiveRefreshOptions?.forceReloadSelectedDiff || optionsArg?.forceReloadSelectedDiff || false,
@@ -247,7 +287,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
     if (gitCommitSubmitting()) return
 
-    passiveGitRefreshInFlight = true
+    const refresh = passiveGitRefresh = {}
     const refreshSelectionId = gitSelectedItemId()
     const previousSelection = describeGitSelection(gitSelectedItemId())
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
@@ -256,7 +296,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
       (gitSelectedBefore() !== null || gitSelectedAfter() !== null || gitSelectedError() !== null)
 
     try {
-      await loadGitStatus(true)
+      if (!await loadGitStatus(true)) return
+      if (passiveGitRefresh !== refresh || !gitActive()) return
       if (gitSelectedItemId() !== refreshSelectionId) return
       const nextSelection = resolveValidGitSelection(previousSelection)
       setGitSelectedItemId(nextSelection)
@@ -277,7 +318,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
         await openGitFile(nextSelection)
       }
     } finally {
-      passiveGitRefreshInFlight = false
+      if (passiveGitRefresh !== refresh) return
+      passiveGitRefresh = null
       if (pendingGitPassiveRefreshOptions) {
         const nextOptions = pendingGitPassiveRefreshOptions
         pendingGitPassiveRefreshOptions = null
@@ -287,6 +329,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
+    const context = captureGitContext()
+    if (!context.current()) return
     const currentSelection = describeGitSelection(gitSelectedItemId())
     const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
     const selectedIds = gitBulkSelectedItemIds()
@@ -296,12 +340,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
     try {
       if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(options.instanceId, options.worktreeSlug(), { paths: targetPaths })
+        await serverApi.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       } else {
-        await serverApi.unstageWorktreeGitPaths(options.instanceId, options.worktreeSlug(), { paths: targetPaths })
+        await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       }
 
-      await loadGitStatus(true)
+      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      if (!await loadGitStatus(true) || !context.current()) return
       clearGitBulkSelection()
       const nextSelection = resolveValidGitSelection(fallbackSelection)
       setGitSelectedItemId(nextSelection)
@@ -311,6 +356,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         clearSelectedGitDiff()
       }
     } catch (error) {
+      if (!context.current()) return
       showToastNotification({
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
@@ -339,14 +385,19 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const submitGitCommit = async () => {
+    const context = captureGitContext()
+    if (!context.current()) return
     const message = gitCommitMessage().trim()
     if (!message || gitCommitSubmitting()) return
 
     setGitCommitSubmitting(true)
+    const operation = commitOperation = {}
+    const draft = gitCommitMessage()
     try {
-      await serverApi.commitWorktreeGitChanges(options.instanceId, options.worktreeSlug(), { message })
-      setGitCommitMessage("")
-      await loadGitStatus(true)
+      await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
+      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      if (gitCommitMessage() === draft) setGitCommitMessage("")
+      if (!await loadGitStatus(true) || !context.current()) return
       const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
       setGitSelectedItemId(nextSelection)
       if (nextSelection) {
@@ -354,22 +405,25 @@ export function useGitChanges(options: UseGitChangesOptions) {
       } else {
         clearSelectedGitDiff()
       }
+      if (!context.current()) return
       showToastNotification({
         message: options.t("instanceShell.gitChanges.commit.success"),
         variant: "success",
       })
     } catch (error) {
+      if (!context.current()) return
       showToastNotification({
         message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.commit.error"),
         variant: "error",
       })
     } finally {
-      setGitCommitSubmitting(false)
+      if (!disposed && commitOperation === operation) { commitOperation = null; setGitCommitSubmitting(false) }
     }
   }
 
   const refreshGitStatus = async () => {
-    await loadGitStatus(true)
+    const context = captureGitContext()
+    if (!await loadGitStatus(true) || !context.current()) return
     const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
     setGitSelectedItemId(selected)
     if (selected) {
@@ -385,12 +439,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     options.promptInputApi()?.insertComment(`Git Diff: File: ${item.path} : ${startLine}-${endLine}`)
   }
 
-  createEffect(() => {
-    options.worktreeSlug()
-    gitStatusRequestVersion += 1
-    gitDiffRequestVersion += 1
-    passiveGitRefreshInFlight = false
-    pendingGitPassiveRefreshOptions = null
+  createEffect(on(options.worktreeSlug, () => {
+    cancelGitReads()
     setGitStatusEntries(null)
     setGitStatusError(null)
     setGitStatusLoading(false)
@@ -399,11 +449,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitSelectedLoading(false)
     clearSelectedGitDiff()
     setGitCommitMessage("")
+    commitOperation = null
     setGitCommitSubmitting(false)
-  })
+  }))
 
   createEffect(() => {
-    if (options.rightPanelTab() !== "git-changes") return
+    if (!gitActive()) return
     const items = gitListItems()
     if (gitStatusEntries() === null) return
     if (items.length === 0) return
@@ -413,32 +464,28 @@ export function useGitChanges(options: UseGitChangesOptions) {
     void openGitFile(next)
   })
 
-  createEffect(() => {
-    const activationKey = options.rightPanelTab() === "git-changes" ? `${options.instanceId}:${options.worktreeSlug()}` : null
+  createEffect(on(() => gitActive() ? `${options.instanceId}:${options.worktreeSlug()}` : null, (activationKey) => {
     if (!activationKey) {
       previousGitChangesActivationKey = null
+      cancelGitReads()
+      setGitStatusLoading(false)
+      setGitSelectedLoading(false)
       return
     }
     if (previousGitChangesActivationKey === activationKey) return
     previousGitChangesActivationKey = activationKey
     void passiveRefreshGitStatus()
-  })
+  }))
 
+  const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {
-    if (options.rightPanelTab() !== "git-changes") return
-
-    const unsubscribe = serverEvents.on("instance.event", (event) => {
-      if (event.type !== "instance.event") return
-      if (event.instanceId !== options.instanceId) return
-      const eventType = (event.event as { type?: unknown } | undefined)?.type
-      if (eventType !== "session.updated") return
-      void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
-    })
-
-    onCleanup(() => {
-      unsubscribe()
-    })
+    const version = filesystemInvalidationVersion(options.instanceId)
+    if (version === seenFilesystemInvalidation) return
+    seenFilesystemInvalidation = version
+    if (gitActive()) filesystemRefresh.trigger()
+    else setGitStatusEntries(null)
   })
+  onCleanup(() => filesystemRefresh.cancel())
 
   createEffect(() => {
     if (options.rightPanelTab() === "git-changes") return

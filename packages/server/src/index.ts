@@ -23,19 +23,24 @@ import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, D
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
-import { resolvePluginBaseUrl } from "./server/listener-base-url"
+import { nativeServiceStarter } from "./workspaces/native-service-start"
+import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
+import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
-import { PluginChannelManager } from "./plugins/channel"
-import { VoiceModeManager } from "./plugins/voice-mode"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { NativeParent } from "./native-parent"
+import { PruningLifecycle } from "./opencode/pruning-lifecycle"
+import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
+import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
+import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
 
 const require = createRequire(import.meta.url)
 
@@ -100,6 +105,7 @@ interface ShutdownStdinSource {
 export function installShutdownStdinHandler(
   source: ShutdownStdinSource,
   shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+  handleLine?: (line: string) => boolean,
 ): void {
   let buffer = ""
   let requested = false
@@ -108,7 +114,12 @@ export function installShutdownStdinHandler(
     buffer += chunk.toString()
     const lines = buffer.split(/\r?\n/)
     buffer = lines.pop() ?? ""
-    if (!lines.some((line) => line.trim() === STDIN_SHUTDOWN_COMMAND)) return
+    let shutdownRequested = false
+    for (const line of lines) {
+      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+      else handleLine?.(line)
+    }
+    if (!shutdownRequested) return
 
     requested = true
     source.off?.("data", onData)
@@ -263,19 +274,20 @@ function parsePort(input: string): number {
   return value
 }
 
-function resolveHost(input: string | undefined): string {
+export function resolveHost(input: string | undefined): string {
   const trimmed = input?.trim()
   if (!trimmed) return DEFAULT_HOST
 
-  if (trimmed === "0.0.0.0") {
-    return "0.0.0.0"
+  if (hasIPv6Zone(trimmed)) {
+    throw new InvalidArgumentError("IPv6 zone identifiers are not supported in --host")
   }
 
-  if (trimmed === "localhost") {
+  const normalized = normalizeNetworkHost(trimmed)
+  if (normalized === "localhost") {
     return DEFAULT_HOST
   }
 
-  return trimmed
+  return normalized
 }
 
 export function programHasArg(argv: string[], flag: string): boolean {
@@ -309,8 +321,6 @@ async function main() {
   }
 
   const eventBus = new EventBus(eventLogger)
-
-  const isLoopbackHost = (host: string) => host === "127.0.0.1" || host === "::1" || host.startsWith("127.")
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
@@ -362,19 +372,39 @@ async function main() {
     logger: logger.child({ component: "tls" }),
   })
 
-  const nodeExtraCaCertsPath = !options.http ? tlsResolution?.caCertPath : undefined
-
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
+  const pruningLifecycle = new PruningLifecycle()
+  const nativeParent = new NativeParent()
+  const automationLifecycle = new DesktopPluginLifecycle("automation")
+  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
+    let paths
+    try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
+    catch (error) {
+      logger.error({ err: error }, "Cannot provision bundled plugins without the connected daemon's discovery directory")
+      return false
+    }
+    try {
+      await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
+        pruning: pruningLifecycle,
+        automation: nativeParent.available ? automationLifecycle : undefined,
+      })
+      return true
+    } catch (error) {
+      logger.error({ err: error }, "Failed to provision bundled desktop plugins for the current connection")
+      return false
+    }
+  }
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
     settings,
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
-    getServerBaseUrl: () => serverMeta.localUrl,
-    nodeExtraCaCertsPath,
+    prepareDesktopPlugins,
+    startServiceCommand: nativeServiceStarter(nativeParent),
   })
+  const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
   const fileSystemBrowser = new FileSystemBrowser({
     rootDir: options.rootDir,
     unrestricted: options.unrestrictedRoot,
@@ -388,11 +418,11 @@ async function main() {
   })
   const previewManager = new PreviewManager()
   const yoloLogger = logger.child({ component: "yolo" })
-  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager)
+  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
   const yoloManager = new AutoAcceptManager({
     eventBus,
     logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager, logger: yoloLogger }),
+    replier: createOpencodePermissionReplier({ workspaceManager }),
     persistence: sessionMetadataPersistence,
   })
   yoloManager.start()
@@ -447,21 +477,12 @@ async function main() {
       })
     : null
 
-  const remoteAccessEnabled = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
-
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
-  const pluginChannel = new PluginChannelManager(logger.child({ component: "plugin-channel" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
     authManager,
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
-  const voiceModeManager = new VoiceModeManager({
-    connections: clientConnectionManager,
-    channel: pluginChannel,
-    logger: logger.child({ component: "voice-mode" }),
-  })
-
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
@@ -469,15 +490,14 @@ async function main() {
   const httpBindPort = httpPortExplicit ? options.httpPort : 0
 
   // Listener binding rules:
-  // - Remote access enabled: HTTP listens on loopback, HTTPS on all IPs (host=0.0.0.0 / LAN IP).
-  // - Remote access disabled: both listen on loopback.
-  // - HTTP-only mode: respect --host (used for dev/testing).
-  const httpsBindHost = remoteAccessEnabled ? options.host : "127.0.0.1"
-  const httpBindHost = options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
+  // - Native desktop HTTP and dual-listener HTTP stay on loopback.
+  // - HTTPS and non-native HTTP-only modes respect --host.
+  const httpsBindHost = options.host
+  const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
 
-  const httpServer = options.http
+  const httpServer = options.http || nativeParent.available
     ? createHttpServer({
         bindHost: httpBindHost,
         bindPort: httpBindPort,
@@ -494,14 +514,13 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
-        pluginChannel,
-        voiceModeManager,
         remoteProxySessionManager,
         yoloManager,
-        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -523,14 +542,13 @@ async function main() {
         previewManager,
         authManager,
         clientConnectionManager,
-        pluginChannel,
-        voiceModeManager,
         remoteProxySessionManager,
         yoloManager,
-        sessionMetadataPersistence,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
+        nativeParent,
+        automationBridgeToken: automationBridge.token,
       })
     : null
 
@@ -542,30 +560,30 @@ async function main() {
     httpsServer ? httpsServer.start() : Promise.resolve(null),
   ])
 
-  const localStart = httpStart ?? httpsStart
+  const visibleHttpStart = options.http ? httpStart : null
+  const localStart = visibleHttpStart ?? httpsStart
   if (!localStart) {
     throw new Error("No listeners started")
   }
 
-  const remoteStart = httpsStart ?? httpStart
-  const remoteProtocol: "http" | "https" = httpsStart ? "https" : "http"
+  const httpListener = httpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: httpStart.port } : null
+  const httpsListener = httpsStart ? { protocol: "https" as const, bindHost: httpsBindHost, port: httpsStart.port } : null
+  const remoteListener = resolvePreferredRemoteListener({ httpStart: httpListener, httpsStart: httpsListener })
 
   let remoteUrl: string | undefined
   let remoteAddresses = [] as ReturnType<typeof resolveNetworkAddresses>
-  if (remoteStart) {
-    const wantsAll = options.host === "0.0.0.0" || !isLoopbackHost(options.host)
-    let remoteHost = options.host
-    if (wantsAll) {
-      if (options.host === "0.0.0.0") {
-        const resolved = resolveRemoteAddresses({ host: options.host, protocol: remoteProtocol, port: remoteStart.port })
-        remoteAddresses = resolved.userVisible
-        remoteUrl = resolved.primaryRemoteUrl ?? `${remoteProtocol}://localhost:${remoteStart.port}`
-      }
-    } else {
+  if (remoteListener) {
+    let remoteHost = remoteListener.bindHost
+    if (isWildcardHost(remoteListener.bindHost)) {
+      const resolved = resolveRemoteAddresses({ host: remoteListener.bindHost, protocol: remoteListener.protocol, port: remoteListener.port })
+      remoteAddresses = resolved.userVisible
+      const loopbackHost = remoteListener.bindHost === "0.0.0.0" ? "127.0.0.1" : "::1"
+      remoteUrl = resolved.primaryRemoteUrl ?? `${remoteListener.protocol}://${formatHostForUrl(loopbackHost)}:${remoteListener.port}`
+    } else if (remoteListener.bindHost === "127.0.0.1") {
       remoteHost = "localhost"
     }
     if (!remoteUrl) {
-      remoteUrl = `${remoteProtocol}://${remoteHost}:${remoteStart.port}`
+      remoteUrl = `${remoteListener.protocol}://${formatHostForUrl(remoteHost)}:${remoteListener.port}`
     }
   }
 
@@ -573,22 +591,36 @@ async function main() {
   // accepts loopback. Concrete LAN bindings do not, so plugins need the reachable
   // bound/listener URL instead of an unreachable 127.0.0.1 URL.
   const localUrl = resolvePluginBaseUrl({
-    httpStart: httpStart ? { protocol: "http", bindHost: httpBindHost, port: httpStart.port } : null,
-    httpsStart: httpsStart ? { protocol: "https", bindHost: httpsBindHost, port: httpsStart.port } : null,
+    httpStart: options.http ? httpListener : null,
+    httpsStart: httpsListener,
     remoteUrl,
   })
 
   serverMeta.localUrl = localUrl
   serverMeta.localPort = localStart.port
   serverMeta.remoteUrl = remoteUrl
-  serverMeta.remotePort = remoteStart?.port
-  serverMeta.host = options.host
-  serverMeta.listeningMode = options.host === "0.0.0.0" || !isLoopbackHost(options.host) ? "all" : "local"
+  serverMeta.remotePort = remoteListener?.port
+  serverMeta.host = remoteListener?.bindHost ?? options.host
+  serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
+
+  let removeAutomationBridge: (() => Promise<void>) | undefined
+  if (nativeParent.available) {
+    try {
+      if (!httpStart) throw new Error("Native automation HTTP listener did not start")
+      const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
+      removeAutomationBridge = await publishAutomationBridge({
+        ...automationBridge,
+        url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
+      })
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to publish the native automation bridge")
+    }
+  }
 
   if (serverMeta.remotePort && remoteUrl) {
     serverMeta.addresses = remoteAddresses.length
       ? remoteAddresses
-      : resolveNetworkAddresses({ host: options.host, protocol: remoteProtocol, port: serverMeta.remotePort })
+      : resolveNetworkAddresses({ host: serverMeta.host, protocol: remoteListener?.protocol ?? "http", port: serverMeta.remotePort })
   } else {
     serverMeta.addresses = []
   }
@@ -628,6 +660,10 @@ async function main() {
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopWorkspaces: () => workspaceManager.shutdown(),
           stopHttpServers: async () => {
+            await pruningLifecycle.stop()
+            await automationLifecycle.stop()
+            nativeParent.close()
+            await removeAutomationBridge?.()
             yoloManager.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
@@ -645,7 +681,7 @@ async function main() {
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown)
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {

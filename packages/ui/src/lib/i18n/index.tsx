@@ -7,9 +7,9 @@ type Messages = Record<string, string>
 
 export type TranslateParams = Record<string, unknown>
 
-export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he" | "de" | "ne"
+export type Locale = "en" | "es" | "fr" | "ru" | "ja" | "zh-Hans" | "he" | "de" | "ne" | "tr"
 
-const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he", "de", "ne"] as const
+const SUPPORTED_LOCALES: readonly Locale[] = ["en", "es", "fr", "ru", "ja", "zh-Hans", "he", "de", "ne", "tr"] as const
 const SUPPORTED_LOCALES_BY_LOWER = new Map(SUPPORTED_LOCALES.map((locale) => [locale.toLowerCase(), locale]))
 const RTL_LOCALES = new Set<Locale>(["he"])
 
@@ -26,6 +26,7 @@ const localeLoaders: Record<Locale, () => Promise<Messages>> = {
   he: async () => (await import("./messages/he")).heMessages,
   de: async () => (await import("./messages/de")).deMessages,
   ne: async () => (await import("./messages/ne")).neMessages,
+  tr: async () => (await import("./messages/tr")).trMessages,
 }
 
 function getLocaleDirection(locale: Locale): "ltr" | "rtl" {

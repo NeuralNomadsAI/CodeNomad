@@ -1,4 +1,4 @@
-import { marked, type Tokenizer, type Tokens } from "marked"
+import { marked, Tokenizer, type Tokens } from "marked"
 import markedKatex from "marked-katex-extension"
 import katex from "katex"
 import { getLogger } from "./logger"
@@ -14,6 +14,7 @@ let currentTheme: "light" | "dark" = "light"
 let isInitialized = false
 let highlightSuppressed = false
 let escapeRawHtmlEnabled = false
+let literalRawHtmlEnabled = false
 let defaultCodeBlockWrapEnabled = true
 let rendererSetup = false
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
@@ -494,6 +495,15 @@ function setupRenderer(isDark: boolean) {
       },
     ],
     tokenizer: {
+      // Marked leaves text inside inline raw HTML regions unescaped. Literal
+      // user source must escape those tokens too, including malformed tags that
+      // the HTML tokenizer doesn't recognize but the browser would interpret.
+      inlineText(this: Tokenizer, src: string) {
+        if (!literalRawHtmlEnabled || !this.lexer.state.inRawBlock) return false
+        const token = Tokenizer.prototype.inlineText.call(this, src)
+        if (token) token.text = escapeHtml(token.text)
+        return token
+      },
       // Split a paragraph before a valid display delimiter so the block lexer can consume it.
       paragraph(this: Tokenizer, src: string) {
         const cap = this.rules.block.paragraph.exec(src)
@@ -517,7 +527,7 @@ function setupRenderer(isDark: boolean) {
   const renderer = new marked.Renderer()
 
   renderer.code = (code: string, lang: string | undefined) => {
-    const decodedCode = decodeHtmlEntities(code)
+    const decodedCode = literalRawHtmlEnabled ? code : decodeHtmlEntities(code)
     const encodedCode = encodeURIComponent(decodedCode)
 
     // Use "text" as default when no language is specified
@@ -599,11 +609,14 @@ function setupRenderer(isDark: boolean) {
   }
 
   renderer.codespan = (code: string) => {
+    // Marked has already escaped this token, including entity spellings in code.
+    if (literalRawHtmlEnabled) return `<code class="inline-code">${code}</code>`
     const decoded = decodeHtmlEntities(code)
     return `<code class="inline-code">${escapeHtml(decoded)}</code>`
   }
 
   renderer.html = (html: string) => {
+    if (literalRawHtmlEnabled) return escapeHtml(html).replace(/\n/g, "<br />\n")
     if (!escapeRawHtmlEnabled) {
       return html
     }
@@ -635,6 +648,7 @@ export async function renderMarkdown(
   options?: {
     suppressHighlight?: boolean
     escapeRawHtml?: boolean
+    literalRawHtml?: boolean
     defaultCodeBlockWrap?: boolean
   },
 ): Promise<string> {
@@ -645,8 +659,9 @@ export async function renderMarkdown(
 
   const suppressHighlight = options?.suppressHighlight ?? false
   const escapeRawHtml = options?.escapeRawHtml ?? false
+  const literalRawHtml = options?.literalRawHtml ?? false
   const defaultCodeBlockWrap = options?.defaultCodeBlockWrap ?? true
-  const decoded = decodeHtmlEntities(content)
+  const decoded = literalRawHtml ? content : decodeHtmlEntities(content)
 
   if (!suppressHighlight) {
     queueHighlighterWarmup()
@@ -655,9 +670,11 @@ export async function renderMarkdown(
 
   const previousSuppressed = highlightSuppressed
   const previousEscapeRawHtml = escapeRawHtmlEnabled
+  const previousLiteralRawHtml = literalRawHtmlEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
   highlightSuppressed = suppressHighlight
   escapeRawHtmlEnabled = escapeRawHtml
+  literalRawHtmlEnabled = literalRawHtml
   defaultCodeBlockWrapEnabled = defaultCodeBlockWrap
 
   try {
@@ -668,6 +685,7 @@ export async function renderMarkdown(
     resetCodeBlockRenderState()
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
+    literalRawHtmlEnabled = previousLiteralRawHtml
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
   }
 }

@@ -20,7 +20,7 @@ export const SavedRemoteServersCard: Component = () => {
               <p class="settings-card-subtitle">{t("folderSelection.servers.empty.description")}</p>
             </div>
           </div>
-          <button type="button" class="selector-button selector-button-secondary" onClick={() => setDialogOpen(true)}>
+          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => setDialogOpen(true)}>
             <Plus class="w-4 h-4" />
             <span>{t("folderSelection.actions.connectButton")}</span>
           </button>
@@ -37,7 +37,7 @@ export const SavedRemoteServersCard: Component = () => {
                   <div class="flex items-center gap-2">
                     <button
                       type="button"
-                      class="selector-button selector-button-secondary"
+                      class="selector-button selector-button-secondary w-auto"
                       disabled={Boolean(connectingServerId())}
                       aria-label={`${t("folderSelection.servers.dialog.connect")}: ${server.name}`}
                       title={`${t("folderSelection.servers.dialog.connect")}: ${server.name}`}
@@ -47,7 +47,7 @@ export const SavedRemoteServersCard: Component = () => {
                     </button>
                     <button
                       type="button"
-                      class="selector-button selector-button-secondary"
+                      class="selector-button selector-button-secondary w-auto"
                       title={`${t("folderSelection.servers.remove")}: ${server.name}`}
                       aria-label={`${t("folderSelection.servers.remove")}: ${server.name}`}
                       onClick={() => removeRemoteServerProfile(server.id)}

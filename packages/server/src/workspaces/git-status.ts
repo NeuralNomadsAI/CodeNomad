@@ -1,13 +1,16 @@
-import { spawn } from "child_process"
-import { readFile } from "fs/promises"
+import { readFile, realpath } from "fs/promises"
 import path from "path"
 
 import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, WorktreeGitStatusEntry } from "../api-types"
 import type { LogLike } from "./git-worktrees"
 import { normalizeGitWorktreeRelativePath } from "./git-mutations"
+import { runGitProcess } from "./git-process"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
+type RunGit = typeof runGit
+const gitStatusGenerations = new Map<string, number>()
+const gitStatusRequests = new Map<string, { generation: number; request: Promise<WorktreeGitStatusEntry[]> }>()
 
 async function readFileAsDiffText(filePath: string): Promise<string> {
   return readFile(filePath, "utf-8")
@@ -21,30 +24,19 @@ async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingO
   return result.stdout
 }
 
-function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
-    let stdout = ""
-    let stderr = ""
-
-    child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString()
-    })
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString()
-    })
-    child.once("error", (error) => {
-      resolve({ ok: false, error, stdout, stderr })
-    })
-    child.once("close", (code) => {
-      if (acceptedExitCodes.includes(code ?? 0)) {
-        resolve({ ok: true, stdout })
-      } else {
-        const error = new Error(stderr.trim() || `git ${args.join(" ")} failed with code ${code}`)
-        resolve({ ok: false, error, stdout, stderr })
-      }
-    })
-  })
+async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
+  try {
+    // Preserve the previous streaming reader's unrestricted content size. Process
+    // creation belongs to the worker, including per-untracked-file numstat reads.
+    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity }) }
+  } catch (cause) {
+    const result = cause as Error & { code?: string | number; stdout?: string; stderr?: string }
+    const stdout = result.stdout ?? "", stderr = result.stderr ?? ""
+    if (typeof result.code === "number" && acceptedExitCodes.includes(result.code)) return { ok: true, stdout }
+    const error = typeof result.code === "number"
+      ? new Error(stderr.trim() || `git ${args.join(" ")} failed with code ${result.code}`) : result
+    return { ok: false, error, stdout, stderr }
+  }
 }
 
 function ensureEntry(map: Map<string, WorktreeGitStatusEntry>, path: string): WorktreeGitStatusEntry {
@@ -148,9 +140,12 @@ async function getUntrackedFileNumstat(workspaceFolder: string, relativePath: st
 }
 
 async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>, workspaceFolder: string) {
-  const pending = Array.from(map.values())
-    .filter((entry) => entry.unstagedStatus === "untracked")
-    .map(async (entry) => {
+  const entries = Array.from(map.values()).filter((entry) => entry.unstagedStatus === "untracked")
+  const pending = entries.values()
+  // Bound submission as well as execution: a large untracked directory must not
+  // fill the shared worker mailbox ahead of worktree authorization requests.
+  await Promise.all(Array.from({ length: Math.min(2, entries.length) }, async () => {
+    for (const entry of pending) {
       try {
         const stats = await getUntrackedFileNumstat(workspaceFolder, entry.path)
         entry.unstagedAdditions = stats.additions
@@ -159,8 +154,8 @@ async function applyUntrackedFileStats(map: Map<string, WorktreeGitStatusEntry>,
         entry.unstagedAdditions = 0
         entry.unstagedDeletions = 0
       }
-    })
-  await Promise.all(pending)
+    }
+  }))
 }
 
 function applyNumstatOutput(
@@ -204,14 +199,36 @@ function applyNumstatOutput(
 export async function getWorktreeGitStatus(params: {
   workspaceFolder: string
   logger?: LogLike
-}): Promise<WorktreeGitStatusEntry[]> {
+}, run: RunGit = runGit): Promise<WorktreeGitStatusEntry[]> {
+  const workspaceFolder = await realpath(params.workspaceFolder)
+  const generation = gitStatusGenerations.get(workspaceFolder) ?? 0
+  const pending = gitStatusRequests.get(workspaceFolder)
+  if (pending?.generation === generation) return pending.request
+
+  const request = readWorktreeGitStatus({ ...params, workspaceFolder }, run).finally(() => {
+    if (gitStatusRequests.get(workspaceFolder)?.request === request) gitStatusRequests.delete(workspaceFolder)
+    if (!gitStatusRequests.has(workspaceFolder)) gitStatusGenerations.delete(workspaceFolder)
+  })
+  gitStatusRequests.set(workspaceFolder, { generation, request })
+  return request
+}
+
+export async function invalidateWorktreeGitStatus(workspaceFolder: string): Promise<void> {
+  const canonicalDirectory = await realpath(workspaceFolder)
+  gitStatusGenerations.set(canonicalDirectory, (gitStatusGenerations.get(canonicalDirectory) ?? 0) + 1)
+}
+
+async function readWorktreeGitStatus(params: {
+  workspaceFolder: string
+  logger?: LogLike
+}, run: RunGit): Promise<WorktreeGitStatusEntry[]> {
   const { workspaceFolder, logger } = params
   const [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult] = await Promise.all([
-    runGit(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    runGit(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
-    runGit(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
-    runGit(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
-    runGit(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
+    run(["diff", "--name-status", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
+    run(["diff", "--name-status", "-z", "--find-renames", "--find-copies"], workspaceFolder),
+    run(["ls-files", "--others", "--exclude-standard"], workspaceFolder),
+    run(["diff", "--numstat", "-z", "--cached", "--find-renames", "--find-copies"], workspaceFolder),
+    run(["diff", "--numstat", "-z", "--find-renames", "--find-copies"], workspaceFolder),
   ])
 
   for (const result of [stagedResult, unstagedResult, untrackedResult, stagedNumstatResult, unstagedNumstatResult]) {

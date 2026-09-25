@@ -17,7 +17,6 @@ interface UseAppLifecycleOptions {
   setEscapeInDebounce: (value: boolean) => void
   handleNewInstanceRequest: () => void
   handleCloseActiveTab: () => Promise<void>
-  handleCloseInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   showFolderSelection: Accessor<boolean>

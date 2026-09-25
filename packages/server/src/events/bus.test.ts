@@ -7,20 +7,20 @@ import type { WorkspaceEventPayload } from "../api-types"
 describe("event bus instance status replay", () => {
   it("replays the latest instance status to a late subscriber", () => {
     const bus = new EventBus()
-    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connecting" })
-    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connected" })
+    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connecting", generation: 1 })
+    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connected", generation: 1 })
 
     const received: WorkspaceEventPayload[] = []
     bus.onEvent((event) => received.push(event))
 
     assert.deepEqual(received, [
-      { type: "instance.eventStatus", instanceId: "workspace-1", status: "connected" },
+      { type: "instance.eventStatus", instanceId: "workspace-1", status: "connected", generation: 1 },
     ])
   })
 
   it("delivers terminal disconnects live without replaying stopped workspaces", () => {
     const bus = new EventBus()
-    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connected" })
+    bus.publish({ type: "instance.eventStatus", instanceId: "workspace-1", status: "connected", generation: 1 })
     const live: WorkspaceEventPayload[] = []
     bus.onEvent((event) => live.push(event))
     live.length = 0
@@ -29,6 +29,7 @@ describe("event bus instance status replay", () => {
       type: "instance.eventStatus",
       instanceId: "workspace-1",
       status: "disconnected",
+      generation: 1,
       reason: "workspace stopped",
     })
 
@@ -36,6 +37,7 @@ describe("event bus instance status replay", () => {
       type: "instance.eventStatus",
       instanceId: "workspace-1",
       status: "disconnected",
+      generation: 1,
       reason: "workspace stopped",
     }])
     const replayed: WorkspaceEventPayload[] = []

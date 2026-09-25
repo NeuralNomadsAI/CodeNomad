@@ -105,6 +105,14 @@ describe("computeThreadTotals", () => {
     assert.equal(totals.reasoningTokens, 0)
   })
 
+  it("uses native session totals before a transcript is loaded", () => {
+    const totals = computeThreadTotals([{
+      id: "unloaded", cost: 0.2, tokens: { input: 300, output: 100, reasoning: 50 },
+    }], undefined)
+
+    assert.deepEqual(totals, { cost: 0.2, inputTokens: 300, outputTokens: 100, reasoningTokens: 50 })
+  })
+
   it("treats missing info as zeros", () => {
     const family = [{ id: "present" }, { id: "missing" }]
     const infoMap = new Map<string, SessionInfo>([

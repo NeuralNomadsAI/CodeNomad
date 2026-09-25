@@ -9,7 +9,7 @@ import {
   type JSX,
 } from "solid-js"
 
-import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-solid"
+import { ChevronRight, GitBranch, RefreshCw, WrapText } from "lucide-solid"
 
 import DiffToolbar from "../components/DiffToolbar"
 import SplitFilePanel from "../components/SplitFilePanel"
@@ -116,6 +116,9 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
   })
 
   const binaryViewerActive = createMemo(() => props.selectedError() === props.t("instanceShell.gitChanges.binaryViewer"))
+  const wordWrapTitle = () => props.diffWordWrapMode() === "on"
+    ? props.t("instanceShell.diff.disableWordWrap")
+    : props.t("instanceShell.diff.enableWordWrap")
 
   const renderContent = (): JSX.Element => {
     const totalsValue = totals()
@@ -269,10 +272,10 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       onToggle: () => void,
     ) => (
       <div class="git-change-section">
-        <button type="button" class="git-change-section-header" onClick={onToggle}>
+        <button type="button" class="git-change-section-header" aria-expanded={isOpen} onClick={onToggle}>
           <span class="git-change-section-header-main">
-            <span class="git-change-section-chevron">
-              {isOpen ? <ChevronDown class="h-3.5 w-3.5" /> : <ChevronRight class="h-3.5 w-3.5" />}
+            <span class="git-change-section-chevron disclosure-chevron">
+              <ChevronRight class="h-3.5 w-3.5" />
             </span>
             <span class="git-change-section-title">{title}</span>
           </span>
@@ -290,10 +293,10 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
       <Show when={allItems.length > 0} fallback={renderEmptyList()}>
         <div class="git-change-sections">
           <div class="git-change-section">
-            <button type="button" class="git-change-section-header" onClick={props.onToggleStagedOpen}>
+            <button type="button" class="git-change-section-header" aria-expanded={props.stagedOpen()} onClick={props.onToggleStagedOpen}>
               <span class="git-change-section-header-main">
-                <span class="git-change-section-chevron">
-                  {props.stagedOpen() ? <ChevronDown class="h-3.5 w-3.5" /> : <ChevronRight class="h-3.5 w-3.5" />}
+                <span class="git-change-section-chevron disclosure-chevron">
+                  <ChevronRight class="h-3.5 w-3.5" />
                 </span>
                 <span class="git-change-section-title-row">
                   <span class="git-change-section-title">{props.t("instanceShell.gitChanges.sections.staged")}</span>
@@ -379,16 +382,26 @@ const GitChangesTab: Component<GitChangesTabProps> = (props) => {
               <DiffToolbar
                 viewMode={props.diffViewMode()}
                 contextMode={props.diffContextMode()}
-                wordWrapMode={props.diffWordWrapMode()}
                 onViewModeChange={props.onViewModeChange}
                 onContextModeChange={props.onContextModeChange}
-                onWordWrapModeChange={props.onWordWrapModeChange}
               />
 
             </>
           }
         list={{ panel: renderGroupedList, overlay: renderGroupedList }}
         viewer={renderViewer()}
+        viewerActions={
+          <button
+            type="button"
+            class="file-viewer-toolbar-icon-button icon-toggle"
+            onClick={() => props.onWordWrapModeChange(props.diffWordWrapMode() === "on" ? "off" : "on")}
+            aria-label={wordWrapTitle()}
+            aria-pressed={props.diffWordWrapMode() === "on"}
+            title={wordWrapTitle()}
+          >
+            <WrapText class="h-4 w-4" aria-hidden="true" />
+          </button>
+        }
         listOpen={props.listOpen()}
         onToggleList={props.onToggleList}
         splitWidth={props.splitWidth()}

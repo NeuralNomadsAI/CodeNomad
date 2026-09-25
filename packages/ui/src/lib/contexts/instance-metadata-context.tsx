@@ -1,7 +1,8 @@
 import { Component, JSX, createContext, createEffect, createMemo, createSignal, useContext, type Accessor } from "solid-js"
 import type { Instance } from "../../types/instance"
-import { instances } from "../../stores/instances"
+import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
 import { getInstanceMetadata } from "../../stores/instance-metadata"
+import { getActiveCatalogLocation } from "../../stores/sessions"
 import { loadInstanceMetadata, hasMetadataLoaded } from "../hooks/use-instance-metadata"
 
 interface InstanceMetadataContextValue {
@@ -21,23 +22,33 @@ interface InstanceMetadataProviderProps {
 export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> = (props) => {
   const resolvedInstance = createMemo(() => instances().get(props.instance.id) ?? props.instance)
   const [isLoading, setIsLoading] = createSignal(true)
+  let metadataLoadId = 0
 
   const ensureMetadata = async (force = false) => {
+    const loadId = ++metadataLoadId
     const current = resolvedInstance()
     if (!current) {
-      setIsLoading(false)
+      if (loadId === metadataLoadId) setIsLoading(false)
       return
     }
 
     const cachedMetadata = getInstanceMetadata(current.id) ?? current.metadata
-    if (!force && hasMetadataLoaded(cachedMetadata)) {
-      setIsLoading(false)
+    const location = getActiveCatalogLocation(current.id)
+    if (!force && hasMetadataLoaded(cachedMetadata, location)) {
+      if (loadId === metadataLoadId) setIsLoading(false)
       return
     }
 
     setIsLoading(true)
-    await loadInstanceMetadata(current, { force })
-    setIsLoading(false)
+    try {
+      // Initial session reads get the limited per-origin browser connections
+      // before MCP/plugin/project decoration for each restored project pane.
+      await waitForInstanceInitialSessionHydration(current.id)
+      if (loadId !== metadataLoadId || resolvedInstance()?.client !== current.client) return
+      await loadInstanceMetadata(current, { force, location })
+    } finally {
+      if (loadId === metadataLoadId) setIsLoading(false)
+    }
   }
 
   createEffect(() => {
@@ -48,7 +59,8 @@ export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> 
     }
 
     const tracked = getInstanceMetadata(current.id) ?? current.metadata
-    if (!tracked || !hasMetadataLoaded(tracked)) {
+    const location = getActiveCatalogLocation(current.id)
+    if (!tracked || !hasMetadataLoaded(tracked, location)) {
       void ensureMetadata()
       return
     }

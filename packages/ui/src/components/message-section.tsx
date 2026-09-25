@@ -1,31 +1,45 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup, on, untrack } from "solid-js"
-import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal, Pause, Search, Trash, X } from "lucide-solid"
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
+import DismissibleWindow from "./dismissible-window"
+import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
+import { getTimelineRecordSignature } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
-import { getSessionInfo } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
-import { showAlertDialog } from "../stores/alerts"
-import { deleteMessage, deleteMessagePart } from "../stores/session-actions"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import type { DeleteHoverState } from "../types/delete-hover"
-import { partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
-import { getPartCharCount } from "../lib/token-utils"
+import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
+import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
-import { buildSessionSearchMatches } from "../lib/session-search"
+import { findHistoryMatches } from "../stores/session-history"
+import HistoryStatistics from "./history-statistics"
+import HistoryMessagePreview from "./history-message-preview"
+import { createSessionOutline } from "../stores/session-outline"
+import { MissingHistoryAnchorError } from "../stores/history-window"
+import { sessions } from "../stores/session-state"
+import { createSessionOutlineProjection } from "./session-outline-projection"
+import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { collectToolDeletionCompanionPartIds, executeBulkDeletionPlan } from "./tool-deletion-companions"
+import { isLatestWindow, preserveMessageWindowCursor, toWindowSnapshot } from "../stores/message-v2/message-window"
+import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor } from "./message-history-pagination"
+import { getLogger } from "../lib/logger"
+import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
+import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
+import type { SessionInboxUser } from "@opencode/client"
+import { getFormQueue } from "../stores/forms"
+import { resolveFormToolTarget } from "./form-request-tool-target"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
@@ -33,15 +47,22 @@ const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
+const log = getLogger("session")
+
+function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }) {
+  return <Show when={props.mount} fallback={props.children}>
+    {(mount) => <Portal mount={mount()}>{props.children}</Portal>}
+  </Show>
+}
 
 export interface MessageSectionProps {
+  timelineMount?: HTMLElement
   instanceId: string
   sessionId: string
   loading?: boolean
   loadError?: string | null
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
   onFork?: (messageId?: string) => void
   registerScrollToBottom?: (fn: (() => void) | null) => void
   showSidebarToggle?: boolean
@@ -49,15 +70,27 @@ export interface MessageSectionProps {
   forceCompactStatusLayout?: boolean
   onQuoteSelection?: (text: string, mode: "quote" | "code") => void
   onReloadMessages?: () => void
+  hasMoreMessages?: boolean
+  onLoadMoreMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadNewerMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadLatestMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadOldestMessages?: (signal?: AbortSignal) => Promise<boolean | void>
+  onLoadMessageAnchor?: (messageId: string, signal?: AbortSignal) => Promise<boolean | void>
+  getMessageHistoryCursor?: () => string | undefined
   isActive?: boolean
   sessionStreamingActive?: boolean
   explicitBottomPinIntent?: VirtualExplicitBottomPinIntent | null
   onExplicitBottomPinCancelled?: () => void
+  pendingPrompts?: ReadonlyMap<string, SessionInboxUser>
+  pendingPromptBusy?: boolean
+  onPendingPromptDeliveryChange?: (item: SessionInboxUser) => void
+  onPendingPromptEdit?: (item: SessionInboxUser) => void
+  onPendingPromptRemove?: (item: SessionInboxUser) => void
 }
 
 export default function MessageSection(props: MessageSectionProps) {
-  const { preferences, updatePreferences } = useConfig()
-  const { t } = useI18n()
+  const { preferences } = useConfig()
+  const { locale, t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
@@ -68,17 +101,26 @@ export default function MessageSection(props: MessageSectionProps) {
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    return messageIds().filter((messageId) => {
+    const visible = messageIds().filter((messageId) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
+
+      if (resolvedStore.getMessageInfo(messageId)?.nativeType === "system") {
+        return preferences().systemMessagesVisibility !== "hidden"
+      }
 
       if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
         return true
       }
 
       if (record.role !== "assistant") {
-        return false
+        return true
       }
+
+      // The navigation timeline omits reasoning-only segments. The transcript
+      // must still show retained thoughts after their neighbouring tools are pruned.
+      if (preferences().showThinkingBlocks
+        && buildRecordDisplayData(props.instanceId, record).orderedParts.some(reasoningHasRenderableContent)) return true
 
       const info = resolvedStore.getMessageInfo(messageId)
       if (!info || info.role !== "assistant") {
@@ -89,34 +131,124 @@ export default function MessageSection(props: MessageSectionProps) {
         return true
       }
 
-      const timeInfo = info.time as { created: number; end?: number } | undefined
-      return Boolean(timeInfo && (timeInfo.end === undefined || timeInfo.end === 0))
+      const timeInfo = info.time as { created: number; completed?: number } | undefined
+      return Boolean(timeInfo && (timeInfo.completed === undefined || timeInfo.completed === 0))
     })
+    if (!props.pendingPrompts?.size) return visible
+    const visibleSet = new Set(visible)
+    return [
+      ...visible.filter((messageId) => !props.pendingPrompts!.has(messageId)),
+      ...Array.from(props.pendingPrompts.keys()).filter((messageId) => visibleSet.has(messageId)),
+    ]
   })
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
-  const usageSnapshot = createMemo(() => store().getSessionUsage(props.sessionId))
-  const sessionInfo = createMemo(() =>
-    getSessionInfo(props.instanceId, props.sessionId) ?? {
-      cost: 0,
-      contextWindow: 0,
-      isSubscriptionModel: false,
-      inputTokens: 0,
-      outputTokens: 0,
-      reasoningTokens: 0,
-      actualUsageTokens: 0,
-      modelOutputLimit: 0,
-      contextAvailableTokens: null,
-    },
+  const technicalCleanupTranscript = createMemo<TechnicalCleanupTranscriptItem[]>(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    return messageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+        const partId = typeof part.id === "string" ? part.id : ""
+        if (!partId) return []
+        if (part.type === "tool" || part.type === "reasoning") {
+          return [{ messageId, partId, type: part.type }]
+        }
+        if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
+          return [{ messageId, partId, type: "boundary" as const }]
+        }
+        return []
+      })
+    })
+  })
+  const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
+    technicalCleanupTranscript(),
+    messageId,
+    partId,
   )
-
-  const tokenStats = createMemo(() => {
-    const usage = usageSnapshot()
-    const info = sessionInfo()
-    return {
-      used: usage?.actualUsageTokens ?? info.actualUsageTokens ?? 0,
-      avail: info.contextAvailableTokens,
-    }
+  const [technicalCleanupHoverTarget, setTechnicalCleanupHoverTarget] = createSignal<{ messageId: string; partId: string } | null>(null)
+  const technicalCleanupPartKeys = createMemo<ReadonlySet<string>>(() => {
+    const target = technicalCleanupHoverTarget()
+    if (!target) return new Set()
+    return new Set(technicalCleanupParts(target.messageId, target.partId).map((part) => technicalPartKey(part.messageId, part.partId)))
+  })
+  const handleTechnicalCleanupHoverChange = (messageId: string, partId: string, hovered: boolean) => {
+    setTechnicalCleanupHoverTarget(hovered ? { messageId, partId } : null)
+  }
+  const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
+    .filter((form) => form.sessionID === props.sessionId)
+    .flatMap((form) => {
+      const target = resolveFormToolTarget(form, store())
+      return target ? [technicalPartKey(target.messageId, target.partId)] : []
+    })))
+  const technicalGroupProjection = createMemo(() => {
+    sessionRevision()
+    const resolvedStore = store()
+    const pendingForms = pendingFormToolTargets()
+    const items = visibleMessageIds().flatMap((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      if (record.role === "user") return [null]
+      const completed = record.status === "complete" || record.status === "error"
+      const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
+      const messageInfo = resolvedStore.getMessageInfo(messageId)
+      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
+        if (part.type === "step-finish") {
+          return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
+        }
+        if (!isTechnicalGroupingVisiblePart(part)) return []
+        const partId = typeof part.id === "string" ? part.id : ""
+        const kind = getTechnicalGroupKind(part)
+        const pending = part.type === "tool" && Boolean(
+          part.pendingPermission?.active
+          || (partId && resolvedStore.getPermissionState(messageId, partId)?.active)
+          || (partId && pendingForms.has(technicalPartKey(messageId, partId)))
+        )
+        if (part.type === "tool" && resolveToolVisibility(preferences(), part.tool) === "hidden" && !pending) return []
+        if (!kind || !partId) return [null]
+        if ((kind === "exploration" || kind === "shell") && pending) return [null]
+        return [{
+          messageId,
+          partId,
+          part,
+          completed,
+          revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
+        }]
+      })
+    })
+    return projectTranscriptTechnicalGroups(items)
+  })
+  const technicalGroupForPart = (messageId: string, partId: string) => technicalGroupProjection().byPartKey.get(technicalPartKey(messageId, partId))
+  const technicalGroupingSignature = (messageId: string) => {
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record) return ""
+    const displayPartIds = getRecordDisplayPartIds(record)
+    const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
+      const group = technicalGroupForPart(messageId, partId)
+      return group ? [group.signature] : []
+    }))).join(";")
+    const pendingForms = pendingFormToolTargets()
+    const tools = displayPartIds.flatMap((partId) => {
+      const part = record.parts[partId]?.data
+      if (part?.type !== "tool") return []
+      const pending = Boolean(
+        part.pendingPermission?.active
+        || resolvedStore.getPermissionState(messageId, partId)?.active
+        || pendingForms.has(technicalPartKey(messageId, partId))
+      )
+      return [`${partId}:${resolveToolVisibility(preferences(), part.tool)}:${pending ? 1 : 0}`]
+    }).join(";")
+    return `${groups}|${tools}`
+  }
+  const [technicalGroupExpansion, setTechnicalGroupExpansion] = createSignal(new Map<string, boolean>())
+  const isTechnicalGroupExpanded = (groupId: string, defaultExpanded: boolean) => technicalGroupExpansion().get(groupId) ?? defaultExpanded
+  const setTechnicalGroupExpanded = (groupId: string, expanded: boolean) => setTechnicalGroupExpansion((current) => {
+    const next = new Map(current)
+    next.set(groupId, expanded)
+    return next
   })
 
   const preferenceSignature = createMemo(() => {
@@ -124,14 +256,14 @@ export default function MessageSection(props: MessageSectionProps) {
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
-    return `${showThinking}|${thinkingExpansion}|${usageVisibility}`
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
 
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
     const scrollToMessage = () => {
       const api = listApi()
       if (api) {
-        api.scrollToKey(segment.messageId, { behavior: "smooth", block: "start" })
+        api.scrollToKey(segment.messageId, { block: "start" })
         return
       }
       if (typeof document === "undefined") return
@@ -139,254 +271,94 @@ export default function MessageSection(props: MessageSectionProps) {
       anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
     }
 
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      setActiveSegmentId(segment.id)
-      scrollToMessage()
-      return
-    }
-
-    setLastSelectionAnchorId(segment.id)
     setActiveSegmentId(segment.id)
-    scrollToMessage()
+    if (messageIds().includes(segment.messageId)) {
+      cancelWindowNavigation()
+      listApi()?.setAutoScroll(false)
+      scrollToMessage()
+    }
+    else void pageWindow("around", () => scrollToMessage(), segment.messageId)
   }
 
-  const [selectedTimelineIds, setSelectedTimelineIds] = createSignal<Set<string>>(new Set())
-  const [lastSelectionAnchorId, setLastSelectionAnchorId] = createSignal<string | null>(null)
   const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const [selectionMode, setSelectionMode] = createSignal<"all" | "tools">("all")
-  const [isDeleteMenuOpen, setIsDeleteMenuOpen] = createSignal(false)
-  const [isSearchOpen, setIsSearchOpen] = createSignal(false)
+  const isSearchOpen = () => isSessionSearchOpen(props.instanceId, props.sessionId)
+  const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
   const [searchedQuery, setSearchedQuery] = createSignal("")
   const [isSearchPending, setIsSearchPending] = createSignal(false)
-  const [searchMatches, setSearchMatches] = createSignal<SessionSearchMatch[]>([])
+  const [failedSearchQuery, setFailedSearchQuery] = createSignal("")
+  const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
+  const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
+  const [searchWorkspace, setSearchWorkspace] = createSignal(false)
+  const [includeTechnical, setIncludeTechnical] = createSignal(false)
+  const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
+  const [nextSearchCursor, setNextSearchCursor] = createSignal<string | null>(null)
+  const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
+  const [previewSearchMatch, setPreviewSearchMatch] = createSignal<{ sessionId: string; messageId: string }>()
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
-  let deleteMenuRef: HTMLDivElement | undefined
-  let deleteMenuButtonRef: HTMLButtonElement | undefined
+  const searchLocatorAuthority = createSearchLocatorAuthority()
+  let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
 
-  // Deletion is only allowed for messages/tool parts that occur AFTER the most
-  // recent compaction. Compaction effectively resets the stored context; deleting
-  // earlier items would not reliably reflect what the model sees.
-  const messageIndexById = createMemo(() => {
-    const ids = messageIds()
-    const map = new Map<string, number>()
-    for (let i = 0; i < ids.length; i++) {
-      map.set(ids[i], i)
-    }
-    return map
-  })
-
-  const lastAssistantMessageId = createMemo(() => store().getLastAssistantMessageId(props.sessionId))
+  const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
+  const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
 
   const activeSearchMatch = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return null
     const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
     return matches[index] ?? null
   })
 
-  const searchResultMessageIds = createMemo(() => new Set(searchMatches().map((match) => match.messageId)))
+  const searchResultMessageIds = createMemo(() => new Set(currentSearchMatches().map((match) => match.messageId)))
 
   const trimmedSearchQuery = createMemo(() => searchQuery().trim())
   const isSearchSettled = createMemo(() => {
     const query = trimmedSearchQuery()
-    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && searchedQuery().trim() === query
+    return query.length >= SEARCH_MIN_CHARS && !isSearchPending() && hasMessageSearchAuthority(query, searchedQuery())
   })
+  const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const lastCompactionIndex = createMemo(() => {
-    // Depend on a single session revision signal (not every message/part read)
-    // to keep reactive overhead small.
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const residentTimelineSegments = createMemo(() => {
     sessionRevision()
-    return untrack(() => store().getLastCompactionMessageIndex(props.sessionId))
-  })
+    const ids = visibleMessageIds()
+    const resolvedStore = store()
+    const activeLocale = locale()
 
-  const deletableStartIndex = createMemo(() => {
-    const idx = lastCompactionIndex()
-    return idx === -1 ? 0 : idx + 1
-  })
-
-  const deletableMessageIds = createMemo(() => {
-    const ids = messageIds()
-    const start = deletableStartIndex()
-    return new Set(ids.slice(start))
-  })
-
-  const isMessageDeletable = (messageId: string): boolean => {
-    const idx = messageIndexById().get(messageId)
-    if (idx === undefined) return false
-    return idx >= deletableStartIndex()
-  }
-
-  // Build the message group for a segment.
-  // Tool calls belong to the same assistant turn (between user messages).
-  // Only assistant badges trigger group selection; user/tool badges are standalone.
-  const getAdjacentGroup = (_clickedIndex: number, segments: TimelineSegment[]): TimelineSegment[] => {
-    const clicked = segments[_clickedIndex]
-    if (clicked.type === "assistant") {
-      let currentTurn = -1
-      const turnByMessageId = new Map<string, number>()
-      for (const segment of segments) {
-        if (segment.type === "user") {
-          currentTurn += 1
+    return untrack(() => {
+      const activeIds = new Set(ids)
+      const segments: TimelineSegment[] = []
+      for (const messageId of ids) {
+        const record = resolvedStore.getMessage(messageId)
+        if (!record) continue
+        const cached = timelineSegmentCache.get(messageId)
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+          segments.push(...cached.segments)
           continue
         }
-        if (currentTurn === -1) currentTurn = 0
-        if (!turnByMessageId.has(segment.messageId)) {
-          turnByMessageId.set(segment.messageId, currentTurn)
-        }
+        const signature = getTimelineRecordSignature(record)
+        const current = cached?.signature === signature && cached.locale === activeLocale
+          ? cached.segments
+          : buildTimelineSegments(props.instanceId, record, t)
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        segments.push(...current)
       }
-      const turnIndex = turnByMessageId.get(clicked.messageId)
-      if (turnIndex === undefined) {
-        return segments.filter((s) => s.messageId === clicked.messageId)
+      for (const messageId of timelineSegmentCache.keys()) {
+        if (!activeIds.has(messageId)) timelineSegmentCache.delete(messageId)
       }
-      return segments.filter((s) => s.type !== "user" && turnByMessageId.get(s.messageId) === turnIndex)
-    }
-    // User, tool, and compaction segments are standalone.
-    return [clicked]
-  }
-
-  const handleToggleTimelineSelection = (id: string) => {
-    const segments = timelineSegments()
-    const segmentIndex = segments.findIndex((s) => s.id === id)
-    if (segmentIndex === -1) return
-    const segment = segments[segmentIndex]
-
-    if (!isMessageDeletable(segment.messageId)) {
-      return
-    }
-
-    setLastSelectionAnchorId(id)
-
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      return
-    }
-
-    const selected = selectedTimelineIds()
-    const isCurrentlySelected = selected.has(id)
-    const group = getAdjacentGroup(segmentIndex, segments)
-    const hasToolsInGroup = group.some((s) => s.type === "tool")
-    const isGroupCandidate = segment.type === "assistant" && hasToolsInGroup
-    const selectedInGroup = isGroupCandidate
-      ? group.reduce((count, s) => (selected.has(s.id) ? count + 1 : count), 0)
-      : 0
-    const isGroupEmpty = isGroupCandidate && selectedInGroup === 0
-
-    if (isGroupCandidate && !isCurrentlySelected && isGroupEmpty) {
-      // Parent click: select entire group only when none are selected yet.
-      // Tool visibility is handled by isSelectionActive() in isHidden() — no
-      // expand/collapse needed.
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        for (const s of group) next.add(s.id)
-        return next
-      })
-    } else if (isCurrentlySelected) {
-      // Individual deselect (tool or parent). No group deselect.
-      const newSelected = new Set(selected)
-      newSelected.delete(id)
-      setSelectedTimelineIds(newSelected)
-    } else {
-      // Individual select (tool badge, parent with partial group, or standalone).
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        next.add(id)
-        return next
-      })
-    }
-  }
-
-  const handleLongPressTimelineSelection = (segment: TimelineSegment) => {
-    const segments = timelineSegments()
-    const segmentIndex = segments.findIndex((s) => s.id === segment.id)
-    if (segmentIndex === -1) return
-
-    if (!isMessageDeletable(segment.messageId)) {
-      return
-    }
-
-    setLastSelectionAnchorId(segment.id)
-
-    if (selectionMode() === "tools" && segment.type !== "tool") {
-      return
-    }
-    const group = getAdjacentGroup(segmentIndex, segments)
-    const hasToolsInGroup = group.some((s) => s.type === "tool")
-    const isGroupCandidate = segment.type === "assistant" && hasToolsInGroup
-    if (!isGroupCandidate) {
-      handleToggleTimelineSelection(segment.id)
-      return
-    }
-    const selected = selectedTimelineIds()
-    const hasAnySelected = group.some((s) => selected.has(s.id))
-    if (!hasAnySelected) {
-      setSelectedTimelineIds((prev) => {
-        const next = new Set(prev)
-        for (const s of group) next.add(s.id)
-        return next
-      })
-      return
-    }
-    const newSelected = new Set(selected)
-    for (const s of group) newSelected.delete(s.id)
-    setSelectedTimelineIds(newSelected)
-  }
-
-  const handleSelectRangeTimeline = (id: string) => {
-    const anchorId = lastSelectionAnchorId()
-    if (!anchorId) {
-      handleToggleTimelineSelection(id)
-      return
-    }
-
-    const segments = timelineSegments()
-    const anchorIndex = segments.findIndex((s) => s.id === anchorId)
-    const targetIndex = segments.findIndex((s) => s.id === id)
-
-    if (anchorIndex === -1 || targetIndex === -1) {
-      handleToggleTimelineSelection(id)
-      return
-    }
-
-    const start = Math.min(anchorIndex, targetIndex)
-    const end = Math.max(anchorIndex, targetIndex)
-
-    const rangeSegments = selectionMode() === "tools"
-      ? segments.slice(start, end + 1).filter((s) => s.type === "tool" && isMessageDeletable(s.messageId))
-      : segments.slice(start, end + 1).filter((s) => isMessageDeletable(s.messageId))
-    // Range selection replaces current selection so it can grow or shrink.
-    setSelectedTimelineIds(new Set(rangeSegments.map((segment) => segment.id)))
-  }
-
-  const handleClearTimelineSelection = () => {
-    clearDeleteMode()
-  }
-
-  const applySelectionMode = (mode: "all" | "tools") => {
-    setSelectionMode(mode)
-    if (mode !== "tools") return
-    const segments = timelineSegments()
-    const toolIds = new Set(
-      segments
-        .filter((segment) => segment.type === "tool" && isMessageDeletable(segment.messageId))
-        .map((segment) => segment.id),
-    )
-    setSelectedTimelineIds((prev) => {
-      if (prev.size === 0) return prev
-      const next = new Set([...prev].filter((id) => toolIds.has(id)))
-      if (next.size === 0) setLastSelectionAnchorId(null)
-      return next
+      return segments
     })
-  }
-
-  const lastAssistantIndex = createMemo(() => {
-    const messageId = lastAssistantMessageId()
-    if (!messageId) return -1
-    return messageIndexById().get(messageId) ?? -1
   })
- 
-  const [timelineSegments, setTimelineSegments] = createSignal<TimelineSegment[]>([])
+  const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
+    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+  const projectSessionOutline = createSessionOutlineProjection()
+  const timelineSegments = createMemo(() => {
+    const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
+    const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()
+    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), t) : residentTimelineSegments()
+  })
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -399,7 +371,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   const searchMatchedTimelineSegmentIds = createMemo(() => {
-    const matches = searchMatches()
+    const matches = currentSearchMatches()
     if (matches.length === 0) return new Set<string>()
     const result = new Set<string>()
     for (const segment of timelineSegments()) {
@@ -416,292 +388,20 @@ export default function MessageSection(props: MessageSectionProps) {
     return timelineSegments().find((segment) => segmentMatchesSearch(segment, match))?.id ?? null
   })
 
-  const seenTimelineMessageIds = new Set<string>()
-  const seenTimelineSegmentKeys = new Set<string>()
-  const timelinePartCountsByMessageId = new Map<string, number>()
-  let pendingTimelineMessagePartUpdates = new Set<string>()
-  let pendingTimelinePartUpdateFrame: number | null = null
-
-  function makeTimelineKey(segment: TimelineSegment) {
-    return `${segment.messageId}:${segment.id}:${segment.type}`
-  }
-
-  function seedTimeline() {
-    seenTimelineMessageIds.clear()
-    seenTimelineSegmentKeys.clear()
-    timelinePartCountsByMessageId.clear()
-    const ids = untrack(messageIds)
-    const resolvedStore = untrack(store)
-    const segments: TimelineSegment[] = []
-    ids.forEach((messageId) => {
-      const record = resolvedStore.getMessage(messageId)
-      if (!record) return
-      seenTimelineMessageIds.add(messageId)
-      timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-      const built = buildTimelineSegments(props.instanceId, record, t)
-      built.forEach((segment) => {
-        const key = makeTimelineKey(segment)
-        if (seenTimelineSegmentKeys.has(key)) return
-        seenTimelineSegmentKeys.add(key)
-        segments.push(segment)
-      })
-    })
-    setTimelineSegments(segments)
-  }
-
-  function appendTimelineForMessage(messageId: string) {
-    const record = untrack(() => store().getMessage(messageId))
-    if (!record) return
-    timelinePartCountsByMessageId.set(messageId, record.partIds.length)
-    const built = buildTimelineSegments(props.instanceId, record, t)
-    if (built.length === 0) return
-    const newSegments: TimelineSegment[] = []
-    built.forEach((segment) => {
-      const key = makeTimelineKey(segment)
-      if (seenTimelineSegmentKeys.has(key)) return
-      seenTimelineSegmentKeys.add(key)
-      newSegments.push(segment)
-    })
-    if (newSegments.length > 0) {
-      setTimelineSegments((prev) => [...prev, ...newSegments])
-    }
-  }
   const [activeSegmentId, setActiveSegmentId] = createSignal<string | null>(null)
+  const [revealActiveToken, setRevealActiveToken] = createSignal(0)
 
-  const [deleteHover, setDeleteHover] = createSignal<DeleteHoverState>({ kind: "none" })
-
-  const [selectedForDeletion, setSelectedForDeletion] = createSignal<Set<string>>(new Set<string>())
-  const selectedToolParts = createMemo(() => {
-    const selected = selectedTimelineIds()
-    if (selected.size === 0) return [] as { messageId: string; partId: string }[]
-    const segments = timelineSegments()
-    const segmentById = new Map<string, TimelineSegment>()
-    for (const segment of segments) segmentById.set(segment.id, segment)
-    const toolParts: { messageId: string; partId: string }[] = []
-    const seen = new Set<string>()
-    for (const segId of selected) {
-      const segment = segmentById.get(segId)
-      if (!segment || segment.type !== "tool") continue
-      for (const partId of segment.toolPartIds ?? []) {
-        if (!partId) continue
-        const key = `${segment.messageId}:${partId}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        toolParts.push({ messageId: segment.messageId, partId })
-      }
-    }
-    return toolParts
-  })
-  const deleteMessageIds = createMemo(() => selectedForDeletion())
-  const deleteToolParts = createMemo(() => {
-    const messageIds = deleteMessageIds()
-    const allowed = deletableMessageIds()
-    return selectedToolParts().filter((entry) => allowed.has(entry.messageId) && !messageIds.has(entry.messageId))
-  })
-
-  const deleteToolPartKeys = createMemo(() => {
-    const set = new Set<string>()
-    for (const entry of deleteToolParts()) {
-      set.add(`${entry.messageId}:${entry.partId}`)
-    }
-    return set
-  })
-  const deleteCompanionParts = createMemo(() => {
-    sessionRevision()
-    const selectedByMessage = new Map<string, Set<string>>()
-    for (const entry of deleteToolParts()) {
-      const selected = selectedByMessage.get(entry.messageId) ?? new Set<string>()
-      selected.add(entry.partId)
-      selectedByMessage.set(entry.messageId, selected)
-    }
-
-    const companions: { messageId: string; partId: string }[] = []
-    const s = store()
-    for (const [messageId, selectedToolPartIds] of selectedByMessage) {
-      const record = s.getMessage(messageId)
-      if (!record) continue
-      const partIds = collectToolDeletionCompanionPartIds(
-        record.partIds ?? [],
-        (partId) => record.parts?.[partId]?.data,
-        selectedToolPartIds,
-      )
-      for (const partId of partIds) {
-        companions.push({ messageId, partId })
-      }
-    }
-    return companions
-  })
-  const deleteCompanionPartKeys = createMemo(() =>
-    new Set(deleteCompanionParts().map((entry) => `${entry.messageId}:${entry.partId}`)),
-  )
-  const isDeleteMode = createMemo(() => deleteMessageIds().size > 0 || deleteToolParts().length > 0)
-  const selectedDeleteCount = createMemo(() => deleteMessageIds().size + deleteToolParts().length)
-
-  const selectedTokenTotal = createMemo(() => {
-    const selected = deleteMessageIds()
-    const toolParts = deleteToolParts()
-    if (selected.size === 0 && toolParts.length === 0) return 0
-    // Fresh-from-store chars: read parts directly via buildRecordDisplayData +
-    // getPartCharCount so the toolbar stays consistent with the xray overlay
-    // (which also reads live from the store). Falls back to segment totalChars
-    // when no record is found (e.g. compaction segments).
-    const s = store()
-    let total = 0
-    for (const messageId of selected) {
-      let chars = 0
-      const record = s.getMessage(messageId)
-      if (record) {
-        const displayData = buildRecordDisplayData(props.instanceId, record)
-        for (const part of displayData.orderedParts) {
-          chars += getPartCharCount(part)
-        }
-      } else {
-        // Fallback: sum from segments (O(n) pre-pass scoped to this branch)
-        for (const seg of timelineSegments()) {
-          if (seg.messageId === messageId) chars += seg.totalChars
-        }
-      }
-      total += Math.max(Math.round(chars / 4), 1)
-    }
-    if (toolParts.length > 0) {
-      const partFallbackChars = new Map<string, number>()
-      for (const segment of timelineSegments()) {
-        if (segment.type !== "tool") continue
-        for (const partId of segment.toolPartIds ?? []) {
-          if (!partId || partFallbackChars.has(partId)) continue
-          partFallbackChars.set(partId, segment.totalChars)
-        }
-      }
-      for (const { messageId, partId } of toolParts) {
-        let chars = 0
-        const record = s.getMessage(messageId)
-        const partRecord = record?.parts?.[partId]
-        if (partRecord?.data) {
-          chars = getPartCharCount(partRecord.data)
-        } else {
-          chars = partFallbackChars.get(partId) ?? 0
-        }
-        total += Math.max(Math.round(chars / 4), 1)
-      }
-      for (const { messageId, partId } of deleteCompanionParts()) {
-        const part = s.getMessage(messageId)?.parts?.[partId]?.data
-        if (part) total += Math.max(Math.round(getPartCharCount(part) / 4), 1)
-      }
-    }
-    return total
-  })
-
-  const formatTokenCount = (tokens: number): string => {
-    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-    return String(tokens)
-  }
-
-  const isMessageSelectedForDeletion = (messageId: string) => selectedForDeletion().has(messageId)
-
-  const setMessageSelectedForDeletion = (messageId: string, selected: boolean) => {
-    if (!messageId) return
-    if (!isMessageDeletable(messageId)) return
-    setSelectedForDeletion((prev) => {
-      const next = new Set(prev)
-      if (selected) {
-        next.add(messageId)
-      } else {
-        next.delete(messageId)
-      }
-      return next
-    })
-  }
-
-  const clearDeleteMode = () => {
-    setSelectedForDeletion(new Set<string>())
-    setDeleteHover({ kind: "none" })
-    setSelectedTimelineIds(new Set<string>())
-    setLastSelectionAnchorId(null)
-    setIsDeleteMenuOpen(false)
-  }
-
-  createEffect(() => {
-    const timelineIds = selectedTimelineIds()
-    if (timelineIds.size === 0) {
-      return
-    }
-    const segments = timelineSegments()
-    const segmentById = new Map<string, TimelineSegment>()
-    for (const segment of segments) segmentById.set(segment.id, segment)
-    const affectedMessageIds = new Set<string>()
-    for (const segId of timelineIds) {
-      const segment = segmentById.get(segId)
-      if (segment && segment.type !== "tool" && isMessageDeletable(segment.messageId)) {
-        affectedMessageIds.add(segment.messageId)
-      }
-    }
-    setSelectedForDeletion(affectedMessageIds)
-  })
-
-  const selectAllForDeletion = () => {
-    const allMessageIds = [...deletableMessageIds()]
-    setSelectedForDeletion(new Set<string>(allMessageIds))
-    // Also select all timeline segments — tool visibility is handled by
-    // isSelectionActive() in isHidden(), no expand/collapse needed.
-    const segments = timelineSegments()
-    setSelectedTimelineIds(new Set(segments.filter((s) => isMessageDeletable(s.messageId)).map((s) => s.id)))
-  }
-
-  const deleteSelectedMessages = async () => {
-    const selected = deleteMessageIds()
-    const toolParts = deleteToolParts()
-    if (selected.size === 0 && toolParts.length === 0) return
-
-    const allowed = deletableMessageIds()
-
-    const idsInSessionOrder = messageIds()
-    const toDelete: string[] = []
-    for (let idx = idsInSessionOrder.length - 1; idx >= 0; idx -= 1) {
-      const id = idsInSessionOrder[idx]
-      if (allowed.has(id) && selected.has(id)) {
-        toDelete.push(id)
-      }
-    }
-
-    const companionParts = deleteCompanionParts()
-
-    try {
-      await executeBulkDeletionPlan(
-        {
-          messageIds: toDelete,
-          companionParts: companionParts.filter(({ messageId }) => allowed.has(messageId)),
-          toolParts: toolParts.filter(({ messageId }) => allowed.has(messageId)),
-        },
-        {
-          clearSelection: clearDeleteMode,
-          deleteMessage: (messageId) => deleteMessage(props.instanceId, props.sessionId, messageId),
-          deletePart: ({ messageId, partId }) =>
-            deleteMessagePart(props.instanceId, props.sessionId, messageId, partId),
-        },
-      )
-    } catch (error) {
-      showAlertDialog(t("messageSection.bulkDelete.failedMessage"), {
-        title: t("messageSection.bulkDelete.failedTitle"),
-        detail: error instanceof Error ? error.message : String(error),
-        variant: "error",
-      })
-    }
-  }
- 
   const isActive = createMemo(() => props.isActive !== false)
   const [listApi, setListApi] = createSignal<VirtualFollowListApi | null>(null)
   const [listState, setListState] = createSignal<VirtualFollowListState | null>(null)
-  const [scrollControlsOpen, setScrollControlsOpen] = createSignal(false)
-  const [scrollControlsHoverSuppressed, setScrollControlsHoverSuppressed] = createSignal(false)
-  const scrollButtonsCount = createMemo(() => listState()?.scrollButtonsCount() ?? 0)
+  const showFirstButton = () => Boolean(props.hasMoreMessages || listState()?.showScrollTopButton())
+  const showLatestButton = () => !isLatestWindow(store().getMessageWindow(props.sessionId)) || Boolean(listState()?.showScrollBottomButton())
+  const scrollButtonsCount = createMemo(() => Number(showFirstButton()) + Number(showLatestButton()))
 
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
-  let scrollControlsRef: HTMLDivElement | undefined
-
   // Only preferences should force a follow-token re-anchor. Message/session
-  // revision churn at the end of a turn (message.updated, session.idle, etc.)
+  // revision churn at the end of a turn (terminal updates, session idle, etc.)
   // should not trigger an immediate scroll-to-bottom.
   const followToken = createMemo(() => preferenceSignature())
 
@@ -711,7 +411,39 @@ export default function MessageSection(props: MessageSectionProps) {
   const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   let restoringScrollSnapshot = false
+  let restoredWithoutSnapshot = false
   let scrollRestoreGeneration = 0
+  let pagingWindow = false
+  let pagingWindowController: AbortController | null = null
+  let anchorRestoreController: AbortController | null = null
+  const [navigationPending, setNavigationPending] = createSignal(false)
+  function cancelWindowNavigation() {
+    if (anchorRestoreController) {
+      anchorRestoreController.abort()
+      anchorRestoreController = null
+      scrollRestoreGeneration += 1
+      restoringScrollSnapshot = false
+      setDidRestoreScroll(true)
+    }
+    pagingWindowController?.abort()
+    pagingWindowController = null
+    pagingWindow = false
+    setNavigationPending(false)
+  }
+  let retryAnchorRestore: (() => void) | null = null
+  const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+
+  function registerListApi(api: VirtualFollowListApi) {
+    if (listApi() !== api) {
+      cancelWindowNavigation()
+      scrollRestoreGeneration += 1
+      restoringScrollSnapshot = false
+      setDidRestoreScroll(false)
+      pagingWindow = false
+      retryAnchorRestore = null
+    }
+    setListApi(api)
+  }
 
   function getLastGoodScrollSnapshot(sessionId: string) {
     return lastGoodScrollSnapshots.get(sessionId) ?? store().getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
@@ -725,8 +457,13 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
+        cancelWindowNavigation()
         scrollRestoreGeneration += 1
         restoringScrollSnapshot = false
+        restoredWithoutSnapshot = false
+        pagingWindow = false
+        retryAnchorRestore = null
+        setOlderMessageLoadFailed(false)
         setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
@@ -744,41 +481,61 @@ export default function MessageSection(props: MessageSectionProps) {
           }
           return
         }
-        persistMessageScrollSnapshot({ requireActive: false })
+        const wasRestoringScrollSnapshot = restoringScrollSnapshot
+        cancelWindowNavigation()
+        scrollRestoreGeneration += 1
+        retryAnchorRestore = null
+        if (!wasRestoringScrollSnapshot) persistMessageScrollSnapshot({ requireActive: false })
+        restoringScrollSnapshot = false
+        pagingWindow = false
       },
     ),
   )
+
+  onCleanup(cancelWindowNavigation)
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
     if (!element) return false
     if ((options?.requireActive ?? true) && !isActive()) return false
     if (restoringScrollSnapshot) return false
+    if (pagingWindow) return false
     if (!element.isConnected) return false
     if (element.clientHeight <= 0) return false
     if (typeof getComputedStyle === "function" && getComputedStyle(element).display === "none") return false
     return true
   }
 
-  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean }) {
+  function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean; snapshot?: VirtualFollowScrollSnapshot }) {
     if (restoringScrollSnapshot) return
+    if (pagingWindow) return
     if (!didRestoreScroll()) return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = listApi()?.captureScrollSnapshot()
+      const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
-        store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, snapshot)
+        const resolvedStore = store()
+        resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+          snapshot,
+          resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+          resolvedStore.getMessageWindow(sessionId),
+        ))
         return
       }
     }
 
     const lastGoodScrollSnapshot = getLastGoodScrollSnapshot(sessionId)
     if (lastGoodScrollSnapshot) {
-      store().setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, lastGoodScrollSnapshot)
+      const resolvedStore = store()
+      resolvedStore.setScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE, preserveMessageWindowCursor(
+        lastGoodScrollSnapshot,
+        resolvedStore.getScrollSnapshot(sessionId, MESSAGE_SCROLL_CACHE_SCOPE),
+        resolvedStore.getMessageWindow(sessionId),
+      ))
       return
     }
 
@@ -812,44 +569,6 @@ export default function MessageSection(props: MessageSectionProps) {
     return streamingAssistantTextMessageId()
   })
 
-  function toggleHoldLongAssistantReplies() {
-    updatePreferences({ holdLongAssistantReplies: !holdLongAssistantRepliesEnabled() })
-  }
-
-  function closeScrollControls() {
-    setScrollControlsOpen(false)
-  }
-
-  function openScrollControlsFromTrigger(event: MouseEvent) {
-    event.preventDefault()
-    event.stopPropagation()
-    if (scrollControlsOpen()) return
-    setScrollControlsHoverSuppressed(false)
-    setScrollControlsOpen(true)
-  }
-
-  function runScrollControlAction(event: PointerEvent, action: () => void) {
-    event.preventDefault()
-    event.stopPropagation()
-    action()
-    setScrollControlsHoverSuppressed(false)
-    closeScrollControls()
-  }
-
-  createEffect(() => {
-    if (!scrollControlsOpen()) return
-    if (typeof document === "undefined") return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null
-      if (target && scrollControlsRef?.contains(target)) return
-      closeScrollControls()
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown)
-    onCleanup(() => document.removeEventListener("pointerdown", handlePointerDown))
-  })
-
   function isStreamingAssistantTextMessage(messageId: string | null | undefined) {
     if (!messageId) return false
     const resolvedStore = store()
@@ -858,8 +577,8 @@ export default function MessageSection(props: MessageSectionProps) {
     if (record.status !== "streaming") return false
 
     const info = resolvedStore.getMessageInfo(messageId)
-    const timeInfo = info?.time as { end?: number } | undefined
-    if (typeof timeInfo?.end === "number" && timeInfo.end > 0) return false
+    const timeInfo = info?.time as { completed?: number } | undefined
+    if (typeof timeInfo?.completed === "number" && timeInfo.completed > 0) return false
 
     const { orderedParts } = buildRecordDisplayData(props.instanceId, record)
     return orderedParts.some((part) => {
@@ -886,52 +605,124 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!isActive()) return
     if (props.loading) return
     if (visibleMessageIds().length === 0) return
-    if (didRestoreScroll()) return
+    if (restoringScrollSnapshot) return
 
-    const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    const snapshot = initialScrollSnapshot()
+    if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
     if (!snapshot) {
-      api.setAutoScroll(true)
-      api.scrollToBottom({ immediate: true })
-      setDidRestoreScroll(true)
+      const restoreSessionId = props.sessionId
+      const restoreGeneration = ++scrollRestoreGeneration
+      const isCurrentRestore = () => isActive()
+        && api === listApi()
+        && isScrollRestoreGenerationCurrent(
+          restoreSessionId,
+          restoreGeneration,
+          props.sessionId,
+          scrollRestoreGeneration,
+        )
+      restoredWithoutSnapshot = true
+      restoringScrollSnapshot = true
+      api.restoreScrollSnapshot({ scrollTop: 0, atBottom: true, followModeType: "following" }, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
       return
     }
 
+    restoredWithoutSnapshot = false
     const restoreSessionId = props.sessionId
     const restoreGeneration = ++scrollRestoreGeneration
-    const isCurrentRestore = () => isScrollRestoreGenerationCurrent(
-      restoreSessionId,
-      restoreGeneration,
-      props.sessionId,
-      scrollRestoreGeneration,
-    )
+    const isCurrentRestore = () => isActive()
+      && api === listApi()
+      && isScrollRestoreGenerationCurrent(
+        restoreSessionId,
+        restoreGeneration,
+        props.sessionId,
+        scrollRestoreGeneration,
+      )
     restoringScrollSnapshot = true
-    api.restoreScrollSnapshot(snapshot, {
-      behavior: "auto",
-      fallback: () => {
-        if (!isCurrentRestore()) return
-        api.setAutoScroll(true)
-        api.scrollToBottom({ immediate: true })
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-      onApplied: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setLastGoodScrollSnapshot(restoreSessionId, snapshot)
-        setDidRestoreScroll(true)
-      },
-      onCancelled: () => {
-        if (!isCurrentRestore()) return
-        restoringScrollSnapshot = false
-        setDidRestoreScroll(true)
-      },
-    })
+    const restore = async () => {
+      setOlderMessageLoadFailed(false)
+      let restoredSnapshot = snapshot
+      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)) {
+        try {
+          if (props.onLoadMessageAnchor) {
+            const controller = new AbortController()
+            anchorRestoreController = controller
+            try {
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+              catch (error) {
+                if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
+                await props.onLoadLatestMessages(controller.signal)
+                if (!isCurrentRestore()) return
+                restoredSnapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
+              }
+            }
+            finally { if (anchorRestoreController === controller) anchorRestoreController = null }
+          } else await loadPagesUntilAnchor({
+            hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
+            hasMore: () => Boolean(props.hasMoreMessages),
+            isCurrent: isCurrentRestore,
+            loadMore: async () => { await props.onLoadMoreMessages?.() },
+            getCursor: () => props.getMessageHistoryCursor?.(),
+          })
+        } catch (error) {
+          if (!isCurrentRestore()) return
+          retryAnchorRestore = () => void restore()
+          setOlderMessageLoadFailed(true)
+          log.error("Failed to load older messages while restoring scroll", { instanceId: props.instanceId, sessionId: restoreSessionId, error })
+          return
+        }
+      }
+      if (!isCurrentRestore()) return
+      retryAnchorRestore = null
+
+      api.restoreScrollSnapshot(restoredSnapshot, {
+        behavior: "auto",
+        fallback: () => {
+          if (!isCurrentRestore()) return
+          api.setAutoScroll(true)
+          api.scrollToBottom({ immediate: true })
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+        onApplied: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setLastGoodScrollSnapshot(restoreSessionId, restoredSnapshot)
+          setDidRestoreScroll(true)
+        },
+        onCancelled: () => {
+          if (!isCurrentRestore()) return
+          restoringScrollSnapshot = false
+          setDidRestoreScroll(true)
+        },
+      })
+    }
+    void restore()
   })
 
   onCleanup(() => {
     const allowCapture = !restoringScrollSnapshot
     scrollRestoreGeneration += 1
     restoringScrollSnapshot = false
+    retryAnchorRestore = null
     persistMessageScrollSnapshot({ allowCapture, requireActive: false })
   })
 
@@ -941,23 +732,59 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function openSearch() {
     setIsSearchOpen(true)
-    requestAnimationFrame(() => searchInputRef?.focus())
+    requestAnimationFrame(() => { if (isSearchOpen()) searchInputRef?.focus() })
   }
 
   function closeSearch() {
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
     setIsSearchOpen(false)
+    setSearchPageCursor(undefined)
+    setNextSearchCursor(null)
+    setPreviewSearchMatch(undefined)
+    setSkippedSearchMessages(0)
     setSearchQuery("")
     setDebouncedSearchQuery("")
     setSearchedQuery("")
     setIsSearchPending(false)
+    setFailedSearchQuery("")
     setSearchMatches([])
     setActiveSearchIndex(0)
   }
 
+  function updateSearchQuery(query: string) {
+    if (query === searchQuery()) return
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+    searchLocatorAuthority.reset()
+    searchGeneration += 1
+    setSearchPageCursor(undefined)
+    setSearchQuery(query)
+  }
+
+  onCleanup(() => {
+    searchLocatorAuthority.reset()
+    invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
+  })
+
   function moveSearchMatch(direction: 1 | -1) {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) return
     setActiveSearchIndex((index) => (index + direction + count) % count)
+    const match = activeSearchMatch()
+    if (match) navigateSearchMatch(match)
+  }
+
+  function navigateSearchMatch(match: { sessionId: string; messageId: string }) {
+    if (match.sessionId !== props.sessionId || !props.onLoadMessageAnchor) {
+      setPreviewSearchMatch(match)
+      return
+    }
+    if (messageIds().includes(match.messageId)) {
+      cancelWindowNavigation()
+      listApi()?.setAutoScroll(false)
+      listApi()?.scrollToKey(match.messageId, { block: "start" })
+    } else void pageWindow("around", api => api.scrollToKey(match.messageId, { block: "start" }), match.messageId)
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -1054,213 +881,107 @@ export default function MessageSection(props: MessageSectionProps) {
     listApi()?.notifyContentRendered()
   }
 
-  let previousTimelineIds: string[] = []
+  function overlayWindowOnSnapshot(snapshot: VirtualFollowScrollSnapshot | undefined) {
+    if (!snapshot) return snapshot
+    return { ...snapshot, ...toWindowSnapshot(store().getMessageWindow(props.sessionId) ?? { kind: "latest", newerCursors: [] }) }
+  }
 
-  createEffect(() => {
-    const loading = Boolean(props.loading)
-    const ids = messageIds()
+  function waitTwoFrames() {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  }
 
-    // Wrap all iteration of the store-proxied `ids` array in untrack()
-    // to prevent O(n) per-element reactive subscriptions.  The effect
-    // only needs to re-run when `messageIds` (memo) changes.
-    untrack(() => {
-      if (loading) {
-        handleClearTimelineSelection()
-        previousTimelineIds = []
-        setTimelineSegments([])
-        seenTimelineMessageIds.clear()
-        seenTimelineSegmentKeys.clear()
-        timelinePartCountsByMessageId.clear()
-        pendingTimelineMessagePartUpdates.clear()
-        if (pendingTimelinePartUpdateFrame !== null) {
-          cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-          pendingTimelinePartUpdateFrame = null
-        }
-        return
+  async function pageWindow(
+    direction: "older" | "newer" | "latest" | "oldest" | "around",
+    after: (api: VirtualFollowListApi) => void,
+    anchorMessageId?: string,
+  ) {
+    const api = listApi()
+    if (!api || !isActive()) return
+    if (pagingWindow && direction !== "around" && direction !== "latest") return
+    cancelWindowNavigation()
+    const load = direction === "around"
+      ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
+      : direction === "older"
+      ? props.onLoadMoreMessages
+      : direction === "newer"
+        ? props.onLoadNewerMessages
+        : direction === "oldest"
+          ? props.onLoadOldestMessages
+          : props.onLoadLatestMessages
+    if (!load) {
+      if (direction === "oldest") after(api)
+      return
+    }
+    if (direction === "older" && !props.hasMoreMessages) return
+    if (direction === "oldest" && !props.hasMoreMessages) {
+      after(api)
+      return
+    }
+    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
+    const sessionId = props.sessionId
+    const generation = scrollRestoreGeneration
+    const controller = new AbortController()
+    pagingWindowController = controller
+    const isCurrent = () => isActive()
+      && api === listApi()
+      && pagingWindowController === controller
+      && !controller.signal.aborted
+      && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
+    pagingWindow = true
+    setNavigationPending(direction === "around")
+    if (direction !== "latest") api.setAutoScroll(false)
+    setOlderMessageLoadFailed(false)
+    retryAnchorRestore = null
+    try {
+      if (!isCurrent()) return
+      const previousPage = messageWindowPageKey()
+      const previousPosition = direction === "older" || direction === "newer" ? api.captureScrollSnapshot() : undefined
+      const committed = await load(controller.signal)
+      if (committed === false || !isCurrent()) return
+      // An empty boundary probe retires the older cursor without changing the
+      // resident page. Do not jump from its top back to its bottom in that case.
+      if (direction === "older" && messageWindowPageKey() === previousPage) return
+      api.setAutoScroll(direction === "latest")
+      api.notifyContentRendered()
+      await waitTwoFrames()
+      if (!isCurrent()) return
+      const retainedAnchor = previousPosition?.anchorKey && visibleMessageIds().includes(previousPosition.anchorKey)
+      if (retainedAnchor) api.restoreScrollSnapshot({ ...previousPosition, atBottom: false, followModeType: "escaped" })
+      else after(api)
+      const bottomSettlement = !retainedAnchor && (direction === "older" || direction === "latest")
+        ? await api.settleAtBottom()
+        : "settled"
+      if (!isCurrent()) return
+      api.setAutoScroll(direction === "latest" && bottomSettlement !== "cancelled")
+      api.notifyContentRendered()
+      await waitTwoFrames()
+      if (!isCurrent()) return
+      pagingWindowController = null
+      pagingWindow = false
+      setNavigationPending(false)
+      const activeMessageId = api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey()
+      const segment = timelineSegments().find(segment => segment.messageId === activeMessageId)
+      if (segment) setActiveSegmentId(segment.id)
+      if (direction === "latest" || direction === "oldest") setRevealActiveToken(value => value + 1)
+      persistMessageScrollSnapshot({ snapshot: api.captureScrollSnapshot() })
+    } catch (error) {
+      if (isCurrent()) {
+        retryAnchorRestore = () => { void pageWindow(direction, after, anchorMessageId) }
+        setOlderMessageLoadFailed(true)
+        log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
-
-      if (previousTimelineIds.length === 0 && ids.length > 0) {
-        seedTimeline()
-        previousTimelineIds = [...ids]
-        return
+    } finally {
+      if (pagingWindowController === controller) {
+        pagingWindowController = null
+        pagingWindow = false
+        setNavigationPending(false)
       }
-
-      if (ids.length < previousTimelineIds.length) {
-        seedTimeline()
-        previousTimelineIds = [...ids]
-        return
-      }
-
-      if (ids.length === previousTimelineIds.length) {
-        let changedIndex = -1
-        let changeCount = 0
-        for (let index = 0; index < ids.length; index++) {
-          if (ids[index] !== previousTimelineIds[index]) {
-            changedIndex = index
-            changeCount += 1
-            if (changeCount > 1) break
-          }
-        }
-        if (changeCount === 1 && changedIndex >= 0) {
-          const oldId = previousTimelineIds[changedIndex]
-          const newId = ids[changedIndex]
-          if (seenTimelineMessageIds.has(oldId) && !seenTimelineMessageIds.has(newId)) {
-            seenTimelineMessageIds.delete(oldId)
-            seenTimelineMessageIds.add(newId)
-            setTimelineSegments((prev) => {
-              const next = prev.map((segment) => {
-                if (segment.messageId !== oldId) return segment
-                const updatedId = segment.id.replace(oldId, newId)
-                return { ...segment, messageId: newId, id: updatedId }
-              })
-              seenTimelineSegmentKeys.clear()
-              next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-              return next
-            })
-
-            // Keep part count tracking in sync with id replacement.
-            const existingPartCount = timelinePartCountsByMessageId.get(oldId)
-            if (existingPartCount !== undefined) {
-              timelinePartCountsByMessageId.delete(oldId)
-              timelinePartCountsByMessageId.set(newId, existingPartCount)
-            }
-
-            previousTimelineIds = [...ids]
-            return
-          }
-        }
-      }
-
-      const newIds: string[] = []
-      ids.forEach((id) => {
-        if (!seenTimelineMessageIds.has(id)) {
-          newIds.push(id)
-        }
-      })
-
-      if (newIds.length > 0) {
-        newIds.forEach((id) => {
-          seenTimelineMessageIds.add(id)
-          appendTimelineForMessage(id)
-        })
-      }
-
-      previousTimelineIds = [...ids]
-    })
-  })
-
-  function clearPendingTimelinePartUpdateFrame() {
-    if (pendingTimelinePartUpdateFrame !== null) {
-      cancelAnimationFrame(pendingTimelinePartUpdateFrame)
-      pendingTimelinePartUpdateFrame = null
     }
   }
 
-  function scheduleTimelinePartUpdateFlush() {
-    if (pendingTimelinePartUpdateFrame !== null) return
-    pendingTimelinePartUpdateFrame = requestAnimationFrame(() => {
-      pendingTimelinePartUpdateFrame = null
-      if (pendingTimelineMessagePartUpdates.size === 0) return
-      const changedIds = Array.from(pendingTimelineMessagePartUpdates)
-      pendingTimelineMessagePartUpdates = new Set<string>()
-
-      const ids = messageIds()
-      const resolvedStore = store()
-
-      setTimelineSegments((prev) => {
-        let next = prev
-
-        for (const changedId of changedIds) {
-          // Remove old segments for this message.
-          next = next.filter((segment) => segment.messageId !== changedId)
-
-          const record = resolvedStore.getMessage(changedId)
-          const rebuilt = record ? buildTimelineSegments(props.instanceId, record, t) : []
-
-          // Insert rebuilt segments in the correct place based on session message order.
-          if (rebuilt.length > 0) {
-            let insertAt = next.length
-            const changedIndex = ids.indexOf(changedId)
-            if (changedIndex >= 0) {
-              for (let i = changedIndex + 1; i < ids.length; i++) {
-                const followingId = ids[i]
-                const existingIndex = next.findIndex((segment) => segment.messageId === followingId)
-                if (existingIndex >= 0) {
-                  insertAt = existingIndex
-                  break
-                }
-              }
-            }
-            next = [...next.slice(0, insertAt), ...rebuilt, ...next.slice(insertAt)]
-          }
-        }
-
-        // Rebuild the segment key set since we may have removed/replaced segments.
-        seenTimelineSegmentKeys.clear()
-        next.forEach((segment) => seenTimelineSegmentKeys.add(makeTimelineKey(segment)))
-        return next
-      })
-
-      // Prune stale selection IDs: segment IDs are positional and change on rebuild.
-      setSelectedTimelineIds((prev) => {
-        if (prev.size === 0) return prev
-        const currentIds = new Set(timelineSegments().map((s) => s.id))
-        const pruned = new Set([...prev].filter((id) => currentIds.has(id)))
-        return pruned.size === prev.size ? prev : pruned
-      })
-    })
+  function messageWindowPageKey() {
+    return getMessageWindowPageKey(store().getMessageWindow(props.sessionId))
   }
-
-  // Keep timeline segments in sync when message parts are added/removed.
-  // Part deletion does not remove message ids from the session, so we must
-  // explicitly replace segments for messages whose part count changed.
-  createEffect(() => {
-    if (props.loading) return
-    const ids = messageIds()
-    // Also re-run when sessionRevision bumps (covers part additions within
-    // existing messages) but read individual records inside untrack() to
-    // avoid creating O(n) fine-grained subscriptions.
-    sessionRevision()
-
-    // Wrap the iteration in untrack() so that accessing individual elements
-    // of the store-proxied `ids` array does not create O(n) per-element
-    // reactive subscriptions.  We only need to re-run when the memo
-    // (messageIds) or sessionRevision changes — not per-element.
-    untrack(() => {
-      const resolvedStore = store()
-      const idsSet = new Set(ids)
-      let hasChanges = false
-
-      for (const messageId of ids) {
-        const record = resolvedStore.getMessage(messageId)
-        const partCount = record?.partIds.length ?? 0
-        const previousCount = timelinePartCountsByMessageId.get(messageId)
-
-        if (previousCount === undefined) {
-          timelinePartCountsByMessageId.set(messageId, partCount)
-          continue
-        }
-
-        if (previousCount !== partCount) {
-          timelinePartCountsByMessageId.set(messageId, partCount)
-          pendingTimelineMessagePartUpdates.add(messageId)
-          hasChanges = true
-        }
-      }
-
-      // Drop tracking for ids that are no longer present.
-      // Use the Set for O(1) lookups instead of ids.includes() which is O(n).
-      for (const trackedId of Array.from(timelinePartCountsByMessageId.keys())) {
-        if (!idsSet.has(trackedId)) {
-          timelinePartCountsByMessageId.delete(trackedId)
-        }
-      }
-
-      if (hasChanges) {
-        scheduleTimelinePartUpdateFlush()
-      }
-    })
-  })
 
   createEffect(() => {
     if (!props.onQuoteSelection) {
@@ -1275,6 +996,7 @@ export default function MessageSection(props: MessageSectionProps) {
       setActiveSearchIndex(0)
       setSearchedQuery("")
       setIsSearchPending(false)
+      setFailedSearchQuery("")
       setSearchMatches([])
       return
     }
@@ -1286,31 +1008,74 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   createEffect(() => {
-    sessionRevision()
     const query = debouncedSearchQuery()
-    const includeThinking = Boolean(preferences().showThinkingBlocks)
-    if (query.trim().length < SEARCH_MIN_CHARS) {
+    const workspace = searchWorkspace()
+    const technical = includeTechnical()
+    const systemVisibility = preferences().systemMessagesVisibility
+    const cursor = searchPageCursor()
+    const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
+    const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
+    searchRetryGeneration()
+    if (!isActive() || !isSearchOpen() || query.trim().length < SEARCH_MIN_CHARS) {
+      setIsSearchPending(false)
       return
     }
 
     setIsSearchPending(true)
-    const frame = requestAnimationFrame(() => {
-      const matches = buildSessionSearchMatches({
-        store: store(),
-        sessionId: props.sessionId,
-        query,
-        includeThinking,
+    setSearchedQuery("")
+    setFailedSearchQuery("")
+    setSearchMatches([])
+    setNextSearchCursor(null)
+    setPreviewSearchMatch(undefined)
+    setSkippedSearchMessages(0)
+    const instanceId = props.instanceId
+    const sessionId = props.sessionId
+    const generation = ++searchGeneration
+    const controller = new AbortController()
+    let frame: number | undefined
+    const isCurrentSearch = () => generation === searchGeneration
+      && isActive()
+      && isSearchOpen()
+      && props.instanceId === instanceId
+      && props.sessionId === sessionId
+      && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
+      && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
+      && debouncedSearchQuery() === query
+    void findHistoryMatches(instanceId, {
+      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
+    }, controller.signal).then((page) => {
+      if (!isCurrentSearch()) return
+      frame = requestAnimationFrame(() => {
+        if (!isCurrentSearch()) return
+        batch(() => {
+          setSearchMatches(page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map(hit => ({
+            id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
+            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
+            role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
+            occurrence: 0, preview: hit.excerpt,
+          })))
+          setNextSearchCursor(page.cursor)
+          setSkippedSearchMessages(page.skipped)
+          setSearchedQuery(query)
+          setActiveSearchIndex(0)
+          setIsSearchPending(false)
+        })
       })
-      setSearchMatches(matches)
-      setSearchedQuery(query)
-      setActiveSearchIndex(0)
+    }).catch((error) => {
+      if (!isCurrentSearch()) return
       setIsSearchPending(false)
+      setFailedSearchQuery(query)
+      log.error("Failed to query message history", { instanceId, sessionId, error })
     })
-    onCleanup(() => cancelAnimationFrame(frame))
+    onCleanup(() => {
+      controller.abort()
+      if (generation === searchGeneration) searchGeneration += 1
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    })
   })
 
   createEffect(() => {
-    const count = searchMatches().length
+    const count = currentSearchMatches().length
     if (count === 0) {
       if (activeSearchIndex() !== 0) setActiveSearchIndex(0)
       return
@@ -1320,13 +1085,25 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   })
 
-  let lastScrolledSearchMatchId: string | null = null
   createEffect(() => {
     const match = activeSearchMatch()
-    if (!match || !isSearchOpen()) return
-    if (match.id === lastScrolledSearchMatchId) return
-    lastScrolledSearchMatchId = match.id
-    listApi()?.scrollToKey(match.messageId, { behavior: "smooth", block: "start" })
+    if (!match || !isSearchOpen() || match.sessionId !== props.sessionId || !messageIds().includes(match.messageId)) return
+    const locatorAuthority = searchLocatorAuthority.claim(match.id)
+    if (!locatorAuthority) return
+    const locate = async () => {
+      const endTraversal = beginMessageHistoryTraversal(props.instanceId, props.sessionId)
+      try {
+      if (searchLocatorAuthority.isCurrent(locatorAuthority) && activeSearchMatch()?.id === match.id) {
+        listApi()?.scrollToKey(match.messageId, { block: "start" })
+      }
+      } finally {
+        endTraversal()
+        searchLocatorAuthority.reset(locatorAuthority)
+      }
+    }
+    void untrack(locate).catch((error) => {
+      if (activeSearchMatch()?.id === match.id) log.error("Failed to locate message search result", { instanceId: props.instanceId, sessionId: props.sessionId, error })
+    })
   })
 
 
@@ -1369,16 +1146,6 @@ export default function MessageSection(props: MessageSectionProps) {
         }
       }
 
-      if (event.key === "Escape" && isSearchOpen()) {
-        event.preventDefault()
-        event.stopPropagation()
-        closeSearch()
-        return
-      }
-
-      if (event.key === "Escape" && (selectedTimelineIds().size > 0 || selectedForDeletion().size > 0)) {
-        clearDeleteMode()
-      }
     }
     document.addEventListener("keydown", handleKeyDown)
     onCleanup(() => document.removeEventListener("keydown", handleKeyDown))
@@ -1394,24 +1161,16 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.removeEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch))
   })
 
-  createEffect(() => {
-    if (!isDeleteMenuOpen()) return
-    if (typeof document === "undefined") return
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (deleteMenuRef?.contains(target)) return
-      if (deleteMenuButtonRef?.contains(target)) return
-      setIsDeleteMenuOpen(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    onCleanup(() => document.removeEventListener("mousedown", handleClick))
-  })
   onCleanup(() => {
-    clearPendingTimelinePartUpdateFrame()
+    setIsSearchOpen(false)
+    timelineSegmentCache.clear()
     clearQuoteSelection()
   })
 
   const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+
+  createEffect(on(isSearchOpen, open => { if (!open) closeSearch() }, { defer: true }))
+  createEffect(() => { if (!isActive()) setIsSearchOpen(false) })
 
   return (
     <div
@@ -1420,8 +1179,21 @@ export default function MessageSection(props: MessageSectionProps) {
       data-session-id={props.sessionId}
       data-stream-active={isActive() ? "true" : "false"}
     >
+      <SessionCleanupProgress instanceId={props.instanceId} sessionId={props.sessionId} />
+      <Show when={navigationPending()}>
+        <div class="history-navigation-status window-toolbar" role="status">
+          <span>{t("history.navigation.loading")}</span>
+          <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
+        </div>
+      </Show>
+      <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
+        <div class="history-navigation-status window-toolbar" role="status">
+          <span title={outline.error()}>{t("history.navigation.outlineUnavailable")}</span>
+          <button type="button" class="button-tertiary" onClick={outline.refresh}>{t("messageSection.search.retry")}</button>
+        </div>
+      </Show>
       <div
-        class={`message-layout${showTimeline() ? " message-layout--with-timeline" : ""}`}
+        class={`message-layout${showTimeline() && !props.timelineMount ? " message-layout--with-timeline" : ""}`}
         data-scroll-buttons={scrollButtonsCount()}
       >
         <VirtualFollowList
@@ -1445,19 +1217,21 @@ export default function MessageSection(props: MessageSectionProps) {
             const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"][data-assistant-text-block="true"]`))
             return candidates[candidates.length - 1] ?? null
           }}
-          onScroll={() => {
+          onScroll={(snapshot) => {
             clearQuoteSelection()
-            persistMessageScrollSnapshot()
+            persistMessageScrollSnapshot({ snapshot })
           }}
+          onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
+          onScrollIntent={() => {
+            setRevealActiveToken(value => value + 1)
+            if (navigationPending()) cancelWindowNavigation()
+          }}
+          onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
-          onClick={(e) => {
-            if (selectedTimelineIds().size === 0) return
-            const target = e.target as HTMLElement
-            if (target.closest("button, a, input, [role='button']")) return
-            handleClearTimelineSelection()
-          }}
           onActiveKeyChange={(messageId) => {
-            if (!messageId) return
+            if (!messageId || pagingWindow) return
             const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
             if (firstSeg) {
               setActiveSegmentId((current) => (current === firstSeg.id ? current : firstSeg.id))
@@ -1473,80 +1247,54 @@ export default function MessageSection(props: MessageSectionProps) {
           }}
           scrollToTopAriaLabel={() => t("messageSection.scroll.toFirstAriaLabel")}
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
-          registerApi={(api) => setListApi(api)}
+          registerApi={registerListApi}
           registerState={(state) => setListState(state)}
-          renderControls={(state, api) => (
-            <div
-              ref={(el) => {
-                scrollControlsRef = el
-              }}
-              class="message-scroll-controls"
-              data-open={scrollControlsOpen() ? "true" : "false"}
-              data-hover-suppressed={scrollControlsHoverSuppressed() ? "true" : "false"}
-              onPointerLeave={(event) => {
-                if (event.pointerType === "mouse") setScrollControlsHoverSuppressed(false)
-              }}
-            >
-              <button
-                type="button"
-                class="message-scroll-button message-scroll-controls-trigger"
-                onClick={openScrollControlsFromTrigger}
-                aria-label={t("messageSection.scroll.showControlsAriaLabel")}
-                title={t("messageSection.scroll.showControlsAriaLabel")}
-              >
-                <ArrowUpDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
-              </button>
-
-              <div class="message-scroll-controls-expanded">
+          renderControls={() => (
+            <div class="message-scroll-controls">
+              <Show when={showFirstButton()}>
                 <button
                   type="button"
                   class="message-scroll-button"
-                  data-active={holdLongAssistantRepliesEnabled() ? "true" : "false"}
-                  onPointerUp={(event) => runScrollControlAction(event, toggleHoldLongAssistantReplies)}
-                  aria-pressed={holdLongAssistantRepliesEnabled()}
-                  aria-label={
-                    holdLongAssistantRepliesEnabled()
-                      ? t("messageSection.scroll.disableHoldAriaLabel")
-                      : t("messageSection.scroll.enableHoldAriaLabel")
-                  }
-                  title={
-                    holdLongAssistantRepliesEnabled()
-                      ? t("messageSection.scroll.disableHoldAriaLabel")
-                      : t("messageSection.scroll.enableHoldAriaLabel")
-                  }
+                  onClick={() => void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true }))}
+                  aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                  title={t("messageSection.scroll.toFirstAriaLabel")}
                 >
-                  <Pause class="message-scroll-icon message-scroll-icon--toggle w-4 h-4" aria-hidden="true" />
+                  <ArrowUp class="message-scroll-icon w-4 h-4" aria-hidden="true" />
                 </button>
-                <Show when={state.showScrollTopButton()}>
-                  <button
-                    type="button"
-                    class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToTop())}
-                    aria-label={t("messageSection.scroll.toFirstAriaLabel")}
-                  >
-                    <span class="message-scroll-icon" aria-hidden="true">
-                      ↑
-                    </span>
-                  </button>
-                </Show>
-                <Show when={state.showScrollBottomButton()}>
-                  <button
-                    type="button"
-                    class="message-scroll-button"
-                    onPointerUp={(event) => runScrollControlAction(event, () => api.scrollToBottom())}
-                    aria-label={t("messageSection.scroll.toLatestAriaLabel")}
-                  >
-                    <span class="message-scroll-icon" aria-hidden="true">
-                      ↓
-                    </span>
-                  </button>
-                </Show>
-              </div>
+              </Show>
+              <Show when={showLatestButton()}>
+                <button
+                  type="button"
+                  class="message-scroll-button"
+                  onClick={() => void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true }))}
+                  aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                  title={t("messageSection.scroll.toLatestAriaLabel")}
+                >
+                  <ArrowDown class="message-scroll-icon w-4 h-4" aria-hidden="true" />
+                </button>
+              </Show>
             </div>
           )}
           renderBeforeItems={() => (
             <>
-              <Show when={!props.loading && !props.loadError && visibleMessageIds().length === 0}>
+              <Show when={olderMessageLoadFailed()}>
+                <div class="flex justify-center py-2">
+                  <button
+                    type="button"
+                    class="button-tertiary"
+                    onClick={() => {
+                      setOlderMessageLoadFailed(false)
+                      const retry = retryAnchorRestore
+                      if (retry) retry()
+                      else void pageWindow("older", (api) => api.scrollToBottom({ immediate: true }))
+                    }}
+                  >
+                    {t("messageSection.loadError.reload")}
+                  </button>
+                </div>
+              </Show>
+
+              <Show when={!props.loading && !props.loadError && !props.hasMoreMessages && visibleMessageIds().length === 0}>
                 <Show
                   when={emptyStateVariant() === "no-session"}
                   fallback={
@@ -1585,22 +1333,20 @@ export default function MessageSection(props: MessageSectionProps) {
                 </Show>
               </Show>
 
-              <Show when={props.loading}>
+              <Show when={Boolean(props.loading) && messageIds().length === 0}>
                 <div class="loading-state">
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>
                 </div>
               </Show>
 
-              <Show when={!props.loading && props.loadError}>
-                {(loadError) => (
-                  <LoadErrorState
-                    title={t("messageSection.loadError.title")}
-                    error={loadError()}
-                    retryLabel={t("messageSection.loadError.reload")}
-                    onRetry={() => props.onReloadMessages?.()}
-                  />
-                )}
+              <Show when={!props.loading && Boolean(props.loadError)}>
+                <LoadErrorState
+                  title={t("messageSection.loadError.title")}
+                  error={props.loadError!}
+                  retryLabel={t("messageSection.loadError.reload")}
+                  onRetry={() => retryAnchorRestore ? retryAnchorRestore() : props.onReloadMessages?.()}
+                />
               </Show>
             </>
           )}
@@ -1609,32 +1355,60 @@ export default function MessageSection(props: MessageSectionProps) {
               messageId={messageId}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
+              isActive={isActive}
               store={store}
-              messageIndex={index}
-              lastAssistantIndex={lastAssistantIndex}
+              messageIndex={index()}
               showThinking={() => preferences().showThinkingBlocks}
+              systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
-              deleteHover={deleteHover}
-              onDeleteHoverChange={setDeleteHover}
-              selectedMessageIds={selectedForDeletion}
-              selectedToolPartKeys={deleteToolPartKeys}
-              selectedCompanionPartKeys={deleteCompanionPartKeys}
-              onToggleSelectedMessage={setMessageSelectedForDeletion}
               onRevert={props.onRevert}
-              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
               onFork={props.onFork}
+              pendingPrompt={props.pendingPrompts?.get(messageId)}
+              pendingPromptBusy={props.pendingPromptBusy}
+              onPendingPromptDeliveryChange={props.onPendingPromptDeliveryChange}
+              onPendingPromptEdit={props.onPendingPromptEdit}
+              onPendingPromptRemove={props.onPendingPromptRemove}
               onContentRendered={handleContentRendered}
-              searchQuery={debouncedSearchQuery}
+              searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
+              pendingFormToolTargets={pendingFormToolTargets}
+              technicalGroupForPart={technicalGroupForPart}
+              technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
+              technicalCleanupParts={technicalCleanupParts}
+              technicalCleanupPartKeys={technicalCleanupPartKeys}
+              onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
+              isTechnicalGroupExpanded={isTechnicalGroupExpanded}
+              setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
           )}
           renderOverlay={() => (
             <>
-              <Show when={isSearchOpen()}>
-                <div class="message-search-popover modal-surface" role="search" aria-label={t("messageSection.search.ariaLabel")}>
+            <DismissibleWindow
+                id={sessionSearchWindowId(props.instanceId, props.sessionId)}
+                open={isSearchOpen()}
+                onClose={closeSearch}
+                title={t("messageSection.search.ariaLabel")}
+                class="message-search-popover"
+              inline
+              initialFocus={() => searchInputRef}
+              >
+                <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
+                  <div class="window-toolbar history-search-toolbar">
+                    <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
+                      onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
+                      <option value="session">{t("history.session")}</option>
+                      <option value="workspace">{t("history.workspace")}</option>
+                    </select>
+                    <label><input type="checkbox" checked={includeTechnical()} onChange={event => batch(() => {
+                      setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
+                    })} /> {t("history.technical")}</label>
+                  </div>
+                  <Show when={isSearchOpen()}>
+                    <HistoryStatistics instanceId={props.instanceId} sessionId={searchWorkspace() ? undefined : props.sessionId} />
+                  </Show>
                   <div class="modal-search-container message-search-container">
                     <div class="message-search-input-row">
                       <Search class="w-4 h-4 modal-search-icon" aria-hidden="true" />
@@ -1647,17 +1421,15 @@ export default function MessageSection(props: MessageSectionProps) {
                         value={searchQuery()}
                         placeholder={t("messageSection.search.placeholder")}
                         onInput={(event) => {
-                          setSearchQuery(event.currentTarget.value)
+                          setSearchedQuery("")
+                          setFailedSearchQuery("")
+                          updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
                             event.preventDefault()
                             moveSearchMatch(event.shiftKey ? -1 : 1)
                             return
-                          }
-                          if (event.key === "Escape") {
-                            event.preventDefault()
-                            closeSearch()
                           }
                         }}
                       />
@@ -1668,18 +1440,20 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.minChars", { count: String(SEARCH_MIN_CHARS) })
                           : isSearchPending()
                             ? t("messageSection.search.count.searching")
-                          : searchMatches().length === 0
+                          : searchFailed()
+                            ? t("messageSection.search.failed")
+                          : currentSearchMatches().length === 0
                             ? t("messageSection.search.count.none")
                             : t("messageSection.search.count.matches", {
                                 current: String(activeSearchIndex() + 1),
-                                total: String(searchMatches().length),
+                                total: String(currentSearchMatches().length),
                               })}
                       </span>
                       <button
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(-1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.previousAriaLabel")}
                         title={t("messageSection.search.previousAriaLabel")}
                       >
@@ -1689,7 +1463,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         type="button"
                         class="message-search-button"
                         onClick={() => moveSearchMatch(1)}
-                        disabled={searchMatches().length === 0}
+                        disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.nextAriaLabel")}
                         title={t("messageSection.search.nextAriaLabel")}
                       >
@@ -1709,15 +1483,47 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>
-                  <Show when={isSearchSettled() && searchMatches().length === 0}>
+                  <Show when={searchFailed()}>
+                    <div class="modal-empty-state message-search-empty">
+                      <span>{t("messageSection.search.failed")}</span>
+                      <button
+                        type="button"
+                        class="button-tertiary"
+                        onClick={() => setSearchRetryGeneration((generation) => generation + 1)}
+                      >
+                        {t("messageSection.search.retry")}
+                      </button>
+                    </div>
+                  </Show>
+                  <div class="history-search-results">
+                    <For each={currentSearchMatches()}>{(match, index) => (
+                      <button type="button" class="history-search-result" classList={{ "history-search-result-active": activeSearchIndex() === index() }}
+                        onClick={() => {
+                          setActiveSearchIndex(index())
+                          navigateSearchMatch(match)
+                        }}>
+                        <span class="text-xs text-muted">{match.sessionId} · {match.messageId} · {t(`history.${match.partType}`)}</span>
+                        <span>{match.preview}</span>
+                      </button>
+                    )}</For>
+                  </div>
+                  <Show when={skippedSearchMessages()}><div class="history-statistics" role="status">
+                    {t("history.skipped", { count: skippedSearchMessages() })}
+                  </div></Show>
+                  <Show when={previewSearchMatch()}>{match => <HistoryMessagePreview instanceId={props.instanceId}
+                    sessionId={match().sessionId} messageId={match().messageId} />}</Show>
+                  <Show when={nextSearchCursor()}>
+                    <button type="button" class="button-tertiary" disabled={isSearchPending()}
+                      onClick={() => setSearchPageCursor(nextSearchCursor() ?? undefined)}>{t("history.more")}</button>
+                  </Show>
+                  <Show when={isSearchSettled() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>
-              </Show>
+              </DismissibleWindow>
 
-              <Show when={quoteSelection()}>
-                {(selection) => (
-                  <div class="message-quote-popover" style={{ top: `${selection().top}px`, left: `${selection().left}px` }}>
+              <Show when={Boolean(quoteSelection())}>
+                <div class="message-quote-popover" style={{ top: `${quoteSelection()!.top}px`, left: `${quoteSelection()!.left}px` }}>
                     <div class="message-quote-button-group">
                       <button type="button" class="message-quote-button" onClick={() => handleQuoteSelectionRequest("quote")}>
                         {t("messageSection.quote.addAsQuote")}
@@ -1730,156 +1536,29 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </div>
-                )}
               </Show>
             </>
           )}
         />
 
-        <Show when={isDeleteMode()}>
-          <div
-            class="message-delete-mode-toolbar"
-            role="toolbar"
-            aria-label={t("messageSection.bulkDelete.toolbarAriaLabel", { count: selectedDeleteCount() })}
-          >
-            <div class="message-delete-mode-toolbar-row" aria-hidden="true">
-              <span class="message-delete-mode-token-group">
-                <span class="message-delete-mode-count message-delete-mode-count--before" title={`${tokenStats().used} tokens currently in context`}>
-                  {formatTokenCount(tokenStats().used)}
-                </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span
-                  class="message-delete-mode-count message-delete-mode-count--selection"
-                  title={`${selectedTokenTotal()} tokens selected (${selectedDeleteCount()} messages)`}
-                >
-                  {formatTokenCount(selectedTokenTotal())}
-                </span>
-                <span class="message-delete-mode-arrow" aria-hidden="true">{"\u203A"}</span>
-                <span
-                  class="message-delete-mode-count message-delete-mode-count--after"
-                  title={`${Math.max(0, tokenStats().used - selectedTokenTotal())} tokens remaining after deletion`}
-                >
-                  {formatTokenCount(Math.max(0, tokenStats().used - selectedTokenTotal()))}
-                </span>
-              </span>
-
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--delete"
-                onClick={() => void deleteSelectedMessages()}
-                title={t("messageSection.bulkDelete.deleteSelectedTitle")}
-                aria-label={t("messageSection.bulkDelete.deleteSelectedTitle")}
-              >
-                <Trash class="w-4 h-4" aria-hidden="true" />
-              </button>
-
-              <div class="message-delete-mode-menu-container">
-                <button
-                  ref={(el) => {
-                    deleteMenuButtonRef = el
-                  }}
-                  type="button"
-                  class="message-delete-mode-button message-delete-mode-button--menu"
-                  onClick={() => setIsDeleteMenuOpen((prev) => !prev)}
-                  title={t("messageSection.bulkDelete.moreOptionsTitle")}
-                  aria-label={t("messageSection.bulkDelete.moreOptionsTitle")}
-                >
-                  <MoreHorizontal class="w-4 h-4" aria-hidden="true" />
-                </button>
-                <Show when={isDeleteMenuOpen()}>
-                  <div
-                    ref={(el) => {
-                      deleteMenuRef = el
-                    }}
-                    class="message-delete-mode-menu dropdown-surface"
-                  >
-                    <button
-                      type="button"
-                      class="dropdown-item"
-                      onClick={() => {
-                        selectAllForDeletion()
-                        setIsDeleteMenuOpen(false)
-                      }}
-                    >
-                      {t("messageSection.bulkDelete.selectAllTitle")}
-                    </button>
-                    <div class="message-delete-mode-menu-divider" aria-hidden="true" />
-                    <div class="message-delete-mode-menu-row">
-                      <span class="message-delete-mode-menu-label">{t("messageSection.bulkDelete.selectionModeLabel")}</span>
-                      <div class="message-delete-mode-menu-toggle">
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="all"
-                          data-active={selectionMode() === "all"}
-                          onClick={() => applySelectionMode("all")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeAll")}
-                        </button>
-                        <button
-                          type="button"
-                          class="message-delete-mode-menu-toggle-button"
-                          data-mode="tools"
-                          data-active={selectionMode() === "tools"}
-                          onClick={() => applySelectionMode("tools")}
-                        >
-                          {t("messageSection.bulkDelete.selectionModeTools")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </Show>
-              </div>
-
-              <button
-                type="button"
-                class="message-delete-mode-button message-delete-mode-button--cancel"
-                onClick={clearDeleteMode}
-                title={t("messageSection.bulkDelete.cancelTitle")}
-                aria-label={t("messageSection.bulkDelete.cancelTitle")}
-              >
-                <X class="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div class="message-delete-mode-hint-row keyboard-hints" aria-hidden="true">
-              <Kbd shortcut="cmd+click" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.toggle")}</span>
-              <span class="message-delete-mode-hint-sep">·</span>
-              <Kbd shortcut="shift+click" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.range")}</span>
-              <span class="message-delete-mode-hint-sep">·</span>
-              <Kbd shortcut="esc" />
-              <span class="message-delete-mode-hint-text">{t("messageSection.bulkDelete.selectionHint.clear")}</span>
-            </div>
-          </div>
-        </Show>
-
         <Show when={showTimeline()}>
+          <TimelinePlacement mount={props.timelineMount}>
           <div class="message-timeline-sidebar">
             <MessageTimeline
+              isActive={isActive()}
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
-              onToggleSelection={handleToggleTimelineSelection}
-              onLongPressSelection={handleLongPressTimelineSelection}
-              onSelectRange={handleSelectRangeTimeline}
-              onClearSelection={handleClearTimelineSelection}
-              selectedIds={selectedTimelineIds}
               expandedMessageIds={expandedMessageIds}
-              deletableMessageIds={deletableMessageIds}
               activeSegmentId={activeSegmentId()}
+              revealActiveToken={revealActiveToken()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               showToolSegments={showTimelineToolsPreference()}
-              deleteHover={deleteHover}
-              onDeleteHoverChange={setDeleteHover}
-              onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-              selectedMessageIds={selectedForDeletion}
-              onToggleSelectedMessage={setMessageSelectedForDeletion}
               searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />
           </div>
+          </TimelinePlacement>
         </Show>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { SetStoreFunction } from "solid-js/store"
 import { getLogger } from "../../lib/logger"
+import { getCacheRetainedEntriesForSession } from "../../lib/global-cache"
 import {
   clearPromptDisplayOverride,
   clearPromptDisplayOverridesForInstance,
@@ -12,8 +13,11 @@ import {
 } from "../message-prompt-display"
 import type { ClientPart, MessageInfo } from "../../types/message"
 import { mergePermissionRequest } from "../../types/permission"
-import { clearRecordDisplayCacheForMessages } from "./record-display-cache"
-import { mergePendingRequestEntry, shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
+import { clearRecordDisplayCacheForInstance, clearRecordDisplayCacheForMessages, getRecordDisplayCacheEntries } from "./record-display-cache"
+import { estimateRetainedBytes, estimateRetainedBytesIncrementally } from "../../lib/retained-size"
+import { clearInstanceMessageRenderCaches, clearSessionMessageRenderCache, peekSessionMessageRenderCache } from "../../lib/message-render-cache"
+import type { MessageWindowState } from "./message-window"
+import { shouldSkipPendingRequestUpsert } from "./pending-request-dedupe"
 import type {
   InstanceMessageState,
   LatestTodoSnapshot,
@@ -22,7 +26,6 @@ import type {
   PartUpdateInput,
   PendingPartEntry,
   PermissionEntry,
-  QuestionEntry,
   ReplaceMessageIdOptions,
   ScrollSnapshot,
   SessionRecord,
@@ -35,6 +38,8 @@ const storeLog = getLogger("session")
 
 interface MessageStoreHooks {
   onSessionCleared?: (instanceId: string, sessionId: string) => void
+  onSessionChanged?: (instanceId: string, sessionId: string) => void
+  onMessagesRemoved?: (instanceId: string, sessionId: string, messageIds: readonly string[]) => void
   onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
 }
 
@@ -49,11 +54,6 @@ function createInitialState(instanceId: string): InstanceMessageState {
     pendingParts: {},
     sessionRevisions: {},
     permissions: {
-      queue: [],
-      active: null,
-      byMessage: {},
-    },
-    questions: {
       queue: [],
       active: null,
       byMessage: {},
@@ -79,6 +79,51 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
 }
 
 const PENDING_PART_MAX_AGE_MS = 30_000
+const PENDING_PARTS_PER_MESSAGE_LIMIT = 100
+const PENDING_PARTS_PER_SESSION_LIMIT = 100
+const PENDING_PARTS_GLOBAL_LIMIT = 500
+const PENDING_PART_MAX_RETAINED_BYTES = 1024 * 1024
+const PENDING_PARTS_PER_SESSION_BYTE_LIMIT = 4 * 1024 * 1024
+const PENDING_PARTS_GLOBAL_BYTE_LIMIT = 8 * 1024 * 1024
+const DROPPED_PENDING_MESSAGE_LIMIT = 500
+const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
+const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
+const pendingPartRetainedBytes = Symbol("pendingPartRetainedBytes")
+const pendingPartBudgetId = Symbol("pendingPartBudgetId")
+let nextPendingPartBudgetId = 0
+const pendingPartBudgetEntries = new Map<number, {
+  instanceId: string
+  bytes: number
+  receivedAt: number
+  isRetained: () => boolean
+  remove: () => void
+}>()
+type SizedPendingPartEntry = PendingPartEntry & { [pendingPartRetainedBytes]?: number; [pendingPartBudgetId]?: number }
+
+function getPendingPartRetainedBytes(entry: PendingPartEntry): number {
+  return (entry as SizedPendingPartEntry)[pendingPartRetainedBytes]
+    ?? estimateRetainedBytes(entry, PENDING_PART_MAX_RETAINED_BYTES)
+}
+
+function forgetPendingPartBudgetEntry(entry: PendingPartEntry): void {
+  const id = (entry as SizedPendingPartEntry)[pendingPartBudgetId]
+  if (id !== undefined) pendingPartBudgetEntries.delete(id)
+}
+
+function enforceGlobalPendingPartBudget(): void {
+  for (const [id, entry] of pendingPartBudgetEntries) if (!entry.isRetained()) pendingPartBudgetEntries.delete(id)
+  let bytes = 0
+  for (const entry of pendingPartBudgetEntries.values()) bytes += entry.bytes
+  if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) return
+  const oldest = [...pendingPartBudgetEntries.entries()].sort((left, right) =>
+    left[1].receivedAt - right[1].receivedAt || left[0] - right[0])
+  for (const [id, entry] of oldest) {
+    if (bytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
+    pendingPartBudgetEntries.delete(id)
+    bytes -= entry.bytes
+    entry.remove()
+  }
+}
 
 function clonePart(part: ClientPart): ClientPart {
   // Cloning is intentionally disabled; message parts
@@ -215,8 +260,9 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean }) => void
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
+  reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
   acceptSend: (messageId: string) => void
   confirmServerMessage: (messageId: string, options?: { clearOptimisticParts?: boolean }) => void
@@ -243,9 +289,6 @@ export interface InstanceMessageStore {
   upsertPermission: (entry: PermissionEntry) => void
   removePermission: (permissionId: string) => void
   getPermissionState: (messageId?: string, partId?: string) => { entry: PermissionEntry; active: boolean } | null
-  upsertQuestion: (entry: QuestionEntry) => void
-  removeQuestion: (requestId: string) => void
-  getQuestionState: (messageId?: string, partId?: string) => { entry: QuestionEntry; active: boolean } | null
   setSessionRevert: (sessionId: string, revert?: SessionRecord["revert"] | null) => void
   getSessionRevert: (sessionId: string) => SessionRecord["revert"] | undefined | null
   rebuildUsage: (sessionId: string, infos: Iterable<MessageInfo>) => void
@@ -253,6 +296,8 @@ export interface InstanceMessageStore {
   setScrollSnapshot: (sessionId: string, scope: string, snapshot: Omit<ScrollSnapshot, "updatedAt">) => void
   restoreScrollSnapshot: (sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   getScrollSnapshot: (sessionId: string, scope: string) => ScrollSnapshot | undefined
+  setMessageWindow: (sessionId: string, window: MessageWindowState) => void
+  getMessageWindow: (sessionId: string) => MessageWindowState | undefined
   getSessionRevision: (sessionId: string) => number
   getSessionMessageIds: (sessionId: string) => string[]
   getLastAssistantMessageId: (sessionId: string) => string | undefined
@@ -261,7 +306,12 @@ export interface InstanceMessageStore {
   getLastCompactionMessageIndex: (sessionId: string) => number
   getMessage: (messageId: string) => MessageRecord | undefined
   getLatestTodoSnapshot: (sessionId: string) => LatestTodoSnapshot | undefined
-  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) => void
+  hasPendingSends: (sessionId: string) => boolean
+  trimSessionMessages: (sessionId: string, limit: number) => void
+  estimateSessionRetainedBytes: (sessionId: string, signal?: AbortSignal) => Promise<number>
+  hasLiveSessionMessages: (sessionId: string) => boolean
+  evictSessionTranscript: (sessionId: string) => void
+  clearSession: (sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean; notify?: boolean }) => void
   clearScrollSnapshots: () => void
   clearInstance: () => void
 }
@@ -275,6 +325,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
+  const droppedPendingMessageIds = new Set<string>()
   const optimisticPartIdsByMessage = new Map<string, Set<string>>()
 
   function forgetPendingSend(messageId: string): void {
@@ -364,9 +415,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     setState("latestTodos", sessionId, undefined)
   }
 
+  function getLatestTodoSnapshot(sessionId: string): LatestTodoSnapshot | undefined {
+    const snapshot = state.latestTodos[sessionId]
+    if (!snapshot) return undefined
+    const messageIds = state.sessions[sessionId]?.messageIds ?? []
+    return messageIds.indexOf(snapshot.messageId) > getLastCompactionMessageIndex(sessionId) ? snapshot : undefined
+  }
+
   function bumpSessionRevision(sessionId: string) {
     if (!sessionId) return
     setState("sessionRevisions", sessionId, (value = 0) => value + 1)
+    hooks?.onSessionChanged?.(instanceId, sessionId)
   }
 
   function getSessionRevisionValue(sessionId: string) {
@@ -412,6 +471,68 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.usage[sessionId]
   }
 
+  function hasLiveSessionMessages(sessionId: string): boolean {
+    for (const messageId of state.sessions[sessionId]?.messageIds ?? []) {
+      const message = state.messages[messageId]
+      if (pendingSendIds.has(messageId) || message?.status === "sending" || message?.status === "streaming") return true
+    }
+    return false
+  }
+
+  function hasPendingSends(sessionId: string): boolean {
+    for (const messageId of pendingSendIds) {
+      if (state.messages[messageId]?.sessionId === sessionId) return true
+    }
+    return false
+  }
+
+  function estimateSessionRetainedBytes(sessionId: string, signal?: AbortSignal): Promise<number> {
+    const session = state.sessions[sessionId]
+    const renderCache = peekSessionMessageRenderCache(instanceId, sessionId)
+    const globalCacheEntries = [...getCacheRetainedEntriesForSession(instanceId, sessionId)]
+    const globalCacheKeyBytes = globalCacheEntries.reduce((total, entry) => total + entry.keyBytes, 0)
+    let hasPendingParts = false
+    for (const messageId in state.pendingParts) {
+      if (state.pendingParts[messageId]?.some((entry) => entry.sessionId === sessionId)) {
+        hasPendingParts = true
+        break
+      }
+    }
+    if ((!session || (session.messageIds.length === 0 && !session.revert)) && !renderCache && !hasPendingParts && globalCacheEntries.length === 0) {
+      return Promise.resolve(0)
+    }
+    function* retainedValues(): Generator<unknown> {
+      if (session) yield session
+      for (const messageId of session?.messageIds ?? []) {
+        yield state.messages[messageId]
+        yield messageInfoCache.get(messageId)
+        yield state.messageInfoVersion[messageId]
+        yield state.pendingParts[messageId]
+      }
+      for (const messageId in state.pendingParts) {
+        const entries = state.pendingParts[messageId]
+        if (entries?.some((entry) => entry.sessionId === sessionId) && !state.messages[messageId]) yield entries
+      }
+      for (const entry of state.permissions.queue) if (entry.permission.sessionID === sessionId) yield entry
+      if (session) {
+        yield state.usage[sessionId]
+        yield state.sessionRevisions[sessionId]
+        yield state.lastAssistantMessageIds[sessionId]
+        yield state.latestTodos[sessionId]
+      }
+      yield renderCache
+      if (session) yield* getRecordDisplayCacheEntries(instanceId, session.messageIds)
+      for (const entry of globalCacheEntries) yield entry.value
+    }
+    if (globalCacheKeyBytes > MAX_TRANSCRIPT_MEASUREMENT_BYTES) return Promise.resolve(Number.POSITIVE_INFINITY)
+    return estimateRetainedBytesIncrementally(retainedValues(), {
+      signal,
+      rootIterable: true,
+      maxBytes: MAX_TRANSCRIPT_MEASUREMENT_BYTES - globalCacheKeyBytes,
+      maxNodes: MAX_TRANSCRIPT_MEASUREMENT_NODES,
+    }).then((bytes) => Number.isFinite(bytes) ? bytes + globalCacheKeyBytes : bytes)
+  }
+
   function ensureSessionEntry(sessionId: string): SessionRecord {
     const existing = state.sessions[sessionId]
     if (existing) {
@@ -442,7 +563,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       parentId: input.parentId ?? session.parentId ?? null,
       updatedAt: Date.now(),
       messageIds: nextMessageIds,
-      revert: input.revert ?? session.revert ?? null,
+      revert: input.revert !== undefined ? input.revert : session.revert ?? null,
     })
 
     if (Array.isArray(input.messageIds) && !areMessageIdListsEqual(previousIds, nextMessageIds)) {
@@ -487,7 +608,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // client) and cross-attach its metadata. Sends the server has not yet
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
-  function hydrateMessages(sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>) {
+  function hydrateMessages(
+    sessionId: string,
+    inputs: MessageUpsertInput[],
+    infos?: Iterable<MessageInfo>,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean },
+  ) {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
     ensureSessionEntry(sessionId)
@@ -498,15 +624,20 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // the id would repeat in session.messageIds. First occurrence wins,
     // preserving snapshot order.
     const seenInputIds = new Set<string>()
+    const revertMessageId = state.sessions[sessionId]?.revert?.messageID
     const dedupedInputs = inputs.filter((input) => {
+      // V2 revert boundaries use message ID ordering, including when the
+      // boundary itself lies outside this resident page (as on commit).
+      if (revertMessageId && input.id >= revertMessageId) return false
       if (seenInputIds.has(input.id)) return false
       seenInputIds.add(input.id)
       return true
     })
+    for (const input of dedupedInputs) droppedPendingMessageIds.delete(input.id)
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
-    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts?.length).map((item) => item.id))
+    const serverIdsWithParts = new Set(dedupedInputs.filter((item) => item.parts !== undefined).map((item) => item.id))
 
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
@@ -529,7 +660,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
     }
 
-    const incomingIds = pendingOptimisticIds.length > 0 ? [...serverIds, ...pendingOptimisticIds] : serverIds
+    const preservedIds = options?.preserveOmitted ? omittedIds : []
+    const incomingIds = [...preservedIds, ...serverIds, ...pendingOptimisticIds]
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -562,8 +694,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
     })
 
-    const infoList = infos ? Array.from(infos) : undefined
-    const usageState = infoList ? rebuildUsageStateFromInfos(infoList) : state.usage[sessionId]
+    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
+    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
+    const usageInfos = options?.preserveOmitted && infoList
+      ? new Map([
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
+            .map((info) => [info.id as string, info] as const),
+          ...infoList.map((info) => [info.id as string, info] as const),
+        ]).values()
+      : infoList
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -578,29 +719,34 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     // The snapshot is authoritative: remove every omitted record except a
     // request that is still awaiting same-ID persistence confirmation.
-    if (omittedIds.length > 0) {
+    if (!options?.preserveOmitted && omittedIds.length > 0) {
       omittedIds.forEach((id) => {
         messageInfoCache.delete(id)
         forgetPendingSend(id)
         clearPromptDisplayOverride(instanceId, sessionId, id)
+        nextPendingParts[id]?.forEach(forgetPendingPartBudgetEntry)
         delete nextMessages[id]
         delete nextMessageInfoVersion[id]
         delete nextPendingParts[id]
         delete nextPermissionsByMessage[id]
       })
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
+      hooks?.onMessagesRemoved?.(instanceId, sessionId, omittedIds)
     }
 
-    // A send that reappears under its own id is confirmed — it is no longer in
-    // flight, so retire its pending marker.
-    serverIds.forEach((id) => {
-      pendingSendIds.delete(id)
-      if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
-    })
+    // Inbox admission can render before the message endpoint projects the
+    // accepted prompt. Only authoritative projection confirms the send.
+    if (options?.confirmPending !== false) {
+      serverIds.forEach((id) => {
+        pendingSendIds.delete(id)
+        if (serverIdsWithParts.has(id)) optimisticPartIdsByMessage.delete(id)
+      })
+    }
 
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
+        if (!serverIdSet.has(messageId)) continue
         // Only bump the info version -- which participates in message-block's
         // render-cache signature -- when the info content actually changed.
         // An identical snapshot (the common case on a reconnect force-reload)
@@ -622,7 +768,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setState("permissions", "byMessage", () => nextPermissionsByMessage)
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
-      if (omittedIds.length > 0) {
+      if (!options?.preserveOmitted && omittedIds.length > 0) {
         setState(
           "messages",
           produce((draft) => {
@@ -658,17 +804,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
             draft.active = draft.queue[0] ?? null
           }),
         )
-        setState(
-          "questions",
-          produce((draft) => {
-            const omitted = new Set(omittedIds)
-            omittedIds.forEach((id) => {
-              delete draft.byMessage[id]
-            })
-            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
-            draft.active = draft.queue[0] ?? null
-          }),
-        )
       }
 
       if (usageState) {
@@ -683,12 +818,46 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       recomputeLastAssistantMessageId(sessionId, incomingIds)
 
       clearLatestTodoSnapshot(sessionId)
-      Object.values(normalizedRecords).forEach((record) => {
-        maybeUpdateLatestTodoFromRecord(record)
+      incomingIds.forEach((messageId) => {
+        maybeUpdateLatestTodoFromRecord(nextMessages[messageId])
       })
 
       bumpSessionRevision(sessionId)
     })
+  }
+
+  function reconcileAuthoritativeMessageIds(
+    sessionId: string,
+    authoritativeIds: ReadonlySet<string>,
+    baselineRevisions: ReadonlyMap<string, number>,
+  ) {
+    const retainedIds = (state.sessions[sessionId]?.messageIds ?? [])
+      .filter((id) => !baselineRevisions.has(id)
+        || authoritativeIds.has(id)
+        || state.messages[id]?.revision !== baselineRevisions.get(id))
+    if (retainedIds.length === 0) {
+      reconcileEmptyAuthoritativeSnapshot(sessionId)
+      return
+    }
+    hydrateMessages(
+      sessionId,
+      retainedIds.flatMap((id) => {
+        const record = state.messages[id]
+        if (!record) return []
+        return [{
+          id: record.id,
+          sessionId: record.sessionId,
+          role: record.role,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          isEphemeral: record.isEphemeral,
+          parts: record.partIds.flatMap((partId) => record.parts[partId]?.data ?? []),
+          bumpRevision: false,
+        }]
+      }),
+      retainedIds.flatMap((id) => messageInfoCache.get(id) ?? []),
+    )
   }
 
   // Register an optimistic user send while promptAsync is unresolved.
@@ -726,6 +895,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     pendingSendIds.delete(messageId)
     if (options?.clearOptimisticParts) optimisticPartIdsByMessage.delete(messageId)
     const record = state.messages[messageId]
+    if (record) hooks?.onSessionChanged?.(instanceId, record.sessionId)
     if (!record) return
     const optimisticPartIds = options?.clearOptimisticParts && record.role === "user"
       ? record.partIds.filter((id) => clientPartIds?.has(id))
@@ -768,10 +938,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function retirePendingSends(sessionId: string) {
+    let changed = false
     for (const messageId of Array.from(pendingSendIds)) {
       const record = state.messages[messageId]
-      if (record?.sessionId === sessionId && record.status === "sent") pendingSendIds.delete(messageId)
+      if (record?.sessionId === sessionId && record.status === "sent") {
+        pendingSendIds.delete(messageId)
+        changed = true
+      }
     }
+    if (changed) hooks?.onSessionChanged?.(instanceId, sessionId)
   }
 
   // Apply an AUTHORITATIVE empty snapshot (server returned zero messages for
@@ -798,8 +973,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       messageInfoCache.delete(id)
       forgetPendingSend(id)
       clearPromptDisplayOverride(instanceId, sessionId, id)
+      state.pendingParts[id]?.forEach(forgetPendingPartBudgetEntry)
     })
     clearRecordDisplayCacheForMessages(instanceId, droppedIds)
+    hooks?.onMessagesRemoved?.(instanceId, sessionId, droppedIds)
 
     batch(() => {
       setState(
@@ -837,17 +1014,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           draft.active = draft.queue[0] ?? null
         }),
       )
-      setState(
-        "questions",
-        produce((draft) => {
-          const dropped = new Set(droppedIds)
-          droppedIds.forEach((id) => {
-            delete draft.byMessage[id]
-          })
-          draft.queue = draft.queue.filter((entry) => !entry.messageId || !dropped.has(entry.messageId))
-          draft.active = draft.queue[0] ?? null
-        }),
-      )
       setState("usage", sessionId, createEmptyUsageState())
       setState("latestTodos", sessionId, undefined)
       setState("sessions", sessionId, (current) => ({
@@ -871,11 +1037,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function normalizeParts(messageId: string, parts: ClientPart[] | undefined) {
-    if (!parts || parts.length === 0) {
+    // Omitted parts are a metadata-only update. An explicit empty snapshot is
+    // authoritative too: pruning the last technical part must clear the cache.
+    if (!parts) {
       return null
     }
     const map: MessageRecord["parts"] = {}
     const ids: string[] = []
+    const seenIds = new Set<string>()
 
     parts.forEach((part, index) => {
       const id = ensurePartId(messageId, part, index)
@@ -885,13 +1054,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         data: cloned,
         revision: 0,
       }
-      ids.push(id)
+      if (!seenIds.has(id)) {
+        seenIds.add(id)
+        ids.push(id)
+      }
     })
 
     return { map, ids }
   }
 
   function upsertMessage(input: MessageUpsertInput) {
+    const pendingDropRequiresReload = droppedPendingMessageIds.delete(input.id)
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
@@ -935,21 +1108,106 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     flushPendingParts(input.id)
     recomputeLastAssistantMessageId(input.sessionId)
     bumpSessionRevision(input.sessionId)
+    if (pendingDropRequiresReload) hooks?.onSessionCleared?.(instanceId, input.sessionId)
+  }
+
+  function markPendingPartDropped(messageId: string, sessionId?: string): void {
+    if (sessionId) {
+      hooks?.onSessionCleared?.(instanceId, sessionId)
+      hooks?.onSessionChanged?.(instanceId, sessionId)
+      return
+    }
+    droppedPendingMessageIds.delete(messageId)
+    droppedPendingMessageIds.add(messageId)
+    while (droppedPendingMessageIds.size > DROPPED_PENDING_MESSAGE_LIMIT) {
+      const oldest = droppedPendingMessageIds.values().next().value
+      if (oldest === undefined) break
+      droppedPendingMessageIds.delete(oldest)
+    }
   }
 
   function bufferPendingPart(entry: PendingPartEntry) {
-    setState("pendingParts", entry.messageId, (list = []) => [...list, entry])
+    const sessionId = entry.sessionId ?? (typeof (entry.part as any).sessionID === "string" ? (entry.part as any).sessionID : undefined)
+    const nextEntry = { ...entry, sessionId } as SizedPendingPartEntry
+    const retainedBytes = estimateRetainedBytes(nextEntry, PENDING_PART_MAX_RETAINED_BYTES)
+    if (retainedBytes > PENDING_PART_MAX_RETAINED_BYTES) {
+      markPendingPartDropped(entry.messageId, sessionId)
+      return
+    }
+    const budgetId = ++nextPendingPartBudgetId
+    Object.defineProperty(nextEntry, pendingPartRetainedBytes, { value: retainedBytes })
+    Object.defineProperty(nextEntry, pendingPartBudgetId, { value: budgetId })
+    const changedSessions = new Set<string>()
+    const droppedMessages = new Map<string, string | undefined>()
+    if (sessionId) changedSessions.add(sessionId)
+    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+      const messageEntries = [...(draft[entry.messageId] ?? []), nextEntry]
+      for (const dropped of messageEntries.slice(0, Math.max(0, messageEntries.length - PENDING_PARTS_PER_MESSAGE_LIMIT))) {
+        droppedMessages.set(entry.messageId, dropped.sessionId)
+      }
+      draft[entry.messageId] = messageEntries.slice(-PENDING_PARTS_PER_MESSAGE_LIMIT)
+
+      const pending: { messageId: string; entry: PendingPartEntry; bytes: number }[] = []
+      for (const messageId in draft) {
+        for (const value of draft[messageId] ?? []) pending.push({ messageId, entry: value, bytes: getPendingPartRetainedBytes(value) })
+      }
+      pending.sort((left, right) => left.entry.receivedAt - right.entry.receivedAt)
+
+      const sessionEntries = pending.filter((value) => value.entry.sessionId === sessionId)
+      const remove = new Set(pending.slice(0, Math.max(0, pending.length - PENDING_PARTS_GLOBAL_LIMIT)))
+      for (const value of sessionEntries.slice(0, Math.max(0, sessionEntries.length - PENDING_PARTS_PER_SESSION_LIMIT))) remove.add(value)
+      let sessionBytes = sessionEntries.reduce((total, value) => total + value.bytes, 0)
+      for (const value of sessionEntries) {
+        if (sessionBytes <= PENDING_PARTS_PER_SESSION_BYTE_LIMIT) break
+        remove.add(value)
+        sessionBytes -= value.bytes
+      }
+      let globalBytes = pending.reduce((total, value) => total + value.bytes, 0)
+      for (const value of pending) {
+        if (globalBytes <= PENDING_PARTS_GLOBAL_BYTE_LIMIT) break
+        remove.add(value)
+        globalBytes -= value.bytes
+      }
+      for (const value of remove) {
+        forgetPendingPartBudgetEntry(value.entry)
+        droppedMessages.set(value.messageId, value.entry.sessionId)
+        if (value.entry.sessionId) changedSessions.add(value.entry.sessionId)
+        const list = draft[value.messageId]
+        const index = list?.indexOf(value.entry) ?? -1
+        if (index >= 0) list.splice(index, 1)
+        if (list?.length === 0) delete draft[value.messageId]
+      }
+    }))
+    const isRetained = () => state.pendingParts[entry.messageId]?.some((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? false
+    if (isRetained()) {
+      pendingPartBudgetEntries.set(budgetId, {
+        instanceId,
+        bytes: retainedBytes,
+        receivedAt: entry.receivedAt,
+        isRetained,
+        remove: () => {
+          setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+            const list = draft[entry.messageId]
+            const index = list?.findIndex((value) => (value as SizedPendingPartEntry)[pendingPartBudgetId] === budgetId) ?? -1
+            if (index >= 0) list.splice(index, 1)
+            if (list?.length === 0) delete draft[entry.messageId]
+          }))
+          markPendingPartDropped(entry.messageId, sessionId)
+        },
+      })
+      enforceGlobalPendingPartBudget()
+    }
+    for (const [messageId, droppedSessionId] of droppedMessages) markPendingPartDropped(messageId, droppedSessionId)
+    for (const changedSessionId of changedSessions) hooks?.onSessionChanged?.(instanceId, changedSessionId)
   }
 
   function clearPendingPartsForMessage(messageId: string) {
-    setState("pendingParts", (prev) => {
-      if (!prev[messageId]) {
-        return prev
-      }
-      const next = { ...prev }
-      delete next[messageId]
-      return next
-    })
+    const entries = state.pendingParts[messageId]
+    if (!entries) return
+    entries.forEach(forgetPendingPartBudgetEntry)
+    setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+      delete draft[messageId]
+    }))
   }
 
   function rebindPermissionForPart(messageId: string, partId: string, part: ClientPart) {
@@ -962,6 +1220,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       (part as any).callId ??
       (part as any).toolCallID ??
       (part as any).toolCallId ??
+      (part as any).id ??
       undefined
     if (!toolCallId) {
       return
@@ -1001,7 +1260,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function applyPartUpdate(input: PartUpdateInput) {
     const message = state.messages[input.messageId]
     if (!message) {
-      bufferPendingPart({ messageId: input.messageId, part: input.part, receivedAt: Date.now() })
+      bufferPendingPart({ messageId: input.messageId, sessionId: typeof (input.part as any).sessionID === "string" ? (input.part as any).sessionID : undefined, part: input.part, receivedAt: Date.now() })
       return
     }
 
@@ -1114,41 +1373,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (!sessionIds.size && fallbackSessionId) sessionIds.add(fallbackSessionId)
 
     clearRecordDisplayCacheForMessages(instanceId, [messageId])
+    sessionIds.forEach((sessionId) => hooks?.onMessagesRemoved?.(instanceId, sessionId, [messageId]))
+    state.pendingParts[messageId]?.forEach(forgetPendingPartBudgetEntry)
 
     batch(() => {
       sessionIds.forEach((sessionId) => {
         setState("sessions", sessionId, "messageIds", (ids = []) => ids.filter((id) => id !== messageId))
       })
 
-      setState("messages", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messages", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("messageInfoVersion", (prev) => {
-        if (!(messageId in prev)) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("messageInfoVersion", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       messageInfoCache.delete(messageId)
 
-      setState("pendingParts", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("pendingParts", produce((draft) => {
+        delete draft[messageId]
+      }))
 
-      setState("permissions", "byMessage", (prev) => {
-        if (!prev[messageId]) return prev
-        const next = { ...prev }
-        delete next[messageId]
-        return next
-      })
+      setState("permissions", "byMessage", produce((draft) => {
+        delete draft[messageId]
+      }))
 
       sessionIds.forEach((sessionId) => {
         withUsageState(sessionId, (draft) => removeUsageEntry(draft, messageId))
@@ -1237,11 +1486,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     setState("messages", options.newId, cloned)
-    setState("messages", (prev) => {
-      const next = { ...prev }
-      delete next[options.oldId]
-      return next
-    })
+    setState("messages", produce((draft) => {
+      delete draft[options.oldId]
+    }))
 
     const affectedSessions = new Set<string>()
 
@@ -1278,18 +1525,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (permissionMap) {
       setState("permissions", "byMessage", options.newId, permissionMap)
       setState("permissions", (prev) => {
-        const next = { ...prev }
-        const nextByMessage = { ...next.byMessage }
-        delete nextByMessage[options.oldId]
-        next.byMessage = nextByMessage
-        return next
-      })
-    }
-
-    const questionMap = state.questions.byMessage[options.oldId]
-    if (questionMap) {
-      setState("questions", "byMessage", options.newId, questionMap)
-      setState("questions", (prev) => {
         const next = { ...prev }
         const nextByMessage = { ...next.byMessage }
         delete nextByMessage[options.oldId]
@@ -1413,151 +1648,19 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return { entry, active }
   }
 
-  function mergeQuestionEntry(entry: QuestionEntry): QuestionEntry {
-    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
-    return mergePendingRequestEntry(entry, existing)
-  }
-
-  function upsertQuestion(input: QuestionEntry) {
-    const entry = mergeQuestionEntry(input)
-    const messageKey = entry.messageId ?? "__global__"
-    const partKey = entry.partId ?? entry.request?.id ?? "__global__"
-    const existing = state.questions.queue.find((item) => item.request.id === entry.request.id)
-    const existingAtLocation = state.questions.byMessage[messageKey]?.[partKey]
-    const expectedActiveId = state.questions.queue[0]?.request.id
-    if (shouldSkipPendingRequestUpsert({
-      existing,
-      existingAtLocationId: existingAtLocation?.request.id,
-      expectedActiveId,
-      activeId: state.questions.active?.request.id,
-      incomingId: entry.request.id,
-      incomingMessageId: entry.messageId,
-      incomingPartId: entry.partId,
-      incomingEnqueuedAt: entry.enqueuedAt,
-      existingValue: existing?.request,
-      incomingValue: entry.request,
-    })) {
-      return
-    }
-
-    setState(
-      "questions",
-      produce((draft) => {
-        Object.keys(draft.byMessage).forEach((existingMessageKey) => {
-          const partEntries = draft.byMessage[existingMessageKey]
-          Object.keys(partEntries).forEach((existingPartKey) => {
-            if (partEntries[existingPartKey].request.id === entry.request.id) {
-              delete partEntries[existingPartKey]
-            }
-          })
-          if (Object.keys(partEntries).length === 0) {
-            delete draft.byMessage[existingMessageKey]
-          }
-        })
-        draft.byMessage[messageKey] = draft.byMessage[messageKey] ?? {}
-        draft.byMessage[messageKey][partKey] = entry
-        const existingIndex = draft.queue.findIndex((item) => item.request.id === entry.request.id)
-        if (existingIndex === -1) {
-          draft.queue.push(entry)
-        } else {
-          draft.queue[existingIndex] = entry
-        }
-        if (!draft.active || draft.active.request.id === entry.request.id) {
-          draft.active = entry
-        }
-      }),
-    )
-  }
-
-  function removeQuestion(requestId: string) {
-    setState(
-      "questions",
-      produce((draft) => {
-        draft.queue = draft.queue.filter((item) => item.request.id !== requestId)
-        if (draft.active?.request.id === requestId) {
-          draft.active = draft.queue[0] ?? null
-        }
-        Object.keys(draft.byMessage).forEach((messageKey) => {
-          const partEntries = draft.byMessage[messageKey]
-          Object.keys(partEntries).forEach((partKey) => {
-            if (partEntries[partKey].request.id === requestId) {
-              delete partEntries[partKey]
-            }
-          })
-          if (Object.keys(partEntries).length === 0) {
-            delete draft.byMessage[messageKey]
-          }
-        })
-      }),
-    )
-  }
-
-  function getQuestionState(messageId?: string, partId?: string) {
-    const messageKey = messageId ?? "__global__"
-    const partKey = partId ?? "__global__"
-    const entry = state.questions.byMessage[messageKey]?.[partKey]
-    if (!entry) return null
-    const active = state.questions.active?.request.id === entry.request.id
-    return { entry, active }
-  }
-
   function pruneMessagesAfterRevert(sessionId: string, revertMessageId: string) {
     const session = state.sessions[sessionId]
     if (!session) return
-    const stopIndex = session.messageIds.indexOf(revertMessageId)
+    const stopIndex = session.messageIds.findIndex((id) => id >= revertMessageId)
     if (stopIndex === -1) return
     const removedIds = session.messageIds.slice(stopIndex)
-    const keptIds = session.messageIds.slice(0, stopIndex)
     if (removedIds.length === 0) return
 
-    removedIds.forEach((messageId) => clearPromptDisplayOverride(instanceId, sessionId, messageId))
-
-    setState("sessions", sessionId, "messageIds", keptIds)
-
-    setState("messages", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => delete next[id])
-      return next
+    // Use the normal removal path: Solid merges object updates, so merely
+    // omitting keys does not delete records or invalidate their render caches.
+    batch(() => {
+      removedIds.forEach((id) => removeMessage(id, sessionId))
     })
-
-    setState("messageInfoVersion", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => delete next[id])
-      return next
-    })
-
-    removedIds.forEach((id) => messageInfoCache.delete(id))
-
-    setState("pendingParts", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    setState("permissions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    setState("questions", "byMessage", (prev) => {
-      const next = { ...prev }
-      removedIds.forEach((id) => {
-        if (next[id]) delete next[id]
-      })
-      return next
-    })
-
-    withUsageState(sessionId, (draft) => {
-      removedIds.forEach((id) => removeUsageEntry(draft, id))
-    })
-
-    recomputeLastAssistantMessageId(sessionId, keptIds)
-    bumpSessionRevision(sessionId)
   }
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
@@ -1567,6 +1670,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       pruneMessagesAfterRevert(sessionId, revert.messageID)
     }
     setState("sessions", sessionId, "revert", revert ?? null)
+    bumpSessionRevision(sessionId)
   }
 
   function getSessionRevert(sessionId: string) {
@@ -1594,87 +1698,91 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return state.scrollState[key]
   }
 
-  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; notify?: boolean }) {
+  function setMessageWindow(sessionId: string, window: MessageWindowState) {
+    ensureSessionEntry(sessionId)
+    // Window state is authoritative, not a partial patch. Solid's default
+    // object merge otherwise retains a history resumeCursor on latest pages.
+    const next: MessageWindowState = { kind: window.kind, newerCursors: [...window.newerCursors] }
+    if (window.resumeCursor !== undefined) next.resumeCursor = window.resumeCursor
+    if (window.olderCursor !== undefined) next.olderCursor = window.olderCursor
+    setState("sessions", sessionId, produce((session) => { session.messageWindow = next }))
+  }
+
+  function getMessageWindow(sessionId: string) {
+    return state.sessions[sessionId]?.messageWindow
+  }
+
+  function trimSessionMessages(sessionId: string, limit: number) {
+    const ids = state.sessions[sessionId]?.messageIds ?? []
+    const overflow = ids.length - Math.max(1, Math.floor(limit))
+    for (const messageId of ids.slice(0, Math.max(0, overflow))) removeMessage(messageId, sessionId)
+  }
+
+  function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean; notify?: boolean }) {
     if (!sessionId) return
 
-    clearPromptDisplayOverridesForSession(instanceId, sessionId)
+    if (!options?.preservePromptDisplayOverrides) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
     const messageIds = Object.values(state.messages)
       .filter((record) => record.sessionId === sessionId)
       .map((record) => record.id)
+    const messageIdSet = new Set(messageIds)
+    for (const [messageId, entries] of Object.entries(state.pendingParts)) {
+      for (const entry of entries) {
+        if (messageIdSet.has(messageId) || entry.sessionId === sessionId) forgetPendingPartBudgetEntry(entry)
+      }
+    }
  
     storeLog.info("Clearing session data", { instanceId, sessionId, messageCount: messageIds.length })
     clearRecordDisplayCacheForMessages(instanceId, messageIds)
+    clearSessionMessageRenderCache(instanceId, sessionId)
     messageIds.forEach((id) => forgetPendingSend(id))
  
     batch(() => {
-      setState("messages", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      // Store setters merge returned objects: omitted keys still retain their
+      // payloads. Delete through produce before retiring byte accounting.
+      setState("messages", produce((draft) => {
+        messageIds.forEach((id) => delete draft[id])
+      }))
 
-      setState("messageInfoVersion", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => delete next[id])
-        return next
-      })
+      setState("messageInfoVersion", produce((draft) => {
+        messageIds.forEach((id) => delete draft[id])
+      }))
 
       messageIds.forEach((id) => messageInfoCache.delete(id))
 
-      setState("pendingParts", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      setState("pendingParts", produce((draft: Record<string, PendingPartEntry[]>) => {
+        for (const id of messageIds) delete draft[id]
+        for (const id in draft) if (draft[id]?.some((entry) => entry.sessionId === sessionId)) delete draft[id]
+      }))
 
-      setState("permissions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
+      const belongsToSession = (entry: PermissionEntry) => entry.permission.sessionID === sessionId
+        || Boolean(entry.messageId && messageIdSet.has(entry.messageId))
+      setState("permissions", produce((draft) => {
+        draft.queue = draft.queue.filter((entry) => !belongsToSession(entry))
+        draft.active = draft.queue[0] ?? null
+        for (const messageId of Object.keys(draft.byMessage)) {
+          const entries = draft.byMessage[messageId]
+          for (const partId of Object.keys(entries)) {
+            if (messageIdSet.has(messageId) || belongsToSession(entries[partId])) delete entries[partId]
+          }
+          if (Object.keys(entries).length === 0) delete draft.byMessage[messageId]
+        }
+      }))
 
-      setState("questions", "byMessage", (prev) => {
-        const next = { ...prev }
-        messageIds.forEach((id) => {
-          if (next[id]) delete next[id]
-        })
-        return next
-      })
-
-      setState("usage", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
-
-      setState("sessionRevisions", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
-
-      setState("lastAssistantMessageIds", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
+      setState("usage", produce((draft) => { delete draft[sessionId] }))
+      setState("sessionRevisions", produce((draft) => { delete draft[sessionId] }))
+      setState("lastAssistantMessageIds", produce((draft) => { delete draft[sessionId] }))
 
       if (!options?.preserveScroll) {
-        setState("scrollState", (prev) => {
-          const next = { ...prev }
+        setState("scrollState", produce((draft) => {
           const prefix = `${sessionId}:`
-          Object.keys(next).forEach((key) => {
+          Object.keys(draft).forEach((key) => {
             if (key.startsWith(prefix)) {
-              delete next[key]
+              delete draft[key]
             }
           })
-          return next
-        })
+        }))
       }
 
       setState("sessions", sessionId, (current) => {
@@ -1682,11 +1790,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         return { ...current, messageIds: [] }
       })
 
-      setState("sessions", (prev) => {
-        const next = { ...prev }
-        delete next[sessionId]
-        return next
-      })
+      setState("sessions", produce((draft) => { delete draft[sessionId] }))
 
       setState("sessionOrder", (ids) => ids.filter((id) => id !== sessionId))
     })
@@ -1696,9 +1800,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
+  function evictSessionTranscript(sessionId: string) {
+    clearSession(sessionId, { preserveScroll: true, preservePromptDisplayOverrides: true })
+  }
+
  
    function clearInstance() {
+     for (const [id, entry] of pendingPartBudgetEntries) if (entry.instanceId === instanceId) pendingPartBudgetEntries.delete(id)
+     droppedPendingMessageIds.clear()
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
+     clearRecordDisplayCacheForInstance(instanceId)
+     clearInstanceMessageRenderCaches(instanceId)
      messageInfoCache.clear()
      pendingSendIds.clear()
      optimisticPartIdsByMessage.clear()
@@ -1717,6 +1829,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      addOrUpdateSession,
       hydrateMessages,
       reconcileEmptyAuthoritativeSnapshot,
+      reconcileAuthoritativeMessageIds,
       markSendPending,
       acceptSend,
       confirmServerMessage,
@@ -1736,9 +1849,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       upsertPermission,
       removePermission,
       getPermissionState,
-      upsertQuestion,
-      removeQuestion,
-      getQuestionState,
 
      setSessionRevert,
      getSessionRevert,
@@ -1747,12 +1857,19 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       setScrollSnapshot,
       restoreScrollSnapshot,
       getScrollSnapshot,
+      setMessageWindow,
+      getMessageWindow,
       getSessionRevision: getSessionRevisionValue,
       getSessionMessageIds: (sessionId: string) => state.sessions[sessionId]?.messageIds ?? [],
       getLastAssistantMessageId: getLastAssistantMessageIdValue,
       getLastCompactionMessageIndex,
       getMessage: (messageId: string) => state.messages[messageId],
-      getLatestTodoSnapshot: (sessionId: string) => state.latestTodos[sessionId],
+      getLatestTodoSnapshot,
+      hasPendingSends,
+      trimSessionMessages,
+      estimateSessionRetainedBytes,
+      hasLiveSessionMessages,
+      evictSessionTranscript,
       clearSession,
       clearScrollSnapshots,
       clearInstance,

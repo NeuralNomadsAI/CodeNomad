@@ -1,7 +1,8 @@
+import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
-  BackgroundProcess,
-  BackgroundProcessListResponse,
-  BackgroundProcessOutputResponse,
+  PruneRequest,
+  PruneResult,
   BinaryValidationResult,
   ConfigFileContentRequest,
   ConfigFileContentResponse,
@@ -18,14 +19,16 @@ import type {
   SpeechTranscriptionResponse,
   SideCar,
   PreviewSession,
+  PluginActivationMutationRequest,
+  PluginActivationMutationResponse,
+  PluginControlLocation,
+  PluginControlsSnapshot,
   ProviderUsageResponse,
   ServerMeta,
-  SessionMetadataResponse,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
-  VoiceModeStateResponse,
   YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
@@ -44,28 +47,23 @@ import type {
   WorkspaceEventPayload,
   WorkspaceEventType,
   WorktreeListResponse,
-  WorktreeMap,
   WorktreeCreateRequest,
+  WorktreeSessionMoveRequest,
+  WorktreeSessionMoveResponse,
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
+import { authenticatedFetch } from "./auth-recovery"
+import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 
-const RUNTIME_BASE = typeof window !== "undefined" ? window.location?.origin : undefined
-const DEFAULT_BASE = typeof window !== "undefined" ? window.__CODENOMAD_API_BASE__ ?? RUNTIME_BASE : undefined
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const API_BASE = import.meta.env?.VITE_CODENOMAD_API_BASE ?? DEFAULT_BASE
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
 
 export const CODENOMAD_API_BASE = API_BASE
-
-export function buildBackgroundProcessStreamUrl(instanceId: string, processId: string): string {
-  const encodedInstanceId = encodeURIComponent(instanceId)
-  const encodedProcessId = encodeURIComponent(processId)
-  return buildAbsoluteUrl(`/workspaces/${encodedInstanceId}/plugin/background-processes/${encodedProcessId}/stream`)
-}
 
 function buildEventsUrl(base: string | undefined, path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -76,17 +74,6 @@ function buildEventsUrl(base: string | undefined, path: string): string {
     return `${base}${normalized}`
   }
   return path
-}
-
-function buildAbsoluteUrl(path: string): string {
-  if (path.startsWith("http://") || path.startsWith("https://")) {
-    return path
-  }
-  if (!API_BASE) {
-    return path
-  }
-  const normalized = path.startsWith("/") ? path : `/${path}`
-  return `${API_BASE}${normalized}`
 }
 
 const httpLogger = getLogger("api")
@@ -152,11 +139,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${path}`)
 
   try {
-    const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new Error(message || `Request failed with ${response.status}`)
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"))
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -181,7 +168,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  const response = await fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -194,6 +181,36 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+      method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+    })
+  },
+  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+      method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
+    })
+  },
+  fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+      method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
+    })
+  },
+  querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
+      method: "POST", body: JSON.stringify(input),
+    })
+  },
   fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },
@@ -227,16 +244,13 @@ export const serverApi = {
     })
   },
 
-  readWorktreeMap(id: string): Promise<WorktreeMap> {
-    return request<WorktreeMap>(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`)
-  },
-
-  writeWorktreeMap(id: string, map: WorktreeMap): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/map`, {
-      method: "PUT",
-      body: JSON.stringify(map),
+  moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+    return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     })
   },
+
   createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
     return request<WorkspaceCreateResponse>("/api/workspaces", {
       method: "POST",
@@ -326,6 +340,17 @@ export const serverApi = {
       body: JSON.stringify(body),
     })
   },
+  getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const params = new URLSearchParams({ directory: location.directory })
+    if (location.workspaceID) params.set("workspaceID", location.workspaceID)
+    return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
+  },
+  setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+    return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    })
+  },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
       method: "POST",
@@ -341,29 +366,33 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
-  listWorkspaceFiles(id: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  listWorkspaceFiles(id: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
+    if (directory) params.set("directory", directory)
     return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
   },
   searchWorkspaceFiles(
     id: string,
     query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all" },
+    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
   ): Promise<WorkspaceFileSearchResponse> {
     const trimmed = query.trim()
     if (!trimmed) {
       return Promise.resolve([])
     }
     const params = new URLSearchParams({ q: trimmed })
+    if (opts?.directory) params.set("directory", opts.directory)
     if (opts?.limit) {
       params.set("limit", String(opts.limit))
     }
     if (opts?.type) {
       params.set("type", opts.type)
     }
-    return request<WorkspaceFileSearchResponse>(
+    const search = () => request<WorkspaceFileSearchResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
+      { signal: opts?.signal },
     )
+    return opts?.signal ? retryFileSearch(search, opts.signal) : search()
   },
   readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
@@ -387,18 +416,20 @@ export const serverApi = {
       },
     )
   },
-  fetchWorktreeGitStatus(id: string, slug: string): Promise<WorktreeGitStatusResponse> {
+  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+      { signal },
     )
   },
-  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest): Promise<WorktreeGitDiffResponse> {
+  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
     const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
     if (requestPayload.originalPath) {
       params.set("originalPath", requestPayload.originalPath)
     }
     return request<WorktreeGitDiffResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+      { signal },
     )
   },
   stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
@@ -459,6 +490,12 @@ export const serverApi = {
   },
   updateOpenCode(): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
+  },
+  startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
+  },
+  reloadOpenCodeConfiguration(): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ reload: true }) })
   },
   fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
     return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
@@ -528,30 +565,6 @@ export const serverApi = {
   deleteInstanceData(id: string): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
-  listBackgroundProcesses(instanceId: string): Promise<BackgroundProcessListResponse> {
-    return request<BackgroundProcessListResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes`,
-    )
-  },
-  stopBackgroundProcess(instanceId: string, processId: string): Promise<BackgroundProcess> {
-    return request<BackgroundProcess>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/stop`,
-      { method: "POST" },
-    )
-  },
-  terminateBackgroundProcess(instanceId: string, processId: string): Promise<void> {
-    return request(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/terminate`,
-      { method: "POST" },
-    )
-  },
-  updateVoiceMode(instanceId: string, enabled: boolean): Promise<VoiceModeStateResponse> {
-    const identity = getClientIdentity()
-    return request<VoiceModeStateResponse>(`/workspaces/${encodeURIComponent(instanceId)}/plugin/voice-mode`, {
-      method: "POST",
-      body: JSON.stringify({ ...identity, enabled }),
-    })
-  },
   getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
     return request<YoloStateResponse>(
       `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
@@ -563,12 +576,6 @@ export const serverApi = {
       { method: "POST" },
     )
   },
-  setSessionWorktreeSlug(instanceId: string, sessionId: string, worktreeSlug: string): Promise<SessionMetadataResponse> {
-    return request<SessionMetadataResponse>(
-      `/api/workspaces/${encodeURIComponent(instanceId)}/worktrees/sessions/${encodeURIComponent(sessionId)}`,
-      { method: "PUT", body: JSON.stringify({ worktreeSlug }) },
-    )
-  },
   sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
     const init: RequestInit = {
       method: "POST",
@@ -578,30 +585,6 @@ export const serverApi = {
       init.signal = signal
     }
     return request<void>("/api/client-connections/pong", init)
-  },
-  fetchBackgroundProcessOutput(
-    instanceId: string,
-    processId: string,
-    options?: { method?: "full" | "tail" | "head" | "grep"; pattern?: string; lines?: number; maxBytes?: number },
-  ): Promise<BackgroundProcessOutputResponse> {
-    const params = new URLSearchParams()
-    if (options?.method) {
-      params.set("method", options.method)
-    }
-    if (options?.pattern) {
-      params.set("pattern", options.pattern)
-    }
-    if (options?.lines) {
-      params.set("lines", String(options.lines))
-    }
-    if (options?.maxBytes !== undefined) {
-      params.set("maxBytes", String(options.maxBytes))
-    }
-    const query = params.toString()
-    const suffix = query ? `?${query}` : ""
-    return request<BackgroundProcessOutputResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/plugin/background-processes/${encodeURIComponent(processId)}/output${suffix}`,
-    )
   },
   connectEvents(
     onEvent: (event: WorkspaceEventPayload) => void,

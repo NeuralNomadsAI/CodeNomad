@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities.json",
+  "identifier": "preferences-window",
+  "description": "Grant the singleton Preferences window only settings and HTML window-chrome capabilities.",
+  "local": true,
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*", "https://127.0.0.1:*", "https://localhost:*"]
+  },
+  "windows": ["preferences"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-preferences-window-ready",
+    "allow-preferences-get-request",
+    "allow-preferences-accept-request",
+    "allow-preferences-resolve-transition",
+    "allow-window-control",
+    "dialog:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" }
+      ]
+    },
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify",
+    "notification:allow-show",
+    "allow-cli-get-status",
+    "allow-cli-restart",
+    "allow-needs-local-certificate-install",
+    "allow-open-remote-window"
+  ]
+}

@@ -40,7 +40,17 @@ export function updateSessionInfo(instanceId: string, sessionId: string): void {
   let contextAvailableFromPrevious = false
   let isSubscriptionModel = false
 
-  if (!hasUsageEntries && previousInfo) {
+  // The session record carries the server's lifetime usage, which covers the
+  // whole session regardless of which messages are currently loaded and is not
+  // reduced by reverts. Message sums only stand in when the server does not
+  // report session usage.
+  if (session.tokens) {
+    totalInputTokens = session.tokens.input
+    totalOutputTokens = session.tokens.output
+    totalReasoningTokens = session.tokens.reasoning
+    totalCost = session.cost ?? 0
+    if (!hasUsageEntries) actualUsageTokens = previousInfo?.actualUsageTokens ?? 0
+  } else if (!hasUsageEntries && previousInfo) {
     totalInputTokens = previousInfo.inputTokens
     totalOutputTokens = previousInfo.outputTokens
     totalReasoningTokens = previousInfo.reasoningTokens

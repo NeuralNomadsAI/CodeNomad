@@ -30,49 +30,57 @@ function validateSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | n
 export function setupClientStateIPC(
   ipcMain: IPCRegistrar,
   clientState: ClientStateManager,
-  getMainWindow: () => BrowserWindow | null,
+  resolveWindow: (sender: IpcMainInvokeEvent["sender"]) => { id: string; window: BrowserWindow; persisted?: boolean } | undefined,
   getAllowedOrigins: (window: BrowserWindow | null) => string[],
 ) {
   const validate = (event: IpcMainInvokeEvent) => {
-    const window = getMainWindow()
+    const record = resolveWindow(event.sender)
+    const window = record?.window ?? null
     validateSender(event, window, getAllowedOrigins(window))
+    return record!
   }
   const handle = (
     channel: string,
-    operation: (argument: unknown, token: unknown) => unknown,
+    operation: (argument: unknown, token: unknown, windowId: string) => unknown,
   ) => ipcMain.handle(channel, async (event, token: unknown, argument: unknown) => {
-    validate(event)
-    clientState.assertRendererAccessToken(token)
-    return operation(argument, token)
+    const { id: windowId, persisted } = validate(event)
+    if (persisted === false) throw new Error("Client state persistence is unavailable for this window")
+    clientState.assertRendererAccessToken(token, windowId)
+    return operation(argument, token, windowId)
   })
 
   ipcMain.handle("client-state:claimAccess", async (event, token: unknown) => {
-    validate(event)
-    return clientState.claimClientStateAccess(token)
+    const record = validate(event)
+    return record.persisted === false ? false : clientState.claimClientStateAccess(token, record.id)
   })
-  handle("client-state:load", () => clientState.loadClientState())
-  handle("client-state:save", (snapshot, token) => clientState.saveClientState(snapshot, token))
-  handle("client-state:setRestoreEnabled", (enabled, token) => {
+  handle("client-state:load", (_argument, _token, windowId) => clientState.loadClientState(windowId))
+  handle("client-state:save", (snapshot, token, windowId) => clientState.saveClientState(snapshot, token, windowId))
+  handle("client-state:commitPartitions", (payload, token, windowId) => clientState.commitClientStatePartitions(payload, token, windowId))
+  handle("client-state:loadPartition", (key, token, windowId) => clientState.loadClientStatePartition(key, token, windowId))
+  handle("client-state:setRestoreEnabled", (enabled, token, windowId) => {
     if (typeof enabled !== "boolean") throw new Error("Restore enabled must be a boolean")
-    return clientState.setRestoreEnabled(enabled, token)
+    return clientState.setRestoreEnabled(enabled, token, windowId)
   })
-  handle("client-state:clear", (_argument, token) => clientState.clearClientState(token))
+  handle("client-state:clear", (_argument, token, windowId) => clientState.clearClientState(token, windowId))
 
   return (window: BrowserWindow): void => {
-    window.webContents.on("did-navigate", (_event, url) => {
-      if (getMainWindow() === window && shouldResetRendererAccessTokenForNavigation(
+    const webContents = window.webContents
+    webContents.on("did-navigate", (_event, url) => {
+      const record = resolveWindow(webContents)
+      if (record && record.persisted !== false && shouldResetRendererAccessTokenForNavigation(
         url,
         false,
         true,
         (target) => isAllowedRendererOrigin(target, getAllowedOrigins(window)),
       )) {
-        clientState.resetRendererAccessToken()
+        clientState.resetRendererAccessToken(record.id)
       }
     })
     const resetDestroyedRenderer = () => {
-      if (getMainWindow() === window) clientState.resetRendererAccessToken()
+      const record = resolveWindow(webContents)
+      if (record && record.persisted !== false) clientState.resetRendererAccessToken(record.id)
     }
-    window.webContents.on("render-process-gone", resetDestroyedRenderer)
-    window.webContents.on("destroyed", resetDestroyedRenderer)
+    webContents.on("render-process-gone", resetDestroyedRenderer)
+    webContents.on("destroyed", resetDestroyedRenderer)
   }
 }

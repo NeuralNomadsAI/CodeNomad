@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-popup-titlebar-menu"
+description = "Enables the popup_titlebar_menu command without any pre-configured scope."
+commands.allow = ["popup_titlebar_menu"]
+
+[[permission]]
+identifier = "deny-popup-titlebar-menu"
+description = "Denies the popup_titlebar_menu command without any pre-configured scope."
+commands.deny = ["popup_titlebar_menu"]

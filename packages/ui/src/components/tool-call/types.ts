@@ -1,11 +1,12 @@
 import type { Accessor, JSXElement } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
 import type { ClientPart } from "../../types/message"
+import type { ToolState } from "../../types/tool-state"
 
 export type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 export interface DiffPayload {
   diffText: string
+  copyText?: string
   filePath?: string
 }
 
@@ -37,6 +38,7 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  onFullDiffAccess?: (diffText: string) => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs
    * within the same tool call (e.g. apply_patch).
@@ -57,6 +59,8 @@ export interface ToolRendererContext {
   toolName: Accessor<string>
   instanceId: string
   sessionId: string
+  /** Activity of the owning conversation, inherited by nested child-session tools. */
+  isActive?: Accessor<boolean>
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
@@ -103,6 +107,8 @@ export interface ToolOutputChrome {
   title?: string
   language?: string
   copyText?: string | null
+  getCopyText?: () => string | null
+  hasCopyText?: boolean
   actions?: JSXElement
   wrapToggle?: boolean
   suppressInnerHeader?: boolean

@@ -30,6 +30,11 @@ export interface DevReleaseMonitor {
 
 const DEFAULT_POLL_INTERVAL_MS = 15 * 60 * 1000
 
+export function matchesDevReleaseChannel(tag: string, currentVersion: string): boolean {
+  const v2 = "-dev-v2-"
+  return currentVersion.includes(v2) ? tag.includes(v2) : tag.includes("-dev-") && !tag.includes(v2)
+}
+
 export function startDevReleaseMonitor(options: DevReleaseMonitorOptions): DevReleaseMonitor {
   let stopped = false
   let timer: ReturnType<typeof setInterval> | null = null
@@ -88,7 +93,10 @@ async function fetchLatestPrerelease(args: {
   }
 
   const list = (await response.json()) as GithubReleaseListItem[]
-  const latest = list.find((r) => r && r.prerelease === true && r.draft !== true)
+  const latest = list.find((release) => {
+    const tag = release?.tag_name || release?.name || ""
+    return release?.prerelease === true && release.draft !== true && matchesDevReleaseChannel(tag, args.currentVersion)
+  })
   if (!latest) {
     return null
   }

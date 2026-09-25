@@ -9,6 +9,10 @@ The Electron app wraps the CodeNomad UI and Server into a standalone executable.
 - Global keyboard shortcuts
 - Application menu integration
 
+Each channel/config profile runs one native singleton process and one backend. A second launch opens another UUID-backed window by default; Advanced settings can restore most-recent-window focus, while `--new-window` always requests another window. Stable, dev, and non-default config profiles keep native/browser/client state isolated. OpenCode sessions/messages remain shared, while tabs, drafts, and views belong to each window.
+
+Restore state uses a V3 per-window envelope over the V2 content-addressed partition graph, with atomic publication/migration, ownership-fenced writes, and post-commit conservative garbage collection.
+
 ## Development
 
 To run the Electron app in development mode:

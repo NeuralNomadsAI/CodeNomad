@@ -95,13 +95,9 @@ export function usePromptState(options: PromptStateOptions): PromptState {
         const instanceId = options.instanceId()
         const sessionId = options.sessionId()
 
-        onCleanup(() => {
-          // Persist the previous session's draft when switching sessions.
-          if (prompt() !== getSessionDraftPrompt(instanceId, sessionId)) {
-            setSessionDraftPrompt(instanceId, sessionId, prompt())
-          }
-        })
-
+        // Fresh edits and explicit clears are persisted synchronously above.
+        // A retiring view must not publish its stale local buffer during cleanup
+        // over another view's newer edit, hydration, or successful send.
         const storedPrompt = getSessionDraftPrompt(instanceId, sessionId)
 
         setPromptInternal(storedPrompt)

@@ -3,6 +3,7 @@ import { Component, Show, createEffect, createSignal } from "solid-js"
 import { alertDialogState, dismissAlertDialog } from "../stores/alerts"
 import type { AlertVariant, AlertDialogState } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
+import { authRecovery } from "../lib/auth-recovery"
 
 const variantAccent: Record<AlertVariant, { badgeBg: string; badgeBorder: string; badgeText: string; symbol: string }> = {
   info: {
@@ -64,9 +65,10 @@ const AlertDialog: Component = () => {
 
   createEffect(() => {
     const state = alertDialogState()
-    if (!state) return
+    if (!state || authRecovery.required()) return
 
     queueMicrotask(() => {
+      if (authRecovery.required() || alertDialogState() !== state) return
       if (state.type === "prompt") {
         promptInputRef?.focus()
         promptInputRef?.select()
@@ -105,7 +107,7 @@ const AlertDialog: Component = () => {
 
         return (
           <Dialog
-            open
+            open={!authRecovery.required()}
             modal
             onOpenChange={(open) => {
               // Only handle dismiss if dialog is dismissible (default: true)
@@ -119,7 +121,7 @@ const AlertDialog: Component = () => {
               <Dialog.Content class="modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-sm -translate-x-1/2 -translate-y-1/2 p-6 border border-base shadow-2xl" tabIndex={-1}>
                    <div class="flex items-start gap-3">
                      <div
-                       class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border text-base font-semibold"
+                       class="flex h-12 w-12 shrink-0 items-center justify-center border text-base font-semibold"
                        style={{
                          "background-color": accent.badgeBg,
                          "border-color": accent.badgeBorder,

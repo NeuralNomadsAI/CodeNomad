@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "शीर्षमा स्क्रोल गर्नुहोस्",
   "infoView.logs.scrollToBottom": "तल स्क्रोल गर्नुहोस्",
 
-  "infoView.dispose.actions.dispose": "उदाहरण विसर्जन गर्नुहोस्",
-  "infoView.dispose.actions.disposing": "विसर्जन गर्दै...",
-  "infoView.dispose.confirm.title": "उदाहरण विसर्जन गर्ने?",
-  "infoView.dispose.confirm.message": "यसले यस डाइरेक्टरीको लागि क्यास गरिएको प्रति-परियोजना स्थिति सफा गर्छ र उदाहरण पुन: लोड गर्दछ।",
-  "infoView.dispose.confirm.confirmLabel": "विसर्जन गर्नुहोस्",
-  "infoView.dispose.confirm.cancelLabel": "रद्द गर्नुहोस्",
-  "infoView.dispose.toast.success": "उदाहरण विसर्जित भयो। पुन: लोड गर्दै...",
-  "infoView.dispose.toast.error": "उदाहरण विसर्जन गर्न असफल भयो।",
 } as const

@@ -10,14 +10,7 @@ export interface ClientConnectionRef {
 
 export interface ClientConnectionRecord extends ClientConnectionRef {
   key: string
-  connectedAt: number
   lastSeenAt: number
-}
-
-type ConnectionChangeEvent = {
-  type: "connected" | "disconnected"
-  connection: ClientConnectionRecord
-  reason?: string
 }
 
 interface RegisteredConnection extends ClientConnectionRecord {
@@ -26,7 +19,6 @@ interface RegisteredConnection extends ClientConnectionRecord {
 
 export class ClientConnectionManager {
   private readonly connections = new Map<string, RegisteredConnection>()
-  private readonly subscribers = new Set<(event: ConnectionChangeEvent) => void>()
   private readonly sweepTimer: NodeJS.Timeout
 
   constructor(private readonly logger: Logger) {
@@ -39,11 +31,6 @@ export class ClientConnectionManager {
     for (const connection of Array.from(this.connections.values())) {
       this.disconnect(connection.key, "shutdown", false)
     }
-  }
-
-  subscribe(listener: (event: ConnectionChangeEvent) => void): () => void {
-    this.subscribers.add(listener)
-    return () => this.subscribers.delete(listener)
   }
 
   register(input: ClientConnectionRef & { close: () => void }): () => void {
@@ -60,14 +47,12 @@ export class ClientConnectionManager {
       key,
       clientId: input.clientId,
       connectionId: input.connectionId,
-      connectedAt: now,
       lastSeenAt: now,
       close: input.close,
     }
     this.connections.set(key, connection)
     this.logger.debug({ clientId: input.clientId, connectionId: input.connectionId }, "Client connected")
-    this.notify({ type: "connected", connection })
-    return () => this.disconnect(key, "closed")
+    return () => this.disconnect(key, "closed", true, connection)
   }
 
   pong(input: ClientConnectionRef): boolean {
@@ -82,10 +67,6 @@ export class ClientConnectionManager {
     return true
   }
 
-  isConnected(input: ClientConnectionRef): boolean {
-    return this.connections.has(getConnectionKey(input))
-  }
-
   private sweepStaleConnections(): void {
     const cutoff = Date.now() - STALE_CONNECTION_TIMEOUT_MS
     for (const connection of Array.from(this.connections.values())) {
@@ -95,9 +76,9 @@ export class ClientConnectionManager {
     }
   }
 
-  private disconnect(key: string, reason: string, invokeClose = true): void {
+  private disconnect(key: string, reason: string, invokeClose = true, expected?: RegisteredConnection): void {
     const connection = this.connections.get(key)
-    if (!connection) return
+    if (!connection || (expected && connection !== expected)) return
     this.connections.delete(key)
     this.logger.debug({ clientId: connection.clientId, connectionId: connection.connectionId, reason }, "Client disconnected")
 
@@ -108,21 +89,9 @@ export class ClientConnectionManager {
         this.logger.warn({ err: error, clientId: connection.clientId, connectionId: connection.connectionId }, "Failed to close stale client connection")
       }
     }
-
-    this.notify({ type: "disconnected", connection, reason })
-  }
-
-  private notify(event: ConnectionChangeEvent): void {
-    for (const subscriber of this.subscribers) {
-      try {
-        subscriber(event)
-      } catch (error) {
-        this.logger.warn({ err: error, eventType: event.type }, "Client connection subscriber failed")
-      }
-    }
   }
 }
 
 function getConnectionKey(input: ClientConnectionRef): string {
-  return `${input.clientId}:${input.connectionId}`
+  return JSON.stringify([input.clientId, input.connectionId])
 }

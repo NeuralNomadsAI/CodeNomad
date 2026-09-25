@@ -1,17 +1,18 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, on, untrack, type Component, type Accessor } from "solid-js"
-import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
-import { Portal } from "solid-js/web"
-import MessagePreview from "./message-preview"
+import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, on, type Component, type Accessor } from "solid-js"
+import TimelineVirtualList, { type TimelineListHandle } from "./timeline-virtual-list"
+import { Dynamic, Portal } from "solid-js/web"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
 import { isHiddenSyntheticTextPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
 import { getPartCharCount } from "../lib/token-utils"
-import { getToolIcon } from "./tool-call/utils"
-import { User as UserIcon, Bot as BotIcon, FoldVertical, ShieldAlert } from "lucide-solid"
+import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import type { DeleteHoverState } from "../types/delete-hover"
+import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
+import { getMessageContentIcon } from "./message-content-icons"
+import { Markdown } from "./markdown"
+import { createTimelinePreviews } from "../stores/timeline-previews"
 
 export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
 
@@ -21,7 +22,7 @@ export interface TimelineSegment {
   type: TimelineSegmentType
   label: string
   tooltip: string
-  shortLabel?: string
+  toolName?: string
   variant?: "auto" | "manual"
   toolPartIds?: string[]
   partIds?: string[]
@@ -32,33 +33,18 @@ export interface TimelineSegment {
 interface MessageTimelineProps {
   segments: TimelineSegment[]
   onSegmentClick?: (segment: TimelineSegment) => void
-  onToggleSelection?: (id: string) => void
-  onLongPressSelection?: (segment: TimelineSegment) => void
-  onSelectRange?: (id: string) => void
-  onClearSelection?: () => void
-  selectedIds?: Accessor<Set<string>>
   expandedMessageIds?: Accessor<Set<string>>
-  // Optional: restrict histogram/xray overlay to only show for these message ids.
-  // Used to hide ribs for messages before the last compaction.
-  deletableMessageIds?: Accessor<Set<string>>
   activeSegmentId?: string | null
   instanceId: string
   sessionId: string
+  isActive?: boolean
   showToolSegments?: boolean
-  deleteHover?: () => DeleteHoverState
-  onDeleteHoverChange?: (state: DeleteHoverState) => void
-  onDeleteMessagesUpTo?: (messageId: string) => void | Promise<void>
-  selectedMessageIds?: () => Set<string>
-  onToggleSelectedMessage?: (messageId: string, selected: boolean) => void
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
+  revealActiveToken?: number
 }
 
 const MAX_TOOLTIP_LENGTH = 220
-const LONG_PRESS_MS = 500
-const JITTER_THRESHOLD = 10
-const ABSOLUTE_TOKEN_CAP = 10000
-const TIMELINE_VIRTUALIZER_BUFFER_PX = 240
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -72,8 +58,6 @@ interface PendingSegment {
 }
 
 interface TimelineSegmentState {
-  deleteHovered: boolean
-  deleteSelected: boolean
   hasActivePermission: boolean
   hidden: boolean
 }
@@ -206,7 +190,6 @@ export function buildTimelineSegments(
       return
     }
     const label = segmentLabel(pending.type)
-    const shortLabel = undefined
     const tooltip = formatTextsTooltip(
       [...pending.texts, ...pending.reasoningTexts],
       pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
@@ -218,7 +201,6 @@ export function buildTimelineSegments(
       type: pending.type,
       label,
       tooltip,
-      shortLabel,
       partIds: pending.partIds,
       totalChars: pending.totalChars,
     })
@@ -250,6 +232,7 @@ export function buildTimelineSegments(
     if (part.type === "tool") {
       flushPending()
       const toolPart = part as ToolCallPart
+      const toolName = typeof toolPart.tool === "string" ? toolPart.tool.trim() : ""
       const partId = typeof toolPart.id === "string" ? toolPart.id : ""
       const title = getToolTitle(toolPart, t)
       result.push({
@@ -258,7 +241,7 @@ export function buildTimelineSegments(
         type: "tool",
         label: getToolTypeLabel(toolPart, t) || segmentLabel("tool"),
         tooltip: formatToolTooltip([title], t),
-        shortLabel: getToolIcon(typeof toolPart.tool === "string" ? toolPart.tool : "tool"),
+        toolName,
         toolPartIds: partId ? [partId] : undefined,
         totalChars: getPartCharCount(part),
       })
@@ -298,7 +281,7 @@ export function buildTimelineSegments(
       continue
     }
 
-    if (part.type === "step-start" || part.type === "step-finish") {
+    if (part.type === "step-start" || part.type === "step-finish" || part.type === "system") {
       continue
     }
 
@@ -323,32 +306,38 @@ export function buildTimelineSegments(
 
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const { t } = useI18n()
-  const buttonRefs = new Map<string, HTMLButtonElement>()
+  const previewId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
   const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
+  const [visiblePreviewSegments, setVisiblePreviewSegments] = createSignal<TimelineSegment[]>([])
+  const previews = createTimelinePreviews({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
+    active: () => props.isActive !== false,
+    requested: () => {
+      const visible = visiblePreviewSegments(), center = Math.floor(visible.length / 2)
+      const nearby = [...visible].sort((a, b) => Math.abs(visible.indexOf(a) - center) - Math.abs(visible.indexOf(b) - center))
+      return [hoveredSegment()?.messageId, ...nearby.map(segment => segment.messageId)].filter((id): id is string => Boolean(id))
+    } })
+  const previewText = createMemo(() => {
+    const segment = hoveredSegment()
+    if (!segment || props.isActive === false) return ""
+    const record = store().getMessage(segment.messageId)
+    if (record) {
+      const parts = buildRecordDisplayData(props.instanceId, record).orderedParts
+      const text = parts.filter(part => segment.type === "tool" ? part.type === "tool" : part.type !== "tool")
+        .map(part => part.type === "tool" ? `${getToolTitle(part as ToolCallPart, t)}\n${part.state && "output" in part.state && typeof part.state.output === "string" ? part.state.output.slice(0, 4096) : ""}`
+          : collectTextFromPart(part, t).slice(0, 4096)).join("\n\n").slice(0, 4096)
+      if (text) return text
+    }
+    const preview = previews(segment.messageId)
+    return (segment.type === "tool" ? preview?.tools : preview?.text) || segment.tooltip || ""
+  })
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
   const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
-  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 420 })
+  const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 120 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
   const showTools = () => props.showToolSegments ?? true
-  const deleteHover = () => props.deleteHover?.() ?? { kind: "none" as const }
-
-  const isHistogramEligible = (segment: TimelineSegment): boolean => {
-    const allowed = props.deletableMessageIds?.()
-    if (!allowed) return true
-    return allowed.has(segment.messageId)
-  }
-
-  const registerButtonRef = (segmentId: string, element: HTMLButtonElement | null) => {
-    if (element) {
-      buttonRefs.set(segmentId, element)
-    } else {
-      buttonRefs.delete(segmentId)
-    }
-  }
-
   const clearHoverTimer = () => {
     if (hoverTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(hoverTimer)
@@ -381,15 +370,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }, 160)
   }
 
-  const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent) => {
-    // Suppress previews during long-press selection gestures.
-    if (longPressTimer !== null) return
-
+  const handleMouseEnter = (segment: TimelineSegment, event: MouseEvent | FocusEvent) => {
     if (typeof window === "undefined") return
     clearHoverTimer()
     clearCloseTimer()
     const target = event.currentTarget as HTMLButtonElement
     hoverTimer = window.setTimeout(() => {
+      hoverTimer = null
+      if (!target.isConnected) return
       const rect = target.getBoundingClientRect()
       setHoverAnchorRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
       setHoveredSegment(segment)
@@ -410,9 +398,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const horizontalGap = 16
     const preferredTop = anchor.top + anchor.height / 2 - height / 2
     const maxTop = window.innerHeight - height - verticalGap
-    const clampedTop = Math.min(maxTop, Math.max(verticalGap, preferredTop))
-    const preferredLeft = anchor.left - width - horizontalGap
-    const clampedLeft = Math.max(horizontalGap, preferredLeft)
+    const clampedTop = Math.max(verticalGap, Math.min(maxTop, preferredTop))
+    const preferredLeft = anchor.left >= width + horizontalGap
+      ? anchor.left - width - horizontalGap : anchor.left + anchor.width + horizontalGap
+    const clampedLeft = Math.max(horizontalGap, Math.min(window.innerWidth - width - horizontalGap, preferredLeft))
     setTooltipCoords({ top: clampedTop, left: clampedLeft })
   })
 
@@ -420,267 +409,29 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     clearHoverPreview()
   })
 
-  // --- Selection & histogram rib state ---
-  const isSelectionActive = createMemo(() => (props.selectedIds?.().size ?? 0) > 0)
-
-  // Segments eligible for xray ribs. We intentionally exclude messages before
-  // the last compaction (when provided by the parent) to avoid misleading token
-  // weights for content that's no longer in context.
-  const xraySegments = createMemo(() => {
-    if (!isSelectionActive()) return [] as TimelineSegment[]
-    return props.segments.filter((segment) => isHistogramEligible(segment))
-  })
-
-  // Stable layout offsets per badge (relative to scroll content), recomputed only
-  // on activation, resize, or expansion — NOT on every scroll frame.
-  const [badgeOffsets, setBadgeOffsets] = createSignal<Record<string, { layoutTop: number; height: number }>>({})
-  const [windowWidth, setWindowWidth] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1200)
   const [scrollElement, setScrollElement] = createSignal<HTMLDivElement | undefined>()
-  const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle | undefined>()
-  let scrollContainerRef: HTMLDivElement | undefined
-  let xrayOverlayRef: HTMLDivElement | undefined
-
-  // Full layout recomputation: reads every badge's getBoundingClientRect once,
-  // then stores offsets relative to the scroll content so they survive scrolling.
-  const computeBadgeLayout = () => {
-    if (!isSelectionActive() || !scrollContainerRef) return
-    const containerRect = scrollContainerRef.getBoundingClientRect()
-    const scrollTop = scrollContainerRef.scrollTop
-    const offsets: Record<string, { layoutTop: number; height: number }> = {}
-
-    for (const [id, element] of buttonRefs.entries()) {
-      if (!element) continue
-      const rect = element.getBoundingClientRect()
-      // Store position relative to scroll content (survives scrolling).
-      offsets[id] = {
-        layoutTop: rect.top - containerRect.top + scrollTop,
-        height: rect.height,
-      }
-    }
-    setBadgeOffsets(offsets)
-    if (xrayOverlayRef) {
-      xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollTop}px`)
-    }
-
-    if (typeof window !== "undefined") {
-      setWindowWidth(window.innerWidth)
-    }
-  }
+  const [virtualizerHandle, setVirtualizerHandle] = createSignal<TimelineListHandle | undefined>()
+  let browsingRail = false
+  const cancelReveal = () => { browsingRail = true }
 
   const handleScroll = () => {
-    if (renderVirtualizedTimeline()) {
-      if (hoveredSegment()) {
-        clearHoverPreview()
-      }
-      return
-    }
-    if (!isSelectionActive()) return
-    if (!scrollContainerRef || !xrayOverlayRef) return
-    xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
-  }
-
-  createEffect(() => {
-    if (isSelectionActive()) {
-      computeBadgeLayout()
-      if (typeof window !== "undefined") {
-        // Deferred pass: tool segments become visible when selection activates,
-        // but they may need a layout pass before getBoundingClientRect is accurate.
-        requestAnimationFrame(computeBadgeLayout)
-        window.addEventListener("resize", computeBadgeLayout)
-        onCleanup(() => {
-          window.removeEventListener("resize", computeBadgeLayout)
-        })
-      }
-    }
-  })
-
-  // Re-compute badge layout after expansion changes (tools become visible in DOM)
-  createEffect(() => {
-    props.expandedMessageIds?.()
-    if (isSelectionActive()) {
-      requestAnimationFrame(computeBadgeLayout)
-    }
-  })
-
-  const renderVirtualizedTimeline = createMemo(() => !isSelectionActive())
-
-  createEffect(on(renderVirtualizedTimeline, () => {
     clearHoverPreview()
-  }))
-
-  const maxRibWidth = createMemo(() => Math.round(windowWidth() * 0.5))
-
-  // Compute fresh char counts from the store. segment.totalChars can be stale for
-  // tool parts whose output arrived after the timeline segment was first built.
-  const liveSegmentChars = createMemo(() => {
-    if (!isSelectionActive()) return {} as Record<string, number>
-    const result: Record<string, number> = {}
-    const resolvedStore = store()
-
-    // Compute live char counts by reading only the parts that the segment
-    // references (partIds/toolPartIds). This stays accurate for streamed tool
-    // outputs without scanning every part in the message.
-    for (const segment of xraySegments()) {
-      const record = resolvedStore.getMessage(segment.messageId)
-      if (!record) {
-        result[segment.id] = segment.totalChars
-        continue
-      }
-
-      const ids = [...(segment.partIds ?? []), ...(segment.toolPartIds ?? [])]
-      let chars = 0
-      for (const partId of ids) {
-        const part = record.parts?.[partId]?.data
-        if (!part) continue
-        chars += getPartCharCount(part)
-      }
-
-      result[segment.id] = chars > 0 ? chars : segment.totalChars
-    }
-
-    return result
-  })
-
-  // Pre-compute aggregate tokens per message: O(n) once, O(1) per lookup.
-  // Avoids the previous O(n²) pattern of iterating all segments inside each <For> item.
-  const aggregateTokensByMessageId = createMemo(() => {
-    const chars = liveSegmentChars()
-    const result: Record<string, number> = {}
-    for (const s of xraySegments()) {
-      result[s.messageId] = (result[s.messageId] ?? 0) + (chars[s.id] ?? s.totalChars)
-    }
-    for (const id of Object.keys(result)) {
-      result[id] = Math.max(Math.round(result[id] / 4), 1)
-    }
-    return result
-  })
-
-  const getSegmentTokens = (segment: TimelineSegment): number => {
-    const isExpanded = props.expandedMessageIds?.().has(segment.messageId) ?? false
-    // When tools are hidden (not expanded, not in selection mode), assistant/user
-    // bars show aggregate tokens for the whole message.  When tools are visible
-    // (expanded or selection mode active), each segment shows its own tokens to
-    // avoid double-counting.
-    if (!isExpanded && !isSelectionActive() && (segment.type === "assistant" || segment.type === "user")) {
-      return aggregateTokensByMessageId()[segment.messageId] ?? 1
-    }
-    const chars = liveSegmentChars()[segment.id] ?? segment.totalChars
-    return Math.max(Math.round(chars / 4), 1)
   }
+  createEffect(() => { if (props.isActive === false) clearHoverPreview() })
 
-  const getMessageAggregateTokens = (messageId: string): number => {
-    return aggregateTokensByMessageId()[messageId] ?? 1
-  }
-
-  const formatTokenLabel = (tokens: number): string => {
-    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-    return String(tokens)
-  }
-
-  const maxTokens = createMemo(() => {
-    let max = 0
-    for (const s of xraySegments()) {
-      const tokens = getSegmentTokens(s)
-      if (tokens > max) max = tokens
-    }
-    return Math.max(max, 1)
-  })
-
-  // --- Long-press for mobile selection ---
-  let longPressTimer: number | null = null
-  let wasLongPress = false
-  let pressStartPos = { x: 0, y: 0 }
-
-  const handlePointerDown = (segment: TimelineSegment, event: PointerEvent) => {
-    if (event.button !== 0) return
-    wasLongPress = false
-    pressStartPos = { x: event.clientX, y: event.clientY }
-
-    clearHoverTimer()
-    clearCloseTimer()
-
-    if (longPressTimer !== null && typeof window !== "undefined") {
-      window.clearTimeout(longPressTimer)
-    }
-
-    if (typeof window !== "undefined") {
-      longPressTimer = window.setTimeout(() => {
-        longPressTimer = null
-        wasLongPress = true
-
-        // Scroll anchoring: preserve visual position of the pressed badge.
-        const btn = renderVirtualizedTimeline() ? null : buttonRefs.get(segment.id)
-        let anchorOffset: number | null = null
-        if (btn && scrollContainerRef) {
-          anchorOffset = btn.offsetTop - scrollContainerRef.scrollTop
-        }
-
-        if (props.onLongPressSelection) {
-          props.onLongPressSelection(segment)
-        } else {
-          props.onToggleSelection?.(segment.id)
-        }
-
-        if (anchorOffset !== null && btn && scrollContainerRef) {
-          const desired = btn.offsetTop - anchorOffset
-          if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
-            scrollContainerRef.scrollTop = desired
-          }
-        }
-      }, LONG_PRESS_MS)
-    }
-  }
-
-  const handlePointerUp = () => {
-    if (longPressTimer !== null && typeof window !== "undefined") {
-      window.clearTimeout(longPressTimer)
-      longPressTimer = null
-    }
-  }
-
-  const handlePointerMove = (event: PointerEvent) => {
-    if (longPressTimer !== null) {
-      const dist = Math.sqrt(
-        Math.pow(event.clientX - pressStartPos.x, 2) +
-        Math.pow(event.clientY - pressStartPos.y, 2),
-      )
-      if (dist > JITTER_THRESHOLD) {
-        if (typeof window !== "undefined") {
-          window.clearTimeout(longPressTimer)
-        }
-        longPressTimer = null
-      }
-    }
-  }
-
-  const handleContextMenu = (event: MouseEvent) => {
-    if (wasLongPress) {
-      event.preventDefault()
-    }
-  }
-
-  createEffect(on(() => props.activeSegmentId, (activeId) => {
-    if (!activeId) return
-    const timer = typeof window !== "undefined" ? window.setTimeout(() => {
-      if (renderVirtualizedTimeline()) {
-        const index = segmentIndexById().get(activeId)
-        if (index !== undefined) {
-          virtualizerHandle()?.scrollToIndex(index, { align: "nearest", smooth: true })
-        }
-        return
-      }
-
-      const element = buttonRefs.get(activeId)
-      if (!element) return
-      element.scrollIntoView({ block: "nearest", behavior: "smooth" })
-    }, 120) : null
-    onCleanup(() => {
-      if (timer !== null && typeof window !== "undefined") {
-        window.clearTimeout(timer)
-      }
+  createEffect(on(() => props.revealActiveToken, () => { browsingRail = false }))
+  createEffect(() => {
+    props.revealActiveToken
+    const activeId = props.activeSegmentId
+    const index = activeId ? segmentIndexById().get(activeId) : undefined
+    const handle = virtualizerHandle()
+    // Wait for the exact extent to reach layout, but never queue a reveal past
+    // a manual rail gesture or a newer active marker.
+    const frame = requestAnimationFrame(() => {
+      if (!browsingRail && index !== undefined) handle?.scrollToIndex(index)
     })
-  }))
+    onCleanup(() => cancelAnimationFrame(frame))
+  })
 
   createEffect(() => {
     const element = tooltipElement()
@@ -693,15 +444,39 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(() => updateSize())
     observer.observe(element)
-    onCleanup(() => observer.disconnect())
+    window.addEventListener("resize", clearHoverPreview)
+    onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", clearHoverPreview) })
   })
 
-  const previewData = createMemo(() => {
-    const segment = hoveredSegment()
-    if (!segment) return null
-    const record = store().getMessage(segment.messageId)
-    if (!record) return null
-    return { messageId: segment.messageId }
+  createEffect(() => {
+    const element = scrollElement()
+    if (!element || typeof ResizeObserver === "undefined") return
+    let previousHeight = element.clientHeight
+    let pendingHeightDelta = 0
+    let pendingFrame: number | null = null
+    const observer = new ResizeObserver(() => {
+      const nextHeight = element.clientHeight
+      if (nextHeight === previousHeight) return
+      if (previousHeight <= 0 || nextHeight <= 0) {
+        previousHeight = nextHeight
+        return
+      }
+      pendingHeightDelta += previousHeight - nextHeight
+      previousHeight = nextHeight
+      if (pendingFrame !== null) return
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = null
+        const offset = getBottomAnchoredViewportOffset(element.scrollTop, pendingHeightDelta)
+        pendingHeightDelta = 0
+        const maxOffset = Math.max(element.scrollHeight - element.clientHeight, 0)
+        element.scrollTop = Math.min(offset, maxOffset)
+      })
+    })
+    observer.observe(element)
+    onCleanup(() => {
+      observer.disconnect()
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
+    })
   })
 
   // Pre-computed set of messageIds that have at least one tool segment.
@@ -714,42 +489,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return set
   })
 
-  // Pre-computed index map for session message ordering.
-  // Used by isDeleteHovered() to replace O(n) indexOf with O(1) Map.get().
-  const messageIdToSessionIndex = createMemo(() => {
-    const ids = store().getSessionMessageIds(props.sessionId)
-    const map = new Map<string, number>()
-    for (let i = 0; i < ids.length; i++) map.set(ids[i], i)
-    return map
-  })
-
-  const segmentIndexById = createMemo(() => {
-    const map = new Map<string, number>()
-    for (let i = 0; i < props.segments.length; i++) map.set(props.segments[i].id, i)
-    return map
-  })
-
   const segmentStates = createMemo(() => {
-    const hover = deleteHover()
-    const selectedMessages = props.selectedMessageIds?.()
     const expandedMessages = props.expandedMessageIds?.()
     const resolvedStore = store()
-    const indexMap = messageIdToSessionIndex()
-    const selectionActive = isSelectionActive()
     const result = new Map<string, TimelineSegmentState>()
 
     for (const segment of props.segments) {
-      let deleteHovered = false
-      if (hover.kind === "message") {
-        deleteHovered = hover.messageId === segment.messageId
-      } else if (hover.kind === "deleteUpTo") {
-        const targetIndex = indexMap.get(hover.messageId)
-        const segmentIndex = indexMap.get(segment.messageId)
-        deleteHovered = targetIndex !== undefined && segmentIndex !== undefined && segmentIndex >= targetIndex
-      }
-
-      const deleteSelected = selectedMessages?.has(segment.messageId) ?? false
-
       let hasActivePermission = false
       if (segment.type === "tool") {
         const partIds = segment.toolPartIds ?? []
@@ -765,16 +510,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       const hidden = segment.type === "tool" && !(
         showTools()
         || expandedMessages?.has(segment.messageId)
-        || selectionActive
         || props.activeSegmentId === segment.id
         || hasActivePermission
-        || deleteHovered
-        || deleteSelected
       )
 
       result.set(segment.id, {
-        deleteHovered,
-        deleteSelected,
         hasActivePermission,
         hidden,
       })
@@ -785,16 +525,16 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const segmentStateFor = (segmentId: string): TimelineSegmentState => {
     return segmentStates().get(segmentId) ?? {
-      deleteHovered: false,
-      deleteSelected: false,
       hasActivePermission: false,
       hidden: false,
     }
   }
 
+  const visibleSegments = createMemo(() => props.segments.filter(segment => !segmentStateFor(segment.id).hidden))
+  const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
   const segmentSpacerHeights = createMemo(() => {
     const states = segmentStates()
-    const result = new Map<string, string>()
+    const result = new Map<string, number>()
     let previousVisible: TimelineSegment | null = null
 
     for (let index = 0; index < props.segments.length; index += 1) {
@@ -802,12 +542,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       const state = states.get(segment.id)
 
       if (state?.hidden) {
-        result.set(segment.id, "0")
+        result.set(segment.id, 0)
         continue
       }
 
       if (!previousVisible) {
-        result.set(segment.id, "0")
+        result.set(segment.id, 0)
         previousVisible = segment
         continue
       }
@@ -825,12 +565,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         && messagesWithTools().has(previousVisible.messageId)
 
       const gapUnits = 1 + (startsVisibleToolGroup || startsCollapsedToolGroup || followsVisibleGroupParent ? 1 : 0)
-      result.set(
-        segment.id,
-        gapUnits === 1
-          ? "var(--message-timeline-segment-gap)"
-          : "calc(var(--message-timeline-segment-gap) * 2)",
-      )
+      result.set(segment.id, gapUnits)
 
       previousVisible = segment
     }
@@ -842,122 +577,27 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     <div class="message-timeline-container">
       <div
         ref={(element) => {
-          scrollContainerRef = element
           setScrollElement(element)
         }}
-        class={`message-timeline${isSelectionActive() ? " message-timeline--selection-active" : ""}`}
+        class="message-timeline"
+        data-segment-count={props.segments.length}
         role="navigation"
+        tabIndex={0}
         aria-label={t("messageTimeline.ariaLabel")}
         onScroll={handleScroll}
+        onWheel={cancelReveal}
+        onPointerEnter={cancelReveal}
+        onPointerDown={cancelReveal}
+        onFocusIn={cancelReveal}
+        onTouchStart={cancelReveal}
+        onKeyDown={(event) => { cancelReveal(); if (event.key === "Escape") clearHoverPreview() }}
       >
-        <Show
-          when={renderVirtualizedTimeline()}
-          fallback={(
-            <For each={props.segments}>
-              {(segment, segIndex) => {
-                onCleanup(() => buttonRefs.delete(segment.id))
-                const isActive = () => props.activeSegmentId === segment.id
-                const isSelected = () => props.selectedIds?.().has(segment.id)
-                const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
-                const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
-                const state = () => segmentStateFor(segment.id)
-                const isDeleteHovered = () => state().deleteHovered
-                const isDeleteSelected = () => state().deleteSelected
-                const hasActivePermission = () => state().hasActivePermission
-                const isHidden = () => state().hidden
-
-                const groupRole = (): "child" | "parent" | "none" => {
-                  if (segment.type === "tool") return "child"
-                  if (segment.type === "assistant" && messagesWithTools().has(segment.messageId)) return "parent"
-                  return "none"
-                }
-
-                const shortLabelContent = () => {
-                  if (segment.type === "tool") {
-                    if (hasActivePermission()) {
-                      return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
-                    }
-                    return segment.shortLabel ?? getToolIcon("tool")
-                  }
-                  if (segment.type === "compaction") {
-                    return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
-                  }
-                  if (segment.type === "user") {
-                    return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-                  }
-                  return <BotIcon class="message-timeline-icon" aria-hidden="true" />
-                }
-
-                return (
-                  <div class="message-timeline-item">
-                    <div aria-hidden="true" class="message-timeline-item-spacer" style={{ height: segmentSpacerHeights().get(segment.id) ?? "0" }} />
-                    <button
-                      ref={(el) => registerButtonRef(segment.id, el)}
-                      type="button"
-                      data-variant={segment.variant}
-                      class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
-                      data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
-                      aria-current={isActive() ? "true" : undefined}
-                      aria-hidden={isHidden() ? "true" : undefined}
-                      onClick={(event) => {
-                        if (wasLongPress) {
-                          wasLongPress = false
-                          return
-                        }
-
-                        const btn = buttonRefs.get(segment.id)
-                        const stableBtn = renderVirtualizedTimeline() ? null : btn
-                        let anchorOffset: number | null = null
-                        if (stableBtn && scrollContainerRef) {
-                          anchorOffset = stableBtn.offsetTop - scrollContainerRef.scrollTop
-                        }
-
-                        const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
-
-                        if (event.shiftKey) {
-                          props.onSelectRange?.(segment.id)
-                        } else if (event.ctrlKey || event.metaKey) {
-                          props.onToggleSelection?.(segment.id)
-                        } else if (isMultiSelectActive) {
-                          props.onSegmentClick?.(segment)
-                        } else {
-                          props.onSegmentClick?.(segment)
-                        }
-
-                        if (anchorOffset !== null && stableBtn && scrollContainerRef) {
-                          const desired = stableBtn.offsetTop - anchorOffset
-                          if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
-                            scrollContainerRef.scrollTop = desired
-                          }
-                        }
-                      }}
-                      onPointerDown={(e) => handlePointerDown(segment, e)}
-                      onPointerUp={handlePointerUp}
-                      onPointerCancel={handlePointerUp}
-                      onPointerMove={handlePointerMove}
-                      onContextMenu={handleContextMenu}
-                      onMouseEnter={(event) => handleMouseEnter(segment, event)}
-                      onMouseLeave={handleMouseLeave}
-                    >
-                      <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
-                      <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
-                    </button>
-                  </div>
-                )
-              }}
-            </For>
-          )}
-        >
-          <Virtualizer ref={setVirtualizerHandle} data={props.segments} scrollRef={scrollElement()} bufferSize={TIMELINE_VIRTUALIZER_BUFFER_PX}>
-            {(segment, index) => {
-              const segIndex = () => index()
+        <TimelineVirtualList register={setVirtualizerHandle} onVisibleItems={setVisiblePreviewSegments} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
+          {(segment) => {
             const isActive = () => props.activeSegmentId === segment.id
-            const isSelected = () => props.selectedIds?.().has(segment.id)
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
             const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
             const state = () => segmentStateFor(segment.id)
-            const isDeleteHovered = () => state().deleteHovered
-            const isDeleteSelected = () => state().deleteSelected
             const hasActivePermission = () => state().hasActivePermission
             const isHidden = () => state().hidden
 
@@ -969,81 +609,44 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               return "none"
             }
 
-             const shortLabelContent = () => {
-               if (segment.type === "tool") {
-                  if (hasActivePermission()) {
-                   return <ShieldAlert class="message-timeline-icon" aria-hidden="true" />
-                 }
-                 return segment.shortLabel ?? getToolIcon("tool")
-               }
-               if (segment.type === "compaction") {
-                 return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
-               }
-               if (segment.type === "user") {
-                 return <UserIcon class="message-timeline-icon" aria-hidden="true" />
-                }
-                return <BotIcon class="message-timeline-icon" aria-hidden="true" />
+            const shortLabelContent = () => {
+              if (segment.type === "tool") {
+                return <Dynamic component={getMessageContentIcon(segment.toolName)} class="message-timeline-icon" aria-hidden="true" />
               }
+              if (segment.type === "compaction") {
+                return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
+              }
+              if (segment.type === "user") {
+                return <UserIcon class="message-timeline-icon" aria-hidden="true" />
+              }
+              return <BotIcon class="message-timeline-icon" aria-hidden="true" />
+            }
 
               return (
-               <div class="message-timeline-item">
-                  <div aria-hidden="true" class="message-timeline-item-spacer" style={{ height: segmentSpacerHeights().get(segment.id) ?? "0" }} />
-                  <button
+              <div class="message-timeline-item">
+                <button
                     type="button"
                     data-variant={segment.variant}
-                    class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSelected() ? "message-timeline-segment-selected" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${isDeleteSelected() ? "message-timeline-segment-delete-selected" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
-                   data-delete-hover={isDeleteHovered() || isDeleteSelected() || isSelected() ? "true" : undefined}
-                   aria-current={isActive() ? "true" : undefined}
-                   aria-hidden={isHidden() ? "true" : undefined}
-                   onClick={(event) => {
-                     if (wasLongPress) {
-                       wasLongPress = false
-                       return
-                     }
-
-                     const btn = buttonRefs.get(segment.id)
-                     const stableBtn = renderVirtualizedTimeline() ? null : btn
-                     let anchorOffset: number | null = null
-                     if (stableBtn && scrollContainerRef) {
-                       anchorOffset = stableBtn.offsetTop - scrollContainerRef.scrollTop
-                     }
-
-                     const isMultiSelectActive = (props.selectedIds?.().size ?? 0) > 0
-
-                     if (event.shiftKey) {
-                       props.onSelectRange?.(segment.id)
-                     } else if (event.ctrlKey || event.metaKey) {
-                       props.onToggleSelection?.(segment.id)
-                     } else if (isMultiSelectActive) {
-                       props.onSegmentClick?.(segment)
-                     } else {
-                       props.onSegmentClick?.(segment)
-                     }
-
-                     if (anchorOffset !== null && stableBtn && scrollContainerRef) {
-                       const desired = stableBtn.offsetTop - anchorOffset
-                       if (Math.abs(scrollContainerRef.scrollTop - desired) > 1) {
-                         scrollContainerRef.scrollTop = desired
-                       }
-                     }
-                   }}
-                   onPointerDown={(e) => handlePointerDown(segment, e)}
-                   onPointerUp={handlePointerUp}
-                   onPointerCancel={handlePointerUp}
-                   onPointerMove={handlePointerMove}
-                   onContextMenu={handleContextMenu}
-                   onMouseEnter={(event) => handleMouseEnter(segment, event)}
-                   onMouseLeave={handleMouseLeave}
-                 >
-                   <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
-                   <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
-                 </button>
-               </div>
-             )
-            }}
-          </Virtualizer>
-        </Show>
-        <Show when={previewData()}>
+                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
+                  aria-current={isActive() ? "true" : undefined}
+                  aria-label={segment.tooltip || segment.label}
+                   aria-describedby={hoveredSegment()?.id === segment.id && previewText() ? previewId : undefined}
+                  data-message-id={segment.messageId}
+                  aria-hidden={isHidden() ? "true" : undefined}
+                    onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}
+                  onMouseEnter={(event) => handleMouseEnter(segment, event)}
+                  onMouseLeave={handleMouseLeave}
+                  onFocus={(event) => handleMouseEnter(segment, event)}
+                  onBlur={handleMouseLeave}
+                >
+                  <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
+                  <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
+                </button>
+              </div>
+            )
+          }}
+        </TimelineVirtualList>
+        <Show when={hoveredSegment() && previewText()}>
           {(data) => {
             onCleanup(() => setTooltipElement(null))
             return (
@@ -1051,20 +654,14 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 <div
                   ref={(element) => setTooltipElement(element)}
                   class="message-timeline-tooltip"
+                  id={previewId}
+                  role="tooltip"
                   style={{ top: `${tooltipCoords().top}px`, left: `${tooltipCoords().left}px` }}
                   onMouseEnter={() => clearCloseTimer()}
                   onMouseLeave={() => scheduleClose()}
                 >
-                  <MessagePreview
-                    messageId={data().messageId}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    store={store}
-                    deleteHover={props.deleteHover}
-                    onDeleteHoverChange={props.onDeleteHoverChange}
-                    onDeleteMessagesUpTo={props.onDeleteMessagesUpTo}
-                    selectedMessageIds={props.selectedMessageIds}
-                  />
+                   <Markdown part={{ type: "text", text: data() }} instanceId={props.instanceId} sessionId={props.sessionId}
+                     size="sm" disableHighlight escapeRawHtml literalRawHtml={hoveredSegment()?.type === "user"} />
                 </div>
               </Portal>
             )
@@ -1072,60 +669,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         </Show>
       </div>
 
-      <Show when={isSelectionActive()}>
-        <div
-          ref={(el) => {
-            xrayOverlayRef = el
-            if (xrayOverlayRef && scrollContainerRef) {
-              xrayOverlayRef.style.setProperty("--xray-scroll-y", `${-scrollContainerRef.scrollTop}px`)
-            }
-          }}
-          class="message-timeline-xray-overlay"
-          style={{ "--max-rib-width": `${maxRibWidth()}px` }}
-        >
-          <div class="message-timeline-xray-overlay-inner">
-          <For each={xraySegments()}>
-            {(segment) => {
-              const pos = () => {
-                const offset = badgeOffsets()[segment.id]
-                if (!offset) return null
-                return { top: offset.layoutTop + offset.height / 2 }
-              }
-              const tokens = () => getSegmentTokens(segment)
-              const relativeWeight = () => tokens() / maxTokens()
-              const absoluteWeight = () => Math.min(tokens() / ABSOLUTE_TOKEN_CAP, 1.0)
-              const isOverflow = () => tokens() > ABSOLUTE_TOKEN_CAP
-              const isParent = segment.type === "assistant" || segment.type === "user"
-              const displayTokens = () =>
-                isParent ? getMessageAggregateTokens(segment.messageId) : tokens()
-              return (
-                <Show when={pos()}>
-                  <div
-                    class="message-timeline-xray-rib"
-                    style={{
-                      top: `${pos()!.top}px`,
-                      left: "var(--xray-overhang)",
-                    }}
-                  >
-                    <span class="message-timeline-xray-token-label">
-                      {formatTokenLabel(displayTokens())}
-                    </span>
-                    <div
-                      class="message-timeline-relative-bar"
-                      style={{ "--segment-weight": relativeWeight() }}
-                    />
-                    <div
-                      class={`message-timeline-absolute-bar${isOverflow() ? " message-timeline-absolute-bar-overflow" : ""}`}
-                      style={{ "--segment-weight": absoluteWeight() }}
-                    />
-                  </div>
-                </Show>
-              )
-            }}
-          </For>
-          </div>
-        </div>
-      </Show>
     </div>
   )
 }

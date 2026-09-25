@@ -23,6 +23,7 @@ import {
 } from "./app-session-snapshot-merge.ts"
 import type { RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { onInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
 
 const absent = { tabs: [], activeTabIndex: -1 }
 function workspace(state: Partial<RestorableWorkspaceTabState> = {}): RestorableWorkspaceTabState {
@@ -76,10 +77,23 @@ describe("instance runtime authority", () => {
     clearSessionState(id)
   })
 
+  it("preserves escaped scroll authority during rehydration cleanup", () => {
+    const id = "rehydrate-scroll", sessionId = "active-session"
+    const store = messageStoreBus.getOrCreate(id)
+    const snapshot = { scrollTop: 240, atBottom: false, followModeType: "escaped" as const, updatedAt: 2400 }
+    store.restoreScrollSnapshot(sessionId, "message-stream", snapshot)
+    try {
+      clearReloadableInstanceState(id)
+      assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), snapshot)
+    } finally {
+      messageStoreBus.unregisterInstance(id)
+    }
+  })
+
   for (const test of [
     { label: "direct definitive session removal", remove: removeSessionRuntimeState },
     { label: "session.deleted event", remove: (id: string, sessionId: string) => handleSessionDeleted(id,
-      { type: "session.deleted", properties: { info: { id: sessionId } } }) },
+      { type: "session.deleted", data: { sessionID: sessionId } }) },
   ]) it(`removes attachment authority on ${test.label}`, () => {
     const id = `authority-${test.label}`, sessionId = "deleted-session"
     addAttachment(id, sessionId, createTextAttachment("pasted", "pasted #1", "paste.txt"))

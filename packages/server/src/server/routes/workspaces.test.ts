@@ -4,10 +4,42 @@ import Fastify from "fastify"
 
 import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerWorkspaceRoutes } from "./workspaces"
+import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 
 describe("workspace routes", () => {
-  it("forwards a validated explicit binary path when creating a workspace", async () => {
+  it("awaits file writes and reports bounded search admission as retryable", async () => {
+    const app = Fastify()
+    let release!: () => void
+    let started!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const entered = new Promise<void>((resolve) => { started = resolve })
+    const workspaceManager = {
+      writeFile: async () => { started(); await gate; throw new Error("disk write failed") },
+      searchFiles: async () => { throw new WorkspaceSearchBusyError() },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+    let finished = false
+    const write = app.inject({ method: "PUT", url: "/api/workspaces/test/files/content?path=file", payload: { contents: "text" } })
+      .then((response) => { finished = true; return response })
+    try {
+      await entered
+      const search = await app.inject("/api/workspaces/test/files/search?q=needle")
+      assert.equal(search.statusCode, 503)
+      assert.equal(search.headers["retry-after"], "1")
+      assert.equal(finished, false)
+      release()
+      assert.notEqual((await write).statusCode, 204)
+      assert.match((await write).body, /disk write failed/)
+    } finally {
+      release()
+      await write
+      await app.close()
+    }
+  })
+
+  it("forwards workspace creation options without per-workspace binary settings", async () => {
     const calls: unknown[][] = []
     const app = Fastify({ logger: false })
     const descriptor: WorkspaceDescriptor = {
@@ -31,7 +63,7 @@ describe("workspace routes", () => {
         calls.push(["cancel", requestId])
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const response = await app.inject({
       method: "POST",
@@ -39,17 +71,14 @@ describe("workspace routes", () => {
       payload: {
         path: "C:/work",
         name: "Work",
-        binaryPath: " C:/tools/opencode.exe ",
+        binaryPath: "C:/tools/ignored-opencode.exe",
         requestId: " restore-request ",
-        forceNew: true,
       },
     })
 
     assert.equal(response.statusCode, 201)
     assert.deepEqual(calls, [["C:/work", "Work", {
-      binaryPath: "C:/tools/opencode.exe",
       requestId: "restore-request",
-      forceNew: true,
     }]])
 
     const released = await app.inject({
@@ -72,15 +101,8 @@ describe("workspace routes", () => {
       payload: { requestId: "restore-request" },
     })
     assert.equal(cancelled.statusCode, 204)
-    assert.deepEqual(calls.at(-1), ["cancel", "restore-request"])
+    assert.deepEqual(calls[calls.length - 1], ["cancel", "restore-request"])
 
-    const invalid = await app.inject({
-      method: "POST",
-      url: "/api/workspaces",
-      payload: { path: "C:/work", binaryPath: "x".repeat(4097) },
-    })
-    assert.equal(invalid.statusCode, 400)
-    assert.equal(calls.length, 2)
     await app.close()
   })
 
@@ -103,7 +125,7 @@ describe("workspace routes", () => {
         return true
       },
     } as unknown as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager })
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
 
     const cancellation = app.inject({
       method: "POST",
@@ -121,6 +143,55 @@ describe("workspace routes", () => {
     assert.equal(release.body, "Workspace creation request not found")
     finishDeletion()
     assert.equal((await cancellation).statusCode, 204)
+    await app.close()
+  })
+
+  it("marks a non-owned creation response as reused", async () => {
+    const app = Fastify({ logger: false })
+    let finishCreation!: () => void
+    const creation = new Promise<void>((resolve) => { finishCreation = resolve })
+    const descriptor: WorkspaceDescriptor = {
+      id: "shared-workspace",
+      path: "C:/work",
+      status: "ready",
+      proxyPath: "/workspaces/shared-workspace/instance",
+      binaryId: "C:/tools/opencode.exe",
+      binaryLabel: "opencode.exe",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }
+    let ownerRequestId: string | undefined
+    const workspaceManager = {
+      create: async (_path: string, _name: string | undefined, options: { requestId?: string }) => {
+        const owner = ownerRequestId === undefined
+        ownerRequestId ??= options.requestId
+        await creation
+        return {
+          workspace: owner ? { ...descriptor, requestId: options.requestId } : descriptor,
+          created: owner,
+        }
+      },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+
+    const owner = app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      payload: { path: "C:/work", requestId: "owner-request" },
+    })
+    const reused = app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      payload: { path: "C:/work", requestId: "reuse-request" },
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    finishCreation()
+
+    const [ownerResponse, reusedResponse] = await Promise.all([owner, reused])
+    assert.equal(ownerResponse.statusCode, 201)
+    assert.deepEqual(ownerResponse.json(), { ...descriptor, requestId: "owner-request" })
+    assert.equal(reusedResponse.statusCode, 201)
+    assert.deepEqual(reusedResponse.json(), { ...descriptor, reused: true })
     await app.close()
   })
 })

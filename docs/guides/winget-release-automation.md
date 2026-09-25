@@ -14,7 +14,7 @@ CodeNomad publishes Winget updates from the stable GitHub release pipeline. `.gi
 
 ### Repository secret
 
-- `WINGET_GITHUB_TOKEN`: Classic GitHub PAT with `public_repo` scope.
+- `WINGET_GITHUB_TOKEN`: GitHub token with write access to the configured fork (for example, a classic PAT with `public_repo` scope or a GitHub CLI OAuth token with `repo` scope).
   - The token owner must own the fork that submits to `microsoft/winget-pkgs`.
   - Komac-based submission cannot open the PR with a fine-grained token today.
 
@@ -33,7 +33,7 @@ CodeNomad publishes Winget updates from the stable GitHub release pipeline. `.gi
 1. Resolve the target release by tag through the GitHub API, then derive the package version from the resolved release tag.
 2. Poll the release API until exactly one uploaded asset matches the configured Windows Tauri asset template.
 3. Download the matched asset once and compute a SHA-256 for logging and verification.
-4. Verify the PAT owner matches `WINGET_FORK_OWNER` and that `${WINGET_FORK_OWNER}/winget-pkgs` is a fork of `microsoft/winget-pkgs`.
+4. Verify the token owner matches `WINGET_FORK_OWNER`, that `${WINGET_FORK_OWNER}/winget-pkgs` is a fork of `microsoft/winget-pkgs`, and that the token can create and delete a temporary branch.
 5. Invoke `vedantmgoyal9/winget-releaser@v2`, which uses Komac under the hood to update the existing `NeuralNomadsAI.CodeNomad` manifest and open the PR.
 
 ## Notes

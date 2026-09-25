@@ -2,48 +2,47 @@
 
 /* Right panel tab bar - browser-style tabs */
 .right-panel-tab-bar {
-  background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--border-base);
+  flex: 0 0 var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  background-color: var(--surface-shade-light);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
+  border-bottom: 0;
   position: relative;
-}
-
-.right-panel-tab-bar::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  inset-inline-start: 0;
-  inset-inline-end: 0;
-  height: 1px;
-  background-color: var(--border-base);
-  z-index: 0;
+  padding-inline: 0;
+  padding-block: 0;
 }
 
 .right-panel-tab-bar .tab-container {
-  @apply flex items-center justify-between gap-1 px-2 pt-2 pb-0;
+  @apply flex items-center justify-between gap-1 px-2;
+  padding-block: 0;
+  align-items: center;
+  height: 100%;
 }
 
 /* Keep the shortcuts (close/pin) fixed; only the tabs should scroll. */
 .right-panel-tab-bar .tab-scroll {
-  @apply flex-1;
+  position: relative;
+  z-index: 1;
   width: auto;
+  min-width: 0;
 }
 
 /* Shortcuts on the left side - match left drawer icon colors */
 .tab-strip-shortcuts {
   @apply flex items-center gap-1 flex-shrink-0;
-  color: var(--text-primary);
+  align-self: center;
+  color: var(--text-muted);
 }
 
 /* Browser-style tabs - using INSTANCE tab color scheme */
 .right-panel-tab {
-  @apply inline-flex items-center gap-2 px-4 py-2 text-xs font-medium transition-all duration-150 relative;
+  @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-normal transition-all duration-150 relative;
   font-family: var(--font-family-sans);
   cursor: grab;
   outline: none;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  margin-inline-end: 2px;
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
   z-index: 1;
 }
 
@@ -62,25 +61,32 @@
 }
 
 .right-panel-tab-active {
-  background-color: var(--tab-active-bg);
-  border-color: transparent;
-  border-bottom: 2px solid var(--accent-primary);
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: var(--surface-secondary);
   color: var(--tab-active-text);
   z-index: 2;
 }
 
+.right-panel-tab-draggable:first-child .right-panel-tab {
+  border-inline-start: 1px solid var(--tab-border);
+}
+
 .right-panel-tab-inactive {
-  background-color: var(--tab-inactive-bg);
+  background-color: var(--surface-shade-light);
+  border-inline-end-color: var(--tab-border);
+  border-bottom-color: var(--tab-border);
   color: var(--tab-inactive-text);
-  border-color: transparent;
-  border-bottom: 2px solid var(--tab-active-bg);
 }
 
 .right-panel-tab-inactive:hover {
-  background-color: var(--tab-inactive-hover-bg);
-  color: var(--text-secondary);
-  border-color: var(--border-base);
-  border-bottom-color: transparent;
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  color: var(--tab-inactive-text);
+}
+
+.right-panel-tab-active:hover,
+.file-list-item-active:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 /* Files tab layout */
@@ -130,14 +136,18 @@
 }
 
 .files-header-icon-button {
-  @apply inline-flex items-center justify-center shrink-0 w-7 h-7 border border-base transition-colors;
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   background-color: var(--surface-base);
-  color: var(--text-secondary);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
 }
 
 .files-header-icon-button:hover {
   background-color: var(--surface-hover);
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
 }
 
 .files-header-icon-button:disabled {
@@ -218,7 +228,8 @@
 }
 
 .file-list-count {
-  @apply text-[10px] px-1.5 py-0.5 rounded-full;
+  @apply text-[10px] px-1.5 py-0.5;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-muted);
   border: 1px solid var(--border-base);
@@ -238,13 +249,14 @@
   @apply border-b-0;
 }
 
-.file-list-item:hover {
-  background-color: var(--surface-hover);
+.file-list-item:not(.file-list-item-active):not(.git-change-list-item-bulk-selected):hover {
+  background-color: var(--surface-hover-overlay);
 }
 
 .file-list-item-active {
-  background-color: color-mix(in srgb, var(--surface-base) 88%, white);
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
+  border-inline-start: 2px solid var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 10%, transparent);
+  box-shadow: none;
 }
 
 .git-change-list-item-bulk-selected {
@@ -254,6 +266,7 @@
 
 .git-change-list-item-bulk-selected:hover {
   background-color: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-base));
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
 .git-change-list-item-bulk-selected.file-list-item-active {
@@ -286,7 +299,8 @@
 }
 
 .git-change-commit-input {
-  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs rounded border border-base resize-y;
+  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs border border-base resize-y;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -296,7 +310,8 @@
 }
 
 .git-change-commit-button {
-  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium rounded border border-base transition-colors;
+  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium border border-base transition-colors;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-primary);
 }
@@ -330,7 +345,7 @@
 
 .git-change-section {
   @apply border-b last:border-b-0;
-  border-color: var(--border-base);
+  border-color: var(--border-divider);
 }
 
 .git-change-section-header {
@@ -366,7 +381,7 @@
 }
 
 .git-change-section-count {
-  @apply text-[10px] px-1.5 py-0.5 rounded-full shrink-0;
+  @apply text-[10px] px-1.5 py-0.5 shrink-0;
   background-color: var(--surface-base);
   color: var(--text-muted);
   border: 1px solid var(--border-base);
@@ -405,7 +420,8 @@
 }
 
 .git-change-row-action {
-  @apply inline-flex items-center justify-center w-5 h-5 rounded border border-base leading-none;
+  @apply inline-flex items-center justify-center w-5 h-5 border border-base leading-none;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-secondary);
@@ -458,7 +474,7 @@
   top: 50%;
   display: block;
   background-color: currentColor;
-  border-radius: 999px;
+  border-radius: 0;
   transform: translate(-50%, -50%);
 }
 
@@ -509,7 +525,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: 0;
   background-color: var(--accent-primary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 70%, white 30%);
   color: white;
@@ -565,25 +581,30 @@
 }
 
 .file-viewer-toolbar-button {
-  @apply text-[11px] px-2 py-1 rounded border border-base transition-colors;
+  @apply text-[11px] px-2 py-1 border border-base transition-colors;
+  border-radius: 0;
   background-color: var(--surface-base);
   color: var(--text-secondary);
 }
 
 .file-viewer-toolbar-icon-button {
-  @apply inline-flex items-center justify-center shrink-0 w-7 h-7 border border-base transition-colors;
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   background-color: var(--surface-base);
-  color: var(--text-secondary);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
 }
 
 .file-viewer-toolbar-icon-button:hover {
   background-color: var(--surface-hover);
-  color: var(--text-primary);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
 }
 
-.file-viewer-toolbar-icon-button.active {
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px var(--accent-primary);
+:is(.files-header-icon-button, .file-viewer-toolbar-icon-button) svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .file-viewer-toolbar-button:hover {
@@ -682,7 +703,8 @@
 }
 
 .file-viewer-file-name {
-  @apply text-xs font-mono px-2 py-1.5 rounded border;
+  @apply text-xs font-mono px-2 py-1.5 border;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
@@ -691,7 +713,8 @@
 
 /* Mobile file selector */
 .mobile-file-selector {
-  @apply rounded-lg border flex flex-col gap-3 p-3;
+  @apply border flex flex-col gap-3 p-3;
+  border-radius: 0;
   background-color: var(--surface-secondary);
   border-color: var(--border-base);
 }
@@ -706,7 +729,8 @@
 }
 
 .mobile-file-viewer {
-  @apply rounded-lg border flex flex-col min-h-[220px];
+  @apply border flex flex-col min-h-[220px];
+  border-radius: 0;
   background-color: var(--surface-secondary);
   border-color: var(--border-base);
 }
@@ -716,10 +740,19 @@
   @apply flex flex-col h-full min-h-0;
 }
 
-.status-tab-context-panel {
-  @apply border-b;
-  border-color: var(--border-base);
-  background-color: var(--surface-secondary);
+.status-process-card {
+  @apply border px-2 py-2 transition-colors duration-150;
+  background-color: var(--surface-base);
+}
+
+.status-process-card:hover {
+  background-color: var(--surface-base);
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  box-shadow: none;
+}
+
+.status-process-actions {
+  @apply mt-1 grid grid-cols-2 gap-1;
 }
 
 /* Accordion improvements for right panel */
@@ -728,13 +761,19 @@
 }
 
 .right-panel-accordion-item {
-  @apply border-b last:border-b-0;
-  border-color: var(--border-base);
+  border-bottom: 1px solid var(--border-base);
   background-color: var(--surface-secondary);
 }
 
 .right-panel-accordion-header-row {
   @apply flex items-center gap-2;
+  color: var(--text-secondary);
+  transition: color 150ms, background-color 150ms;
+}
+
+.right-panel-accordion-header-row:hover {
+  background-color: var(--surface-hover-overlay);
+  color: var(--text-primary);
 }
 
 .right-panel-accordion-header-row .right-panel-accordion-trigger {
@@ -743,17 +782,16 @@
 
 .right-panel-accordion-header-row .section-info-trigger {
   flex: 0 0 auto;
-  margin-inline-end: 0.75rem;
 }
 
 .right-panel-accordion-trigger {
-  @apply w-full flex items-center justify-between px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors duration-150;
+  @apply w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition-colors;
   color: var(--text-secondary);
   background-color: transparent;
 }
 
 .right-panel-accordion-trigger:hover {
-  background-color: var(--surface-hover);
+  background-color: transparent;
   color: var(--text-primary);
 }
 
@@ -763,12 +801,27 @@
 }
 
 .right-panel-accordion-chevron {
-  @apply h-4 w-4 transition-transform duration-200;
+  @apply h-4 w-4;
   color: var(--text-muted);
+  opacity: var(--icon-button-idle-opacity);
+  transition: color 150ms, opacity 150ms, transform 150ms ease;
 }
 
-.right-panel-accordion-chevron-expanded {
-  transform: rotate(180deg);
+.right-panel-section-grip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-inline-end: 0.75rem;
+  color: var(--text-muted);
+  opacity: var(--icon-button-idle-opacity);
+  cursor: grab;
+  transition: color 150ms, opacity 150ms;
+}
+
+.right-panel-accordion-trigger:hover .right-panel-accordion-chevron,
+.right-panel-section-grip:hover {
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
 .right-panel-accordion-content {
@@ -850,29 +903,42 @@
 
 .right-panel-customization-hint {
   margin-top: 0.5rem;
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   font-size: 0.6875rem;
   line-height: 1rem;
 }
 
 /* Section info tooltip */
 .section-info-trigger {
-  @apply inline-flex items-center justify-center p-0.5 rounded transition-all duration-150;
+  @apply inline-flex items-center justify-center p-0.5 transition-colors;
+  border-radius: 0;
   color: var(--text-muted);
   flex-shrink: 0;
   border: none;
   background-color: transparent;
+  opacity: var(--icon-button-idle-opacity);
+  transition: color 150ms, opacity 150ms;
 }
 
 .section-info-trigger:hover {
-  color: var(--text-primary);
-  background-color: var(--surface-hover);
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
 .section-info-trigger:focus-visible {
   @apply ring-2 ring-offset-1;
   ring-color: var(--accent-primary);
   ring-offset-color: var(--surface-secondary);
+  opacity: 1;
+}
+
+.right-panel-accordion-header-row .section-info-trigger:hover {
+  opacity: 1;
+}
+
+.status-tab-container .right-panel-accordion-content :is(.border, .status-process-card) {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
 }
 
 .section-label {
@@ -880,69 +946,31 @@
 }
 
 .section-info-icon {
-  @apply w-3.5 h-3.5;
+  @apply w-3 h-3;
+}
+
+@media (hover: none) {
+  .section-info-trigger {
+    opacity: 0.7;
+  }
 }
 
 .section-info-tooltip {
-  @apply max-w-xs px-3 py-2 text-xs rounded-lg border shadow-lg;
+  @apply max-w-xs px-3 py-2 text-xs border shadow-lg;
+  border-radius: 0;
   background-color: var(--surface-base);
   border-color: var(--border-base);
   color: var(--text-primary);
-  animation: tooltipShow 150ms ease-out;
-  transform-origin: var(--kb-tooltip-content-transform-origin);
   z-index: 9999;
-}
-
-.section-info-tooltip[data-expanded] {
-  animation: tooltipShow 150ms ease-out;
-}
-
-@keyframes tooltipShow {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Background process cards in status panel */
-.status-process-card {
-  @apply rounded-lg border flex flex-col gap-2 p-3 transition-all duration-150;
-  background-color: var(--surface-base);
-  border-color: var(--border-base);
-}
-
-.status-process-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.status-process-header {
-  @apply flex flex-col gap-1;
-}
-
-.status-process-title {
-  @apply text-xs font-semibold;
-  color: var(--text-primary);
-}
-
-.status-process-meta {
-  @apply flex flex-wrap gap-2 text-[11px];
-  color: var(--text-muted);
-}
-
-.status-process-actions {
-  @apply grid grid-cols-3 gap-2;
 }
 
 /* Empty states */
 .right-panel-empty {
   @apply flex flex-col items-center justify-center text-center gap-2;
   color: var(--text-muted);
+  font-style: italic;
+  font-weight: 400;
+  opacity: 0.55;
 }
 
 .right-panel-empty--left {
@@ -950,20 +978,18 @@
 }
 
 .right-panel-empty-text {
-  @apply text-xs;
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
 }
 
-/* Dark mode adjustments */
-[data-theme="dark"] .right-panel-tab-active {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-[data-theme="dark"] .file-list-item-active {
-  box-shadow: inset 0 0 0 1px var(--accent-primary), 0 0 0 1px var(--surface-secondary);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .right-panel-tab-active {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
+.right-panel-accordion-content .tool-call-todo-empty {
+  padding: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
 }

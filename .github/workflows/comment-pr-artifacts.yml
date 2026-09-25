@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$BASE_REF" = "dev" ]; then
+          if [ "$BASE_REF" = "dev" ] || [ "$BASE_REF" = "DEV-v2" ]; then
             echo "allowed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

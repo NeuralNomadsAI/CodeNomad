@@ -1,6 +1,7 @@
 import { Combobox } from "@kobalte/core/combobox"
 import { createEffect, createMemo } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
+import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
 import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
@@ -25,7 +26,10 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
 
   createEffect(() => {
     if (instanceProviders().length === 0) {
-      fetchProviders(props.instanceId).catch((error) => log.error("Failed to fetch providers", error))
+      const instanceId = props.instanceId
+      void waitForInstanceInitialSessionHydration(instanceId)
+        .then(() => fetchProviders(instanceId))
+        .catch((error) => log.error("Failed to fetch providers", error))
     }
   })
 
@@ -58,15 +62,16 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
     setModelThinkingSelection(props.currentModel, value.value)
   }
 
-  const triggerPrimary = createMemo(() => {
+  const triggerValue = createMemo(() => {
     const selected = currentValue()?.value
-    const variant = selected ?? t("thinkingSelector.variant.default")
-    return t("thinkingSelector.label", { variant })
+    return selected ?? t("thinkingSelector.variant.default")
   })
+  const accessibleLabel = () => t("thinkingSelector.label", { variant: triggerValue() })
 
   return (
     <div class="sidebar-selector">
       <Combobox<ThinkingOption>
+        gutter={0}
         value={currentValue()}
         onChange={handleChange}
         options={options()}
@@ -87,10 +92,13 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
         )}
       >
         <Combobox.Control class="relative w-full" data-thinking-selector-control>
-          <Combobox.Input class="sr-only" data-thinking-selector />
-          <Combobox.Trigger class="selector-trigger">
+          <Combobox.Input class="sr-only" data-thinking-selector aria-label={accessibleLabel()} />
+          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={accessibleLabel()}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
-              <span class="selector-trigger-primary selector-trigger-primary--align-left">{triggerPrimary()}</span>
+              <span class="selector-trigger-primary selector-trigger-primary--align-left">
+                <span class="session-sidebar-selector-prefix">{t("thinkingSelector.label", { variant: "" }).trim()}</span>{" "}
+                {triggerValue()}
+              </span>
             </div>
             <Combobox.Icon class="selector-trigger-icon">
               <ChevronDown class="w-3 h-3" />
@@ -99,7 +107,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
         </Combobox.Control>
 
         <Combobox.Portal>
-          <Combobox.Content class="selector-popover">
+          <Combobox.Content class="selector-popover session-sidebar-selector-popover">
             <Combobox.Listbox class="selector-listbox" />
           </Combobox.Content>
         </Combobox.Portal>

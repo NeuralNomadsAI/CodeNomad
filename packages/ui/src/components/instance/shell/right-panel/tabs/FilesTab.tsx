@@ -1,5 +1,4 @@
 import { For, Show, Suspense, createEffect, createMemo, createSignal, lazy, type Accessor, type Component, type JSX } from "solid-js"
-import type { FileNode } from "@opencode-ai/sdk/v2/client"
 
 import { Copy, ExternalLink, FolderOpen, RefreshCw, Save, Search, TerminalSquare, WrapText } from "lucide-solid"
 
@@ -42,11 +41,17 @@ function isMarkdownPath(path: string | null | undefined): boolean {
   return /\.(md|markdown|mdown|mkdn)$/i.test(path)
 }
 
+export interface FileBrowserEntry {
+  name: string
+  path: string
+  type: "file" | "directory"
+}
+
 interface FilesTabProps {
   t: (key: string, vars?: Record<string, any>) => string
 
   browserPath: Accessor<string>
-  browserEntries: Accessor<FileNode[] | null>
+  browserEntries: Accessor<FileBrowserEntry[] | null>
   browserLoading: Accessor<boolean>
   browserError: Accessor<string | null>
 
@@ -161,7 +166,7 @@ const FilesTab: Component<FilesTabProps> = (props) => {
     }
   }
 
-  const rowActions = (item: FileNode): ActionOverflowMenuItem[] => {
+  const rowActions = (item: FileBrowserEntry): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
     if (canOpenWorkspacePaths()) {
       if (item.type === "directory") {
@@ -434,16 +439,6 @@ const FilesTab: Component<FilesTabProps> = (props) => {
             </button>
             <button
               type="button"
-              class={`file-viewer-toolbar-icon-button${props.wordWrapMode() === "on" ? " active" : ""}`}
-              title={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
-              aria-label={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
-              disabled={showingMarkdownPreview()}
-              onClick={() => props.onWordWrapModeChange(props.wordWrapMode() === "on" ? "off" : "on")}
-            >
-              <WrapText class="h-4 w-4" />
-            </button>
-            <button
-              type="button"
               class="files-header-icon-button"
               title={props.t("instanceShell.rightPanel.actions.save") || "Save (Ctrl+S)"}
               aria-label={props.t("instanceShell.rightPanel.actions.save") || "Save"}
@@ -468,6 +463,19 @@ const FilesTab: Component<FilesTabProps> = (props) => {
         }
         list={{ panel: () => <FileList />, overlay: () => <FileList /> }}
         viewer={renderViewer()}
+        viewerActions={
+          <button
+            type="button"
+            class="file-viewer-toolbar-icon-button icon-toggle"
+            title={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+            aria-label={props.wordWrapMode() === "on" ? props.t("instanceShell.filesShell.disableWordWrap") : props.t("instanceShell.filesShell.enableWordWrap")}
+            data-active={props.wordWrapMode() === "on" ? "true" : undefined}
+            disabled={showingMarkdownPreview()}
+            onClick={() => props.onWordWrapModeChange(props.wordWrapMode() === "on" ? "off" : "on")}
+          >
+            <WrapText class="h-4 w-4" />
+          </button>
+        }
         listOpen={props.listOpen()}
         onToggleList={props.onToggleList}
         splitWidth={props.splitWidth()}

@@ -1,9 +1,8 @@
 import { For, Match, Show, Suspense, Switch, createMemo, createSignal, lazy } from "solid-js"
-import { ChevronsDownUp, ChevronsUpDown, Copy } from "lucide-solid"
-import { isItemExpanded, toggleItemExpanded } from "../stores/tool-call-state"
+import { ChevronRight, Copy } from "lucide-solid"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { partHasRenderableText, SDKPart, TextPart, ClientPart } from "../types/message"
+import { partHasRenderableText, TextPart, ClientPart } from "../types/message"
 import { useI18n } from "../lib/i18n"
 import { splitPromptDisplaySections, type PromptDisplayMetadata } from "../lib/prompt-display-metadata"
 import { copyToClipboard } from "../lib/clipboard"
@@ -30,8 +29,6 @@ export default function MessagePart(props: MessagePartProps) {
   const { t } = useI18n()
   const { isDark } = useTheme()
   const partType = () => props.part?.type || ""
-  const reasoningId = () => `reasoning-${props.part?.id || ""}`
-  const isReasoningExpanded = () => isItemExpanded(reasoningId())
   const isAssistantMessage = () => props.messageType === "assistant"
   const textContainerClass = () => (isAssistantMessage() ? "message-text message-text-assistant" : "message-text")
   const markdownContainerClass = () => "message-text message-text-assistant"
@@ -74,38 +71,6 @@ export default function MessagePart(props: MessagePartProps) {
     return splitPromptDisplaySections(props.part.text, props.displayMetadataOverride)
   })
 
-  function reasoningSegmentHasText(segment: unknown): boolean {
-    if (typeof segment === "string") {
-      return segment.trim().length > 0
-    }
-    if (segment && typeof segment === "object") {
-      const candidate = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-      if (typeof candidate.text === "string" && candidate.text.trim().length > 0) {
-        return true
-      }
-      if (typeof candidate.value === "string" && candidate.value.trim().length > 0) {
-        return true
-      }
-      if (Array.isArray(candidate.content)) {
-        return candidate.content.some((entry) => reasoningSegmentHasText(entry))
-      }
-    }
-    return false
-  }
-
-  const hasReasoningContent = () => {
-    if (props.part?.type !== "reasoning") {
-      return false
-    }
-    if (reasoningSegmentHasText((props.part as any).text)) {
-      return true
-    }
-    if (Array.isArray((props.part as any).content)) {
-      return (props.part as any).content.some((entry: unknown) => reasoningSegmentHasText(entry))
-    }
-    return false
-  }
-
   const createTextPartForMarkdown = (): TextPart => {
     const part = props.part
     if (part.type === "text" && typeof part.text === "string") {
@@ -142,14 +107,8 @@ export default function MessagePart(props: MessagePartProps) {
     }
   }
 
-  function handleReasoningClick(e: Event) {
-    e.preventDefault()
-    toggleItemExpanded(reasoningId())
-  }
-
   function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
     const [hasExpanded, setHasExpanded] = createSignal(false)
-    const [isOpen, setIsOpen] = createSignal(false)
     const [copied, setCopied] = createSignal(false)
     const lineCount = () => getPastedTextLineCount(disclosureProps.text)
     const lineCountLabel = () =>
@@ -168,29 +127,26 @@ export default function MessagePart(props: MessagePartProps) {
 
     return (
       <details
-        class="rounded-md border border-base bg-transparent"
+        class="border border-base bg-transparent"
         onToggle={(event) => {
           const nextOpen = (event.currentTarget as HTMLDetailsElement).open
-          setIsOpen(nextOpen)
           if (nextOpen) {
             setHasExpanded(true)
           }
         }}
       >
-        <summary class="flex items-center justify-between gap-3 cursor-pointer list-none rounded-md bg-surface-secondary px-3 py-1.5 select-none text-xs font-medium text-secondary [&::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between gap-3 cursor-pointer list-none bg-surface-secondary px-3 py-1.5 select-none text-xs font-medium text-secondary [&::-webkit-details-marker]:hidden">
           <span class="min-w-0 flex flex-1 items-center gap-2">
             <span>{t("messagePart.pastedText.summary")}</span>
             <span class="text-[11px] text-secondary/80">{lineCountLabel()}</span>
           </span>
           <span class="inline-flex items-center gap-1.5">
             <span class="inline-flex h-6 w-6 items-center justify-center text-secondary/80" aria-hidden="true">
-              <Show when={isOpen()} fallback={<ChevronsUpDown class="h-3.5 w-3.5" aria-hidden="true" />}>
-                <ChevronsDownUp class="h-3.5 w-3.5" aria-hidden="true" />
-              </Show>
+              <ChevronRight class="disclosure-chevron h-3.5 w-3.5" aria-hidden="true" />
             </span>
             <button
               type="button"
-              class="inline-flex h-6 w-6 items-center justify-center rounded text-secondary hover:bg-surface-tertiary"
+              class="inline-flex h-6 w-6 items-center justify-center text-secondary hover:bg-surface-tertiary"
               onClick={(event) => void handleCopy(event)}
               aria-label={t("messagePart.pastedText.copyAriaLabel")}
               title={t("messagePart.pastedText.copyAriaLabel")}
@@ -209,6 +165,7 @@ export default function MessagePart(props: MessagePartProps) {
               isDark={isDark()}
               size="base"
               escapeRawHtml
+              literalRawHtml={props.messageType === "user"}
               onRendered={props.onRendered}
             />
           </div>
@@ -239,6 +196,7 @@ export default function MessagePart(props: MessagePartProps) {
                     isDark={isDark()}
                     size={isAssistantMessage() ? "tight" : "base"}
                     escapeRawHtml
+                    literalRawHtml={props.messageType === "user"}
                     onRendered={props.onRendered}
                   />
                 </Show>
@@ -258,6 +216,7 @@ export default function MessagePart(props: MessagePartProps) {
                           isDark={isDark()}
                           size="base"
                           escapeRawHtml
+                          literalRawHtml
                           onRendered={props.onRendered}
                         />
                       )

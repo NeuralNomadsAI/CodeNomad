@@ -1,19 +1,19 @@
 import { batch, createSignal } from "solid-js"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages } from "./session-api"
+import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
 import { instances, ensureYoloStateSynced } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { requestData } from "../lib/opencode-api"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeWorkspaceIdForSession } from "./opencode-workspaces"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import { applySessionPendingState } from "./session-pending-state"
+import { cleanupBlankSession } from "./blank-session-cleanup"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import {
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -29,6 +29,7 @@ import {
 } from "./session-tree"
 
 export type { SessionThread } from "./session-tree"
+import { getDirectoryOnlyWorktree } from "./worktrees"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -80,6 +81,7 @@ const [messagesLoaded, setMessagesLoaded] = createSignal<Map<string, Set<string>
 const [messageLoadErrors, setMessageLoadErrors] = createSignal<Map<string, Map<string, string>>>(new Map())
 const [sessionListErrors, setSessionListErrors] = createSignal<Map<string, string>>(new Map())
 const messageLoadEpochs = new Map<string, number>()
+const messageLoadControllers = new Map<string, AbortController>()
 let nextMessageLoadEpoch = 0
 const [sessionInfoByInstance, setSessionInfoByInstance] = createSignal<Map<string, Map<string, SessionInfo>>>(new Map())
 const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<string, Map<string, ThreadTotals>>>(new Map())
@@ -202,8 +204,8 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingQuestion">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission || session.pendingQuestion) {
+function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
+  if (session.pendingPermission || session.pendingForm) {
     return "permission"
   }
   const status = session.status ?? "idle"
@@ -270,7 +272,7 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let compacting = 0
 
   for (const session of instanceSessions.values()) {
-    if (session.pendingPermission || session.pendingQuestion) {
+    if (session.pendingPermission || session.pendingForm) {
       permission += 1
       continue
     }
@@ -337,13 +339,24 @@ function clearLoadedFlag(instanceId: string, sessionId: string) {
 
 function advanceMessageLoadEpoch(instanceId: string, sessionId: string): number {
   const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
   const epoch = ++nextMessageLoadEpoch
   messageLoadEpochs.set(key, epoch)
+  messageLoadControllers.set(key, new AbortController())
   return epoch
 }
 
 function isCurrentMessageLoad(instanceId: string, sessionId: string, epoch: number): boolean {
   return messageLoadEpochs.get(getDraftKey(instanceId, sessionId)) === epoch
+}
+
+function getMessageLoadSignal(instanceId: string, sessionId: string): AbortSignal | undefined {
+  return messageLoadControllers.get(getDraftKey(instanceId, sessionId))?.signal
+}
+
+function finishMessageLoad(instanceId: string, sessionId: string, epoch: number): void {
+  if (!isCurrentMessageLoad(instanceId, sessionId, epoch)) return
+  messageLoadControllers.delete(getDraftKey(instanceId, sessionId))
 }
 
 function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
@@ -359,13 +372,52 @@ function clearMessageLoadingFlag(instanceId: string, sessionId: string): void {
   })
 }
 
-function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
-  advanceMessageLoadEpoch(instanceId, sessionId)
-  clearLoadedFlag(instanceId, sessionId)
+function supersedeSessionMessageLoad(instanceId: string, sessionId: string): void {
+  const key = getDraftKey(instanceId, sessionId)
+  messageLoadControllers.get(key)?.abort()
+  messageLoadControllers.delete(key)
+  messageLoadEpochs.set(key, ++nextMessageLoadEpoch)
   clearMessageLoadingFlag(instanceId, sessionId)
 }
 
+function invalidateSessionMessageLoad(instanceId: string, sessionId: string): void {
+  supersedeSessionMessageLoad(instanceId, sessionId)
+  clearLoadedFlag(instanceId, sessionId)
+}
+
 messageStoreBus.onSessionCleared(invalidateSessionMessageLoad)
+
+function clearInstanceMessageLoads(instanceId: string): void {
+  const prefix = `${instanceId}:`
+  for (const [key, controller] of messageLoadControllers) {
+    if (!key.startsWith(prefix)) continue
+    controller.abort()
+    messageLoadControllers.delete(key)
+  }
+  for (const key of messageLoadEpochs.keys()) {
+    if (key.startsWith(prefix)) messageLoadEpochs.delete(key)
+  }
+  setMessagesLoaded((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setMessageLoadErrors((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+  setLoading((prev) => {
+    if (!prev.loadingMessages.has(instanceId)) return prev
+    const loadingMessages = new Map(prev.loadingMessages)
+    loadingMessages.delete(instanceId)
+    return { ...prev, loadingMessages }
+  })
+}
+
+messageStoreBus.onInstanceDestroyed(clearInstanceMessageLoads)
 
 function getDraftKey(instanceId: string, sessionId: string): string {
   return `${instanceId}:${sessionId}`
@@ -564,7 +616,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
 function setSessionPending(
   instanceId: string,
   sessionId: string,
-  field: "pendingPermission" | "pendingQuestion",
+  field: "pendingPermission" | "pendingForm",
   pending: boolean,
 ): void {
   if (pending) cancelSessionGenerationAdmissions(instanceId, sessionId)
@@ -582,20 +634,20 @@ function setSessionPendingPermission(instanceId: string, sessionId: string, pend
   setSessionPending(instanceId, sessionId, "pendingPermission", pending)
 }
 
-function setSessionPendingQuestion(instanceId: string, sessionId: string, pending: boolean): void {
-  setSessionPending(instanceId, sessionId, "pendingQuestion", pending)
+function setSessionPendingForm(instanceId: string, sessionId: string, pending: boolean): void {
+  setSessionPending(instanceId, sessionId, "pendingForm", pending)
 }
 
 function reconcileSessionPendingState(
   instanceId: string,
   permissionSessionIds: ReadonlySet<string>,
-  questionSessionIds: ReadonlySet<string>,
+  formSessionIds: ReadonlySet<string> = new Set(),
 ): void {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
 
-    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, questionSessionIds)
+    const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, formSessionIds)
     if (reconciled === instanceSessions) return prev
 
     const next = new Map(prev)
@@ -651,7 +703,7 @@ function hydrateSessionGenerationRecovery(
 ): void {
   for (const [sessionId, persisted] of Object.entries(markers)) {
     withSession(instanceId, sessionId, (session) => {
-      const recovery = session.pendingPermission || session.pendingQuestion
+      const recovery = session.pendingPermission || session.pendingForm
         ? null
         : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
       if ((session.generationRecovery ?? null) === recovery) return false
@@ -725,6 +777,7 @@ function writeSessionSelection(
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
     // matches the server even on first connect / multi-client scenarios.
@@ -764,8 +817,20 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
 ): void {
   if (hasAuthoritativeSessionSelection(instanceId)) return
-  writeActiveParentSession(instanceId, parentSessionId)
-  writeActiveSession(instanceId, sessionId)
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeActiveSession(instanceId, sessionId)
+  })
+}
+
+// Restore selection identity before HTTP hydration, without starting any
+// session-scoped effects until the native session has actually been resolved.
+function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
+  if (hasAuthoritativeSessionSelection(instanceId)) return
+  batch(() => {
+    writeActiveParentSession(instanceId, parentSessionId)
+    writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  })
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
@@ -845,7 +910,7 @@ function getSessions(instanceId: string): Session[] {
 
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === null)
+  return allSessions.filter((s) => getSessionRoot(instanceId, s.id)?.id === s.id)
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
@@ -869,41 +934,27 @@ function getSessionFamily(instanceId: string, parentId: string): Session[] {
 function getSessionRoot(instanceId: string, sessionId: string): Session | null {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return null
-  return getSessionRootFromMap(instanceSessions, sessionId)
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return getSessionRootFromMap(instanceSessions, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
 }
 
 function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
   const instanceSessions = sessions().get(instanceId)
-  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds) : []
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
   return buildSessionThreads(instanceId, getSessionListIds(instanceId))
 }
 
-function getSessionSearchThreads(instanceId: string): SessionThread[] {
-  const resultIds = getSessionSearchResultIds(instanceId)
-  if (resultIds.length === 0) return []
-
+function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
-
-  const rootIds: string[] = []
-  const childIds = new Set<string>()
-
-  for (const sessionId of resultIds) {
-    const session = instanceSessions.get(sessionId)
-    if (!session) continue
-    if (session.parentId === null) {
-      if (!rootIds.includes(session.id)) rootIds.push(session.id)
-    } else {
-      childIds.add(session.id)
-      const root = getSessionRootFromMap(instanceSessions, session.id)
-      if (root && !rootIds.includes(root.id)) rootIds.push(root.id)
-    }
-  }
-
-  return buildSessionThreads(instanceId, rootIds, childIds)
+  return getSessionSearchResultIds(instanceId).flatMap(id => {
+    const session = instanceSessions.get(id)
+    return session ? [session] : []
+  })
 }
 
 function isSessionExpanded(instanceId: string, sessionId: string): boolean {
@@ -1008,21 +1059,13 @@ function getVisibleSessionIds(instanceId: string): string[] {
 function setActiveSessionFromList(instanceId: string, sessionId: string): void {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return
-  const root = getSessionRoot(instanceId, sessionId)
-  if (!root) return
+  const root = getSessionRoot(instanceId, sessionId) ?? session
   ensureSessionAncestorsExpanded(instanceId, sessionId)
 
   batch(() => {
     setActiveParentSession(instanceId, root.id)
     if (session.id !== root.id) setActiveSession(instanceId, session.id)
   })
-}
-
-function isSessionBusy(instanceId: string, sessionId: string): boolean {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return false
-  if (!instanceSessions.has(sessionId)) return false
-  return true
 }
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
@@ -1098,34 +1141,18 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
 }
 
-async function isBlankSession(session: Session, instanceId: string, fetchIfNeeded = false): Promise<boolean> {
-  const created = session.time?.created || 0
-  const updated = session.time?.updated || 0
-  const hasChildren = getChildSessions(instanceId, session.id).length > 0
-  const isFreshSession = created === updated && !hasChildren
-
-  // Common short-circuit: fresh sessions without children
-  if (!fetchIfNeeded) {
-    return isFreshSession
-  }
-
-  // For a more thorough deep clean, we need to look at actual messages
-
+async function isDeepCleanupCandidate(session: Session, instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance?.client) {
-    return isFreshSession
+    return false
   }
   let messages: any[] = []
   try {
     const client = getRootClient(instanceId)
-    const workspace = await getOpenCodeWorkspaceIdForSession(instanceId, session.id)
-    messages = await requestData<any[]>(
-      client.session.messages({ sessionID: session.id, ...(workspace ? { workspace } : {}) }),
-      "session.messages",
-    )
+    messages = (await client.message.list({ sessionID: session.id })).data
   } catch (error) {
     log.error(`Failed to fetch messages for session ${session.id}`, error)
-    return isFreshSession
+    return false
   }
 
   // Specific logic by session type
@@ -1139,31 +1166,57 @@ async function isBlankSession(session: Session, instanceId: string, fetchIfNeede
     if (messages.length === 0) return true
 
     const hasStreaming = messages.some((msg) => {
-      const info = msg.info.status || msg.status
-      return info === "streaming" || info === "sending"
+      return msg.type === "assistant" && !msg.time?.completed
     })
 
     const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.parts || []
+    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
     const hasToolPart = lastParts.some((part: any) =>
       part.type === "tool" || part.data?.type === "tool"
     )
 
-    return !hasStreaming && !session.pendingPermission && !hasToolPart
+    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
   } else {
     // Fork: blank if somehow has no messages or at revert point
     if (messages.length === 0) return true
 
     const lastMessage = messages[messages.length - 1]
-    const lastInfo = lastMessage?.info || lastMessage
-    return lastInfo?.id === session.revert?.messageID
+    return lastMessage?.id === session.revert?.messageID
   }
 }
 
 
-async function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+const automaticCleanupRequests = new Map<string, {
+  client: unknown
+  generation: number
+  promise: Promise<void>
+}>()
+
+function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+  if (fetchIfNeeded) return runSessionCleanup(instanceId, excludeSessionId, true)
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const pending = automaticCleanupRequests.get(instanceId)
+  if (pending?.client === client && pending?.generation === generation) return pending.promise
+
+  // One bounded sweep per connection. Later creations are outside the captured
+  // candidate set; they do not enqueue another full historical scan.
+  const request = { client, generation, promise: Promise.resolve() }
+  request.promise = runSessionCleanup(instanceId, excludeSessionId, false).finally(() => {
+    if (automaticCleanupRequests.get(instanceId) === request) automaticCleanupRequests.delete(instanceId)
+  })
+  automaticCleanupRequests.set(instanceId, request)
+  return request.promise
+}
+
+async function runSessionCleanup(instanceId: string, excludeSessionId: string | undefined, fetchIfNeeded: boolean): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const candidates = Array.from(instanceSessions)
+  const current = () => instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation
 
   if (fetchIfNeeded) {
     const confirmed = await showConfirmDialog(
@@ -1179,31 +1232,34 @@ async function cleanupBlankSessions(instanceId: string, excludeSessionId?: strin
     if (!confirmed) return
   }
 
-  const cleanupPromises = Array.from(instanceSessions)
-    .filter(([sessionId]) => sessionId !== excludeSessionId)
-    .map(async ([sessionId, session]) => {
-      const isBlank = await isBlankSession(session, instanceId, fetchIfNeeded)
-      if (!isBlank) return false
-
-      await deleteSession(instanceId, sessionId).catch((error: Error) => {
-        log.error(`Failed to delete blank session ${sessionId}`, error)
-      })
-      return true
-    })
-
-  if (cleanupPromises.length > 0) {
-    log.info(`Cleaning up ${cleanupPromises.length} blank sessions`)
-    const deletionResults = await Promise.all(cleanupPromises)
-    const deletedCount = deletionResults.filter(Boolean).length
-
-    if (deletedCount > 0) {
-      showToastNotification({
-        message: deletedCount === 1
-          ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
-          : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
-        variant: "info"
-      })
+  // Bound native checks instead of fanning out one read per historical session.
+  // Snapshot candidates so a concurrently created session is not swept up.
+  let deletedCount = 0
+  for (const [sessionId, session] of candidates) {
+    if (!current()) break
+    if (sessionId === excludeSessionId) continue
+    if (sessions().get(instanceId)?.get(sessionId) !== session) continue
+    if (!fetchIfNeeded) {
+      if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
+      continue
     }
+    if (!await isDeepCleanupCandidate(session, instanceId)) continue
+    if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
+    try {
+      await deleteSession(instanceId, sessionId)
+      deletedCount++
+    } catch (error) {
+      log.error(`Failed to deep clean session ${sessionId}`, error)
+    }
+  }
+
+  if (deletedCount > 0) {
+    showToastNotification({
+      message: deletedCount === 1
+        ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
+        : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
+      variant: "info"
+    })
   }
 }
 
@@ -1224,7 +1280,11 @@ export {
   setSessionListError,
   advanceMessageLoadEpoch,
   isCurrentMessageLoad,
+  getMessageLoadSignal,
+  finishMessageLoad,
+  supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
+  clearInstanceMessageLoads,
   setSessionMessagesLoadError,
   sessionInfoByInstance,
   setSessionInfoByInstance,
@@ -1249,7 +1309,7 @@ export {
   pruneDraftPrompts,
   withSession,
   setSessionPendingPermission,
-  setSessionPendingQuestion,
+  setSessionPendingForm,
   reconcileSessionPendingState,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,
@@ -1263,6 +1323,7 @@ export {
   clearActiveSession,
   clearActiveParentSession,
   hydrateActiveSessionSelection,
+  seedRestoredSessionSelection,
   hasAuthoritativeSessionSelection,
   clearInstanceSessionSelection,
   getActiveSession,
@@ -1274,7 +1335,7 @@ export {
   getSessionRoot,
   getSessionFamily,
   getSessionThreads,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getVisibleSessionIds,
   expandedSessions,
   isSessionExpanded,
@@ -1285,11 +1346,9 @@ export {
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
   setActiveSessionFromList,
-  isSessionBusy,
   isSessionMessagesLoading,
   getSessionMessagesLoadError,
   getSessionInfo,
-  isBlankSession,
   cleanupBlankSessions,
   SESSION_PAGE_SIZE,
   sessionPagination,

@@ -2,7 +2,7 @@ import fs from "fs"
 import path from "path"
 import fuzzysort from "fuzzysort"
 import type { FileSystemEntry } from "../api-types"
-import { clearWorkspaceSearchCache, getWorkspaceCandidates, refreshWorkspaceCandidates } from "./search-cache"
+import { clearWorkspaceSearchCache, getWorkspaceCandidates, refreshWorkspaceCandidates, WorkspaceSearchBusyError } from "./search-cache"
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 200
@@ -26,11 +26,11 @@ interface CandidateEntry {
   key: string
 }
 
-export function searchWorkspaceFiles(
+export async function searchWorkspaceFiles(
   rootDir: string,
   query: string,
   options: WorkspaceFileSearchOptions = {},
-): FileSystemEntry[] {
+): Promise<FileSystemEntry[]> {
   const trimmedQuery = query.trim()
   if (!trimmedQuery) {
     throw new Error("Search query is required")
@@ -50,12 +50,12 @@ export function searchWorkspaceFiles(
     }
 
     if (!entries) {
-      entries = refreshWorkspaceCandidates(normalizedRoot, cacheScope, () =>
+      entries = await refreshWorkspaceCandidates(normalizedRoot, cacheScope, () =>
         collectCandidates(normalizedRoot, trimmedQuery, typeFilter),
       )
     }
   } catch (error) {
-    clearWorkspaceSearchCache(normalizedRoot)
+    if (!(error instanceof WorkspaceSearchBusyError)) clearWorkspaceSearchCache(normalizedRoot)
     throw error
   }
 
@@ -82,7 +82,7 @@ export function searchWorkspaceFiles(
 }
 
 
-function collectCandidates(rootDir: string, query: string, filter: WorkspaceFileSearchType): FileSystemEntry[] {
+async function collectCandidates(rootDir: string, query: string, filter: WorkspaceFileSearchType): Promise<FileSystemEntry[]> {
   const queue: Array<{ relativeDir: string; ancestors: ReadonlySet<string> }> = [
     { relativeDir: "", ancestors: new Set() },
   ]
@@ -96,12 +96,12 @@ function collectCandidates(rootDir: string, query: string, filter: WorkspaceFile
     let dirents: fs.Dirent[]
     let branchAncestors: ReadonlySet<string>
     try {
-      const realDir = normalizeDirectoryIdentity(fs.realpathSync.native(absoluteDir))
+      const realDir = normalizeDirectoryIdentity(await fs.promises.realpath(absoluteDir))
       if (ancestors.has(realDir)) {
         continue
       }
       branchAncestors = new Set([...ancestors, realDir])
-      dirents = fs.readdirSync(absoluteDir, { withFileTypes: true })
+      dirents = await fs.promises.readdir(absoluteDir, { withFileTypes: true })
     } catch {
       continue
     }
@@ -118,7 +118,7 @@ function collectCandidates(rootDir: string, query: string, filter: WorkspaceFile
 
       let stats: fs.Stats
       try {
-        stats = fs.statSync(absolutePath)
+        stats = await fs.promises.stat(absolutePath)
       } catch {
         continue
       }

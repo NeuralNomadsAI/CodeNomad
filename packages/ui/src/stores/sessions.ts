@@ -38,12 +38,11 @@ import {
   getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getSessionThreads,
   getThreadTotals,
   getSessions,
   getVisibleSessionIds,
-  isSessionBusy,
   isSessionMessagesLoading,
   isSessionExpanded,
   loading,
@@ -68,24 +67,39 @@ import {
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
 } from "./session-state"
+import { isSessionBusy } from "./session-status"
 
 import { getDefaultModel } from "./session-models"
-import { handleWorktreeReady } from "./worktrees"
+import { handleWorktreeReady, reloadWorktrees } from "./worktrees"
 import {
   createSession,
   deleteSession,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
+  refreshSessionCatalog,
   fetchSessions,
   hydrateRestoredSessionChain,
+  hasMoreMessages,
+  getMessageNextCursor,
+  loadMoreMessages,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   loadMessages,
+  loadOlderMessageWindow,
+  loadNewerMessageWindow,
+  loadLatestMessageWindow,
+  loadOldestMessageWindow,
+  loadMessageAnchor,
+  isLatestMessageWindow,
   clearSessionListRequestState,
+  clearSessionCatalogState,
 } from "./session-api"
 import {
   abortSession,
+  backgroundSession,
   executeCustomCommand,
   renameSession,
   runShellCommand,
@@ -94,14 +108,9 @@ import {
   updateSessionModel,
 } from "./session-actions"
 import {
-  handleMessagePartRemoved,
-  handleMessageRemoved,
-  handleMessagePartDelta,
-  handleMessageUpdate,
+  handleNativeSessionEvent,
   handlePermissionReplied,
   handlePermissionUpdated,
-  handleQuestionAnswered,
-  handleQuestionAsked,
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,
@@ -111,11 +120,7 @@ import {
   handleTuiToast,
 } from "./session-events"
 
-sseManager.onMessageUpdate = handleMessageUpdate
-sseManager.onMessagePartUpdated = handleMessageUpdate
-sseManager.onMessagePartDelta = handleMessagePartDelta
-sseManager.onMessageRemoved = handleMessageRemoved
-sseManager.onMessagePartRemoved = handleMessagePartRemoved
+sseManager.onNativeSessionEvent = handleNativeSessionEvent
 sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
 sseManager.onSessionDeleted = handleSessionDeleted
@@ -125,12 +130,15 @@ sseManager.onSessionStatus = handleSessionStatus
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied
-sseManager.onQuestionAsked = handleQuestionAsked
-sseManager.onQuestionAnswered = handleQuestionAnswered
 sseManager.onWorktreeReady = handleWorktreeReady
+sseManager.onWorktreeUpdated = async (instanceId) => {
+  await reloadWorktrees(instanceId)
+  await fetchSessions(instanceId, { reset: true })
+}
 
 export {
   abortSession,
+  backgroundSession,
   activeParentSessionId,
   activeSessionId,
   agents,
@@ -150,9 +158,21 @@ export {
   runShellCommand,
   fetchAgents,
   fetchProviders,
+  getActiveCatalogLocation,
+  refreshSessionCatalog,
   fetchSessions,
   hydrateRestoredSessionChain,
+  hasMoreMessages,
+  getMessageNextCursor,
+  loadMoreMessages,
+  loadOlderMessageWindow,
+  loadNewerMessageWindow,
+  loadLatestMessageWindow,
+  loadOldestMessageWindow,
+  loadMessageAnchor,
+  isLatestMessageWindow,
   loadMoreSessions,
+  loadAllSessions,
   searchSessions,
   forkSession,
   getActiveParentSession,
@@ -179,7 +199,7 @@ export {
   getSessionListError,
   getSessionMessagesLoadError,
   getSessionSearchQuery,
-  getSessionSearchThreads,
+  getSessionSearchSessions,
   getSessionThreads,
   getThreadTotals,
   getSessions,
@@ -189,6 +209,7 @@ export {
   isSessionExpanded,
   loadMessages,
   clearSessionListRequestState,
+  clearSessionCatalogState,
   loading,
   markSessionIdleSeen,
   markViewedSessionIdleSeen,

@@ -12,7 +12,9 @@ interface PendingSidebarAction {
 
 interface UseSessionSidebarRequestsOptions {
   instanceId: Accessor<string>
+  activeSessionId: Accessor<string | null | undefined>
   sidebarContentEl: Accessor<HTMLElement | null>
+  selectorContentEl: Accessor<HTMLElement | null>
   leftPinned: Accessor<boolean>
   leftOpen: Accessor<boolean>
   setLeftOpen: (next: boolean) => void
@@ -36,16 +38,24 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
     )
   }
 
+  const activeSelectorContentEl = () => {
+    const content = options.selectorContentEl()
+    const sessionId = options.activeSessionId()
+    if (!content || sessionId === "info") return null
+    if (!sessionId) return content
+    return content.querySelector<HTMLElement>('.session-cache-pane[data-session-active="true"]')
+  }
+
   const focusAgentSelectorControl = () => {
-    const agentTrigger = options.sidebarContentEl()?.querySelector("[data-agent-selector]") as HTMLElement | null
-    if (!agentTrigger) return false
-    agentTrigger.focus()
-    setTimeout(() => triggerKeyboardEvent(agentTrigger, { key: "Enter", code: "Enter", keyCode: 13 }), 10)
+    const input = activeSelectorContentEl()?.querySelector<HTMLInputElement>("[data-agent-selector]")
+    if (!input) return false
+    input.focus()
+    setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
     return true
   }
 
   const focusModelSelectorControl = () => {
-    const input = options.sidebarContentEl()?.querySelector<HTMLInputElement>("[data-model-selector]")
+    const input = activeSelectorContentEl()?.querySelector<HTMLInputElement>("[data-model-selector]")
     if (!input) return false
     input.focus()
     setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
@@ -53,7 +63,7 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
   }
 
   const focusVariantSelectorControl = () => {
-    const input = options.sidebarContentEl()?.querySelector<HTMLInputElement>("[data-thinking-selector]")
+    const input = activeSelectorContentEl()?.querySelector<HTMLInputElement>("[data-thinking-selector]")
     if (!input) return false
     input.focus()
     setTimeout(() => triggerKeyboardEvent(input, { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }), 10)
@@ -64,7 +74,13 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
     const pending = pendingSidebarAction()
     if (!pending) return
     const action = pending.action
-    const contentReady = Boolean(options.sidebarContentEl())
+    if (action !== "show-session-list" && options.activeSessionId() === "info") {
+      setPendingSidebarAction(null)
+      return
+    }
+    const contentReady = action === "show-session-list"
+      ? Boolean(options.sidebarContentEl())
+      : Boolean(activeSelectorContentEl())
     if (!contentReady) {
       return
     }
@@ -85,7 +101,7 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
 
   const handleSidebarRequest = (action: SessionSidebarRequestAction) => {
     setPendingSidebarAction({ action, id: sidebarActionId++ })
-    if (!options.leftPinned() && !options.leftOpen()) {
+    if (action === "show-session-list" && !options.leftPinned() && !options.leftOpen()) {
       options.setLeftOpen(true)
       options.measureDrawerHost()
     }

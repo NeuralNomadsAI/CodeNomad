@@ -7,6 +7,7 @@ import { normalizeWorkspacePath } from "./app-session-reconciliation"
 export interface RestoreTabResult {
   status: "pending" | "restored" | "removed"
   runtimeTabId?: string | null
+  runtimeUnavailable?: true
   unavailableSessionIds?: ReadonlySet<string>
 }
 export interface RestorableSessionPreservation {
@@ -76,7 +77,7 @@ export function hasRestoredTabBinding(
   expectedRuntimeTabId: string,
 ): boolean {
   const result = preservation.results[sourceIndex]
-  return Boolean(result?.status === "pending" && result.runtimeTabId === expectedRuntimeTabId)
+  return Boolean(result?.status === "pending" && !result.runtimeUnavailable && result.runtimeTabId === expectedRuntimeTabId)
 }
 export function settleRestoredTab(
   preservation: RestorableSessionPreservation,
@@ -97,7 +98,12 @@ function findWorkspaceSourceIndex(
   if (runtimeIndex >= 0) return runtimeIndex
   const identity = `workspace:${normalizeWorkspacePath(workspace.folder)}:${workspace.occurrence}`
   const index = mapTabIdentities(preservation.sourceTabs).findIndex((candidate) => candidate.value === identity)
-  return index >= 0 ? index : undefined
+  if (index < 0) return undefined
+  const result = preservation.results[index]
+  // Occurrences describe the old global workspace order, not a live binding.
+  // Another window can later occupy that occurrence during concurrent startup.
+  // Only a missing/unavailable binding may be recovered by this fallback.
+  return result?.runtimeTabId && !result.runtimeUnavailable ? undefined : index
 }
 export function getPreservedWorkspaceState(
   preservation: RestorableSessionPreservation,
@@ -123,7 +129,7 @@ export function markPreservedWorkspaceRemoved(
   workspace: { runtimeTabId: string; folder: string; occurrence: number },
 ): RestorableSessionPreservation {
   const index = findWorkspaceSourceIndex(preservation, workspace)
-  if (index !== undefined && preservation.results[index]?.status === "pending") {
+  if (index !== undefined && preservation.results[index]?.status !== "removed") {
     preservation.results[index] = { status: "removed" }
     preservation.removalRevisions[index] = (preservation.removalRevisions[index] ?? 0) + 1
   }
@@ -139,6 +145,7 @@ export function markPreservedWorkspaceReopened(
   preservation.results[index] = result?.status === "removed"
     ? { status: "pending", runtimeTabId: workspace.runtimeTabId }
     : { ...result, status: "pending", runtimeTabId: workspace.runtimeTabId }
+  delete preservation.results[index]!.runtimeUnavailable
   return preservation
 }
 function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): RestorableTabState | null {
@@ -159,6 +166,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
     expandedSessionIds: (source.expandedSessionIds ?? []).filter((id) => unavailable.has(id)),
   }
   if (source.occurrence !== undefined) tab.occurrence = source.occurrence
+  if (source.outlineIndexes) tab.outlineIndexes = keep(source.outlineIndexes)
   if (source.activeParentSessionId && unavailable.has(source.activeParentSessionId)) {
     tab.activeParentSessionId = source.activeParentSessionId
   }
@@ -189,6 +197,10 @@ function mergeWorkspaceState(
     ].filter((id, index, values) => values.indexOf(id) === index),
   }
   const restoreSelection = !authority.sessionSelection && !current.activeParentSessionId && !current.activeSessionId
+  if (current.outlineIndexes || preserved.outlineIndexes) {
+    result.outlineIndexes = mergeRecords(current.outlineIndexes ?? {}, preserved.outlineIndexes ?? {}, authority.idleMarkers)
+    for (const id of authority.deletedSessions ?? []) delete result.outlineIndexes[id]
+  }
   if (restoreSelection && preserved.activeParentSessionId && !authority.deletedSessions?.has(preserved.activeParentSessionId)) {
     result.activeParentSessionId = preserved.activeParentSessionId
   }
@@ -296,12 +308,20 @@ export function markPreservedWorkspaceUnavailable(
   current?: RestorableWorkspaceTabState,
   authority?: RestorableWorkspaceRuntimeAuthority,
 ): RestorableSessionPreservation {
-  const index = findWorkspaceSourceIndex(preservation, workspace)
-  if (index === undefined) return preservation
+  let index = findWorkspaceSourceIndex(preservation, workspace)
+  if (index === undefined) {
+    // Workspaces opened after startup are not present in the saved snapshot.
+    if (!current) return preservation
+    index = preservation.sourceTabs.length
+    preservation.sourceTabs.push(current)
+    preservation.results.push({ status: "pending" })
+    preservation.removalRevisions.push(0)
+  }
+  if (preservation.results[index]?.status === "removed") return preservation
   const source = preservation.sourceTabs[index]
   if (current) preservation.sourceTabs[index] = source?.kind === "workspace"
     ? mergeWorkspaceState(current, source, authority)
     : current
-  preservation.results[index] = { status: "pending", runtimeTabId: workspace.runtimeTabId }
+  preservation.results[index] = { status: "pending", runtimeTabId: workspace.runtimeTabId, runtimeUnavailable: true }
   return preservation
 }

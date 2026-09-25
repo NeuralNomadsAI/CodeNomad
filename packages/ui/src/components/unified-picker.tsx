@@ -1,7 +1,6 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
 import type { Agent } from "../types/session"
-import type { Command as SDKCommand } from "@opencode-ai/sdk/v2"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { CommandInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -71,7 +70,7 @@ function mapEntriesToFileItems(entries: { path: string; type: "file" | "director
 type PickerItem =
   | { type: "agent"; agent: Agent }
   | { type: "file"; file: FileItem }
-  | { type: "command"; command: SDKCommand }
+  | { type: "command"; command: CommandInfo }
 
 export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
 
@@ -82,11 +81,11 @@ interface UnifiedPickerProps {
   onClose: () => void
   onSubmitWithoutSelection?: () => void
   agents: Agent[]
-  commands?: SDKCommand[]
-  instanceClient: OpencodeClient | null
+  commands?: CommandInfo[]
   searchQuery: string
   textareaRef?: HTMLTextAreaElement
   workspaceId: string
+  directory?: string
 }
 
 const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
@@ -133,7 +132,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
  
     inflightWorkspaceId = workspaceId
     inflightSnapshotPromise = serverApi
-      .listWorkspaceFiles(workspaceId)
+      .listWorkspaceFiles(workspaceId, ".", props.directory)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
         setAllFiles(snapshot)
@@ -164,7 +163,12 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     return fetchWorkspaceSnapshot(workspaceId)
   }
  
+  let searchController: AbortController | undefined
+
   async function loadFilesForQuery(rawQuery: string, workspaceId: string) {
+    searchController?.abort()
+    const controller = new AbortController()
+    searchController = controller
     const normalizedQuery = normalizeQuery(rawQuery)
     const requestId = ++activeRequestId
     const hasCachedSnapshot =
@@ -188,12 +192,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
       const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
+        signal: controller.signal,
+        directory: props.directory,
       })
       if (!shouldApplyResults(requestId, workspaceId)) {
         return
       }
       applyFileResults(mapEntriesToFileItems(results))
     } catch (error) {
+      if (controller.signal.aborted) return
       if (workspaceId === props.workspaceId) {
         log.error(`[UnifiedPicker] Failed to fetch files:`, error)
         if (shouldApplyResults(requestId, workspaceId)) {
@@ -215,6 +222,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
 
   function scheduleLoadFilesForQuery(rawQuery: string, workspaceId: string, immediate = false) {
+    searchController?.abort()
+    activeRequestId += 1
     clearQueryDebounce()
     const normalizedQuery = normalizeQuery(rawQuery)
     const shouldDebounce = !immediate && normalizedQuery.length > 0
@@ -238,6 +247,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
  
   function resetPickerState() {
+    searchController?.abort()
     clearQueryDebounce()
     setFiles([])
     setAllFiles([])
@@ -248,10 +258,11 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     lastWorkspaceId = null
     lastQuery = ""
     lastCommandQuery = ""
-    activeRequestId = 0
+    activeRequestId += 1
   }
 
   onCleanup(() => {
+    searchController?.abort()
     clearQueryDebounce()
   })
 

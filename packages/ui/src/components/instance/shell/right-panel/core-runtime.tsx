@@ -1,8 +1,6 @@
 import { createEffect, createMemo, createSignal, lazy, type Accessor } from "solid-js"
-import type { ToolState } from "@opencode-ai/sdk/v2"
 
 import type { Instance } from "../../../../types/instance"
-import type { BackgroundProcess } from "../../../../../../server/src/api-types"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
@@ -38,16 +36,12 @@ const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 
 interface CoreRightPanelRuntimeOptions {
+  isActive: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string
   instanceId: string
   instance: Instance
   activeSessionId: Accessor<string | null>
   activeSession: Accessor<Session | null>
-  latestTodoState: Accessor<ToolState | null>
-  backgroundProcessList: Accessor<BackgroundProcess[]>
-  onOpenBackgroundOutput: (process: BackgroundProcess) => void
-  onStopBackgroundProcess: (processId: string) => Promise<void> | void
-  onTerminateBackgroundProcess: (processId: string) => Promise<void> | void
   isPhoneLayout: Accessor<boolean>
   rightDrawerWidth: Accessor<number>
   rightDrawerWidthInitialized: Accessor<boolean>
@@ -135,6 +129,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const gitChangesBranchLabel = createMemo(() => gitChangesWorktree()?.branch?.trim() || null)
   const gitScopeKey = createMemo(() => `${options.instanceId}:git:${worktreeSlugForViewer()}`)
   const git = useGitChanges({
+    isActive: options.isActive,
     t: options.t,
     instanceId: options.instanceId,
     rightPanelTab: options.rightPanelTab,
@@ -227,13 +222,8 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
         t={options.t}
         instanceId={options.instanceId}
         instance={options.instance}
-        activeSessionId={options.activeSessionId}
         activeSession={options.activeSession}
-        latestTodoState={options.latestTodoState}
-        backgroundProcessList={options.backgroundProcessList}
-        onOpenBackgroundOutput={options.onOpenBackgroundOutput}
-        onStopBackgroundProcess={options.onStopBackgroundProcess}
-        onTerminateBackgroundProcess={options.onTerminateBackgroundProcess}
+        isActive={() => options.isActive() && options.rightPanelTab() === "status"}
         expandedItems={options.expandedItems}
         onExpandedItemsChange={options.onExpandedItemsChange}
         customization={options.customization}

@@ -11,12 +11,11 @@ interface CoreRightPanelRenderers {
 }
 
 interface CoreStatusSectionRenderers {
+  renderTokens: () => JSX.Element
   renderYoloModeSection: () => JSX.Element
   renderProviderUsage: () => JSX.Element
-  renderPlanSectionContent: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
-  renderLspStatus: () => JSX.Element
   renderPluginStatus: () => JSX.Element
 }
 
@@ -58,12 +57,11 @@ export function createCoreRightPanelManifest(renderers: CoreRightPanelRenderers)
 
 export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRenderers): RightPanelModule {
   const sectionRenderers: Record<string, () => JSX.Element> = {
+    tokens: renderers.renderTokens,
     "yolo-mode": renderers.renderYoloModeSection,
     "provider-usage": renderers.renderProviderUsage,
-    plan: renderers.renderPlanSectionContent,
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
-    lsp: renderers.renderLspStatus,
     plugins: renderers.renderPluginStatus,
   }
 

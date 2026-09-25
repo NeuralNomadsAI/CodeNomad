@@ -10,6 +10,8 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
     "rootDir": "src",
+    "sourceMap": true,
+    "inlineSources": true,
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],

@@ -1,0 +1,1039 @@
+import assert from "node:assert/strict"
+import { after, afterEach, before, describe, it } from "node:test"
+
+import { serverApi } from "../lib/api-client.ts"
+import { sdkManager } from "../lib/sdk-manager.ts"
+import type { Session } from "../types/session.ts"
+import { addInstance, removeInstance, updateInstance } from "./instances.ts"
+import {
+  abortSession,
+  compactSession,
+  deleteMessagePart,
+  deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
+  executeCustomCommand,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
+  runShellCommand,
+  sendMessage,
+  stageSessionRevert,
+  updateSessionAgent,
+  updateSessionModel,
+} from "./session-actions.ts"
+import { setConversationModeEnabled } from "./conversation-speech.ts"
+import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
+import { sessions, setAgents, setProviders, setSessions, withSession } from "./session-state.ts"
+import { loadMessages } from "./session-api.ts"
+import { handleNativeSessionEvent } from "./session-events.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
+import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
+
+const instanceId = "session-actions"
+const sessionId = "session"
+const storageMethods = {
+  fetchConfigOwner: serverApi.fetchConfigOwner,
+  fetchStateOwner: serverApi.fetchStateOwner,
+  patchStateOwner: serverApi.patchStateOwner,
+  pruneSessionMessage: serverApi.pruneSessionMessage,
+  querySessionHistory: serverApi.querySessionHistory,
+  pruneSessionHistory: serverApi.pruneSessionHistory,
+}
+let testUiState: Record<string, any> = {}
+
+before(() => {
+  serverApi.fetchConfigOwner = async <T extends Record<string, any> = Record<string, any>>() => ({} as T)
+  serverApi.fetchStateOwner = async <T extends Record<string, any> = Record<string, any>>() => testUiState as T
+  serverApi.patchStateOwner = async <T extends Record<string, any> = Record<string, any>>(_owner: string, value: unknown) => {
+    const patch = value as Record<string, any>
+    testUiState = {
+      ...testUiState,
+      ...patch,
+      ...(patch.models ? { models: { ...testUiState.models, ...patch.models } } : {}),
+    }
+    return testUiState as T
+  }
+})
+
+after(() => {
+  Object.assign(serverApi, storageMethods)
+})
+
+function seed(client: any): void {
+  if (client.session?.applyPrune) {
+    const read = client.session.message.get
+    const committed = new Map<string, any>()
+    client.session.message.get = async (input: any) => committed.get(input.messageID) ?? read(input)
+    serverApi.pruneSessionMessage = async (owner, input) => {
+      assert.equal(owner, instanceId)
+      assert.deepEqual(Object.keys(input).sort(), ["indexes", "messageID", "revision", "sessionID"])
+      const message = await client.session.message.get(input)
+      assert.equal(input.revision, await contentRevision(message.content))
+      const updated = await client.session.applyPrune({
+        sessionID: input.sessionID, messageID: input.messageID,
+        content: message.content.filter((_: unknown, index: number) => !input.indexes.includes(index)),
+      })
+      committed.set(input.messageID, updated)
+      return { status: "pruned", messageID: input.messageID, revision: await contentRevision(updated.content), removedCount: input.indexes.length }
+    }
+  }
+  const session = {
+    id: sessionId,
+    instanceId,
+    parentId: null,
+    title: sessionId,
+    agent: "build",
+    model: { providerId: "provider", modelId: "old" },
+    status: "idle",
+    location: { directory: "/work" },
+    time: { created: 1, updated: 1 },
+  } as Session
+
+  ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  setSessions(new Map([[instanceId, new Map([[sessionId, session]])]]))
+  // Give agent-switch tests a deterministic default independent of recents.
+  setAgents(new Map([[instanceId, [{ id: "plan", name: "Plan", description: "", mode: "primary",
+    model: { providerId: "provider", modelId: "old" } }]]]))
+  setProviders(new Map([[instanceId, [{ id: "provider", name: "Provider", models: [
+    { id: "old", name: "Old", providerId: "provider", variantKeys: ["high"] },
+    { id: "new", name: "New", providerId: "provider", variantKeys: ["high"] },
+  ] }]]]))
+}
+
+async function selectVariant(modelId: string, variant: string): Promise<void> {
+  const model = { providerId: "provider", modelId }
+  setModelThinkingSelection(model, variant)
+  while (getModelThinkingSelection(model) !== variant) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+afterEach(() => {
+  serverApi.pruneSessionMessage = storageMethods.pruneSessionMessage
+  setSessions(new Map())
+  setProviders(new Map())
+  setAgents(new Map())
+  removeInstance(instanceId, { authoritative: false })
+  sdkManager.destroyClientsForInstance(instanceId)
+  setConversationModeEnabled(instanceId, false)
+  setModelThinkingSelection({ providerId: "provider", modelId: "old" }, undefined)
+  setModelThinkingSelection({ providerId: "provider", modelId: "new" }, undefined)
+})
+
+describe("native undo settlement", () => {
+  const busy = { _tag: "SessionBusyError", sessionID: sessionId, message: "busy" }
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+
+  it("does not interrupt an idle session and preserves native stage semantics", async () => {
+    const calls: unknown[] = []
+    seed({ session: { revert: { stage: async (input: unknown) => { calls.push(input) } } } })
+    await stageSessionRevert(instanceId, sessionId, "message")
+    assert.deepEqual(calls, [{ sessionID: sessionId, messageID: "message" }])
+  })
+
+  it("waits for settlement after native Busy, even when the UI thinks the session is idle", async () => {
+    const calls: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    seed({ session: {
+      revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
+      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
+      wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
+    } })
+    const undo = stageSessionRevert(instanceId, sessionId, "message")
+    await tick()
+    assert.deepEqual(calls, ["stage", "interrupt", "wait"])
+    release()
+    await undo
+    assert.deepEqual(calls, ["stage", "interrupt", "wait", "stage"])
+  })
+
+  for (const failure of ["interrupt", "wait", "retry", "other-error", "replacement"] as const) {
+    it(`does not claim successful undo after ${failure}`, async () => {
+      let stages = 0, interrupts = 0
+      seed({ session: {
+        revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
+        interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
+        wait: async () => {
+          if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
+          if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+        },
+      } })
+      await assert.rejects(stageSessionRevert(instanceId, sessionId, "message"))
+      assert.equal(stages, failure === "retry" ? 2 : 1)
+      assert.equal(interrupts, failure === "other-error" ? 0 : 1)
+    })
+  }
+
+  it("orders undo after prior prompt admission and before a later send", async () => {
+    const calls: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {}, switchModel: async () => {},
+      prompt: async (input: any) => { calls.push(input.text); if (input.text === "before") await gate; return { id: input.id } },
+      revert: { stage: async () => { calls.push("stage") } },
+    } })
+    const before = sendMessage(instanceId, sessionId, "before")
+    await tick()
+    const undo = stageSessionRevert(instanceId, sessionId, "message")
+    const after = sendMessage(instanceId, sessionId, "after")
+    await tick()
+    assert.deepEqual(calls, ["before"])
+    release()
+    await Promise.all([before, undo, after])
+    assert.deepEqual(calls, ["before", "stage", "after"])
+  })
+})
+
+describe("session instruction sync", () => {
+  it("syncs the enabled instruction before a slash command", async () => {
+    const calls: string[] = []
+    let commandInput: unknown
+    seed({ session: {
+      instructions: { entry: {
+        put: async (input: any) => { calls.push(`put:${input.key}`) },
+        remove: async () => { calls.push("remove") },
+      } },
+      command: async (input: unknown) => { calls.push("command"); commandInput = input },
+    } })
+    setConversationModeEnabled(instanceId, true)
+
+    await executeCustomCommand(instanceId, sessionId, "review", "")
+
+    assert.deepEqual(calls, ["put:codenomad.voice-mode", "put:codenomad.session-placement", "command"])
+    assert.deepEqual(commandInput, {
+      sessionID: sessionId,
+      name: "review",
+      text: "",
+      delivery: "steer",
+    })
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.generationRecovery, undefined)
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
+  })
+
+  it("removes a stale instruction before a shell command", async () => {
+    const calls: string[] = []
+    seed({ session: {
+      instructions: { entry: {
+        put: async (input: any) => { calls.push(`put:${input.key}`) },
+        remove: async (input: any) => { calls.push(`remove:${input.key}`) },
+      } },
+      shell: async () => { calls.push("shell") },
+    } })
+
+    await runShellCommand(instanceId, sessionId, "pwd")
+
+    assert.deepEqual(calls, ["remove:codenomad.voice-mode", "put:codenomad.session-placement", "shell"])
+  })
+
+  it("serializes concurrent syncs so the latest mode wins remotely", async () => {
+    const calls: string[] = []
+    let releasePut!: () => void
+    const putGate = new Promise<void>((resolve) => { releasePut = resolve })
+    seed({ session: {
+      instructions: { entry: {
+        put: async (input: any) => {
+          if (input.key === "codenomad.session-placement") { calls.push("placement"); return }
+          calls.push("put:start"); await putGate; calls.push("put:end")
+        },
+        remove: async () => { calls.push("remove") },
+      } },
+      command: async () => { calls.push("command") },
+      shell: async () => { calls.push("shell") },
+    } })
+    setConversationModeEnabled(instanceId, true)
+    const first = executeCustomCommand(instanceId, sessionId, "review", "")
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    setConversationModeEnabled(instanceId, false)
+    releasePut()
+    await first
+
+    assert.deepEqual(calls, ["put:start", "put:end", "remove", "placement", "command"])
+    assert.equal(calls.filter((call) => call === "remove").length, 1)
+  })
+
+  for (const action of ["prompt", "command", "shell"] as const) {
+    it(`waits for placement setup before ${action} and propagates its failure`, async () => {
+      const calls: string[] = []
+      let rejectPut!: (error: Error) => void
+      const gate = new Promise<void>((_resolve, reject) => { rejectPut = reject })
+      seed({ session: {
+        instructions: { entry: {
+          put: async (input: any) => {
+            assert.equal(input.sessionID, sessionId)
+            assert.equal(input.key, "codenomad.session-placement")
+            calls.push("placement")
+            await gate
+          },
+          remove: async () => {},
+        } },
+        switchAgent: async () => {}, switchModel: async () => {},
+        [action]: async () => { calls.push(action) },
+      } })
+      const pending = action === "prompt" ? sendMessage(instanceId, sessionId, "hello")
+        : action === "command" ? executeCustomCommand(instanceId, sessionId, "review", "")
+          : runShellCommand(instanceId, sessionId, "pwd")
+      const rejected = assert.rejects(pending, /instruction unavailable/)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.deepEqual(calls, ["placement"])
+      rejectPut(new Error("instruction unavailable"))
+      await rejected
+      assert.deepEqual(calls, ["placement"])
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle")
+      if (action === "prompt") {
+        const store = messageStoreBus.getOrCreate(instanceId)
+        const ids = store.getSessionMessageIds(sessionId)
+        assert.equal(store.getMessage(ids[ids.length - 1])?.status, "error")
+      }
+    })
+  }
+
+  for (const action of ["prompt", "command", "shell"] as const) {
+    it(`continues ${action} when voice instruction sync fails`, async () => {
+      const calls: string[] = []
+      seed({ session: {
+        instructions: { entry: {
+          put: async (input: any) => { calls.push(`put:${input.key}`) },
+          remove: async () => { throw new Error("Unexpected status 500") },
+        } },
+        switchAgent: async () => {}, switchModel: async () => {},
+        [action]: async () => { calls.push(action) },
+      } })
+
+      if (action === "prompt") await sendMessage(instanceId, sessionId, "hello")
+      else if (action === "command") await executeCustomCommand(instanceId, sessionId, "review", "")
+      else await runShellCommand(instanceId, sessionId, "pwd")
+
+      assert.deepEqual(calls, ["put:codenomad.session-placement", action])
+    })
+  }
+})
+
+describe("session interruption", () => {
+  it("matches TUI interruption without cancelling children that can wake the parent again", async () => {
+    const interrupted: unknown[] = []
+    seed({ session: { interrupt: async (input: unknown) => { interrupted.push(input) } } })
+    const root = sessions().get(instanceId)!.get(sessionId)!
+    setSessions(new Map([[instanceId, new Map([
+      [sessionId, root],
+      ["child-working", { ...root, id: "child-working", parentId: sessionId, status: "working" }],
+      ["grandchild-working", { ...root, id: "grandchild-working", parentId: "child-working", status: "compacting" }],
+      ["child-idle", { ...root, id: "child-idle", parentId: sessionId, status: "idle" }],
+    ])]]))
+
+    await abortSession(instanceId, sessionId)
+
+    assert.deepEqual(interrupted, [{ sessionID: sessionId, resume: true }])
+
+    // A child selected directly is still independently interruptible.
+    await abortSession(instanceId, "child-working")
+    assert.deepEqual(interrupted[1], { sessionID: "child-working", resume: true })
+  })
+})
+
+describe("plugin RPC message pruning", () => {
+  it("keeps the local message when the plugin blocks or its acknowledgement is lost", async () => {
+    const messageId = "blocked-prune"
+    const content = [{ type: "tool", id: "tool-1", state: { status: "completed" } }, { type: "text", text: "keep" }]
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" }, { id: "keep", type: "text", text: "keep" },
+    ] })
+    const reasons = { unavailable: /plugin is unavailable/, maintenance_required: /storage is busy/, conflict: /message changed/, not_deletable: /cannot be deleted/, unsupported_storage: /could not validate/ } as const
+    for (const reason of Object.keys(reasons) as Array<keyof typeof reasons>) {
+      serverApi.pruneSessionMessage = async () => ({ status: "blocked", reason })
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), reasons[reason])
+      serverApi.pruneSessionHistory = async () => ({ results: [{ messageID: messageId, result: { status: "blocked", reason } }] })
+      const failures = await executeSessionTechnicalPartDeletion({ instanceId, sessionId, generation: getOpenCodeInstanceGeneration(instanceId),
+        candidates: [{ messageID: messageId, revision: "a".repeat(64), toolCount: 1, reasoningCount: 0 }], skipped: 0, toolCount: 1, reasoningCount: 0 })
+      assert.equal(failures.length, 1)
+      assert.match(failures[0], reasons[reason])
+      assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+    }
+    serverApi.pruneSessionMessage = async () => { throw new Error("Lost acknowledgement") }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"), /Lost acknowledgement/)
+    assert.ok(store.getMessage(messageId)?.parts["tool-1"])
+  })
+
+  it("resolves a tool by identity rather than a stale local array position", async () => {
+    const messageId = "stale-selection"
+    const content = [{ type: "text", text: "new text" }, { type: "tool", id: "tool-1", state: { status: "completed" } }]
+    let selected: number[] = []
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
+    serverApi.pruneSessionMessage = async (_owner, input) => { selected = input.indexes; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: "tool-1", type: "tool", tool: "bash" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, "tool-1"))
+    assert.deepEqual(selected, [1])
+  })
+
+  it("refuses ambiguous reasoning instead of deleting another occurrence", async () => {
+    const messageId = "ambiguous-selection"
+    const content = [{ type: "reasoning", text: "same" }, { type: "reasoning", text: "same" }]
+    seed({ session: { message: { get: async () => ({ id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content }) } } })
+    let calls = 0
+    serverApi.pruneSessionMessage = async () => { calls++; return { status: "blocked", reason: "maintenance_required" } }
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: [
+      { id: `${messageId}-reasoning-0`, type: "reasoning", text: "same" },
+    ] })
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-0`), /message changed/)
+    assert.equal(calls, 0)
+  })
+
+  for (const variant of ["opaque-state", "identical", "missing-time", "changed-state"] as const) {
+    it(`does not send a destructive RPC for a stale reasoning selection (${variant})`, async () => {
+      const messageId = `stale-reasoning-${variant}`
+      const first = { type: "reasoning", text: "", state: { provider: { opaque: "FIRST" } } }
+      const second = variant === "identical" ? structuredClone(first)
+        : { ...first, state: { provider: { opaque: "SECOND" } } }
+      const original = {
+        id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second],
+      } as any
+      const fresh = variant === "missing-time" ? [{ ...first, time: { created: 1, completed: 2 } }]
+        : variant === "changed-state" ? [{ ...first, state: { provider: { opaque: "CHANGED" } } }]
+        : [second]
+      seed({ session: { message: { get: async () => ({ ...original, content: fresh }) } } })
+      const normalized = normalizeSessionMessage(sessionId, original).message
+      const store = messageStoreBus.getOrCreate(instanceId)
+      store.upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+      let calls = 0
+      serverApi.pruneSessionMessage = async () => { calls++; throw new Error("Destructive RPC must not be called") }
+
+      await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[0].id!), /message changed/)
+
+      assert.equal(calls, 0)
+      assert.deepEqual(store.getMessage(messageId)?.partIds, normalized.parts.map(part => part.id))
+    })
+  }
+
+  it("matches a surviving reasoning block with its full state despite key and index reordering", async () => {
+    const messageId = "surviving-reasoning"
+    const first = { type: "reasoning", text: "", state: { provider: "p", opaque: "FIRST" } }
+    const second = { type: "reasoning", text: "", state: { provider: "p", opaque: "SECOND" } }
+    const original = { id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second] } as any
+    const fresh = { ...original, content: [{ ...second, state: { opaque: "SECOND", provider: "p" } }] }
+    seed({ session: { message: { get: async () => fresh } } })
+    const normalized = normalizeSessionMessage(sessionId, original).message
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
+    let calls = 0
+    serverApi.pruneSessionMessage = async (_owner, input) => {
+      calls++
+      assert.deepEqual(input.indexes, [0])
+      assert.equal(input.revision, await contentRevision(fresh.content))
+      return { status: "blocked", reason: "maintenance_required" }
+    }
+    await assert.rejects(deleteMessagePart(instanceId, sessionId, messageId, normalized.parts[1].id!))
+    assert.equal(calls, 1)
+  })
+
+  it("removes one terminal assistant part and projects the updated response", async () => {
+    const messageId = "assistant-message"
+    const content = [
+      { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } },
+      {
+        type: "tool",
+        id: "tool-1",
+        name: "bash",
+        state: { status: "completed", input: {}, content: [{ type: "text", text: "ok" }] },
+        time: { created: 2, completed: 3 },
+      },
+      { type: "text", text: "done" },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: { get: async () => ({
+        id: messageId,
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "provider", id: "old" },
+        time: { created: 1, completed: 3 },
+        content,
+      }) },
+      applyPrune: async (input: any) => {
+        updateInput = input
+        return {
+          id: messageId,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "provider", id: "old" },
+          time: { created: 1, completed: 3 },
+          content: input.content,
+        }
+      },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "error",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "thinking" },
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await deleteMessagePart(instanceId, sessionId, messageId, "tool-1")
+
+    assert.deepEqual(updateInput, {
+      sessionID: sessionId,
+      messageID: messageId,
+      content: [content[0], content[2]],
+    })
+    assert.equal(store.getMessage(messageId)?.parts["tool-1"], undefined)
+    assert.deepEqual(store.getMessage(messageId)?.partIds, [
+      `${messageId}-reasoning-0`,
+      `${messageId}-text-1`,
+    ])
+  })
+
+  it("serializes concurrent deletions from the same assistant message", async () => {
+    const messageId = "assistant-concurrent"
+    let remote: any = {
+      id: messageId,
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 4 },
+      content: [
+        { type: "tool", id: "tool-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { type: "text", text: "done" },
+      ],
+    }
+    seed({ session: {
+      message: { get: async () => structuredClone(remote) },
+      applyPrune: async (input: any) => {
+        remote = { ...remote, content: input.content }
+        return structuredClone(remote)
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "tool-1", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-1`, type: "reasoning", text: "thinking", time: { created: 2, completed: 3 } },
+        { id: `${messageId}-text-2`, type: "text", text: "done" },
+      ],
+    })
+
+    await Promise.all([
+      deleteMessagePart(instanceId, sessionId, messageId, "tool-1"),
+      deleteMessagePart(instanceId, sessionId, messageId, `${messageId}-reasoning-1`),
+    ])
+
+    assert.deepEqual(remote.content, [{ type: "text", text: "done" }])
+  })
+
+  it("removes a selected range without touching tools after the response", async () => {
+    const messageId = "assistant-range"
+    const content = [
+      { type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
+      { type: "tool", id: "tool-before", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 2, completed: 3 } },
+      { type: "text", text: "response" },
+      { type: "tool", id: "tool-after", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 4, completed: 5 } },
+      { type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
+    ]
+    let updateInput: any
+    seed({ session: {
+      message: { get: async () => ({ id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content }) },
+      applyPrune: async (input: any) => {
+        updateInput = input
+        return { id: messageId, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, time: { created: 1, completed: 6 }, content: input.content }
+      },
+    } })
+    messageStoreBus.getOrCreate(instanceId).upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: `${messageId}-reasoning-0`, type: "reasoning", text: "before", time: { created: 1, completed: 2 } },
+        { id: "tool-before", type: "tool", tool: "bash" },
+        { id: `${messageId}-text-2`, type: "text", text: "response" },
+        { id: "tool-after", type: "tool", tool: "bash" },
+        { id: `${messageId}-reasoning-4`, type: "reasoning", text: "after", time: { created: 5, completed: 6 } },
+      ],
+    })
+
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, [`${messageId}-reasoning-0`, "tool-before"])
+
+    assert.deepEqual(updateInput.content, [content[2], content[3], content[4]])
+    assert.ok(messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts["tool-after"])
+  })
+
+  it("awaits every message in a technical group, including its final native projection", async () => {
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 2 }, content: [
+        { type: "tool", id: "shell-1", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 1, completed: 2 } },
+        { type: "text", text: "first" },
+      ] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 3, completed: 4 }, content: [
+        { type: "tool", id: "shell-2", name: "bash", state: { status: "completed", input: {}, content: [] }, time: { created: 3, completed: 4 } },
+        { type: "text", text: "second" },
+      ] }],
+    ])
+    const updates: any[] = []
+    let releaseLast!: () => void
+    let lastStarted!: () => void
+    const lastGate = new Promise<void>(resolve => { releaseLast = resolve })
+    const lastReached = new Promise<void>(resolve => { lastStarted = resolve })
+    seed({ session: {
+      message: { get: async ({ messageID }: { messageID: string }) => messages.get(messageID) },
+      applyPrune: async (input: any) => {
+        updates.push(input)
+        if (input.messageID === "assistant-2") { lastStarted(); await lastGate }
+        return { ...messages.get(input.messageID), content: input.content }
+      },
+    } })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    for (const [messageId, message] of messages) {
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "assistant",
+        status: "complete",
+        parts: [{ id: message.content[0].id, type: "tool", tool: "bash" }, { id: `${messageId}-text-1`, type: "text", text: message.content[1].text }],
+      })
+    }
+
+    let completed = false
+    const deletion = deleteTechnicalPartGroup(instanceId, sessionId, [
+      { messageId: "assistant-1", partId: "shell-1" },
+      { messageId: "assistant-2", partId: "shell-2" },
+    ]).then(() => { completed = true })
+    await lastReached
+    assert.equal(completed, false, "The first prune is not completion of the rendered group")
+    assert.equal(store.getMessage("assistant-1")?.parts["shell-1"], undefined)
+    assert.ok(store.getMessage("assistant-2")?.parts["shell-2"])
+    releaseLast()
+    await deletion
+    assert.equal(store.getMessage("assistant-2")?.parts["shell-2"], undefined)
+
+    assert.deepEqual(updates.map((update) => [update.messageID, update.content]), [
+      ["assistant-1", [{ type: "text", text: "first" }]],
+      ["assistant-2", [{ type: "text", text: "second" }]],
+    ])
+  })
+
+  it("plans compact metadata and refuses changed content without downloading history", async () => {
+    const text = (value: string) => ({ type: "text", text: value })
+    const reasoning = { type: "reasoning", text: "thinking", time: { created: 1, completed: 2 } }
+    const tool = {
+      type: "tool",
+      id: "tool-1",
+      name: "bash",
+      state: { status: "completed", input: {}, content: [text("ok")] },
+      time: { created: 2, completed: 3 },
+    }
+    const messages = new Map<string, any>([
+      ["assistant-1", { id: "assistant-1", type: "assistant", time: { created: 1, completed: 3 }, content: [reasoning, text("first")] }],
+      ["assistant-active", { id: "assistant-active", type: "assistant", time: { created: 4 }, content: [tool] }],
+      ["assistant-2", { id: "assistant-2", type: "assistant", time: { created: 5, completed: 7 }, content: [tool, text("second")] }],
+    ])
+    const updates: any[] = []
+    let page = 0
+    seed({
+      message: { list: async () => {
+        page += 1
+        return page === 1
+          ? { data: [messages.get("assistant-1"), messages.get("assistant-active")], cursor: { next: "page-2" } }
+          : { data: [messages.get("assistant-2")], cursor: {} }
+      } },
+      session: {
+        message: { get: async ({ messageID }: { messageID: string }) => messages.get(messageID) },
+        applyPrune: async (input: any) => {
+          updates.push(input)
+          return { ...messages.get(input.messageID), content: input.content }
+        },
+      },
+    })
+
+    serverApi.querySessionHistory = async (_owner, input) => {
+      assert.equal(input.purpose, "prune")
+      const message = messages.get(input.cursor ? "assistant-2" : "assistant-1")
+      return { status: "page", scanned: 1, tools: 0, reasoning: 0, skipped: 0, hits: [],
+        candidates: [{ messageID: message.id, revision: await contentRevision(message.content),
+          toolCount: input.cursor ? 1 : 0, reasoningCount: input.cursor ? 0 : 1 }], cursor: input.cursor ? null : "page-2" }
+    }
+    serverApi.pruneSessionHistory = async (_owner, input) => ({ results: await Promise.all(input.candidates.map(async candidate => ({
+      messageID: candidate.messageID,
+      result: candidate.revision !== await contentRevision(messages.get(candidate.messageID).content)
+        ? { status: "blocked" as const, reason: "conflict" as const }
+        : { status: "pruned" as const, messageID: candidate.messageID, revision: "a".repeat(64), removedCount: 1 },
+    }))) })
+    const plan = await planSessionTechnicalPartDeletion(instanceId, sessionId)
+    messages.get("assistant-1").content = [reasoning, text("updated")]
+    const failed = await executeSessionTechnicalPartDeletion(plan)
+
+    assert.equal(plan.toolCount, 1)
+    assert.equal(plan.reasoningCount, 1)
+    assert.deepEqual(plan.candidates.map(candidate => candidate.messageID), ["assistant-1", "assistant-2"])
+    assert.equal(failed.length, 1, "changed content after confirmation is refused")
+    assert.equal(page, 0, "no native message pages were downloaded")
+    assert.deepEqual(updates, [])
+    const store = messageStoreBus.getOrCreate(instanceId)
+    assert.equal(store.getMessage("assistant-1"), undefined)
+    assert.equal(store.getMessage("assistant-2"), undefined)
+  })
+})
+
+describe("native session selection persistence", () => {
+  for (const blockedAt of ["instructions", "model", "prompt", "agent"] as const) {
+    it(`orders a model choice after pending ${blockedAt} and before the next prompt`, async () => {
+      let release!: () => void
+      const pending = new Promise<void>(resolve => { release = resolve })
+      let entered!: () => void
+      const started = new Promise<void>(resolve => { entered = resolve })
+      let held = false, sequence = 0, nativeModel = "old"
+      const calls: string[] = []
+      const hold = async (stage: string) => {
+        if (stage !== blockedAt || held) return
+        held = true
+        entered()
+        await pending
+      }
+      seed({ session: {
+        get: async () => ({ model: { providerID: "provider", id: nativeModel } }),
+        instructions: { entry: { put: () => hold("instructions"), remove: async () => {} } },
+        switchAgent: () => hold("agent"),
+        switchModel: async ({ model }: any) => {
+          await hold("model")
+          nativeModel = model.id
+          calls.push(`model:${model.id}`)
+          handleNativeSessionEvent(instanceId, {
+            id: `selection-${++sequence}`, type: "session.model.selected", created: sequence,
+            durable: { aggregateID: sessionId, seq: sequence, version: 1 },
+            data: { sessionID: sessionId, model },
+          } as any)
+        },
+        prompt: async (input: any) => { await hold("prompt"); calls.push(`prompt:${nativeModel}`); return { id: input.id } },
+      } })
+      if (blockedAt !== "agent") withSession(instanceId, sessionId, current => { current.status = "working" })
+      const first = blockedAt === "agent" ? updateSessionAgent(instanceId, sessionId, "plan")
+        : sendMessage(instanceId, sessionId, "first", undefined, { delivery: "steer" })
+      await started
+      const selection = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      const second = sendMessage(instanceId, sessionId, "second")
+      release()
+      await Promise.all([first, selection, second])
+      assert.deepEqual(calls, blockedAt === "agent"
+        ? ["model:old", "model:new", "model:new", "prompt:new"]
+        : ["model:old", "prompt:old", "model:new", "model:new", "prompt:new"])
+      assert.equal(nativeModel, "new")
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.model.modelId, "new")
+    })
+  }
+
+  for (const rejectFirst of [false, true]) {
+    it(`orders rapid choices and takes rollback snapshots at admission (first rejected: ${rejectFirst})`, async () => {
+      let release!: () => void
+      const pending = new Promise<void>(resolve => { release = resolve })
+      const calls: string[] = []
+      seed({ session: { switchModel: async ({ model }: any) => {
+        calls.push(model.id)
+        if (calls.length === 1) { await pending; if (rejectFirst) throw new Error("first rejected") }
+      } } })
+      const first = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      const outcome = first.catch(error => { assert.equal(error.message, "first rejected") })
+      const second = updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "old" })
+      release()
+      await Promise.all([outcome, second])
+      assert.deepEqual(calls, ["new", "old"])
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.model.modelId, "old")
+    })
+  }
+
+  for (const status of ["working", "compacting"] as const) {
+    it(`persists one model selection while ${status}`, async () => {
+      const inputs: unknown[] = []
+      seed({ session: { switchModel: async (input: unknown) => { inputs.push(input) } } })
+      withSession(instanceId, sessionId, current => { current.status = status })
+      await updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      assert.deepEqual(inputs, [{ sessionID: sessionId, model: { providerID: "provider", id: "new" } }])
+    })
+    it(`rolls back a rejected model switch while ${status}`, async () => {
+      const error = new Error("model switch rejected")
+      seed({ session: { switchModel: async () => { throw error } } })
+      withSession(instanceId, sessionId, current => { current.status = status })
+      await assert.rejects(updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" }), error)
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, status)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.modelSelectionPending, undefined)
+    })
+  }
+
+  for (const duringLoad of [false, true]) {
+    it(`retains the selected model when old transcript history reloads (${duringLoad ? "in-flight selection" : "already selected"})`, async () => {
+      let release!: (value: any) => void
+      const pending = new Promise(resolve => { release = resolve })
+      seed({ session: { switchModel: async () => {} }, message: { list: async () => pending } })
+      const select = () => updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+      if (!duringLoad) await select()
+      const loading = loadMessages(instanceId, sessionId, { force: true })
+      if (duringLoad) await select()
+      release({ data: [{ id: "historical-assistant", type: "assistant", agent: "plan",
+        model: { providerID: "provider", id: "old" }, time: { created: 1, completed: 2 }, content: [] }], cursor: {} })
+      await loading
+      assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "new" })
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "build")
+    })
+  }
+
+  it("still hydrates missing selections from the latest transcript", async () => {
+    seed({ message: { list: async () => ({ data: [{ id: "historical-assistant", type: "assistant", agent: "plan",
+      model: { providerID: "provider", id: "old" }, time: { created: 1, completed: 2 }, content: [] }], cursor: {} }) } })
+    withSession(instanceId, sessionId, current => { current.agent = ""; current.model = { providerId: "", modelId: "" } })
+    await loadMessages(instanceId, sessionId, { force: true })
+    assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "plan")
+  })
+
+  it("switches the native agent", async () => {
+    const inputs: unknown[] = []
+    seed({ session: {
+      switchAgent: async (value: unknown) => { inputs.push(value) },
+      switchModel: async (value: unknown) => { inputs.push(value) },
+    } })
+
+    await updateSessionAgent(instanceId, sessionId, "plan")
+
+    assert.deepEqual(inputs, [
+      { sessionID: sessionId, agent: "plan" },
+      { sessionID: sessionId, model: { providerID: "provider", id: "old" } },
+    ])
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "plan")
+  })
+
+  it("switches the native model with ModelRef field names", async () => {
+    let input: unknown
+    seed({ session: { switchModel: async (value: unknown) => { input = value } } })
+
+    await updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+
+    assert.deepEqual(input, {
+      sessionID: sessionId,
+      model: { providerID: "provider", id: "new" },
+    })
+    assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "new" })
+  })
+
+  it("persists the selected variant for model and agent-driven model switches", async () => {
+    const inputs: unknown[] = []
+    seed({ session: {
+      switchAgent: async () => {},
+      switchModel: async (value: unknown) => { inputs.push(value) },
+    } })
+    await selectVariant("new", "high")
+    await selectVariant("old", "high")
+
+    await updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" })
+    await updateSessionAgent(instanceId, sessionId, "plan")
+
+    assert.deepEqual(inputs, [
+      { sessionID: sessionId, model: { providerID: "provider", id: "new", variant: "high" } },
+      { sessionID: sessionId, model: { providerID: "provider", id: "old", variant: "high" } },
+    ])
+    assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+  })
+
+  it("rolls back local selections when native switching fails", async () => {
+    const error = new Error("switch failed")
+    seed({ session: {
+      switchAgent: async () => { throw error },
+      switchModel: async () => { throw error },
+    } })
+
+    await assert.rejects(updateSessionAgent(instanceId, sessionId, "plan"), error)
+    assert.equal(sessions().get(instanceId)?.get(sessionId)?.agent, "build")
+
+    await assert.rejects(updateSessionModel(instanceId, sessionId, { providerId: "provider", modelId: "new" }), error)
+    assert.deepEqual(sessions().get(instanceId)?.get(sessionId)?.model, { providerId: "provider", modelId: "old" })
+  })
+})
+
+describe("native prompt serialization", () => {
+  it("admits compaction after an in-flight prompt", async () => {
+    const admissions: string[] = []
+    let releasePrompt!: () => void
+    const promptPending = new Promise<void>((resolve) => { releasePrompt = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        admissions.push("prompt")
+        await promptPending
+        return { id: input.id }
+      },
+      compact: async () => { admissions.push("compact") },
+    } })
+
+    const prompt = sendMessage(instanceId, sessionId, "first")
+    await new Promise((resolve) => setImmediate(resolve))
+    const compact = compactSession(instanceId, sessionId)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(admissions, ["prompt"])
+
+    releasePrompt()
+    await Promise.all([prompt, compact])
+    assert.deepEqual(admissions, ["prompt", "compact"])
+  })
+
+  it("admits concurrent prompts in submission order", async () => {
+    const prompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        prompts.push(input.text)
+        if (input.text === "first") await firstPending
+        return { id: input.id }
+      },
+    } })
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(prompts, ["first"])
+    releaseFirst()
+    await Promise.all([first, second])
+    assert.deepEqual(prompts, ["first", "second"])
+  })
+
+  it("uses the current client when a queued prompt starts after reconnect", async () => {
+    const oldPrompts: string[] = []
+    const newPrompts: string[] = []
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const oldClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        oldPrompts.push(input.text)
+        await firstPending
+        return { id: input.id }
+      },
+    } }
+    seed(oldClient)
+
+    const first = sendMessage(instanceId, sessionId, "first")
+    const second = sendMessage(instanceId, sessionId, "second")
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const newClient = { session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { newPrompts.push(input.text); return { id: input.id } },
+    } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, newClient)
+    updateInstance(instanceId, { client: newClient as any })
+    releaseFirst()
+
+    await Promise.all([first, second])
+    assert.deepEqual(oldPrompts, ["first"])
+    assert.deepEqual(newPrompts, ["second"])
+  })
+
+  it("sends agent attachments with mention offsets and the selected model variant", async () => {
+    const calls: Array<{ type: string; input: any }> = []
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async (input: unknown) => { calls.push({ type: "agent", input }) },
+      switchModel: async (input: unknown) => { calls.push({ type: "model", input }) },
+      prompt: async (input: unknown) => { calls.push({ type: "prompt", input }) },
+    } })
+    await selectVariant("old", "high")
+    setProviders(new Map([[instanceId, [{ id: "provider", name: "Provider", models: [
+      { id: "old", name: "Old", providerId: "provider", variantKeys: ["high"] },
+    ] }]]]))
+
+    await sendMessage(instanceId, sessionId, "Ask @reviewer now", [{
+      id: "agent-attachment",
+      type: "agent",
+      display: "@reviewer",
+      url: "",
+      filename: "reviewer",
+      mediaType: "text/plain",
+      source: { type: "agent", name: "reviewer" },
+    }])
+
+    assert.deepEqual(calls[0], {
+      type: "agent",
+      input: { sessionID: sessionId, agent: "build" },
+    })
+    assert.deepEqual(calls[1], {
+      type: "model",
+      input: { sessionID: sessionId, model: { providerID: "provider", id: "old", variant: "high" } },
+    })
+    assert.deepEqual(calls[2]?.input.agents, [{
+      name: "reviewer",
+      mention: { start: 4, end: 13, text: "@reviewer" },
+    }])
+  })
+
+  it("preserves structured queued payload fields after composer editing", async () => {
+    let promptInput: any
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => { promptInput = input; return { id: input.id } },
+    } })
+
+    await sendMessage(instanceId, sessionId, "edited @reviewer @skill", [{
+      id: "file",
+      type: "file",
+      display: "@notes.txt",
+      url: "data:text/plain;base64,bm90ZXM=",
+      filename: "notes.txt",
+      mediaType: "text/plain",
+      source: { type: "file", path: "notes.txt", mime: "text/plain" },
+    }, {
+      id: "agent",
+      type: "agent",
+      display: "@reviewer",
+      url: "",
+      filename: "reviewer",
+      mediaType: "text/plain",
+      source: { type: "agent", name: "reviewer" },
+    }], {
+      restoredPayload: {
+        text: "original @reviewer @skill\n\nhidden note",
+        metadata: { displayText: "original @reviewer @skill", source: "queued" },
+        files: [{
+          data: "bm90ZXM=",
+          mime: "text/plain",
+          source: { type: "inline" },
+          name: "notes.txt",
+          description: "Notes",
+          mention: { start: 0, end: 10, text: "@notes.txt" },
+        }],
+        agents: [{ name: "reviewer", mention: { start: 9, end: 18, text: "@reviewer" } }],
+        skills: [{ id: "skill", name: "Skill", mention: { start: 19, end: 25, text: "@skill" } }],
+      },
+    })
+
+    assert.equal(promptInput.text, "edited @reviewer @skill\n\nhidden note")
+    assert.equal(promptInput.files[0].description, "Notes")
+    assert.deepEqual(promptInput.agents[0].mention, { start: 7, end: 16, text: "@reviewer" })
+    assert.deepEqual(promptInput.skills, [{ id: "skill", mention: { start: 17, end: 23, text: "@skill" } }])
+    assert.deepEqual(promptInput.metadata, { displayText: "edited @reviewer @skill", source: "queued" })
+  })
+
+})

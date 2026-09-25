@@ -36,3 +36,16 @@ test("failed shutdown reopens the lifecycle before queued retries run", async ()
   assert.equal(await retry, "restarted")
   assert.equal(lifecycle.stopped, false)
 })
+
+test("shutdown can interrupt pending work before entering the serialized stop", async () => {
+  const lifecycle = new SerializedLifecycle()
+  let interrupt!: () => void
+  const startup = lifecycle.enqueue(() => new Promise<void>((_resolve, reject) => {
+    interrupt = () => reject(new Error("startup interrupted"))
+  }))
+  await new Promise((resolve) => setImmediate(resolve))
+  const shutdown = lifecycle.stop(async () => {}, () => interrupt())
+
+  await assert.rejects(startup, /startup interrupted/)
+  await shutdown
+})

@@ -1,7 +1,13 @@
-import { createContext, createEffect, createMemo, createSignal, onMount, useContext, type JSX } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js"
 import { createTheme, ThemeProvider as MuiThemeProvider } from "@suid/material/styles"
 import CssBaseline from "@suid/material/CssBaseline"
 import { useConfig } from "../stores/preferences"
+import { effectiveAppearance } from "./appearance-preferences"
+import {
+  applyColorScheme,
+  normalizeColorScheme,
+  type NormalizedColorScheme,
+} from "./theme-scheme"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -10,18 +16,11 @@ interface ThemeContextValue {
   themeMode: () => ThemeMode
   setThemeMode: (mode: ThemeMode) => void
   cycleThemeMode: () => void
+  colorScheme: () => NormalizedColorScheme
+  setColorScheme: (scheme: NormalizedColorScheme) => void
 }
 
 const ThemeContext = createContext<ThemeContextValue>()
-
-function applyThemeMode(mode: ThemeMode) {
-  if (typeof document === "undefined") return
-  if (mode === "system") {
-    document.documentElement.removeAttribute("data-theme")
-    return
-  }
-  document.documentElement.setAttribute("data-theme", mode)
-}
 
 interface ResolvedPaletteColors {
   backgroundDefault: string
@@ -69,7 +68,7 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
     backgroundDefault: readCssVar("--surface-base", fallbackSet.backgroundDefault, rootStyle),
     backgroundPaper: readCssVar("--surface-secondary", fallbackSet.backgroundPaper, rootStyle),
     primary: readCssVar("--accent-primary", fallbackSet.primary, rootStyle),
-    primaryContrast: readCssVar("--text-inverted", fallbackSet.primaryContrast, rootStyle),
+    primaryContrast: readCssVar("--text-on-accent", fallbackSet.primaryContrast, rootStyle),
     textPrimary: readCssVar("--text-primary", fallbackSet.textPrimary, rootStyle),
     textSecondary: readCssVar("--text-secondary", fallbackSet.textSecondary, rootStyle),
     divider: readCssVar("--border-base", fallbackSet.divider, rootStyle),
@@ -78,27 +77,16 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
 
 export function ThemeProvider(props: { children: JSX.Element }) {
   const mediaQuery = typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)") : null
-  const { themePreference, setThemePreference } = useConfig()
+  const config = useConfig()
+  const [systemDark, setSystemDark] = createSignal(mediaQuery?.matches ?? false)
   const [isDark, setIsDarkSignal] = createSignal(true)
   const [themeRevision, setThemeRevision] = createSignal(0)
 
-  const themeMode = () => themePreference() as ThemeMode
-
-  const resolveDarkTheme = () => {
-    const mode = themeMode()
-    if (mode === "dark") return true
-    if (mode === "light") return false
-    return mediaQuery?.matches ?? false
-  }
+  const themeMode = () => config.themePreference()
+  const colorScheme = () => config.getAppearancePalette(effectiveAppearance(themeMode(), systemDark()))
 
   const applyResolvedTheme = () => {
-    const mode = themeMode()
-    const dark = resolveDarkTheme()
-    if (mode === "system") {
-      applyThemeMode("system")
-    } else {
-      applyThemeMode(mode)
-    }
+    const dark = applyColorScheme(colorScheme(), { systemDark: mediaQuery?.matches })
     setIsDarkSignal(dark)
     if (typeof window !== "undefined") {
       requestAnimationFrame(() => setThemeRevision((v) => v + 1))
@@ -111,21 +99,16 @@ export function ThemeProvider(props: { children: JSX.Element }) {
     applyResolvedTheme()
   })
 
-  onMount(() => {
-    if (!mediaQuery) return
-    const handleSystemThemeChange = () => {
-      applyResolvedTheme()
-    }
+  const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+  mediaQuery?.addEventListener("change", handleSystemThemeChange)
+  onCleanup(() => mediaQuery?.removeEventListener("change", handleSystemThemeChange))
 
-    mediaQuery.addEventListener("change", handleSystemThemeChange)
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleSystemThemeChange)
-    }
-  })
+  const setColorScheme = (scheme: NormalizedColorScheme) => {
+    void config.setColorSchemePreference(normalizeColorScheme(scheme))
+  }
 
   const setThemeMode = (mode: ThemeMode) => {
-    setThemePreference(mode)
+    void config.setThemePreference(mode)
   }
 
   const cycleThemeMode = () => {
@@ -161,13 +144,15 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         fontFamily: "var(--font-family-sans)",
       },
       shape: {
-        borderRadius: 8,
+        borderRadius: 0,
       },
       components: {
         MuiIconButton: {
           styleOverrides: {
             root: {
               color: "inherit",
+              borderRadius: 0,
+              padding: "6px",
               "&.Mui-disabled": {
                 color: "var(--text-muted)",
                 opacity: 0.55,
@@ -197,7 +182,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         MuiToolbar: {
           styleOverrides: {
             root: {
-              minHeight: "56px",
+              minHeight: "40px",
             },
           },
         },
@@ -206,7 +191,7 @@ export function ThemeProvider(props: { children: JSX.Element }) {
   })
 
   return (
-    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode }}>
+    <ThemeContext.Provider value={{ isDark, themeMode, setThemeMode, cycleThemeMode, colorScheme, setColorScheme }}>
       <MuiThemeProvider theme={muiTheme()}>
         <CssBaseline />
         {props.children}

@@ -2,7 +2,7 @@ import { getLogger } from "./logger"
 
 export type HostRuntime = "electron" | "tauri" | "web"
 export type PlatformKind = "desktop" | "mobile"
-export type WindowContextKind = "local" | "remote"
+export type WindowContextKind = "local" | "remote" | "preferences"
 
 export interface RuntimeEnvironment {
   host: HostRuntime
@@ -35,6 +35,10 @@ function detectWindowContext(): WindowContextKind {
 
   if (window.__CODENOMAD_WINDOW_CONTEXT__ === "local") {
     return "local"
+  }
+
+  if (window.__CODENOMAD_WINDOW_CONTEXT__ === "preferences") {
+    return "preferences"
   }
 
   const win = window as Window & { electronAPI?: unknown }
@@ -124,7 +128,12 @@ export const isDesktopHost = () => isElectronHost() || isTauriHost()
 export const isMobilePlatform = () => detectPlatform() === "mobile"
 export const isLocalWindow = () => detectWindowContext() === "local"
 export const isRemoteWindow = () => detectWindowContext() === "remote"
-export const canUseNativeDialogs = () => isDesktopHost() && isLocalWindow()
-export const canOpenRemoteWindows = () => isDesktopHost() && isLocalWindow()
-export const canRestartCli = () => isDesktopHost() && isLocalWindow()
+export const isPreferencesWindow = () => detectWindowContext() === "preferences"
+export const usesClientState = (
+  environment: Pick<RuntimeEnvironment, "windowContext"> = detectRuntimeEnvironment(),
+) => environment.windowContext !== "preferences"
+export const isNativeApplicationWindow = () => isLocalWindow() || isPreferencesWindow()
+export const canUseNativeDialogs = () => isDesktopHost() && isNativeApplicationWindow()
+export const canOpenRemoteWindows = () => isDesktopHost() && isNativeApplicationWindow()
+export const canRestartCli = () => isDesktopHost() && isNativeApplicationWindow()
 export const canUseDesktopFolderDrop = () => isDesktopHost() && isLocalWindow()

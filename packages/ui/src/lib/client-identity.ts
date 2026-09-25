@@ -18,6 +18,8 @@ function getOrCreateClientId(): string {
 }
 
 function getOrCreateConnectionId(): string {
+  const nativeWindowId = window.__CODENOMAD_WINDOW_ID__?.trim()
+  if (nativeWindowId) return nativeWindowId
   if (cachedConnectionId) return cachedConnectionId
   cachedConnectionId = getOrCreateStoredValue(CONNECTION_ID_STORAGE_KEY, window.sessionStorage)
   return cachedConnectionId

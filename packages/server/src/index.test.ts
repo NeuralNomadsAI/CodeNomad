@@ -3,7 +3,7 @@ import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { describe, it } from "node:test"
 
-import { installShutdownSignalHandlers, installShutdownStdinHandler, STDIN_SHUTDOWN_COMMAND } from "./index"
+import { installShutdownSignalHandlers, installShutdownStdinHandler, resolveHost, STDIN_SHUTDOWN_COMMAND } from "./index"
 import { createServerShutdownHandler } from "./shutdown"
 
 describe("CLI shutdown signal registration", () => {
@@ -69,5 +69,14 @@ describe("CLI shutdown signal registration", () => {
     child.stdin.end(`${STDIN_SHUTDOWN_COMMAND}\n`)
     const [code] = await once(child, "exit")
     assert.equal(code, 0)
+  })
+})
+
+describe("CLI host normalization", () => {
+  it("normalizes mapped and internationalized hosts and rejects IPv6 zones", () => {
+    assert.equal(resolveHost("::ffff:0:0"), "0.0.0.0")
+    assert.equal(resolveHost("::ffff:7f00:1"), "127.0.0.1")
+    assert.equal(resolveHost("münchen.local"), "xn--mnchen-3ya.local")
+    assert.throws(() => resolveHost("fe80::1%12"), /IPv6 zone identifiers/)
   })
 })

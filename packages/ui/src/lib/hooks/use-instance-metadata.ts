@@ -1,78 +1,128 @@
-import type { Instance, RawMcpStatus } from "../../types/instance"
-import { fetchLspStatus } from "../../stores/instances"
+import type { LocationRef } from "@opencode/client"
+import type { Instance } from "../../types/instance"
 import { getLogger } from "../../lib/logger"
-import { getInstanceMetadata, mergeInstanceMetadata } from "../../stores/instance-metadata"
-import { extractConfiguredPlugins } from "./plugin-metadata"
+import { getInstanceMetadata, getInstanceMetadataGeneration, mergeInstanceMetadata } from "../../stores/instance-metadata"
+import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 
 const log = getLogger("session")
-const pendingMetadataRequests = new Set<string>()
+const pendingMetadataRequests = new Map<string, {
+  client: NonNullable<Instance["client"]>
+  generation: number
+  locationKey: string
+  promise: Promise<void>
+}>()
+const pendingProjectMetadataRequests = new Map<string, {
+  client: NonNullable<Instance["client"]>
+  generation: number
+  promise: Promise<void>
+}>()
 
-function hasMetadataLoaded(metadata?: Instance["metadata"]): boolean {
-  if (!metadata) return false
-  return "project" in metadata && "mcpStatus" in metadata && "lspStatus" in metadata && "plugins" in metadata
+function locationKey(location: LocationRef): string {
+  return locationAuthorityKey(location)
 }
 
-export async function loadInstanceMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
+function metadataMatchesLocation(metadata: Instance["metadata"] | undefined, location: LocationRef): boolean {
+  if (!metadata) return false
+  const resolved = metadata.mcpStatus?.location
+  return Boolean(resolved && locationAuthorityKey(resolved) === locationAuthorityKey(location))
+}
+
+function hasMetadataLoaded(metadata?: Instance["metadata"], location?: LocationRef): boolean {
+  if (!metadata) return false
+  if (metadata.project === undefined || metadata.mcpStatus === undefined) return false
+  return !location || metadataMatchesLocation(metadata, location)
+}
+
+export function loadInstanceMetadata(instance: Instance, options?: { force?: boolean; location?: LocationRef }): Promise<void> {
   const client = instance.client
   if (!client) {
     log.warn("[metadata] Skipping fetch; client missing", { instanceId: instance.id })
-    return
+    return Promise.resolve()
   }
 
+  const location = options?.location ?? { directory: instance.folder }
+  const currentLocationKey = locationKey(location)
   const currentMetadata = getInstanceMetadata(instance.id) ?? instance.metadata
-  if (!options?.force && hasMetadataLoaded(currentMetadata)) {
-    return
+  if (!options?.force && hasMetadataLoaded(currentMetadata, location)) {
+    return Promise.resolve()
   }
 
-  if (pendingMetadataRequests.has(instance.id)) {
-    return
-  }
+  const generation = getInstanceMetadataGeneration(instance.id)
+  const pending = pendingMetadataRequests.get(instance.id)
+  if (pending?.client === client
+    && pending.generation === generation
+    && pending.locationKey === currentLocationKey) return pending.promise
+  const request = { client, generation, locationKey: currentLocationKey, promise: Promise.resolve() as Promise<void> }
+  request.promise = (async () => {
+    try {
+      const requestLocation = toRequestLocation(location)
+      const [projectResult, projectsResult, mcpResult] = await Promise.allSettled([
+        loadInstanceProjectMetadata(instance, options),
+        client.project.list(),
+        client.mcp.list({ location: requestLocation }, requestLocationOptions(location)),
+      ])
 
-  pendingMetadataRequests.add(instance.id)
+      const currentProject = getInstanceMetadata(instance.id)?.project
+      const listedProject = currentProject && projectsResult.status === "fulfilled"
+        ? projectsResult.value.find((project) => project.id === currentProject.id)
+        : undefined
+      const latestMetadata = getInstanceMetadata(instance.id) ?? currentMetadata
+      const updates: Instance["metadata"] = { ...(latestMetadata ?? {}) }
+      if (latestMetadata && !metadataMatchesLocation(latestMetadata, location)) {
+        updates.mcpStatus = undefined
+      }
 
-  try {
-    const [projectResult, mcpResult, lspResult, configResult] = await Promise.allSettled([
-      client.project.current(),
-      client.mcp.status(),
-      fetchLspStatus(instance.id),
-      client.config.get(),
-    ])
+      if (projectResult.status === "fulfilled" && currentProject && listedProject?.vcs) {
+        updates.project = { ...currentProject, vcs: listedProject.vcs }
+      }
 
-    const project = projectResult.status === "fulfilled" ? projectResult.value.data : undefined
-    const mcpStatus = mcpResult.status === "fulfilled" ? (mcpResult.value.data as RawMcpStatus) : undefined
-    const lspStatus = lspResult.status === "fulfilled" ? lspResult.value ?? [] : undefined
-    const config = configResult.status === "fulfilled" ? (configResult.value.data as { plugin?: unknown } | undefined) : undefined
-    const plugins = config ? extractConfiguredPlugins(config.plugin) : undefined
+      if (mcpResult.status === "fulfilled") {
+        updates.mcpStatus = mcpResult.value
+      }
 
-    const updates: Instance["metadata"] = { ...(currentMetadata ?? {}) }
+      if (!updates?.version && instance.binaryVersion) {
+        updates.version = instance.binaryVersion
+      }
 
-    if (projectResult.status === "fulfilled") {
-      updates.project = project ?? null
+
+      if (pendingMetadataRequests.get(instance.id) !== request
+        || getInstanceMetadataGeneration(instance.id) !== generation) return
+      mergeInstanceMetadata(instance.id, updates)
+    } catch (error) {
+      log.error("Failed to load instance metadata", error)
+    } finally {
+      if (pendingMetadataRequests.get(instance.id) === request) pendingMetadataRequests.delete(instance.id)
     }
+  })()
+  pendingMetadataRequests.set(instance.id, request)
+  return request.promise
+}
 
-    if (mcpResult.status === "fulfilled") {
-      updates.mcpStatus = mcpStatus ?? {}
-    }
+export function loadInstanceProjectMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
+  const client = instance.client
+  if (!client) return Promise.resolve()
+  const currentMetadata = getInstanceMetadata(instance.id) ?? instance.metadata
+  if (!options?.force && currentMetadata && "project" in currentMetadata) return Promise.resolve()
 
-    if (lspResult.status === "fulfilled") {
-      updates.lspStatus = lspStatus ?? []
-    }
-
-    if (configResult.status === "fulfilled") {
-      updates.plugins = plugins ?? []
-    }
- 
-    if (!updates?.version && instance.binaryVersion) {
-      updates.version = instance.binaryVersion
-    }
-
-
-    mergeInstanceMetadata(instance.id, updates)
-  } catch (error) {
-    log.error("Failed to load instance metadata", error)
-  } finally {
-    pendingMetadataRequests.delete(instance.id)
-  }
+  const generation = getInstanceMetadataGeneration(instance.id)
+  const pending = pendingProjectMetadataRequests.get(instance.id)
+  if (pending?.client === client && pending.generation === generation) return pending.promise
+  const request = { client, generation, promise: Promise.resolve() as Promise<void> }
+  request.promise = client.location.get({ location: { directory: instance.folder } })
+    .then((location) => {
+      if (pendingProjectMetadataRequests.get(instance.id) !== request
+        || getInstanceMetadataGeneration(instance.id) !== generation) return
+      mergeInstanceMetadata(instance.id, {
+        project: location.project,
+        ...(!currentMetadata?.version && instance.binaryVersion ? { version: instance.binaryVersion } : {}),
+      })
+    })
+    .catch((error) => log.warn("Failed to load project metadata", { instanceId: instance.id, error }))
+    .finally(() => {
+      if (pendingProjectMetadataRequests.get(instance.id) === request) pendingProjectMetadataRequests.delete(instance.id)
+    })
+  pendingProjectMetadataRequests.set(instance.id, request)
+  return request.promise
 }
 
 export { hasMetadataLoaded }

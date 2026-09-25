@@ -39,11 +39,7 @@ export class PreviewManager {
 
     const publicBase = this.buildProxyBasePath(token)
     let targetPath = incomingPath.startsWith(publicBase) ? incomingPath.slice(publicBase.length) : incomingPath
-    if (!targetPath || targetPath === "/") {
-      targetPath = record.target.pathname || "/"
-    } else if (!targetPath.startsWith("/")) {
-      targetPath = `/${targetPath}`
-    }
+    targetPath = !targetPath || targetPath === "/" ? "/" : `/${targetPath.replace(/^\/+/, "")}`
 
     return new URL(`${targetPath}${search}`, record.target.origin)
   }
@@ -54,7 +50,18 @@ export class PreviewManager {
 
   private normalizeTargetUrl(rawUrl: string): URL {
     const trimmed = rawUrl.trim()
-    const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`
+    const explicitHttp = /^https?:\/\//i.test(trimmed)
+    let implicitHostname = ""
+    try {
+      implicitHostname = new URL(`http://${trimmed}`).hostname.toLowerCase()
+    } catch {
+      // Invalid implicit URLs are rejected below.
+    }
+    const loopback = implicitHostname === "localhost" || implicitHostname === "0.0.0.0" || implicitHostname === "::1" || /^127(?:\.|$)/.test(implicitHostname)
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !explicitHttp && !loopback) {
+      throw new Error("Preview URL must use HTTP or HTTPS")
+    }
+    const withProtocol = explicitHttp ? trimmed : `${loopback ? "http" : "https"}://${trimmed}`
     const target = new URL(withProtocol)
     if (target.protocol !== "http:" && target.protocol !== "https:") {
       throw new Error("Preview URL must use HTTP or HTTPS")

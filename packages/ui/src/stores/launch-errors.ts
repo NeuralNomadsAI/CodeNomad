@@ -33,6 +33,7 @@ export function showWorkspaceLaunchError(workspace: WorkspaceDescriptor) {
     rawMessage,
     tGlobal("app.launchError.fallbackMessage"),
     tGlobal("app.launchError.invalidConfig"),
+    tGlobal("opencodeBinarySelector.validation.v2Required"),
   )
 
   const previous = lastWorkspaceErrorByInstanceId.get(instanceId)
@@ -42,7 +43,7 @@ export function showWorkspaceLaunchError(workspace: WorkspaceDescriptor) {
 
   lastWorkspaceErrorByInstanceId.set(instanceId, message)
 
-  const binaryPath = (workspace.binaryLabel || workspace.binaryId || "opencode").trim() || "opencode"
+  const binaryPath = (workspace.binaryLabel || workspace.binaryId || "opencode2").trim() || "opencode2"
   const missingBinary = isMissingBinaryMessage(message)
 
   showLaunchError({

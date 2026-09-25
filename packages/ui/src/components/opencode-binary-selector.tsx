@@ -1,13 +1,14 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { FolderOpen, Trash2, Check, AlertCircle, Loader2, Plus } from "lucide-solid"
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../../../server/src/api-types"
 import { useConfig } from "../stores/preferences"
 import { serverApi } from "../lib/api-client"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
 import { openNativeFileDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-const log = getLogger("actions")
 
+const log = getLogger("actions")
 
 interface BinaryOption {
   path: string
@@ -21,6 +22,7 @@ interface OpenCodeBinarySelectorProps {
   onBinaryChange: (binary: string) => void
   disabled?: boolean
   isVisible?: boolean
+  defaultVersion?: string
 }
 
 const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) => {
@@ -30,7 +32,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     addOpenCodeBinary,
     removeOpenCodeBinary,
     serverSettings,
-    updateLastUsedBinary,
   } = useConfig()
   const [customPath, setCustomPath] = createSignal("")
   const [validating, setValidating] = createSignal(false)
@@ -43,11 +44,11 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
   const lastUsedBinary = () => serverSettings().opencodeBinary
 
-  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode"))
+  const customBinaries = createMemo(() => binaries().filter((binary) => binary.path !== "opencode" && binary.path !== "opencode2"))
 
-  const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode", isDefault: true }, ...customBinaries()])
+  const binaryOptions = createMemo<BinaryOption[]>(() => [{ path: "opencode2", isDefault: true }, ...customBinaries()])
 
-  const currentSelectionPath = () => props.selectedBinary || "opencode"
+  const currentSelectionPath = () => props.selectedBinary || "opencode2"
 
   createEffect(() => {
     if (!props.selectedBinary && lastUsedBinary()) {
@@ -79,7 +80,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   createEffect(() => {
     if (!props.isVisible) return
     const cache = versionInfo()
-    const pathsToValidate = ["opencode", ...customBinaries().map((binary) => binary.path)].filter(
+    const pathsToValidate = ["opencode2", ...customBinaries().map((binary) => binary.path)].filter(
       (path) => !cache.has(path),
     )
 
@@ -98,11 +99,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   })
 
   async function validateBinary(path: string): Promise<{ valid: boolean; version?: string; error?: string }> {
-    if (versionInfo().has(path)) {
-      const cachedVersion = versionInfo().get(path)
-      return cachedVersion ? { valid: true, version: cachedVersion } : { valid: true }
-    }
-
+    // Persisted versions are display metadata, not proof that this path still
+    // supports V2. In particular, always revalidate an explicit add/browse.
     if (validatingPaths().has(path)) {
       return { valid: false, error: t("opencodeBinarySelector.validation.alreadyValidating") }
     }
@@ -112,7 +110,10 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       setValidating(true)
       setValidationError(null)
 
-      const result = await serverApi.validateBinary(path)
+      const response = await serverApi.validateBinary(path)
+      const result = response.errorCode === OPENCODE_V2_REQUIRED_ERROR_CODE
+        ? { ...response, error: t("opencodeBinarySelector.validation.v2Required") }
+        : response
 
       if (result.valid && result.version) {
         const updatedVersionInfo = new Map(versionInfo())
@@ -157,7 +158,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (validation.valid) {
       addOpenCodeBinary(path, validation.version)
       props.onBinaryChange(path)
-      updateLastUsedBinary(path)
       setCustomPath("")
       setValidationError(null)
     } else {
@@ -182,7 +182,6 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     if (props.disabled) return
     if (path === props.selectedBinary) return
     props.onBinaryChange(path)
-    updateLastUsedBinary(path)
   }
 
   function handleRemoveBinary(path: string, event: Event) {
@@ -191,8 +190,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
     removeOpenCodeBinary(path)
 
     if (props.selectedBinary === path) {
-      props.onBinaryChange("opencode")
-      updateLastUsedBinary("opencode")
+      props.onBinaryChange("opencode2")
     }
   }
 
@@ -210,7 +208,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
 
   function getDisplayName(path: string): string {
-    if (path === "opencode") return t("opencodeBinarySelector.display.systemPath", { name: "opencode" })
+    if (path === "opencode2") return t("opencodeBinarySelector.display.systemPath", { name: "opencode2" })
     const parts = path.split(/[/\\]/)
     return parts[parts.length - 1] ?? path
   }
@@ -246,7 +244,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
                 }
               }}
               disabled={props.disabled}
-              placeholder={t("opencodeBinarySelector.customPath.placeholder")}
+              placeholder={t("opencodeBinarySelector.customPath.placeholder", { name: "opencode2" })}
               class="selector-input"
             />
             <button
@@ -284,7 +282,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
           <For each={binaryOptions()}>
             {(binary) => {
               const isDefault = binary.isDefault
-              const versionLabel = () => versionInfo().get(binary.path) ?? binary.version
+              const versionLabel = () => (isDefault ? props.defaultVersion : undefined) ?? versionInfo().get(binary.path) ?? binary.version
 
               return (
                 <div

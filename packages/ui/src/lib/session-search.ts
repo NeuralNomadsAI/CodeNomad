@@ -28,6 +28,7 @@ export interface BuildSessionSearchMatchesOptions {
   sessionId: string
   query: string
   includeThinking: boolean
+  includeSystem?: boolean
 }
 
 const PREVIEW_RADIUS = 56
@@ -88,9 +89,10 @@ function extractMessageInfoText(info: MessageInfo | undefined): string {
   return values.filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n")
 }
 
-function extractSearchablePartText(part: ClientPart, includeThinking: boolean): SearchablePartText | null {
+function extractSearchablePartText(part: ClientPart, includeThinking: boolean, includeSystem: boolean): SearchablePartText | null {
   if (!part || typeof part !== "object") return null
   if (isHiddenSyntheticTextPart(part)) return null
+  if (part.type === "system" && !includeSystem) return null
 
   const partId = typeof (part as any).id === "string" ? (part as any).id : undefined
   const partType = typeof (part as any).type === "string" ? (part as any).type : undefined
@@ -133,12 +135,12 @@ function buildPreview(text: string, start: number, end: number): string {
   return `${prefix}${text.slice(from, to).replace(/\s+/g, " ").trim()}${suffix}`
 }
 
-function collectRecordSearchableText(store: InstanceMessageStore, record: MessageRecord, includeThinking: boolean): SearchablePartText[] {
+function collectRecordSearchableText(store: InstanceMessageStore, record: MessageRecord, includeThinking: boolean, includeSystem: boolean): SearchablePartText[] {
   const results: SearchablePartText[] = []
   for (const partId of record.partIds) {
     const part = record.parts[partId]?.data
     if (!part) continue
-    const text = extractSearchablePartText(part, includeThinking)
+    const text = extractSearchablePartText(part, includeThinking, includeSystem)
     if (text) results.push(text)
   }
 
@@ -161,7 +163,7 @@ export function buildSessionSearchMatches(options: BuildSessionSearchMatchesOpti
   for (const messageId of messageIds) {
     const record = options.store.getMessage(messageId)
     if (!record) continue
-    const searchableParts = collectRecordSearchableText(options.store, record, options.includeThinking)
+    const searchableParts = collectRecordSearchableText(options.store, record, options.includeThinking, options.includeSystem ?? false)
 
     for (const searchable of searchableParts) {
       const haystack = normalizeSearchValue(searchable.text)

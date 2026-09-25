@@ -65,11 +65,15 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
           </div>
           <Select<SelectOption>
             value={selectedOption()}
-            onChange={(option) => {
+            onChange={async (option) => {
               if (!option) return
               const next = option.value === "true"
-              setOverride(setting.id, next)
-              setting.set(next)
+              try {
+                await setting.set(next)
+                setOverride(setting.id, next)
+              } catch {
+                return
+              }
             }}
             options={options()}
             optionValue="value"

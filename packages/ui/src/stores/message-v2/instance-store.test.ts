@@ -1,7 +1,112 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
+import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
+import type { MessageInfo } from "../../types/message"
+import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
+
+it("keeps the beginning and final response when bounding message parts", () => {
+  const partIds = Array.from({ length: MESSAGE_PART_DISPLAY_LIMIT + 2 }, (_, index) => `part-${index}`)
+  const data = buildRecordDisplayData("bounded-parts", {
+    id: "message", sessionId: "session", role: "assistant", status: "complete",
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: Object.fromEntries(partIds.map((id) => [id, { id, revision: 1, data: { id, type: "text", text: id } }])),
+  })
+
+  assert.equal(data.orderedParts.length, MESSAGE_PART_DISPLAY_LIMIT)
+  assert.equal(data.orderedParts[0]?.id, "part-0")
+  assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+  assert.equal(data.truncated, true)
+
+  const displayPartIds = getRecordDisplayPartIds({
+    id: "message", sessionId: "session", role: "assistant", status: "complete",
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: {},
+  })
+  assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
+  assert.equal(displayPartIds[0], "part-0")
+  assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
+
+describe("message window replacement authority", () => {
+  it("retires an older resume cursor when returning to latest before cold restoration", () => {
+    const store = createInstanceMessageStore("window-replacement")
+    store.setMessageWindow("session", { kind: "history", resumeCursor: "older-200", olderCursor: "older-400", newerCursors: [null] })
+    const previous = store.getMessageWindow("session")
+    store.setMessageWindow("session", emptyLatestWindow())
+    const window = store.getMessageWindow("session")!
+    assert.notEqual(window, previous, "Window identity fences in-flight page requests")
+    assert.equal(window.resumeCursor, undefined)
+    assert.equal(window.olderCursor, undefined)
+    const snapshot = JSON.parse(JSON.stringify(toWindowSnapshot(window)))
+    assert.deepEqual(windowFromSnapshot(snapshot), emptyLatestWindow())
+    assert.deepEqual(windowFromSnapshot({ windowIsLatest: true, windowCursor: "stale-older" }), emptyLatestWindow())
+  })
+})
+
+describe("staged undo usage authority", () => {
+  for (const preserveOmitted of [false, true]) {
+    it(`keeps visible usage stable on hydration (preserveOmitted=${preserveOmitted})`, () => {
+      const store = createInstanceMessageStore("undo-usage")
+      const records = ["msg_01", "msg_02", "msg_03"].map(id => ({ id, sessionId: "session", role: "assistant" as const, status: "complete" as const }))
+      const infos = records.map((record, i) => ({ id: record.id, sessionID: "session", role: "assistant", time: { created: i + 1, completed: i + 1 }, cost: 1,
+        tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+      })) as MessageInfo[]
+      store.hydrateMessages("session", records, infos)
+      store.setSessionRevert("session", { messageID: "msg_02" })
+      const usage = JSON.parse(JSON.stringify(store.getSessionUsage("session")))
+      assert.equal(usage.totalCost, 1)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(store.getSessionMessageIds("session"), ["msg_01"])
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      // A native page can consist entirely of the staged tail; it must not
+      // contribute usage even when the visible boundary is outside that page.
+      store.hydrateMessages("session", records.slice(1), infos.slice(1), { preserveOmitted: true })
+      assert.deepEqual(store.getSessionUsage("session"), usage)
+      const cold = createInstanceMessageStore("undo-usage-cold")
+      cold.setSessionRevert("session", { messageID: "msg_02" })
+      cold.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.deepEqual(cold.getSessionUsage("session"), usage)
+      // Clearing the marker must allow the native tail and its usage back.
+      store.setSessionRevert("session", null)
+      store.hydrateMessages("session", records, infos, { preserveOmitted })
+      assert.equal(store.getSessionUsage("session")?.totalCost, 3)
+    })
+  }
+})
+
+describe("message display cache authority", () => {
+  it("changes display identity after eviction even when numeric revisions repeat", () => {
+    const store = createInstanceMessageStore("display-identity")
+    const base = { id: "assistant", sessionId: "session", role: "assistant" as const, status: "streaming" as const }
+    store.hydrateMessages("session", [base])
+    const original = store.getMessage(base.id)!
+    const empty = buildRecordDisplayData("display-identity", original)
+    assert.equal(empty.orderedParts.length, 0)
+
+    store.reconcileEmptyAuthoritativeSnapshot("session")
+    const completed = { ...base, parts: [{ id: "text", type: "text", text: "restored response" } as any] }
+    store.hydrateMessages("session", [completed])
+    const restored = store.getMessage(base.id)!
+    const display = buildRecordDisplayData("display-identity", restored)
+    assert.equal(restored.revision, original.revision)
+    assert.notEqual(display, empty)
+    assert.equal((display.orderedParts[0] as any).text, "restored response")
+
+    store.hydrateMessages("session", [completed])
+    assert.equal(buildRecordDisplayData("display-identity", store.getMessage(base.id)!), display,
+      "an unchanged resident snapshot must still reuse display data")
+  })
+
+  it("binds the derived message block cache to the invalidatable display identity", () => {
+    const source = readFileSync(new URL("../../components/message-block.tsx", import.meta.url), "utf8")
+    assert.match(source, /cachedBlock\.signature === cacheSignature && cachedBlock\.displayData === displayData/)
+    assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
+  })
+})
 
 describe("message-v2 permission state", () => {
   it("keeps one permission attachment when a duplicate moves from global to a tool part", () => {
@@ -17,7 +122,7 @@ describe("message-v2 permission state", () => {
         sessionID: "session-1",
         action: "edit",
         resources: ["file-a.ts"],
-        source: { type: "tool", callID: "call-1", messageID: "message-1" },
+        source: { type: "tool", id: "call-1", messageID: "message-1" },
       },
       messageId: "message-1",
       partId: "part-1",
@@ -26,7 +131,7 @@ describe("message-v2 permission state", () => {
 
     assert.equal(store.state.permissions.queue.length, 1)
     assert.equal(store.getPermissionState(undefined, "permission-1"), null)
-    assert.equal((store.getPermissionState("message-1", "part-1")?.entry.permission as any).source?.callID, "call-1")
+    assert.equal(store.getPermissionState("message-1", "part-1")?.entry.permission.source?.id, "call-1")
     assert.equal(store.getPermissionState("message-1", "part-1")?.active, true)
   })
 
@@ -43,7 +148,61 @@ describe("message-v2 permission state", () => {
 
 })
 
+describe("message-v2 todo state", () => {
+  it("does not expose a plan from before the latest compaction", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+    store.hydrateMessages("session-1", [
+      {
+        id: "msg-todo", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "todo", type: "tool", tool: "todowrite", state: { status: "completed", input: { todos: [{ content: "Old task", status: "in_progress" }] } } } as any],
+      },
+      {
+        id: "msg-compaction", sessionId: "session-1", role: "assistant", status: "complete",
+        parts: [{ id: "compaction", type: "compaction" } as any],
+      },
+    ], [
+      { id: "msg-todo", sessionID: "session-1", role: "assistant", time: { created: 1 } } as any,
+      { id: "msg-compaction", sessionID: "session-1", role: "assistant", time: { created: 2 } } as any,
+    ])
+
+    assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
+  })
+})
+
 describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
+  it("trims to 200 messages and purges removed render-cache entries", () => {
+    const instanceId = "window-trim", sessionId = "session"
+    const cache = getSessionMessageRenderCache(instanceId, sessionId)
+    const store = createInstanceMessageStore(instanceId, {
+      onMessagesRemoved: (_instanceId, _sessionId, messageIds) => purgeMessageRenderCache(cache, messageIds),
+    })
+    store.hydrateMessages(sessionId, Array.from({ length: 201 }, (_, index) => ({
+      id: `message-${index}`, sessionId, role: "assistant" as const, status: "complete" as const,
+    })))
+    cache.messageBlocks.set("message-0", {})
+    cache.messageBlocks.set("message-200", {})
+
+    store.trimSessionMessages(sessionId, 200)
+
+    assert.equal(store.getSessionMessageIds(sessionId).length, 200)
+    assert.equal(store.getSessionMessageIds(sessionId).includes("message-0"), false)
+    assert.deepEqual([...cache.messageBlocks.keys()], ["message-200"])
+    store.clearInstance()
+  })
+
+  it("clears pending parts omitted by authoritative hydration", () => {
+    const store = createInstanceMessageStore("pending-cleanup")
+    store.hydrateMessages("session-1", [{ id: "old", sessionId: "session-1", role: "assistant", status: "complete" }])
+    store.bufferPendingPart({ messageId: "old", sessionId: "session-1", part: { type: "text", text: "pending" } as any, receivedAt: 1 })
+
+    store.hydrateMessages("session-1", [{ id: "current", sessionId: "session-1", role: "user", status: "complete" }])
+
+    assert.equal(store.state.pendingParts.old, undefined)
+    assert.deepEqual(store.getSessionMessageIds("session-1"), ["current"])
+    store.clearInstance()
+  })
+
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
@@ -138,6 +297,26 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.hydrateMessages("session-1", [duplicated, duplicated])
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-real-1"])
+  })
+
+  it("dedupes repeated part ids while keeping the newest part payload", () => {
+    const store = createInstanceMessageStore("instance-1")
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1",
+      sessionId: "session-1",
+      role: "assistant",
+      status: "complete",
+      parts: [
+        { id: "part-1", type: "text", text: "stale" } as any,
+        { id: "part-1", type: "text", text: "current" } as any,
+      ],
+    })
+
+    const message = store.getMessage("msg-1")
+    assert.deepEqual(message?.partIds, ["part-1"])
+    assert.equal((message?.parts["part-1"]?.data as any)?.text, "current")
   })
 
   it("drops a definitively failed send on the next authoritative snapshot", () => {
@@ -243,11 +422,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       messageId: "msg-stale",
       enqueuedAt: 1,
     })
-    store.upsertQuestion({
-      request: { id: "question-stale", sessionID: "session-1", questions: [] },
-      messageId: "msg-stale",
-      enqueuedAt: 1,
-    })
     store.upsertMessage({
       id: "msg-inflight", sessionId: "session-1", role: "user", status: "sending",
       parts: [{ type: "text", text: "new" } as any], isEphemeral: true,
@@ -263,8 +437,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.state.pendingParts["msg-stale"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-stale"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
-    assert.equal(store.state.questions.byMessage["msg-stale"], undefined)
-    assert.equal(store.state.questions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
     assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
   })
@@ -285,11 +457,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       messageId: "msg-old",
       enqueuedAt: 1,
     })
-    store.upsertQuestion({
-      request: { id: "question-old", sessionID: "session-1", questions: [] },
-      messageId: "msg-old",
-      enqueuedAt: 1,
-    })
 
     store.hydrateMessages("session-1", [{
       id: "msg-new", sessionId: "session-1", role: "user", status: "complete",
@@ -301,8 +468,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.state.pendingParts["msg-old"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-old"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
-    assert.equal(store.state.questions.byMessage["msg-old"], undefined)
-    assert.equal(store.state.questions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
     assert.equal(store.getLatestTodoSnapshot("session-1"), undefined)
   })

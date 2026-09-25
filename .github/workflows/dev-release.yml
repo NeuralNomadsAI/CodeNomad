@@ -72,6 +72,7 @@ jobs:
     uses: ./.github/workflows/reusable-release.yml
     with:
       ref: ${{ needs.gate.outputs.dev_sha }}
+      base_version: 0.20.0
       version_suffix: ${{ needs.gate.outputs.version_suffix }}
       npm_package_name: "@neuralnomads/codenomad-dev"
       dist_tag: latest

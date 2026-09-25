@@ -1,21 +1,31 @@
-export function formatLaunchErrorMessage(error: unknown, fallbackMessage: string, invalidConfigMessage: string): string {
+import { OPENCODE_V2_REQUIRED_ERROR_CODE } from "../../../server/src/api-types"
+
+export function formatLaunchErrorMessage(
+  error: unknown,
+  fallbackMessage: string,
+  invalidConfigMessage: string,
+  openCodeV2RequiredMessage?: string,
+): string {
   if (!error) {
     return fallbackMessage
   }
 
-  const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
+  let raw = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
 
   try {
     const parsed = JSON.parse(raw) as unknown
     const configError = formatConfigError(parsed, invalidConfigMessage)
     if (configError) return configError
     if (parsed && typeof parsed === "object" && "error" in parsed && typeof (parsed as any).error === "string") {
-      return (parsed as any).error
+      raw = (parsed as any).error
     }
   } catch {
     // ignore JSON parse errors
   }
 
+  if (openCodeV2RequiredMessage && (raw === OPENCODE_V2_REQUIRED_ERROR_CODE || raw.startsWith(`${OPENCODE_V2_REQUIRED_ERROR_CODE}:`))) {
+    return openCodeV2RequiredMessage
+  }
   return raw
 }
 

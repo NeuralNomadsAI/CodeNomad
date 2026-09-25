@@ -39,6 +39,7 @@ export class ServerStorage {
   private instanceDataCache = new Map<string, InstanceData>()
   private instanceDataListeners = new Map<string, Set<(data: InstanceData) => void>>()
   private instanceLoadPromises = new Map<string, Promise<InstanceData>>()
+  private pendingWrites = new Set<Promise<unknown>>()
 
   constructor() {
     serverEvents.on("storage.configChanged", (event: WorkspaceEventPayload) => {
@@ -77,10 +78,11 @@ export class ServerStorage {
     return this.configOwnerLoadPromises.get(owner)!
   }
 
-  async patchConfigOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
-    const updated = await serverApi.patchConfigOwner<OwnerBucket>(owner, patch)
-    this.setOwnerCache("config", owner, updated)
-    return updated
+  patchConfigOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    return this.trackWrite(serverApi.patchConfigOwner<OwnerBucket>(owner, patch).then((updated) => {
+      this.setOwnerCache("config", owner, updated)
+      return updated
+    }))
   }
 
   async loadStateOwner(owner: string): Promise<OwnerBucket> {
@@ -103,10 +105,11 @@ export class ServerStorage {
     return this.stateOwnerLoadPromises.get(owner)!
   }
 
-  async patchStateOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
-    const updated = await serverApi.patchStateOwner<OwnerBucket>(owner, patch)
-    this.setOwnerCache("state", owner, updated)
-    return updated
+  patchStateOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    return this.trackWrite(serverApi.patchStateOwner<OwnerBucket>(owner, patch).then((updated) => {
+      this.setOwnerCache("state", owner, updated)
+      return updated
+    }))
   }
 
   async loadInstanceData(instanceId: string): Promise<InstanceData> {
@@ -133,15 +136,23 @@ export class ServerStorage {
     return this.instanceLoadPromises.get(instanceId)!
   }
 
-  async saveInstanceData(instanceId: string, data: InstanceData): Promise<void> {
+  saveInstanceData(instanceId: string, data: InstanceData): Promise<void> {
     const normalized = this.normalizeInstanceData(data)
-    await serverApi.writeInstanceData(instanceId, normalized)
-    this.setInstanceDataCache(instanceId, normalized)
+    return this.trackWrite(serverApi.writeInstanceData(instanceId, normalized).then(() => {
+      this.setInstanceDataCache(instanceId, normalized)
+    }))
   }
 
-  async deleteInstanceData(instanceId: string): Promise<void> {
-    await serverApi.deleteInstanceData(instanceId)
-    this.setInstanceDataCache(instanceId, DEFAULT_INSTANCE_DATA)
+  deleteInstanceData(instanceId: string): Promise<void> {
+    return this.trackWrite(serverApi.deleteInstanceData(instanceId).then(() => {
+      this.setInstanceDataCache(instanceId, DEFAULT_INSTANCE_DATA)
+    }))
+  }
+
+  async flushWrites(): Promise<void> {
+    while (this.pendingWrites.size > 0) {
+      await Promise.allSettled(this.pendingWrites)
+    }
   }
 
   onConfigOwnerChanged(owner: string, listener: (value: OwnerBucket) => void): () => void {
@@ -223,6 +234,12 @@ export class ServerStorage {
     for (const listener of bucket) {
       listener(value)
     }
+  }
+
+  private trackWrite<T>(write: Promise<T>): Promise<T> {
+    this.pendingWrites.add(write)
+    void write.finally(() => this.pendingWrites.delete(write)).catch(() => undefined)
+    return write
   }
 
   private normalizeInstanceData(data?: InstanceData | null): InstanceData {

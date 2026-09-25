@@ -1,7 +1,8 @@
 import { Show, createMemo, type Component } from "solid-js"
 import { ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getPermissionQueueLength, getQuestionQueueLength } from "../stores/instances"
+import { getPermissionQueueLength } from "../stores/instances"
+import { getFormQueue } from "../stores/forms"
 
 interface PermissionNotificationBannerProps {
   instanceId: string
@@ -11,8 +12,8 @@ interface PermissionNotificationBannerProps {
 const PermissionNotificationBanner: Component<PermissionNotificationBannerProps> = (props) => {
   const { t } = useI18n()
   const permissionCount = createMemo(() => getPermissionQueueLength(props.instanceId))
-  const questionCount = createMemo(() => getQuestionQueueLength(props.instanceId))
-  const queueLength = createMemo(() => permissionCount() + questionCount())
+  const formCount = createMemo(() => getFormQueue(props.instanceId).length)
+  const queueLength = createMemo(() => permissionCount() + formCount())
   const hasRequests = createMemo(() => queueLength() > 0)
   const label = createMemo(() => {
     const total = queueLength()
@@ -31,11 +32,11 @@ const PermissionNotificationBanner: Component<PermissionNotificationBannerProps>
       )
     }
 
-    if (questionCount() > 0) {
+    if (formCount() > 0) {
       parts.push(
-        questionCount() === 1
-          ? t("permissionBanner.detail.question.one", { count: questionCount() })
-          : t("permissionBanner.detail.question.other", { count: questionCount() }),
+        formCount() === 1
+          ? t("permissionBanner.detail.form.one", { count: formCount() })
+          : t("permissionBanner.detail.form.other", { count: formCount() }),
       )
     }
 
