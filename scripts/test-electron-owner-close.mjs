@@ -62,7 +62,10 @@ try {
   })
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const child = spawn(require("electron"), [entry, `--user-data-dir=${join(directory, "profile")}`], { env, stdio: ["ignore", "pipe", "pipe"] })
+  // Some Linux test hosts disable unprivileged user namespaces. This opt-in
+  // only affects this empty-window fixture, which loads no page or backend.
+  const sandboxArgs = process.platform === "linux" && process.argv.includes("--no-sandbox") ? ["--no-sandbox"] : []
+  const child = spawn(require("electron"), [entry, `--user-data-dir=${join(directory, "profile")}`, ...sandboxArgs], { env, stdio: ["ignore", "pipe", "pipe"] })
   let output = ""
   child.stdout.on("data", data => { output += data })
   child.stderr.on("data", data => { output += data })
