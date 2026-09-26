@@ -875,13 +875,23 @@ jobs:
             fi
           done
 
-          # Tauri writes the updater manifest next to the signed bundles. Publish
-          # it only when it exists, so an unsigned release never advertises one.
-          shopt -s nullglob
-          manifests=(packages/tauri-app/target/release/bundle/*.json)
+          # Tauri writes the updater manifest and its signature under the bundle
+          # tree, and the exact layout is the bundler's business rather than this
+          # workflow's, so discover it instead of guessing a path. Nothing is
+          # published when the build produced no manifest, so an unsigned release
+          # never advertises an update it cannot verify.
+          #
+          # Note for whoever adds the signing secret: a single latest.json is
+          # shared by every platform, while each job only produces its own
+          # entries, and each entry points at the bundler's own artifact name.
+          # Publishing must therefore be extended to the Windows and macOS jobs,
+          # the per-platform manifests merged, and the renamed release assets
+          # reconciled with the URLs inside latest.json, before the key is
+          # enabled. Until then this step only ever publishes the AppImage.
+          mapfile -t manifests < <(find packages/tauri-app/target/release/bundle -type f \( -name 'latest.json' -o -name 'latest.json.sig' -o -name '*.AppImage.sig' \) 2>/dev/null | sort)
           if [ "${#manifests[@]}" -gt 0 ]; then
             for manifest in "${manifests[@]}"; do
-              echo "Uploading updater manifest $(basename "$manifest")"
+              echo "Uploading updater artifact $(basename "$manifest")"
               gh release upload "$TAG" "$manifest" --clobber
             done
           else

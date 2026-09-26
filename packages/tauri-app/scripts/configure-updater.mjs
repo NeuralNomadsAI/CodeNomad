@@ -15,8 +15,9 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { join } from "node:path"
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url))
-const configPath = join(__dirname, "..", "tauri.conf.json")
+const scriptsDirectory = fileURLToPath(new URL(".", import.meta.url))
+// The Tauri project lives in src-tauri, not at the package root.
+export const configPath = join(scriptsDirectory, "..", "src-tauri", "tauri.conf.json")
 const DEFAULT_ENDPOINT = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest/download/latest.json"
 
 export function resolveUpdaterConfig(environment = process.env) {
@@ -44,7 +45,17 @@ export function applyUpdaterConfig(config, updater) {
 export function configureUpdater(options = {}) {
   const environment = options.environment ?? process.env
   const targetPath = options.configPath ?? configPath
-  const config = JSON.parse(readFileSync(targetPath, "utf8"))
+  let config
+  try {
+    config = JSON.parse(readFileSync(targetPath, "utf8"))
+  } catch (cause) {
+    // A wrong path here used to surface as a bare ENOENT inside a build step
+    // with no mention of the file the script was looking for.
+    throw new Error(
+      `cannot read the Tauri configuration at ${targetPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    )
+  }
   const updater = resolveUpdaterConfig(environment)
   writeFileSync(targetPath, `${JSON.stringify(applyUpdaterConfig(config, updater), null, 2)}\n`, "utf8")
   if (updater) {
