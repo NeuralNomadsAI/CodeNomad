@@ -48,8 +48,10 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     // Credentialed native requests must never follow a redirect to another host.
     const options: RequestInit = { method: request.method, headers, signal: AbortSignal.any([request.signal, lifetime]), redirect: "error" }
     const originalPath = url.pathname
-    if (originalPath === "/api/status" && request.method === "GET" && identity?.discovery === "info") {
-      url.pathname = "/api/info"
+    const serverInfo = (originalPath === "/api/info" || originalPath === "/api/status") && request.method === "GET"
+    if (serverInfo) {
+      url.pathname = identity?.discovery === "info" ? "/api/info"
+        : identity?.discovery === "health" || profile === "legacy" ? "/api/health" : "/api/status"
     }
     if (profile === "legacy" || headers.has(LOCATION_CONTEXT_HEADER)) {
       const text = request.body ? await request.text() : undefined
@@ -72,7 +74,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
         status: response.status, profile, method: request.method, path: originalPath,
       }, { status: response.status })
     }
-    if (profile === "legacy" && response.ok && originalPath === "/api/status") {
+    if (serverInfo && url.pathname === "/api/health" && response.ok) {
       const health = await response.json() as { version: string; pid: number }
       return Response.json({ version: health.version, pid: health.pid, urls: [endpoint.url] })
     }

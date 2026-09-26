@@ -6,6 +6,8 @@ import type { DeveloperCdpIdentity, DeveloperCdpSelection } from "../../develope
 import type { NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { admitMissionInput } from "./mission-input"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -13,6 +15,7 @@ interface AutomationPluginRouteDeps {
   nativeParent: NativeParent
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
+  worktreeDeletionFence?: WorktreeDeletionFence
 }
 
 interface DeveloperNativeStatus {
@@ -40,10 +43,10 @@ export function isAutomationPluginRequest(
 }
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
-  app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 32 * 1024 }, async (request, reply) => {
+  app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
@@ -58,6 +61,21 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       deps.workspaceManager.ownsLocation(workspace.id, location).catch(() => false),
     ))).some(Boolean)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+
+    if (body.mode === "mission-input") {
+      if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
+      const disconnected = new AbortController()
+      const close = () => disconnected.abort()
+      reply.raw.once("close", close)
+      try {
+        const result = await admitMissionInput(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command,
+          AbortSignal.any([disconnected.signal, AbortSignal.timeout(30_000)]))
+        return reply.send({ result })
+      } catch {
+        // Native errors can contain environment snapshots or provider credentials.
+        return reply.code(502).send({ error: "Mission admission failed" })
+      } finally { reply.raw.off("close", close) }
+    }
 
     if (body.mode === "browser-claim") return reply.send({ result: { available: true } })
     if (body.mode === "browser-probe") {

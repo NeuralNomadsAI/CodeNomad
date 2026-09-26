@@ -230,8 +230,8 @@ async function runIsolated(cli) {
     const client = OpenCode.make({ baseUrl, fetch: transport.fetch })
     const connection = { endpoint, client, ...transport, assertCurrent() {}, invalidate() {} }
     console.log(`Testing official runtime ${identity.version}`)
-    assert.equal((await client.server.status()).version, identity.version)
-    console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.status()`)
+    assert.equal((await client.server.info()).version, identity.version)
+    console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.info()`)
     await testNativeLocationIdentity({ client, connection, root })
   } finally {
     child.kill()

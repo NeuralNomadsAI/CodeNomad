@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "Görev haritası okunuyor…",
   "missions.control.unavailable.title": "Görev Kontrolü kullanılamıyor",
   "missions.control.unavailable.workspace": "OpenCode çalışma alanı hazır değil. Yeniden bağlanıp yenileyin.",
-  "missions.control.unavailable.plugin": "Bu proje, incelenmiş codenomad.missions eklentisini etkinleştirmedi.",
+  "missions.control.unavailable.plugin": "Yerleşik codenomad.missions eklentisi kullanılamıyor. CodeNomad'ı yeniden bağlayıp yenileyin.",
   "missions.control.error.title": "Görev haritası yenilenemedi",
   "missions.control.error.detail": "Çalışma alanı bağlantısını kontrol edip tekrar deneyin.",
   "missions.control.error.stale": "Yeniden bağlantı beklenirken son kalıcı harita gösteriliyor.",

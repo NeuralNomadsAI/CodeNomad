@@ -53,6 +53,8 @@ class FakeSessions implements MissionSessionAdapter {
       id: input.id,
       projectID: "project-1",
       title: input.title,
+      agent: input.agent,
+      model: input.model,
       location: input.location,
     }
     this.sessions.set(session.id, session)
@@ -88,6 +90,36 @@ function harness() {
   })
   return { storage, sessions, changed, create }
 }
+
+test("persists native execution through a failed admission and restart without switching an existing actor", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Review", template: "custom" } }, "start")
+  const input = {
+    taskKey: "native-review", title: "Review", brief: "Inspect", role: "reviewer", blockedBy: [], delivery: "queue" as const,
+    execution: { agent: "review-all", model: { providerID: "fixture", id: "reasoner", variant: "high" } },
+  }
+  const prompt = sessions.prompt.bind(sessions)
+  sessions.prompt = async () => { throw new Error("admission unavailable") }
+  await assert.rejects(control.delegate("ses_coordinator", input), /admission unavailable/)
+  const snapshot = await create().snapshot()
+  assert.deepEqual(snapshot.missions[0].tasks[0].execution, input.execution)
+  const actorID = snapshot.missions[0].tasks[0].actorSessionId!
+  assert.deepEqual(sessions.sessions.get(actorID)?.model, input.execution.model)
+  sessions.prompt = prompt
+  await assert.rejects(create().delegate("ses_coordinator", { ...input, execution: { agent: "other" } }), /different contract/)
+  sessions.sessions.get(actorID)!.agent = "other"
+  await assert.rejects(create().delegate("ses_coordinator", input), /changed since dispatch/)
+  assert.equal(sessions.prompts.length, 0)
+  sessions.sessions.get(actorID)!.agent = "review-all"
+  const retried = await create().delegate("ses_coordinator", input)
+  assert.equal(retried.disposition, "dispatched")
+  assert.equal(sessions.sessions.size, 2)
+  assert.equal(sessions.prompts.length, 1)
+  await assert.rejects(control.delegate("ses_coordinator", {
+    ...input, taskKey: "wrong-target", targetSessionID: actorID, execution: { agent: "other" },
+  }), /differs from the task contract/)
+})
 
 test("rejects a twenty-first mission without hiding an active mission", async () => {
   const { create, sessions, storage } = harness()

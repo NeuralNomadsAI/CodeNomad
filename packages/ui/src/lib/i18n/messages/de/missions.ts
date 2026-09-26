@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "Missionskarte wird gelesen…",
   "missions.control.unavailable.title": "Missionszentrale ist nicht verfügbar",
   "missions.control.unavailable.workspace": "Der OpenCode-Arbeitsbereich ist nicht bereit. Erneut verbinden und aktualisieren.",
-  "missions.control.unavailable.plugin": "Dieses Projekt hat das geprüfte Plugin codenomad.missions nicht aktiviert.",
+  "missions.control.unavailable.plugin": "Das mitgelieferte Plugin codenomad.missions ist nicht verfügbar. CodeNomad erneut verbinden und aktualisieren.",
   "missions.control.error.title": "Die Missionskarte konnte nicht aktualisiert werden",
   "missions.control.error.detail": "Arbeitsbereichsverbindung prüfen und erneut versuchen.",
   "missions.control.error.stale": "Die letzte dauerhafte Karte wird während der Wiederverbindung angezeigt.",

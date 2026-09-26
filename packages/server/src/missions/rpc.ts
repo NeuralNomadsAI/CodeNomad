@@ -1,3 +1,5 @@
+import { executionSchema } from "./execution"
+
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
 
@@ -73,6 +75,7 @@ const mission = {
           title: { type: "string" },
           brief: { type: "string" },
           role: { type: "string" },
+          execution: executionSchema,
           blockedBy: stringArray,
           status: { type: "string", enum: ["blocked", "ready", "dispatching", "queued", "completed", "needs-input", "failed"] },
           actorSessionId: { type: "string" },

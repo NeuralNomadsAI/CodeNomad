@@ -13,9 +13,11 @@ import {
   type MissionReport,
   type MissionSnapshot,
 } from "./model"
-import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
+import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "./recipes"
+import { assignmentInput, reportInput } from "./inputs"
 import { validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 import { runMissionExclusive } from "./exclusive"
+import { matchesExecution, sameExecution } from "./execution"
 import type {
   MissionDelegateInput,
   MissionInspectInput,
@@ -23,6 +25,7 @@ import type {
   MissionProject,
   MissionReportInput,
   MissionSessionAdapter,
+  MissionInputTransport,
   NativeMissionSession,
 } from "./control-types"
 
@@ -43,6 +46,8 @@ export class MissionControl {
     sessions: MissionSessionAdapter
     now?: () => number
     changed?: (missionID: string, revision: number) => Promise<void>
+    validateExecution?: (input: MissionDelegateInput, coordinatorID: string) => Promise<void>
+    transport?: MissionInputTransport
   }) {
     this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now)
   }
@@ -124,6 +129,8 @@ export class MissionControl {
 
     let task = mission.tasks.find((candidate) => candidate.key === input.taskKey)
     if (!task) {
+      if (input.targetSessionID) await this.ownedRootSession(input.targetSessionID)
+      await this.options.validateExecution?.(input, sessionID)
       if (mission.tasks.length >= MISSION_MAX_TASKS) throw new MissionControlError("Mission task limit reached", "task-limit")
       if (input.blockedBy.includes(input.taskKey)) throw new MissionControlError("A task cannot block itself", "invalid-blocker")
       const existingTasks = mission.tasks
@@ -141,6 +148,7 @@ export class MissionControl {
           title: input.title,
           brief: input.brief,
           role: input.role,
+          ...(input.execution === undefined ? {} : { execution: input.execution }),
           blockedBy: input.blockedBy,
         },
         createdAt: this.timestamp(snapshot),
@@ -152,6 +160,7 @@ export class MissionControl {
     } else {
       const same = task.title === input.title && task.brief === input.brief && task.role === input.role
         && equalStrings(task.blockedBy, input.blockedBy)
+        && sameExecution(task.execution, input.execution)
       if (!same) throw new MissionControlError("Task key already exists with a different contract", "task-conflict")
     }
 
@@ -162,6 +171,12 @@ export class MissionControl {
       return { disposition: "dispatched", mission }
     }
 
+    if (input.targetSessionID) {
+      const target = await this.ownedRootSession(input.targetSessionID)
+      if (!matchesExecution(task.execution, target)) {
+        throw new MissionControlError("Target agent/model differs from the task contract; select another actor instead of switching a busy session", "execution-conflict")
+      }
+    }
     const actor = await this.selectActor(snapshot, mission, sessionID, task.role, task.title, input.targetSessionID)
     const admissionID = this.messageID(`assignment\0${mission.id}\0${task.key}`)
     await this.journal.append({
@@ -282,16 +297,14 @@ export class MissionControl {
     }
     const actor = mission.actors.find((candidate) => candidate.sessionId === task.actorSessionId)
     if (!actor) throw new MissionControlError("Task actor is missing", "invalid-dispatch")
-    const session = await this.ensureActorSession(mission, actor, task.role, task.title)
+    const session = await this.ensureActorSession(mission, actor, task)
     this.assertOwnedRoot(session)
-    await this.options.sessions.prompt({
-      sessionID: session.id,
-      id: task.admissionId,
-      text: buildAssignmentPrompt(mission, task),
-      metadata: this.metadata(mission.id, "assignment", { taskKey: task.key, role: task.role }),
-      delivery: task.delivery,
-      resume: true,
-    })
+    if (!matchesExecution(task.execution, session)) {
+      throw new MissionControlError("Actor agent/model changed since dispatch; restore its selection before retrying", "execution-conflict")
+    }
+    const prompt = assignmentInput(mission, task)
+    if (this.options.transport) await this.options.transport.prompt(mission.coordinatorSessionId, prompt)
+    else await this.options.sessions.prompt(prompt)
     const snapshot = await this.snapshot()
     await this.journal.append({
       version: MISSION_SCHEMA_VERSION,
@@ -340,7 +353,7 @@ export class MissionControl {
     }
   }
 
-  private async ensureActorSession(mission: MissionMap, actor: MissionActor, role: string, taskTitle: string): Promise<NativeMissionSession> {
+  private async ensureActorSession(mission: MissionMap, actor: MissionActor, task: MissionMap["tasks"][number]): Promise<NativeMissionSession> {
     try {
       return await this.options.sessions.get({ sessionID: actor.sessionId })
     } catch (getError) {
@@ -348,9 +361,10 @@ export class MissionControl {
       try {
         return await this.options.sessions.create({
           id: actor.sessionId,
-          title: actor.title || `Mission · ${role}: ${taskTitle}`,
+          title: actor.title || `Mission · ${task.role}: ${task.title}`,
           location: actor.location,
-          metadata: this.metadata(mission.id, "actor", { role }),
+          metadata: this.metadata(mission.id, "actor", { role: task.role }),
+          ...task.execution,
         })
       } catch (createError) {
         try {
@@ -363,20 +377,10 @@ export class MissionControl {
   }
 
   private async notifyCoordinator(mission: MissionMap, report: MissionReport): Promise<void> {
-    const admissionID = this.messageID(`report\0${report.id}`)
-    await this.options.sessions.synthetic({
-      sessionID: mission.coordinatorSessionId,
-      id: admissionID,
-      text: `Mission report received for “${report.taskKey}” from ${report.sessionId}. Outcome: ${report.outcome}.\n\n${report.summary}`,
-      description: "CodeNomad mission report",
-      metadata: this.metadata(mission.id, "report", {
-        taskKey: report.taskKey,
-        reportID: report.id,
-        fromSessionID: report.sessionId,
-      }),
-      delivery: "queue",
-      resume: true,
-    })
+    const notification = reportInput(mission, report)
+    const admissionID = notification.id
+    if (this.options.transport) await this.options.transport.synthetic(mission.coordinatorSessionId, notification)
+    else await this.options.sessions.synthetic(notification)
     const snapshot = await this.snapshot()
     await this.journal.append({
       version: MISSION_SCHEMA_VERSION,

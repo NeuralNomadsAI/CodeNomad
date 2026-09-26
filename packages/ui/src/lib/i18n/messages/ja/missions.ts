@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "ミッションマップを読み込み中…",
   "missions.control.unavailable.title": "ミッションコントロールを利用できません",
   "missions.control.unavailable.workspace": "OpenCode ワークスペースの準備ができていません。再接続して更新してください。",
-  "missions.control.unavailable.plugin": "このプロジェクトでは、確認済みの codenomad.missions プラグインが有効になっていません。",
+  "missions.control.unavailable.plugin": "同梱の codenomad.missions プラグインを利用できません。CodeNomad に再接続して更新してください。",
   "missions.control.error.title": "ミッションマップを更新できませんでした",
   "missions.control.error.detail": "ワークスペース接続を確認して、もう一度お試しください。",
   "missions.control.error.stale": "再接続中のため、最後の永続マップを表示しています。",

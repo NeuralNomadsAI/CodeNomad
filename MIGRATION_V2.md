@@ -6,7 +6,7 @@ This branch replaces CodeNomad's OpenCode V1 SDK, custom plugin, and per-workspa
 
 The work grew beyond an SDK swap. It also introduces location-based ownership, native Forms and Shell resources, project-wide session pagination, reconnect reconciliation, bounded virtualized timelines, multi-window desktop state, and a content-addressed restore format.
 
-Server and UI pin the official `@opencode/client@2.0.4`; the bundled pruning plugin pins `@opencode/plugin@2.0.4`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates authenticated `/api/status` (`version`, `pid`, `urls`), falling back only on HTTP 404 to the earlier V2 `/api/health` contract (`healthy: true`, `version`, positive `pid`). Both probes share the endpoint, credentials, response-size bound and absolute deadline. There is no exact version gate. Discovery compatibility alone does not establish compatibility for the remaining client APIs. The older beta reviews below are historical.
+Server and UI pin the official `@opencode/client@2.0.11`; bundled plugins use `@opencode/plugin@2.0.11`. Upgrade the client, plugin and lock together using official V2 documentation, installed declarations and generated wire paths. The runtime CLI is independently managed: production startup validates authenticated `/api/status`, `/api/health`, then `/api/info`, advancing only on HTTP 404 with shared credentials, bounds and deadline. The canonical client method is now `server.info()`, mapped to the discovered route. There is no exact version gate. Discovery compatibility alone does not establish compatibility for the remaining client APIs. The older beta reviews below are historical. See [Missions](dev-docs/MISSIONS.md) for isolated 2.0.11 execution-profile and plugin-presence validation.
 
 The incremental comparison with official OpenCode Desktop V2, including closed findings and remaining gaps, is recorded in [`DESKTOP_V2_COMPARISON.md`](DESKTOP_V2_COMPARISON.md).
 
@@ -50,7 +50,7 @@ shared daemon is never stopped by this lifecycle.
 - Store voice-mode instructions with `session.instructions.entry` and synchronize them before prompts, commands, and session Shell calls.
 - Inherit native durable JSON `SessionMetadata` directly from `SessionInfo`. Do not widen it to arbitrary `unknown` values or maintain a parallel CodeNomad-only metadata contract.
 - Read location-scoped native catalogs and refresh on `plugin.updated` and resource-specific updates. Stable 2.0.4 has no activation-wait endpoint.
-- Keep the narrow project-local `codenomad.automation` and `codenomad.missions` definitions for developer feedback and native root-session coordination, alongside the reviewed bundled session-pruning RPC. None restores the removed V1 plugin runtime or installs a global shim.
+- Keep the narrow bundled `codenomad.automation`, `codenomad.missions` and session-pruning integrations under authenticated discovery and backend presence. None restores the removed V1 plugin runtime.
 
 ### Beta 18866 Contract Review (Historical)
 

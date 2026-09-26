@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "正在读取任务地图…",
   "missions.control.unavailable.title": "任务控制台不可用",
   "missions.control.unavailable.workspace": "OpenCode 工作区尚未就绪。请重新连接后刷新。",
-  "missions.control.unavailable.plugin": "此项目尚未启用经过审核的 codenomad.missions 插件。",
+  "missions.control.unavailable.plugin": "内置的 codenomad.missions 插件不可用。请重新连接 CodeNomad 后刷新。",
   "missions.control.error.title": "无法刷新任务地图",
   "missions.control.error.detail": "请检查工作区连接，然后重试。",
   "missions.control.error.stale": "等待重新连接时显示上次保存的持久地图。",

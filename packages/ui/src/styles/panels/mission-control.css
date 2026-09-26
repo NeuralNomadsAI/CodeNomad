@@ -2,9 +2,7 @@
   min-height: 100%;
   padding: var(--space-md);
   color: var(--text-primary);
-  background:
-    linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--border-base) calc(100% - 1px)),
-    var(--surface-base);
+  background: var(--surface-secondary);
 }
 
 .mission-control-header {

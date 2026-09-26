@@ -5,6 +5,15 @@
 
 ## Decision summary
 
+**2026-09-20 package update:** UI/server now pin client 2.0.11 and the bundled
+plugins compile against plugin 2.0.11. The generated `server.info()` replaces
+`server.status()`; the connection adapter maps either GET spelling to the
+authenticated discovered info/status/health route. No write fallback is added.
+The isolated Windows Missions, automation-presence and full proxy/pruning native
+fixtures pass against CLI 2.0.11, including durable queueing, permissions, native
+worktrees, environment propagation and plugin recovery. Historical matrix runs
+below retain their original package versions; they are not retroactively relabeled.
+
 At `bcfe4d24`, CodeNomad had a working modern-client path and backward-compatible service discovery, **not a complete backward-compatible V2 integration**. The follow-up change keeps that discovery fix and addresses the remaining issues through one connection-scoped integration module and one cross-runtime acceptance matrix.
 
 The primary split is the pre-2.0.4 V2 contract versus the 2.0.4 contract. Earlier changes also matter, particularly message editing, catalog activation, location identity and native cache behavior. Support should be defined by tested contract families and features, not inferred from a healthy daemon, a package name, a beta-number comparison or a passing TypeScript build.

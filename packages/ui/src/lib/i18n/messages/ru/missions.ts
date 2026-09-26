@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "Чтение карты миссии…",
   "missions.control.unavailable.title": "Центр миссии недоступен",
   "missions.control.unavailable.workspace": "Рабочая область OpenCode не готова. Переподключите её и обновите карту.",
-  "missions.control.unavailable.plugin": "В этом проекте не активирован проверенный плагин codenomad.missions.",
+  "missions.control.unavailable.plugin": "Встроенный плагин codenomad.missions недоступен. Переподключите CodeNomad и обновите карту.",
   "missions.control.error.title": "Не удалось обновить карту миссии",
   "missions.control.error.detail": "Проверьте подключение рабочей области и повторите попытку.",
   "missions.control.error.stale": "Во время переподключения показана последняя постоянная карта.",

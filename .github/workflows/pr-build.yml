@@ -153,6 +153,9 @@ jobs:
           - version: 2.0.7
             scope: '@opencode'
             binary: opencode
+          - version: 2.0.11
+            scope: '@opencode'
+            binary: opencode
     steps:
       - uses: actions/checkout@v4
         with:
@@ -164,6 +167,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
+      - run: npm run build:missions --workspace @neuralnomads/codenomad
       - name: Cross the pinned client with an isolated runtime
         shell: pwsh
         env:
@@ -179,6 +183,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($env:RUNTIME_VERSION -eq '2.0.11') {
+            node scripts/test-missions-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           if ($env:RUNTIME_VERSION -eq '0.0.0-beta-19271' -or $env:RUNTIME_VERSION -eq '2.0.3') {
             node scripts/test-session-pruning-native.mjs $cli --legacy-pruning
           }
@@ -231,6 +239,9 @@ jobs:
 
       - name: Build bundled automation integration
         run: npm run build:automation --workspace @neuralnomads/codenomad
+
+      - name: Build bundled mission integration
+        run: npm run build:missions --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs

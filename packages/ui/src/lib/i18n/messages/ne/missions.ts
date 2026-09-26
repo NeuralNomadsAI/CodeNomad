@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "मिसन नक्सा पढिँदै छ…",
   "missions.control.unavailable.title": "मिसन नियन्त्रण उपलब्ध छैन",
   "missions.control.unavailable.workspace": "OpenCode कार्यक्षेत्र तयार छैन। फेरि जडान गरेर ताजा गर्नुहोस्।",
-  "missions.control.unavailable.plugin": "यस परियोजनाले जाँचिएको codenomad.missions प्लगइन सक्रिय गरेको छैन।",
+  "missions.control.unavailable.plugin": "समावेश गरिएको codenomad.missions प्लगइन उपलब्ध छैन। CodeNomad फेरि जडान गरेर ताजा गर्नुहोस्।",
   "missions.control.error.title": "मिसन नक्सा ताजा गर्न सकिएन",
   "missions.control.error.detail": "कार्यक्षेत्र जडान जाँचेर फेरि प्रयास गर्नुहोस्।",
   "missions.control.error.stale": "पुनः जडान हुँदा पछिल्लो दिगो नक्सा देखाइँदै छ।",

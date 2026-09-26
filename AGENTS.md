@@ -26,6 +26,8 @@
 
 ## Coding Principles
 
+- Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Mission prompt/report admission uses the authenticated desktop bridge, authoritative typed snapshot, ownership/connection/worktree fences and per-send profile environment. See `dev-docs/MISSIONS.md`; validate with the isolated `scripts/test-missions-native.mjs` fixture.
+
 - Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies. See `dev-docs/SESSION_ENVIRONMENT.md`.
 
 - One bundled `codenomad.automation` V2 plugin uses native discovery and backend presence. All browser/developer tools are available without a Developer Mode toggle; native instrumentation starts with the desktop host. Loading, tool availability and execution targeting are separate: retain the authenticated bridge and session/window fences. Tauri preview children receive no application capabilities; primary-renderer reload must dispose them and final-window checks must count native windows. See `dev-docs/BROWSER_AUTOMATION.md`.

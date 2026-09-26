@@ -11,7 +11,7 @@ export interface DesktopPluginPaths {
   // WSL uses Linux paths in the entry, UNC paths only for host filesystem I/O.
   nativeData?: string
 }
-export type DesktopPluginFeature = "session-pruning" | "automation"
+export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
 
 // Only parse our exact generated entry shape. Older backend leases remain
 // readable during migration, but new heartbeats must leave the watched root.

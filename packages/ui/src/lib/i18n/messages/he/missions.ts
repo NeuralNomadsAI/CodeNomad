@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "מפת המשימה נטענת…",
   "missions.control.unavailable.title": "בקרת המשימה אינה זמינה",
   "missions.control.unavailable.workspace": "סביבת העבודה של OpenCode אינה מוכנה. יש להתחבר מחדש ולרענן.",
-  "missions.control.unavailable.plugin": "התוסף המאומת codenomad.missions לא הופעל בפרויקט זה.",
+  "missions.control.unavailable.plugin": "התוסף המובנה codenomad.missions אינו זמין. יש לחבר מחדש את CodeNomad ולרענן.",
   "missions.control.error.title": "לא ניתן לרענן את מפת המשימה",
   "missions.control.error.detail": "יש לבדוק את החיבור לסביבת העבודה ולנסות שוב.",
   "missions.control.error.stale": "המפה המתמשכת האחרונה מוצגת בזמן ההתחברות מחדש.",

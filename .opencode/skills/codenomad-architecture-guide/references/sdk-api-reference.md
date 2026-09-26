@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad server and UI pin `@opencode/client@2.0.4`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport maps canonical `server.status()` to the discovered route. Discovery does not prove compatibility for other APIs. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
+CodeNomad server and UI pin `@opencode/client@2.0.11`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport maps canonical `server.info()` to the discovered route. Discovery does not prove compatibility for other APIs. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
 Cross-runtime adaptation lives in `packages/server/src/opencode/compatibility/`. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Known published contracts select their serializer directly; unknown versions require authenticated bounded OpenAPI recognition before calls. Never add operation-specific retry fallbacks in UI stores or Yolo. See `dev-docs/OPENCODE_V2_COMPATIBILITY.md` for the evidence matrix and maintained issue register.
 

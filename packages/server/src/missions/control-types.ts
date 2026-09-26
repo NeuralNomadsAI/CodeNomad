@@ -1,8 +1,9 @@
 import type { SessionMetadata } from "@opencode/client"
+import type { MissionExecution } from "./execution"
 import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, MissionTemplateId } from "./model"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 
-export interface NativeMissionSession {
+export interface NativeMissionSession extends MissionExecution {
   id: string
   parentID?: string
   projectID: string
@@ -17,6 +18,8 @@ export interface MissionSessionAdapter {
     title: string
     location: { directory: string; workspaceID?: string }
     metadata: SessionMetadata
+    agent?: MissionExecution["agent"]
+    model?: MissionExecution["model"]
   }): Promise<NativeMissionSession>
   prompt(input: {
     sessionID: string
@@ -63,6 +66,7 @@ export interface MissionDelegateInput {
   blockedBy: string[]
   targetSessionID?: string
   delivery: "queue" | "steer"
+  execution?: MissionExecution
 }
 
 export interface MissionReportInput {
@@ -81,4 +85,13 @@ export interface MissionInspection {
   actor: MissionActor | null
   templates: ReturnType<typeof missionRecipeCatalog>
   playbook?: MissionRecipe
+  catalog?: {
+    agents: Array<{ id: string; mode: string; description?: string }>
+    models: Array<{ providerID: string; id: string; variants: string[] }>
+  }
+}
+
+export interface MissionInputTransport {
+  prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
+  synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>
 }

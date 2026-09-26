@@ -8,7 +8,7 @@ export const missionMessages = {
   "missions.control.loading": "Leyendo el mapa de misión…",
   "missions.control.unavailable.title": "Control de misión no está disponible",
   "missions.control.unavailable.workspace": "El espacio de trabajo de OpenCode no está listo. Vuelve a conectarlo y actualiza.",
-  "missions.control.unavailable.plugin": "Este proyecto no ha activado el plugin revisado codenomad.missions.",
+  "missions.control.unavailable.plugin": "El plugin incluido codenomad.missions no está disponible. Vuelve a conectar CodeNomad y actualiza.",
   "missions.control.error.title": "No se pudo actualizar el mapa de misión",
   "missions.control.error.detail": "Comprueba la conexión del espacio de trabajo e inténtalo de nuevo.",
   "missions.control.error.stale": "Se muestra el último mapa duradero mientras se restablece la conexión.",

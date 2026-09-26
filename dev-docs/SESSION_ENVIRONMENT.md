@@ -18,6 +18,11 @@ store, applied-version cache, plugin or daemon restart.
   and acquisition of the worktree mutation fence. Both writes use the acquired
   connection; a stale connection or disconnected request prevents forwarding.
 - `WorkspaceManager.getSessionEnvironment` reads current settings for each send.
+- Bundled Missions also applies this snapshot before its assignment prompts and
+  report synthetics, through the authenticated desktop bridge's narrow mission
+  admission handler. It revalidates the durable contract, native ownership,
+  connection and worktree fence before writing; plugin-originated inputs do not
+  bypass profile environment handling. See [MISSIONS.md](MISSIONS.md).
 - `workspaces/session-environment.ts` builds the **complete** snapshot required by
   the native replacement API. On the host this is the backend process environment
   plus profile overrides, merging keys case-insensitively on Windows.

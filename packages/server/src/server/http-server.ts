@@ -328,6 +328,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
     bridgeToken: deps.automationBridgeToken,
+    worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,

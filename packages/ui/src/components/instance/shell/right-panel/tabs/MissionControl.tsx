@@ -217,6 +217,10 @@ const MissionRoute: Component<{
                 </div>
                 <div class="mission-route-meta">
                   <span>{task.role}</span>
+                  <Show when={task.execution?.agent}>{agent => <code>{agent()}</code>}</Show>
+                  <Show when={task.execution?.model}>
+                    {model => <code>{model().providerID}/{model().id}{model().variant ? `#${model().variant}` : ""}</code>}
+                  </Show>
                   <Show when={task.blockedBy.length > 0}>
                     <span>{props.t("missions.control.task.blockedBy", { tasks: task.blockedBy.join(", ") })}</span>
                   </Show>

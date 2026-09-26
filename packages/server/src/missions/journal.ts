@@ -12,6 +12,7 @@ import {
   type MissionTemplateId,
 } from "./model"
 import { runMissionExclusive } from "./exclusive"
+import { parseExecution } from "./execution"
 
 const STORAGE_PREFIX = "codenomad-missions/v1"
 const PAGE_SIZE = 100
@@ -138,6 +139,8 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (!record(input.task) || !text(input.task.id, MAX_SHORT_TEXT) || !text(input.task.key, MAX_SHORT_TEXT)
         || !text(input.task.title, MAX_SHORT_TEXT) || !text(input.task.brief, MAX_TEXT)
         || !text(input.task.role, MAX_SHORT_TEXT) || !stringArray(input.task.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+      let execution
+      try { execution = parseExecution(input.task.execution) } catch { return undefined }
       return {
         ...eventBase(input),
         type: "task.created",
@@ -147,6 +150,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
           title: input.task.title,
           brief: input.task.brief,
           role: input.task.role,
+          ...(execution === undefined ? {} : { execution }),
           blockedBy: input.task.blockedBy,
         },
       }

@@ -1,3 +1,5 @@
+import type { MissionExecution } from "./execution"
+
 export const MISSION_SCHEMA_VERSION = 1 as const
 export const MISSION_MAX_ACTORS = 8
 export const MISSION_MAX_EVENTS = 2_000
@@ -55,6 +57,7 @@ export interface MissionTask {
   title: string
   brief: string
   role: string
+  execution?: MissionExecution
   blockedBy: string[]
   status: MissionTaskStatus
   actorSessionId?: string
@@ -135,6 +138,7 @@ export interface MissionTaskCreatedEvent extends MissionEventBase {
     title: string
     brief: string
     role: string
+    execution?: MissionExecution
     blockedBy: string[]
   }
 }

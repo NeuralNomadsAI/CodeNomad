@@ -28,7 +28,7 @@ test("the pinned status client follows the discovered route across legacy, moder
       return Response.json(discovery === "health" ? { healthy: true, version, pid: 123 } : { version, pid: 123, urls: [endpoint.url] })
     })
     const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
-    assert.deepEqual(await client.server.status(), { version, pid: 123, urls: [endpoint.url] })
+    assert.deepEqual(await client.server.info(), { version, pid: 123, urls: [endpoint.url] })
     assert.deepEqual(seen, discovery === "info" ? ["/openapi.json", route] : [route])
   }
 })
@@ -43,7 +43,7 @@ test("info translation is GET-only and does not probe alternate routes on failur
     return path === "/openapi.json" ? Response.json(modernContractFixture) : new Response(null, { status: 404 })
   })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
-  await assert.rejects(client.server.status())
+  await assert.rejects(client.server.info())
   await fetch(`${endpoint.url}/api/status`, { method: "POST" })
   assert.deepEqual(seen, ["GET /openapi.json", "GET /api/info", "POST /api/status"])
 })

@@ -5,6 +5,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@opencode/plugin": "2.0.4"
+    "@opencode/plugin": "2.0.11"
   }
 }

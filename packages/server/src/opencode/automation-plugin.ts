@@ -462,6 +462,14 @@ async function probeBrowserBridges(
   return found.slice(0, 2)
 }
 
+export async function sendMissionInput(sessionID: string, kind: "prompt" | "synthetic", input: unknown): Promise<unknown> {
+  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim")
+  if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+  const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
+  if (response.status !== 200) throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  return response.body.result
+}
+
 export async function executeBrowserTool(sessionID: string, input: unknown) {
   const command = parseBrowserAction(input)
   const mode = command.action === "open" ? "browser-claim" : "browser-probe"

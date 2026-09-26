@@ -91,4 +91,24 @@ test("registers three tools, typed snapshot RPC, and role context", async () => 
   assert.match(event.system[0]?.text ?? "", /Only this coordinator session/)
   assert.ok(event.tools.mission_delegate)
   await cleanup()
+  await assert.rejects(inspect.execute({}, {
+    sessionID: "ses_coordinator", id: "stale-tool", progress: async () => {},
+  }), /no longer available/)
+})
+
+test("failed presence activation disposes partial registrations and fences captured tools", async () => {
+  const disposed: string[] = []
+  const captured: Array<{ execute(input: unknown, context: unknown): Promise<unknown> }> = []
+  await assert.rejects(setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: {},
+    session: { hook: async () => { throw new Error("hook failed") } },
+    rpc: { register: async () => ({ dispose: async () => { disposed.push("rpc") } }) },
+    tool: { transform: async (callback: (draft: unknown) => void) => {
+      callback({ namespace: () => {}, add: (tool: typeof captured[number]) => captured.push(tool) })
+      return { dispose: async () => { disposed.push("tools") } }
+    } },
+  } as never), /hook failed/)
+  assert.deepEqual(disposed.sort(), ["rpc", "tools"])
+  await assert.rejects(captured[0].execute({}, {}), /no longer available/)
 })
