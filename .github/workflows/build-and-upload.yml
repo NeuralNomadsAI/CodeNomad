@@ -637,6 +637,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
+      # Optional: added by a repository administrator. Without it the AppImage
+      # is still published, unsigned, and no update manifest is produced.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -671,6 +675,14 @@ jobs:
 
       - name: Sync Tauri package version
         run: npm run sync:version --workspace @codenomad/tauri-app
+
+      # The updater is enabled only when a verifiable public key is available.
+      # Its private half stays in a repository secret that an administrator
+      # adds, so an unsigned build never advertises an update it cannot verify.
+      - name: Configure Tauri updater
+        env:
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+        run: npm run configure:updater --workspace @codenomad/tauri-app
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
@@ -836,7 +848,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
-          path: packages/tauri-app/release-tauri/*.deb
+          path: |
+            packages/tauri-app/release-tauri/*.deb
+            packages/tauri-app/release-tauri/*.AppImage
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
@@ -845,24 +859,38 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(packages/tauri-app/release-tauri/*.deb)
-          if [ "${#files[@]}" -ne 1 ]; then
-            echo "Expected one Tauri Linux release asset, found ${#files[@]}" >&2
+          files=(packages/tauri-app/release-tauri/*.deb packages/tauri-app/release-tauri/*.AppImage)
+          if [ "${#files[@]}" -ne 2 ]; then
+            echo "Expected the Tauri Linux deb and AppImage, found ${#files[@]}" >&2
             exit 1
           fi
 
-          file="${files[0]}"
-          asset_name=$(basename "$file")
-          echo "Uploading $file"
-          gh release upload "$TAG" "$file" --clobber
-          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
-            echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
-            exit 1
+          for file in "${files[@]}"; do
+            asset_name=$(basename "$file")
+            echo "Uploading $file"
+            gh release upload "$TAG" "$file" --clobber
+            if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
+              echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
+              exit 1
+            fi
+          done
+
+          # Tauri writes the updater manifest next to the signed bundles. Publish
+          # it only when it exists, so an unsigned release never advertises one.
+          shopt -s nullglob
+          manifests=(packages/tauri-app/target/release/bundle/*.json)
+          if [ "${#manifests[@]}" -gt 0 ]; then
+            for manifest in "${manifests[@]}"; do
+              echo "Uploading updater manifest $(basename "$manifest")"
+              gh release upload "$TAG" "$manifest" --clobber
+            done
+          else
+            echo "No updater manifest produced: this build is unsigned"
           fi
 
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
-              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.AppImage|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
+              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
                 echo "Deleting obsolete Linux asset $asset"
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
