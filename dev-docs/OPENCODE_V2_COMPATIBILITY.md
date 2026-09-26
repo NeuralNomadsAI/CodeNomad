@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.16**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.18**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -116,7 +116,7 @@ startup phase diagnostics for a recurrence; this passing rerun does not establis
 the cause or a fix for the intermittent exit. Detailed results and remaining CI
 gates belong in #752 rather than being inferred from other passing platforms.
 
-### Current stable target: 2.0.16
+### Previous stable target: 2.0.16
 
 Server/UI client, bundled plugin and recommendation advance together to **2.0.16**;
 the evidence-based minimum remains **2.0.7**. Comparing the tagged
@@ -156,6 +156,39 @@ failure as unresolved intermittent evidence, not a corrected regression. The
 independent gatekeeper reports zero actionable findings. Detailed native suite
 completion and cross-platform qualification belong in the PR/CI; do not treat
 unchanged wire types or a passing rerun as proof of untested behavior.
+
+### Current stable target: 2.0.18
+
+Server/UI client, bundled plugin and recommendation advance together to **2.0.18**;
+the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
+adds `server.pair()`, `server.connect()` and optional `Shell.Info.signal`.
+The native authenticated 2.0.18 schema has 115 paths: the existing 113 paths are
+unchanged, with `/api/pair` and `/auth/connect/{code}` added. Component changes
+are limited to the optional Shell signal and the two pairing response schemas.
+The tagged `packages/protocol/openapi.json` is stale (113 paths); use the actual
+runtime schema and published declarations when reviewing this boundary.
+
+CodeNomad retains its authenticated service connection and explicit proxy allowlist;
+the new pairing routes are not exposed. Plugin declaration changes concern TUI
+model variants; CodeNomad's server-plugin surface is unchanged. Upstream also
+flushes batched transcript deltas before starting the next content block, reports
+signal-terminated Shells, fixes provider/reasoning budgets and restores the Shell
+no-output placeholder. The 2.0.18 provider-context decoder upgrades pre-2.0.15
+media in stored compaction checkpoints. These are reasons to prefer the newer
+runtime, not new CodeNomad API dependencies or a higher minimum.
+
+The native npm upgrade fixture follows the recommendation constant while keeping
+2.0.15 as its source boundary; installation and daemon restart remain separate.
+Detailed qualification results and independent review belong in the PR and CI.
+
+Windows qualification with Node 24.20.0 passes the seven native suites on 2.0.7
+with the 2.0.18 dependencies, and the 2.0.18 native/UI acceptance on its diagnostic
+rerun. The first 2.0.18 pruning/UI run exited with Windows heap-corruption status
+`0xC0000374` while loading browser/server dependencies, after native history and
+proxy checks passed. The earlier 2.0.16 dependency baseline passes against runtime
+2.0.18 too. The passing rerun does not explain or fix the intermittent exit
+previously recorded above. Both historical migrations (2.0.3 and beta-19271) to
+2.0.18 pass; the native npm installation leaves the 2.0.15 daemon and PID intact.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
