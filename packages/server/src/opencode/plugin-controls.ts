@@ -102,9 +102,10 @@ export class PluginControls {
   // Shared scope acquisition for native settings that have no native write API.
   // Callers receive only the already-authorized documents; path/WSL selection,
   // deletion admission, connection fencing and atomic conflict checks stay here.
-  async readConfigDocuments(workspaceId: string, location: PluginControlLocation) {
+  async readConfigDocuments(workspaceId: string, location: PluginControlLocation, declaredSources = false) {
     const context = await this.readContext(workspaceId, location)
-    const documents = await Promise.all(context.targets.map(async target => ({
+    const targets = declaredSources ? await this.declaredTargets(workspaceId, context) : context.targets
+    const documents = await Promise.all(targets.map(async target => ({
       scope: target.scope, path: target.path,
       document: await readPluginControlDocument(target.ioPath, context.fileSystem),
     })))
@@ -117,13 +118,22 @@ export class PluginControls {
     location: PluginControlLocation,
     scope: PluginControlScope,
     edit: (document: PluginControlDocument) => string,
+    declaration?: string[],
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
       const context = await this.readContext(workspaceId, location)
-      const target = context.targets.find(target => target.scope === scope)
-      if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
+      let target = context.targets.find(target => target.scope === scope)
+      if (declaration) {
+        target = undefined
+        for (const candidate of await this.declaredTargets(workspaceId, context)) {
+          if (candidate.scope !== scope) continue
+          const document = await readPluginControlDocument(candidate.ioPath, context.fileSystem)
+          if (readNativeSetting(document, declaration) !== undefined) target = candidate
+        }
+      }
+      if (!target) throw new PluginControlsError(declaration ? "Setting is not configured in this scope" : "OpenCode configuration scope is unavailable", declaration ? "conflict" : "unavailable")
       const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
       if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
       const release = this.options.worktreeDeletionFence.enter([identity])
@@ -334,6 +344,32 @@ export class PluginControls {
       || (inheritedProjectLayer && !containsPath(ioPaths, projectIoRoot, projectTarget.ioPath))
       ? [globalTarget]
       : [globalTarget, projectTarget]
+  }
+
+  private async declaredTargets(workspaceId: string, context: ReadContext): Promise<ResolvedTarget[]> {
+    const nativeWsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
+    const ioPaths = nativeWsl ? path.posix : hostPathStyle()
+    const result: ResolvedTarget[] = []
+    const globalWrites = new Set<string>()
+    for (const scope of ["global", "project"] as const) {
+      const root = scope === "global" ? context.globalDirectory : context.location.directory
+      if (scope === "project" && samePath(context.paths, root, context.globalDirectory)) continue
+      const ioRoot = nativeWsl ? root : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, root)
+      if (!ioRoot || !ioPaths.isAbsolute(ioRoot)) throw new PluginControlsError("Configuration source unavailable", "unavailable")
+      const candidates = targetCandidates(scope, context.paths, root, ioRoot, ioPaths)
+      const inspected = await context.fileSystem.inspectMany(candidates.map(item => item.ioPath))
+      for (const entry of context.entries) {
+        if (entry.type !== "document" || !entry.path) continue
+        const index = candidates.findIndex(item => samePath(context.paths, item.servicePath, entry.path!))
+        if (index < 0 || !inspected[index]?.exists) continue
+        const ioPath = inspected[index]!.writePath
+        if (scope === "project" && (!containsPath(ioPaths, ioRoot, ioPath) || [...globalWrites].some(value => samePath(ioPaths, value, ioPath)))) continue
+        if (scope === "global") globalWrites.add(ioPath)
+        result.push({ scope, path: candidates[index]!.servicePath, ioPath, exists: true })
+      }
+    }
+    assertCurrentConnection(context.connection)
+    return result
   }
 
   private serializeMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -803,3 +839,4 @@ function assertCurrentConnection(connection: ServiceConnection): void {
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
+import { readNativeSetting } from "./native-setting-document"

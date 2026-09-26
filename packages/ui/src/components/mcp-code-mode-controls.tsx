@@ -5,7 +5,7 @@ import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
 
-export function McpCodeModeControls(props: { instanceId: string; directory: string }) {
+export function McpCodeModeControls(props: { instanceId: string; directory: string; active?: boolean }) {
   const { t } = useI18n()
   const [open, setOpen] = createSignal(false)
   const [entries, setEntries] = createSignal<McpCodeModeEntry[]>([])
@@ -15,7 +15,7 @@ export function McpCodeModeControls(props: { instanceId: string; directory: stri
   createEffect(() => {
     const instanceId = props.instanceId, directory = props.directory
     setEntries([]); setError(false); setBusy(false)
-    if (!open() || !directory) return
+    if (!open() || !directory || props.active === false) return
     let disposed = false, reading = false, writing = false, trailing = false
     const load = async () => {
       if (disposed) return

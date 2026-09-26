@@ -16,6 +16,7 @@ interface InstanceServiceStatusProps {
   sections?: ServiceSection[]
   showSectionHeadings?: boolean
   pluginsActive?: boolean
+  mcpActive?: boolean
   class?: string
   initialInstance?: Instance
 }
@@ -180,7 +181,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
           </For>
         </div>
       </Show>
-      <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} />
+      <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} active={props.mcpActive} />
     </section>
   )
 

@@ -5,6 +5,10 @@ import Fastify from "fastify"
 import { McpCodeMode } from "./mcp-code-mode"
 import { registerMcpCodeModeRoutes } from "../server/routes/mcp-code-mode"
 import { PluginControlsError } from "./plugin-controls"
+import { PluginControls } from "./plugin-controls"
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 
 test("MCP source editing preserves whole-server precedence, substitutions and unrelated fields", async () => {
   let global = '{// retain\n"mcp":{"servers":{"same":{"type":"remote","url":"https://example.invalid","headers":{"secret":"{env:KEY}"},"codemode":false},"global-only":{"type":"local","command":["fixture"]}}},"shell":"unchanged"}'
@@ -45,4 +49,29 @@ test("MCP route admits only bounded tri-state source mutations and maps authorit
     assert.equal((await app.inject({ method: "PUT", url: "/api/workspaces/w/mcp-code-mode", payload: { location: { directory: "/foreign" }, scope: "global", server: "s", mode: false } })).statusCode, 403)
     assert.equal(writes.length, 3)
   } finally { await app.close() }
+})
+
+test("MCP finds declarations below unrelated higher-priority config files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mcp-sources-"))
+  try {
+    const global = path.join(root, "global"), project = path.join(root, "project")
+    await mkdir(global); await mkdir(path.join(project, ".opencode"), { recursive: true })
+    const files = [path.join(global, "opencode.json"), path.join(global, "opencode.jsonc"), path.join(project, "opencode.json"), path.join(project, ".opencode", "opencode.jsonc")]
+    const definition = '{"mcp":{"servers":{"fixture":{"type":"local","command":["fixture"],"disabled":true}}}}'
+    for (let i = 0; i < files.length; i++) await writeFile(files[i], i % 2 ? '{"plugins":[]}' : definition)
+    const controls = new PluginControls({ workspaceManager: {
+      get: () => ({}), getSharedServiceConnection: async () => ({ assertCurrent() {}, client: {
+        config: { get: async () => [{ type: "directory", path: global }, ...await Promise.all(files.map(async file => ({ type: "document", path: file, info: parse(await readFile(file, "utf8")) }))) ] }, plugin: { list: async () => ({ data: [] }) },
+      } }), getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned", getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, directory: string) => directory,
+    } as any, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new McpCodeMode(controls), location = { directory: project }
+    assert.deepEqual((await settings.read("w", location))[0].scopes.map(item => item.path), [files[0], files[2]])
+    await settings.update("w", location, "global", "fixture", false)
+    await settings.update("w", location, "project", "fixture", true)
+    assert.equal(parse(await readFile(files[0], "utf8")).mcp.servers.fixture.codemode, false)
+    assert.equal(parse(await readFile(files[2], "utf8")).mcp.servers.fixture.codemode, true)
+    for (const file of [files[1], files[3]]) assert.equal(await readFile(file, "utf8"), '{"plugins":[]}')
+  } finally { await rm(root, { recursive: true, force: true }) }
 })

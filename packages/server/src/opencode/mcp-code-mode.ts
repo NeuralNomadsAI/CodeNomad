@@ -10,7 +10,7 @@ function serverConfig(value: unknown): value is Record<string, unknown> {
 export class McpCodeMode {
   constructor(private readonly documents: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">) {}
   async read(workspaceId: string, location: PluginControlLocation): Promise<McpCodeModeEntry[]> {
-    const snapshot = await this.documents.readConfigDocuments(workspaceId, location)
+    const snapshot = await this.documents.readConfigDocuments(workspaceId, location, true)
     const effective = new Map<string, boolean>()
     for (const entry of snapshot.entries) {
       if (entry.type !== "document") continue
@@ -21,8 +21,9 @@ export class McpCodeMode {
       }
     }
     return [...effective].map(([server, mode]) => ({ server, effective: mode,
-      scopes: snapshot.documents.flatMap(({ scope, path, document }) => {
+      scopes: snapshot.documents.flatMap(({ scope, path, document }, index, all) => {
         const config = readNativeSetting(document, ["mcp", "servers", server])
+        if (all.slice(index + 1).some(item => item.scope === scope && serverConfig(readNativeSetting(item.document, ["mcp", "servers", server])))) return []
         return serverConfig(config) ? [{ scope, path, mode: typeof config.codemode === "boolean" ? config.codemode : null }] : []
       }),
     }))
@@ -34,6 +35,6 @@ export class McpCodeMode {
       // Do not clone inherited server credentials into a project override. Only
       // edit a declared source, preserving its original substitutions and fields.
       return editNativeSetting(document, ["mcp", "servers", server, "codemode"], mode === null ? undefined : mode)
-    })
+    }, ["mcp", "servers", server])
   }
 }
