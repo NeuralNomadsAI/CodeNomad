@@ -3,7 +3,8 @@ import { ArrowLeft, WrapText } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useTheme } from "../lib/theme"
 import { serverApi } from "../lib/api-client"
-import { backgroundReads } from "../lib/background-read-queue"
+import { previewReads } from "../lib/background-read-queue"
+import { loadMonaco } from "../lib/monaco/setup"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../lib/filesystem-events"
 import type { FilePreviewTarget } from "../stores/files-preview"
 import { Markdown } from "./markdown"
@@ -28,10 +29,11 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     if (!props.active) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
+    if (!markdown() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
-      const result = await backgroundReads.run(request.signal,
+      const result = await previewReads.run(request.signal,
         () => serverApi.previewWorkspaceFile(props.instanceId, target.path, target.directory, request.signal), "visible")
       if (request.signal.aborted) return
       const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]

@@ -1,7 +1,7 @@
 import type { GitCommitDetails, GitCommitFile, GitHistoryPage, GitCommitDiff } from "../git-history-types"
 import { runGitProcess } from "./git-process"
 
-const git = (directory: string, args: string[]) => runGitProcess(directory, args, { timeout: 15_000, maxBuffer: 2 * 1024 * 1024 })
+const git = (directory: string, args: string[]) => runGitProcess(directory, args, { timeout: 15_000, maxBuffer: 2 * 1024 * 1024, priority: "foreground" })
 
 function commitId(value: string): string {
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)) throw new Error("Invalid commit ID")
@@ -33,8 +33,11 @@ export async function getGitHistory(directory: string, offset = 0, snapshot?: st
 
 export async function getGitCommit(directory: string, revision: string): Promise<GitCommitDetails> {
   const id = commitId(revision)
-  if ((await git(directory, ["cat-file", "-t", id])).trim() !== "commit") throw new Error("Object is not a commit")
-  const parents = (await git(directory, ["show", "-s", "--format=%P", id, "--"])).trim().split(" ").filter(Boolean)
+  // Validate the object as a commit and read its metadata in one bounded process.
+  const metadata = await git(directory, ["show", "-s", "--format=%P%x00%B", `${id}^{commit}`, "--"])
+    .catch(cause => { throw new Error("Object is not a commit", { cause }) })
+  const separator = metadata.indexOf("\0")
+  const parents = metadata.slice(0, separator).trim().split(" ").filter(Boolean)
   const parent = parents[0] ? commitId(parents[0]) : null
   const output = await git(directory, ["diff-tree", "--root", "--no-commit-id", "-r", "-M", "--name-status", "-z", ...(parent ? [parent, id] : [id]), "--"])
   const tokens = output.split("\0")
@@ -46,7 +49,7 @@ export async function getGitCommit(directory: string, revision: string): Promise
     const path = renamed ? tokens[i++]! : first
     files.push({ path, originalPath: renamed ? first : null, status: status[0]! })
   }
-  const message = (await git(directory, ["show", "-s", "--format=%B", id, "--"])).trimEnd()
+  const message = metadata.slice(separator + 1).trimEnd()
   return { id, parent, message, files }
 }
 

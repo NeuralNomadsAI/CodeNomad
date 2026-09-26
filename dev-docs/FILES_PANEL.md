@@ -26,6 +26,18 @@ Workspace source previews are intentionally read-only. The former sidebar file
 editor and sidebar split viewer are retired. Monaco's tokenizers are packaged
 locally for offline source highlighting.
 
+Clicked readers have a reserved one-request lane beside the two background scan
+slots. Start the local Monaco load alongside the content read; preview Git work
+uses the worker's foreground queue. Commit metadata and parent IDs share one Git
+process. These changes preserve ownership checks and cancellation fencing.
+
+`lib/monaco/theme.ts` resolves the selected palette's CSS tokens into Monaco hex
+colors, including source tokens, editor surfaces and added/removed-line tints.
+Its observer follows live appearance/custom-palette changes and is disposed with
+the viewer. Read-only previews disable cross-model occurrence highlighting to
+avoid Monaco 0.52's leaked cancellation on fast model changes; text selection and
+insertion into the composer remain available.
+
 ## Backend boundaries
 
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed

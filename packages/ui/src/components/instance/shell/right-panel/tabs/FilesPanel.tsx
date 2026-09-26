@@ -63,9 +63,12 @@ const FilesPanel: Component<FilesPanelProps> = props => {
     <div class="git-panel-tools">
       <div class="git-panel-switch" role="group" aria-label={props.t("instanceShell.rightPanel.tabs.files")}>
         <button aria-pressed={props.mode === "workspace"} onClick={() => props.onModeChange("workspace")}>{props.t("filesPanel.workspace")}</button>
-        <button disabled={!props.gitAvailable} aria-pressed={props.mode === "changes"} onClick={() => props.onModeChange("changes")}>{props.t("gitPanel.changes")} <span class="badge-shape">{props.git.gitStatusEntries()?.length ?? "–"}</span></button>
+        <button disabled={!props.gitAvailable} aria-pressed={props.mode === "changes"} onClick={() => props.onModeChange("changes")}>{props.t("gitPanel.changes")}</button>
         <button disabled={!props.gitAvailable} aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button>
       </div>
+      <Show when={props.mode === "changes" && props.git.gitStatusEntries()}>
+        <span class="git-panel-count">{props.t("gitPanel.files", { count: props.git.gitStatusEntries()?.length ?? 0 })}</span>
+      </Show>
     </div>
     <Show when={error()}><div role="alert" class="p-3 text-error text-xs">{error()}</div></Show>
     <Show when={!props.canOpenFile}><p class="p-3 text-xs text-secondary">{props.t("instanceShell.gitChanges.noSessionSelected")}</p></Show>

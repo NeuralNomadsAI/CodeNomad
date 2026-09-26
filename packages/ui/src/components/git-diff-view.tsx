@@ -2,7 +2,8 @@ import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from 
 import { ArrowLeft, WrapText } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { serverApi } from "../lib/api-client"
-import { backgroundReads } from "../lib/background-read-queue"
+import { previewReads } from "../lib/background-read-queue"
+import { loadMonaco } from "../lib/monaco/setup"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../lib/filesystem-events"
 import type { FilePreviewTarget } from "../stores/files-preview"
 import DiffToolbar from "./instance/shell/right-panel/components/DiffToolbar"
@@ -30,10 +31,11 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     if (!props.active) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
+    void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
-      const result = await backgroundReads.run<{ before: string; after: string; isBinary?: boolean }>(request.signal, () => target.commit
+      const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean }>(request.signal, () => target.commit
         ? serverApi.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, request.signal)
         : serverApi.fetchWorktreeGitDiff(props.instanceId, target.slug, {
           path: target.path, originalPath: target.originalPath, scope: target.scope ?? "unstaged",

@@ -24,11 +24,11 @@ async function readGitBlobAsDiffText(resultPromise: Promise<GitResult>, missingO
   return result.stdout
 }
 
-async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0]): Promise<GitResult> {
+async function runGit(args: string[], cwd: string, acceptedExitCodes: number[] = [0], priority: "foreground" | "background" = "background"): Promise<GitResult> {
   try {
     // Preserve the previous streaming reader's unrestricted content size. Process
     // creation belongs to the worker, including per-untracked-file numstat reads.
-    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity }) }
+    return { ok: true, stdout: await runGitProcess(cwd, args, { maxBuffer: Infinity, priority }) }
   } catch (cause) {
     const result = cause as Error & { code?: string | number; stdout?: string; stderr?: string }
     const stdout = result.stdout ?? "", stderr = result.stderr ?? ""
@@ -271,7 +271,7 @@ function decodeGitShowResult(result: GitResult, missingOk = false): string {
 }
 
 async function readGitIndexBlob(workspaceFolder: string, normalizedPath: string): Promise<GitResult> {
-  return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder)
+  return runGit(["cat-file", "-p", `:${normalizedPath}`], workspaceFolder, [0], "foreground")
 }
 
 async function getTrackedDiffMetadata(params: {
@@ -290,7 +290,7 @@ async function getTrackedDiffMetadata(params: {
     args.push(params.normalizedOriginalPath)
   }
 
-  const result = await runGit(args, params.workspaceFolder)
+  const result = await runGit(args, params.workspaceFolder, [0], "foreground")
   if (!result.ok) {
     throw result.error
   }
@@ -304,7 +304,7 @@ async function getUntrackedDiffMetadata(params: {
   normalizedPath: string
 }): Promise<{ isBinary: boolean }> {
   const absolutePath = path.join(params.workspaceFolder, params.normalizedPath)
-  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], params.workspaceFolder, [0, 1])
+  const result = await runGit(["diff", "--numstat", "--no-index", "--", "/dev/null", absolutePath], params.workspaceFolder, [0, 1], "foreground")
   if (!result.ok) {
     throw result.error
   }
@@ -361,7 +361,7 @@ export async function getWorktreeGitDiff(params: {
 
   if (params.scope === "staged") {
     const [beforeResult, afterResult] = await Promise.all([
-      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder), true),
+      readGitBlobAsDiffText(runGit(["show", `HEAD:${normalizedOriginalPath ?? normalizedPath}`], params.workspaceFolder, [0], "foreground"), true),
       readGitBlobAsDiffText(readGitIndexBlob(params.workspaceFolder, normalizedPath), true),
     ])
 

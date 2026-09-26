@@ -25,6 +25,49 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+test("clicked previews bypass blocked background scans and follow the live palette", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
+  try {
+    await page.goto(url)
+    await page.getByRole("treeitem", { name: "package.json", exact: true }).waitFor()
+    await page.evaluate(async () => {
+      const queuePath = "/src/lib/background-read-queue.ts"
+      const { backgroundReads } = await import(queuePath)
+      const releases: Array<() => void> = []
+      for (let i = 0; i < 2; i++) void backgroundReads.run(new AbortController().signal,
+        () => new Promise<void>(resolve => releases.push(resolve)))
+      ;(window as any).releaseScans = () => releases.forEach(release => release())
+    })
+    const start = performance.now()
+    await page.getByRole("treeitem", { name: "package.json", exact: true }).click()
+    await page.locator(".workspace-file-view .view-line").first().waitFor({ timeout: 5000 })
+    console.log(`Cold file reader with blocked scans: ${Math.round(performance.now() - start)}ms`)
+    await page.evaluate(() => (window as any).releaseScans())
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--surface-base", "#24313f")
+      document.documentElement.style.setProperty("--status-success", "#68ac93")
+    })
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".monaco-editor-background")!).backgroundColor === "rgb(36, 49, 63)")
+    await page.getByRole("button", { name: /Changements/, exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "Changements", exact: true }).innerText(), "Changements")
+    await page.locator(".git-panel-count").waitFor()
+    assert.equal(await page.locator(".git-panel-switch button").nth(1).evaluate(el => getComputedStyle(el).borderInlineStartWidth), "1px")
+    assert.equal(await page.locator(".git-panel").evaluate(el => {
+      const sample = document.createElement("span")
+      sample.style.backgroundColor = "var(--surface-secondary)"
+      el.append(sample)
+      const matches = getComputedStyle(el).backgroundColor === getComputedStyle(sample).backgroundColor
+      sample.remove()
+      return matches
+    }), true)
+    await page.getByRole("button", { name: /src\/styles\/panels\/git-history.css/ }).click()
+    await page.locator(".line-insert").first().waitFor()
+    const inserted = await page.locator(".line-insert").first().evaluate(el => getComputedStyle(el).backgroundColor)
+    assert.match(inserted, /104, 172, 147/)
+    if (process.env.CODENOMAD_GIT_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/palette-diff.png` })
+  } finally { await page.close() }
+})
+
 test("reopening an ancestor revalidates its expanded descendants without reading collapsed folders", async () => {
   const page = await browser.newPage()
   try {
@@ -191,7 +234,7 @@ test("real SessionView keeps its composer while file previews are fenced by sess
 test("central diff inserts local lines and revision-qualified history into the real session composer", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
+  page.on("pageerror", error => errors.push(error.stack ?? error.message))
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(`${url}?session=1`)

@@ -16,7 +16,7 @@ function ensureLoaderScript(): Promise<void> {
     script.src = `${LOCAL_VS_ROOT}/loader.js`
     script.async = true
     script.onload = () => resolve()
-    script.onerror = () => reject(new Error("Failed to load Monaco AMD loader"))
+    script.onerror = () => { script.remove(); reject(new Error("Failed to load Monaco AMD loader")) }
     document.head.appendChild(script)
   })
 }
@@ -144,17 +144,11 @@ export async function loadMonaco(): Promise<MonacoApi> {
     // Load editor core.
     const [monaco] = await requireAsync(["vs/editor/editor.main"])
 
-    // Load language metadata so we can infer language IDs from paths.
-    // (This is small and should remain local for offline support.)
-    // Note: In Monaco 0.52.x, `vs/basic-languages/monaco.contribution` is bundled
-    // into `vs/editor/editor.main` already. Older builds had additional
-    // `vs/basic-languages/_.contribution` metadata, but that module isn't present
-    // in the current AMD bundle; attempting to load it can trigger a hard
-    // `Unexpected token '<'` if the server falls back to `index.html`.
-    await requireAsync(["vs/basic-languages/monaco.contribution"]).catch(() => [])
-
+    // Language metadata is already part of editor.main in our pinned Monaco.
+    // No extra module round trip is needed before displaying plain text.
     return (globalThis as any).monaco ?? monaco
   })()
 
-  return monacoPromise
+  try { return await monacoPromise }
+  catch (error) { monacoPromise = null; throw error }
 }
