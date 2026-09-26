@@ -7,7 +7,7 @@ import { getLogger } from "../logger"
 
 const sections = new Set<SettingsSectionId>([
   "general", "chat", "notifications", "speech", "remote", "opencode",
-  "providers", "sidecars", "config-files", "advanced", "info",
+  "providers", "usage", "sidecars", "config-files", "advanced", "info",
 ])
 
 export interface NativePreferencesRequest {

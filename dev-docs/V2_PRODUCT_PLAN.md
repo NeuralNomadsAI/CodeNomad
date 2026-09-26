@@ -5,16 +5,16 @@ The user requested eight individually reviewed PRs, all kept open and unmerged.
 Implementation is coordinated in one conversation. Each branch builds on the
 preceding reviewed branch; each PR describes only its own delta.
 
-| Order | Branch | Deliverable |
-| --- | --- | --- |
-| 1 | `feat/v2-01-code-mode` | Native execute script/call presentation |
-| 2 | `feat/v2-02-web-results` | Web search results and provider form |
-| 3 | `feat/v2-03-skills` | Explicit native skill attachments |
-| 4 | `feat/v2-04-web-settings` | Web search configuration and credentials |
-| 5 | `feat/v2-05-provider-accounts` | Individual provider accounts |
-| 6 | `feat/v2-06-plugin-updates` | Native plugin check/update controls |
-| 7 | `feat/v2-07-mcp-code-mode` | Per-server default/on/off Code Mode |
-| 8 | `feat/v2-08-usage` | Native usage dashboard |
+| Order | PR | Branch | Deliverable | Reviewed implementation head |
+| --- | --- | --- | --- | --- |
+| 1 | [#789](https://github.com/NeuralNomadsAI/CodeNomad/pull/789) | `feat/v2-01-code-mode` | Native execute script/call presentation | `aaee7d5a` — zero |
+| 2 | [#790](https://github.com/NeuralNomadsAI/CodeNomad/pull/790) | `feat/v2-02-web-results` | Web search results and provider form | `3e443abe` — zero |
+| 3 | [#791](https://github.com/NeuralNomadsAI/CodeNomad/pull/791) | `feat/v2-03-skills` | Explicit native skill attachments | `ea3b4ef6` — zero |
+| 4 | [#792](https://github.com/NeuralNomadsAI/CodeNomad/pull/792) | `feat/v2-04-web-settings` | Web search configuration and credentials | `c3b05383` — zero |
+| 5 | [#793](https://github.com/NeuralNomadsAI/CodeNomad/pull/793) | `feat/v2-05-provider-accounts` | Individual provider accounts | `ef172992` — zero |
+| 6 | [#794](https://github.com/NeuralNomadsAI/CodeNomad/pull/794) | `feat/v2-06-plugin-updates` | Native plugin check/update controls | `f7cbbf05` — zero |
+| 7 | [#795](https://github.com/NeuralNomadsAI/CodeNomad/pull/795) | `feat/v2-07-mcp-code-mode` | Per-server default/on/off Code Mode | `4f97fa6e` — zero |
+| 8 | [#796](https://github.com/NeuralNomadsAI/CodeNomad/pull/796) | `feat/v2-08-usage` | Native usage dashboard | `d47b75ca` — zero |
 
 Every PR needs focused tests, rendered evidence for UI, and an independent
 gatekeeper review published on GitHub. Findings are corrected and re-reviewed
@@ -22,6 +22,28 @@ until none remain. No PR is merged. Native mutations use isolated test data;
 the shared user daemon is not a test target. Runtime requirements follow
 demonstrated contracts, not the dependency pin. Track any adjustments and
 capability boundaries in the relevant PR rather than silently shrinking scope.
+
+## User feedback corrections
+
+The table above records the initial reviewed implementation heads. Follow-up
+reviews are published against the updated heads on the corresponding GitHub PRs.
+
+- #792 now names the search provider's role, explains automatic saves and labels
+  the default for all projects separately from the current-project override.
+  API keys are in a collapsed section explaining their service-wide scope and
+  independence from provider selection; environment connections are read-only.
+  Alpha in browser captures is synthetic fixture data, not a bundled provider.
+- #793 exposes individual controls for already-supported native credentials;
+  it does not introduce multi-credential storage. Its PR description now states
+  that distinction and the absence of per-session account selection.
+- #794 reserves refresh arrows for list refresh. Package checks use PackageSearch
+  and installation uses Download, with a pulse retaining the action icon while busy.
+- #796 is labelled Stats in English/French, with equivalent translations in all
+  other locales. Usage remains the provider subscription panel. Internal API and
+  persisted settings-section identities remain stable.
+
+Follow-up verification uses isolated Chromium fixtures, including the real
+Preferences screen; no shared daemon mutation or desktop relaunch is involved.
 
 ## Contract notes
 
@@ -81,6 +103,9 @@ through native invalidations and failed saves without automatic write replay.
 
 ## Plugin package updates
 
+PR #794 reached zero findings at `f7cbbf05` after stable ownership fencing:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/794#pullrequestreview-5326715646
+
 Native check/update validates package targets against the Location's fresh native
 inventory, and the native package cache is shared by all Locations. UI actions
 select one target (not a plugin ID), disclose shared scope in their tooltip, and
@@ -90,6 +115,10 @@ fixtures pass on 2.0.7 and 2.0.18: installed 1.0.0, detected 1.1.0, rejected an
 unknown target, updated and observed native reloading without location.reload.
 
 ## MCP Code Mode source controls
+
+PR #795 reached zero findings at `4f97fa6e`, including lower-priority declared
+source resolution and activity propagation through both production mount paths:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/795#pullrequestreview-5326743092
 
 The native default is on; false exposes direct tools, and removing the field
 restores the default. Global/Project controls edit only an existing declaration,
@@ -101,3 +130,85 @@ and fences stale Location responses. Isolated 2.0.7/2.0.18 validation covers nat
 global discovery/hot reload, three states, unchanged connection configuration,
 missing-source refusal and foreign-directory refusal. Project precedence is
 tested deterministically; disabled synthetic servers do not exercise MCP calls.
+
+## Native usage dashboard
+
+Usage is a Preferences section in browser, Electron and Tauri navigation. It
+explicitly aggregates the entire connected service, including independent clones
+and unrelated projects. After gatekeeper reproduced native project-ID collisions
+across independent clones, the user was asked whether to authorize service-wide
+aggregates or retain an unavailable folder-scoped dashboard. The user explicitly
+selected **Global au service**. The initial folder-scoped design was the
+assistant's choice and is retired, not represented as a native guarantee.
+
+The dedicated service-usage endpoint requires the authenticated application and a
+current workspace connection; no native project/directory selector is accepted.
+Stats always request tools:none, with explicit timezone and a maximum 366-day
+range. UI offers rolling 7/30/90/365-day windows,
+recorded tokens/cost, session/subsession/step counts, models and daily activity.
+Costs are native recorded values, not billing invoices or subscription quotas.
+No transcript fetch or background polling is used. Service scope is prominently
+displayed and translated in all locales.
+
+Isolated 2.0.7 and 2.0.18 fixtures create two repositories, a worktree and an
+independent same-history clone, generate through a loopback synthetic provider
+and verify explicit service totals, native tokens/models/activity and tools:none.
+Backend tests cover bounded inputs, client-supplied project/directory/tool
+rejection and late connection/workspace
+changes. Browser tests cover real Preferences reachability, narrow layout,
+period changes, failure reconciliation and stale/disposed requests. UI/server/
+Electron typechecks and native Preferences tests pass; Tauri allowlist updated,
+but no Tauri rebuild or native desktop relaunch is claimed for this series.
+
+## Series integration evidence and size signals
+
+Production UI build passes on the combined eight-feature head `a3388fee`.
+The cross-series shared-stylesheet browser run passed 21 scenarios on that head;
+the service-scope correction adds its own replacement regressions afterward.
+All eight PRs were confirmed open on GitHub; reviews for #789–#795 are attached
+to their exact current heads. Reviews use COMMENTED because the current GitHub
+account cannot approve its own PRs. Remote CI is not represented by these local
+results and was not continuously polled. The series worktree is
+`D:\CodeNomad\.codenomad\worktrees\v2-product-plan`; this conversation remains
+attached to `D:\CodeNomad`.
+
+Existing files touched above the repository's size guidance (approximate lines;
+recorded as refactor signals, without unrelated refactoring):
+
+| File | Lines |
+| --- | ---: |
+| `packages/server/src/server/http-server.ts` | 2,328 |
+| `packages/server/src/opencode/plugin-controls.ts` | 842 |
+| `packages/server/src/api-types.ts` | 696 |
+| `packages/server/src/server/__tests__/instance-proxy.test.ts` | 1,082 |
+| `packages/tauri-app/src-tauri/src/preferences_window.rs` | 664 |
+| `packages/ui/src/components/prompt-input.tsx` | 1,118 |
+| `packages/ui/src/components/provider-auth/provider-manager-modal.tsx` | 871 |
+| `packages/ui/src/components/session/session-view.tsx` | 700 |
+| `packages/ui/src/lib/api-client.ts` | 628 |
+| `packages/ui/src/lib/i18n/messages/{de,en,es,fr,he,ja,ne,ru,tr,zh-Hans}/settings.ts` | 704–718 each |
+| `packages/ui/src/stores/session-actions.ts` | 696 |
+| `packages/ui/src/stores/session-actions.test.ts` | 1,040 |
+
+## Final completion status
+
+All eight deliverables have reached zero actionable gatekeeper findings at the
+implementation heads recorded above. PR #796 was independently re-reviewed at
+`d47b75ca4dbc4e03a33205107a504b8cbc0831cd` after the user explicitly authorized
+service-wide usage. Its earlier physical-Git-family scope and clone-authority
+finding are resolved by that deliberate product-scope change, not by claiming
+native project IDs establish folder ownership.
+
+The final PR #796 pass independently passed 3 backend usage tests, 2 Chromium
+usage tests (including real Preferences), 7 native Preferences tests and the
+UI/server/Electron typechecks. Isolated OpenCode 2.0.7 and 2.0.18 fixtures each
+verified all four service sessions across a repository, its worktree, an unrelated
+repository and an independent same-history clone. The refreshed
+`C:\Users\Admin\AppData\Local\Temp\opencode\v2-service-usage.png` capture was inspected.
+No shared daemon/database, native desktop relaunch or Tauri build was involved.
+
+This final commit changes only this completion document; the implementation head
+remains `d47b75ca`. The concluding published gatekeeper review is pinned to the
+resulting documentation-only PR head and distinguishes these two revisions.
+GitHub verification confirmed PRs #789–#796 are all open, with #789–#795 retaining
+their exact-head zero-finding reviews. All eight PRs remain unmerged as requested.
