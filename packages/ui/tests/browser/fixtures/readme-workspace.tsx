@@ -17,7 +17,7 @@ import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
 const instanceId = "readme", sessionId = "workspace", directory = "/projects/atlas"
-const model = { providerID: "anthropic", id: "claude-sonnet-4-5" }
+const model = { providerID: "openai", id: "gpt-6-astra" }
 const time = Date.UTC(2026, 8, 25, 10)
 const tokens = { input: 18400, output: 3200, reasoning: 0, cache: { read: 12800, write: 0 } }
 const messages = [
@@ -80,7 +80,7 @@ addInstance(instance)
 sseManager.seedStatus(instanceId, "connected")
 setSessions(new Map([[instanceId, new Map(demoSessions.map(session => [session.id, session]))]]))
 setSessionPage(instanceId, demoSessions.filter(session => !session.parentId).map(session => session.id), false, true)
-setProviders(new Map([[instanceId, [{ id: model.providerID, name: "Anthropic", models: [{ id: model.id, name: "Claude Sonnet 4.5", providerId: model.providerID, limit: { context: 200000, output: 64000 }, cost: { input: 3, output: 15 } }] }]]]))
+setProviders(new Map([[instanceId, [{ id: model.providerID, name: "OpenAI", models: [{ id: model.id, name: "GPT-6 Astra", providerId: model.providerID, limit: { context: 200000, output: 64000 }, cost: { input: 3, output: 15 } }] }]]]))
 setAgents(new Map([[instanceId, [{ id: "build", name: "Build", mode: "primary", description: "Build and implement" }, { id: "explore", name: "Explore", mode: "subagent", description: "Explore the codebase" }]]]))
 ensureSessionExpanded(instanceId, sessionId)
 setActiveParentSession(instanceId, sessionId)
