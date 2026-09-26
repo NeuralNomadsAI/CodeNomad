@@ -4,6 +4,7 @@ import type { PluginControlScope } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
+import { RefreshCw } from "lucide-solid"
 
 export function McpCodeModeControls(props: { instanceId: string; directory: string; active?: boolean }) {
   const { t } = useI18n()
@@ -59,18 +60,17 @@ export function McpCodeModeControls(props: { instanceId: string; directory: stri
   return <details class="mcp-code-mode" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>{t("settings.mcpCodeMode.title")}</summary>
     <Show when={open()}>
-      <p>{t("settings.mcpCodeMode.hint")}</p>
-      <button type="button" class="selector-button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
+      <button type="button" class="files-header-icon-button" disabled={busy()} aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")} onClick={() => refresh()}><RefreshCw size={14} classList={{ "animate-spin": busy() }} /></button>
       <Show when={error()}><p role="alert">{t("settings.mcpCodeMode.error")}</p></Show>
       <For each={entries().map(entry => entry.server)}>{server => {
         const entry = () => entries().find(item => item.server === server)!
         return <div class="mcp-code-mode-server">
-          <strong>{server}</strong><span>{t("settings.mcpCodeMode.effective", { mode: t(`settings.mcpCodeMode.${mode(entry().effective)}`) })}</span>
+          <strong title={t("settings.mcpCodeMode.effective", { mode: t(`settings.mcpCodeMode.${mode(entry().effective)}`) })}>{server}</strong>
           <For each={entry().scopes.map(item => item.scope)}>{scope => {
             const source = () => entry().scopes.find(item => item.scope === scope)!
             return <label title={source().path}>
               <span>{t(`instanceServiceStatus.plugins.scope.${scope}`)}</span>
-              <select class="selector-trigger" aria-label={`${server} · ${t(`instanceServiceStatus.plugins.scope.${scope}`)}`} value={mode(source().mode)} disabled={busy()}
+              <select class="selector-trigger" title={t("settings.mcpCodeMode.hint")} aria-label={`${server} · ${t(`instanceServiceStatus.plugins.scope.${scope}`)}`} value={mode(source().mode)} disabled={busy()}
                 onChange={event => save(server, scope, event.currentTarget.value)}>
                 <For each={["default", "on", "off"]}>{value => <option value={value} selected={value === mode(source().mode)}>{t(`settings.mcpCodeMode.${value}`)}</option>}</For>
               </select>

@@ -9,6 +9,10 @@ test("MCP source controls persist three states, reconcile failures and fence lat
     await page.goto(fixture.url)
     await page.getByText("MCP Code Mode", { exact: true }).click()
     const select = page.getByLabel("fixture · Global", { exact: true })
+    await select.waitFor()
+    assert.equal(await page.locator(".mcp-code-mode p").count(), 0)
+    assert.ok(await select.getAttribute("title"))
+    assert.equal(await page.getByRole("button", { name: "Refresh", exact: true }).innerText(), "")
     for (const mode of ["off", "on", "default"]) {
       await select.selectOption(mode)
       await page.waitForFunction(() => !document.querySelector("select:disabled"))
