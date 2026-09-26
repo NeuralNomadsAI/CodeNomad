@@ -32,6 +32,8 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 tauri = { version = "2.5.2", features = ["test"] }

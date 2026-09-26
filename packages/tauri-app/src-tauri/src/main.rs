@@ -16,6 +16,7 @@ mod native_request;
 mod native_service_start;
 mod preferences_window;
 mod shutdown;
+mod updater_support;
 mod view_menu;
 mod windows_update;
 mod workspace_open;
@@ -1619,6 +1620,12 @@ fn main() {
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // The updater registers its state even when no signing key was injected,
+        // so a build without an updater configuration still starts. Every call is
+        // gated on an actual check, and a missing key surfaces as an error the
+        // caller turns into a release-page fallback.
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1703,6 +1710,10 @@ fn main() {
         .setup(move |app| {
             set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
+            eprintln!(
+                "[tauri-startup] in-place updates supported on this installation: {}",
+                updater_support::current_platform_support()
+            );
             let client_state = client_state::ClientState::initialize(
                 &app.handle(),
                 setup_scope.client_state_directory.as_deref(),
