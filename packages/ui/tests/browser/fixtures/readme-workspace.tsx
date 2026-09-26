@@ -14,13 +14,15 @@ import { setSessions, setSessionPage, setActiveSession, setActiveParentSession, 
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { LEFT_DRAWER_STORAGE_KEY, RIGHT_DRAWER_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import type { Session } from "../../../src/types/session"
+import { createReadmeHistory, projectNames, sessionTitles } from "./readme-workspace-data"
 import "../../../src/index.css"
 
 const instanceId = "readme", sessionId = "workspace", directory = "/projects/atlas"
 const model = { providerID: "openai", id: "gpt-6-astra" }
 const time = Date.UTC(2026, 8, 25, 10)
-const tokens = { input: 18400, output: 3200, reasoning: 0, cache: { read: 12800, write: 0 } }
-const messages = [
+const tokens = { input: 82400, output: 6200, reasoning: 0, cache: { read: 34200, write: 0 } }
+const messages: any[] = [
+  ...createReadmeHistory(model, time),
   { id: "msg_01", type: "user", time: { created: time }, text: "Add keyboard navigation to the project switcher. Keep the existing styling and cover the interaction with a browser test." },
   { id: "msg_02", type: "assistant", agent: "build", model, time: { created: time + 1000, completed: time + 2000 }, content: [
     { type: "text", text: "I'll check the existing focus behavior, add arrow-key navigation, then verify the interaction in the browser." },
@@ -32,10 +34,9 @@ const messages = [
   ] },
   { id: "msg_04", type: "idle", outcome: "completed", time: { created: time + 6000 } },
 ]
-const titles = ["Keyboard navigation", "Review focus behavior", "Browser regression tests", "Polish the settings panel", "Add project search", "Review API pagination", "Improve empty states", "Update the contributor guide"]
-const demoSessions: Session[] = titles.map((title, index) => ({
+const demoSessions: Session[] = sessionTitles.map((title, index) => ({
   id: index === 0 ? sessionId : `session-${index}`, instanceId, title,
-  parentId: index === 1 || index === 2 ? sessionId : null,
+  parentId: index === 4 ? "session-3" : index >= 1 && index <= 6 ? sessionId : index === 9 || index === 10 ? "session-8" : null,
   agent: index === 1 ? "explore" : "build", model: { providerId: model.providerID, modelId: model.id },
   status: "idle", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
   version: "1", projectID: "atlas", location: { directory }, cost: 0.18, tokens,
@@ -46,7 +47,11 @@ const client: any = {
     get: async () => demoSessions[0], list: async () => ({ data: demoSessions, cursor: {} }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
   },
-  message: { list: async () => ({ data: [...messages].reverse(), cursor: {} }) },
+  message: { list: async ({ cursor, limit = 200 }: { cursor?: string; limit?: number } = {}) => {
+    const end = cursor ? Number(cursor) : messages.length
+    const start = Math.max(0, end - limit)
+    return { data: messages.slice(start, end).reverse(), cursor: start ? { next: String(start) } : {} }
+  } },
   model: { default: async () => ({ data: model }) },
   shell: { list: async () => ({ data: [] }) },
   mcp: { status: async () => ({}) },
@@ -61,12 +66,22 @@ serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: dir
 serverApi.getPluginControls = async () => ({ location: { directory }, runtime: [], configured: { sources: [], rules: [] }, targets: [],
   controls: ["codenomad.automation", "codenomad-session-pruning"].map(id => ({ id, builtin: false, effective: "enabled", global: "enabled", project: "default" })),
 } as any)
-const entries = messages.map((message, seq) => ({ id: message.id, seq, type: message.type,
-  tools: message.type === "assistant" ? 1 : 0, reasoning: 0, ...(message.type === "assistant" ? { toolName: seq === 1 ? "read" : "shell" } : {}),
-}))
+const entries = messages.map((message, seq) => {
+  const tools = message.content?.filter((part: any) => part.type === "tool") ?? []
+  return { id: message.id, seq, type: message.type, tools: tools.length,
+    reasoning: message.content?.filter((part: any) => part.type === "reasoning").length ?? 0,
+    ...(tools.length ? { toolName: tools[0].name } : {}),
+  }
+})
 serverApi.fetchSessionOutline = async () => ({ status: "outline", total: entries.length, entries,
   checkpoints: [{ after: -1, through: entries.length - 1, digest: "0".repeat(64), changed: true }], cursor: null,
 } as any)
+serverApi.fetchOutlinePreviews = async (_instanceId, _sessionId, ids) => ({ status: "previews",
+  entries: messages.filter(message => ids.includes(message.id)).map(message => ({ id: message.id,
+    text: message.text ?? message.content?.filter((part: any) => part.type === "text").map((part: any) => part.text).join("\n\n") ?? "",
+    tools: message.content?.filter((part: any) => part.type === "tool").map((part: any) => part.name).join(", ") ?? "",
+  })),
+})
 
 await initializeClientState()
 writeClientLayoutValue(LEFT_DRAWER_STORAGE_KEY, "290")
@@ -83,6 +98,8 @@ setSessionPage(instanceId, demoSessions.filter(session => !session.parentId).map
 setProviders(new Map([[instanceId, [{ id: model.providerID, name: "OpenAI", models: [{ id: model.id, name: "GPT-6 Astra", providerId: model.providerID, limit: { context: 200000, output: 64000 }, cost: { input: 3, output: 15 } }] }]]]))
 setAgents(new Map([[instanceId, [{ id: "build", name: "Build", mode: "primary", description: "Build and implement" }, { id: "explore", name: "Explore", mode: "subagent", description: "Explore the codebase" }]]]))
 ensureSessionExpanded(instanceId, sessionId)
+ensureSessionExpanded(instanceId, "session-3")
+ensureSessionExpanded(instanceId, "session-8")
 setActiveParentSession(instanceId, sessionId)
 setActiveSession(instanceId, sessionId)
 await updatePreferences({ locale: "en", showMessageTimeline: true })
@@ -100,8 +117,9 @@ function CapturePreferences() {
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <CapturePreferences />
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
-    <InstanceTabs tabs={[{ id: "instance:readme", kind: "instance", instance },
-      { id: "instance:docs", kind: "instance", instance: { ...instance, id: "docs", projectName: "Documentation", folder: "/projects/docs" } }]}
+    <InstanceTabs tabs={projectNames.map((name, index) => ({ id: index === 0 ? "instance:readme" : `instance:project-${index}`, kind: "instance",
+      instance: index === 0 ? instance : { ...instance, id: `project-${index}`, projectName: name, folder: `/projects/${name.toLowerCase().replaceAll(" ", "-")}` },
+    }))}
       activeTabId="instance:readme" onSelect={() => {}} onClose={() => {}} onNew={() => {}} onMoveTab={() => {}} />
     <InstanceShell instance={instance} isActiveInstance escapeInDebounce={false} paletteCommands={() => []}
       onCloseSession={() => {}} onNewSession={() => {}} handleSidebarAgentChange={async () => {}}
