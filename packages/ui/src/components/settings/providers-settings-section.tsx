@@ -12,5 +12,5 @@ interface ProvidersSettingsSectionProps {
 export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> = (props) => {
   const instanceId = () => props.instanceId ?? activeInstanceId() ?? ""
   return <><ProviderManagerModal instanceId={instanceId()} location={props.location} embedded />
-    <WebSearchSettingsCard instanceId={instanceId()} location={props.location} /></>
+    <WebSearchSettingsCard instanceId={instanceId()} location={props.location} scope="global" /></>
 }

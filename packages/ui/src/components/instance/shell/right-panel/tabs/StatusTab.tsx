@@ -28,6 +28,7 @@ import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
+import { WebSearchSettingsCard } from "../../../../settings/websearch-settings-card"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -227,6 +228,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderYoloModeSection,
       renderProviderUsage,
       renderBackgroundProcesses,
+      renderWebSearch: () => <Show when={props.isActive() && isSectionExpanded("websearch")}>
+        <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="project" />
+      </Show>,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
         <InstanceServiceStatus
