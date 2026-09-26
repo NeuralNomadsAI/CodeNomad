@@ -18,6 +18,8 @@ import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { ProvidersSettingsSection } from "./settings/providers-settings-section"
+import { UsageSettingsSection } from "./settings/usage-settings-section"
+import { BarChart3 } from "lucide-solid"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
 import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
@@ -56,6 +58,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
+      { id: "usage", icon: BarChart3, label: t("settings.usage.title") },
       { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
       { id: "config-files", icon: FileCog, label: t("settings.nav.configFiles") },
       { id: "advanced", icon: Settings, label: t("settings.nav.advanced") },
@@ -88,6 +91,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <OpenCodeSettingsSection />
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+      case "usage":
+        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":

@@ -81,6 +81,9 @@ through native invalidations and failed saves without automatic write replay.
 
 ## Plugin package updates
 
+PR #794 reached zero findings at `f7cbbf05` after stable ownership fencing:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/794#pullrequestreview-5326715646
+
 Native check/update validates package targets against the Location's fresh native
 inventory, and the native package cache is shared by all Locations. UI actions
 select one target (not a plugin ID), disclose shared scope in their tooltip, and
@@ -90,6 +93,10 @@ fixtures pass on 2.0.7 and 2.0.18: installed 1.0.0, detected 1.1.0, rejected an
 unknown target, updated and observed native reloading without location.reload.
 
 ## MCP Code Mode source controls
+
+PR #795 reached zero findings at `4f97fa6e`, including lower-priority declared
+source resolution and activity propagation through both production mount paths:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/795#pullrequestreview-5326743092
 
 The native default is on; false exposes direct tools, and removing the field
 restores the default. Global/Project controls edit only an existing declaration,
@@ -101,3 +108,24 @@ and fences stale Location responses. Isolated 2.0.7/2.0.18 validation covers nat
 global discovery/hot reload, three states, unchanged connection configuration,
 missing-source refusal and foreign-directory refusal. Project precedence is
 tested deterministically; disabled synthetic servers do not exercise MCP calls.
+
+## Native usage dashboard
+
+Usage is a Preferences section in browser, Electron and Tauri navigation. Native
+session.stats accepts project scope, not a directory filter; the backend derives
+the project from an authorized native Location and checks its Git canonical root
+against current workspace ownership. Git-degraded/non-Git directories cannot be
+widened to native project scope. Stats always request tools:none, with explicit
+timezone and a maximum 366-day range. UI offers rolling 7/30/90/365-day windows,
+recorded tokens/cost, session/subsession/step counts, models and daily activity.
+Costs are native recorded values, not billing invoices or subscription quotas.
+No transcript fetch, background polling or global-daemon aggregate is exposed.
+
+Isolated 2.0.7 and 2.0.18 fixtures create two repositories and an owned worktree,
+generate through a loopback synthetic provider and verify owned project totals,
+foreign exclusion, native tokens/models/activity and tools:none. Backend tests
+cover bounded inputs, client-supplied project/tool rejection and late authority
+changes. Browser tests cover real Preferences reachability, narrow layout,
+period changes, failure reconciliation and stale/disposed requests. UI/server/
+Electron typechecks and native Preferences tests pass; Tauri allowlist updated,
+but no Tauri rebuild or native desktop relaunch is claimed for this series.
