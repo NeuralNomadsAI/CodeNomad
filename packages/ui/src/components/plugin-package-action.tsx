@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, onCleanup } from "solid-js"
-import { Download, RefreshCw } from "lucide-solid"
+import { Download, PackageSearch } from "lucide-solid"
 import type { PluginControlLocation, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
@@ -25,8 +25,8 @@ export function PluginPackageAction(props: { instanceId: string; location: Plugi
         if (captured === generation && props.active !== false) showToastNotification({ variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
       })
     }}>
-    <Show when={action() === "update" && !busy()} fallback={<RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": busy() }} aria-hidden="true" />}>
-      <Download class="h-3.5 w-3.5" aria-hidden="true" />
+    <Show when={action() === "update"} fallback={<PackageSearch class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />}>
+      <Download class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />
     </Show>
   </button></Show>
 }

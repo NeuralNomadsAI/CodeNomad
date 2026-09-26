@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { RefreshCw } from "lucide-solid"
 import type { IntegrationInfo, LocationRef } from "@opencode/client"
 import type { PluginControlScope, WebSearchSelection, WebSearchSettingsSnapshot } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
@@ -82,15 +83,20 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
     : value === false ? t("settings.websearch.off") : value === "random" ? t("settings.websearch.random")
       : providers().find(item => item.id === value)?.name ?? value
   return <section class="settings-card websearch-settings">
-    <h3>{t("toolCall.websearch.provider")}</h3>
-    <p>{t("settings.websearch.defaultHint")}</p>
-    <button type="button" class="selector-button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
+    <header class="websearch-settings-header">
+      <h3 class="settings-card-title">{t("settings.websearch.title")}</h3>
+      <button type="button" class="icon-button-compact" title={t("settings.providers.refresh")} aria-label={t("settings.providers.refresh")} disabled={busy()} onClick={() => refresh()}>
+        <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": busy() }} aria-hidden="true" />
+      </button>
+    </header>
+    <p class="settings-card-subtitle">{t("settings.websearch.description")}</p>
     <Show when={error()}><p role="alert">{t("settings.websearch.error")}</p></Show>
     <Show when={snapshot()}>{data => <>
-      <p>{t("settings.websearch.effective", { provider: label(data().effective) })}</p>
+      <p class="websearch-settings-effective">{t("settings.websearch.effective", { provider: label(data().effective) })}</p>
+      <div class="websearch-settings-scopes">
       <For each={data().scopes}>{entry => <label>
-        <span title={entry.path}>{t(`instanceServiceStatus.plugins.scope.${entry.scope}`)}</span>
-        <select class="selector-trigger" aria-label={t(`instanceServiceStatus.plugins.scope.${entry.scope}`)} disabled={busy()} value={encode(entry.selection)}
+        <span class="settings-form-label" title={entry.path}>{t(`settings.websearch.${entry.scope}`)}</span>
+        <select class="selector-trigger" aria-label={t(`settings.websearch.${entry.scope}`)} disabled={busy()} value={encode(entry.selection)}
           onChange={event => save(entry.scope, event.currentTarget.value)}>
           <option value="default" selected={entry.selection === null}>{t("settings.websearch.default")}</option>
           <option value="off" selected={entry.selection === false}>{t("settings.websearch.off")}</option>
@@ -101,8 +107,13 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
           </Show>
         </select>
       </label>}</For>
-      <h4>{t("settings.providers.apiKey.label")} · {t("instanceServiceStatus.plugins.scope.global")}</h4>
-      <label>{t("toolCall.websearch.provider")}
+      </div>
+      <p class="settings-card-subtitle">{t("settings.websearch.defaultHint")}</p>
+      <details class="websearch-settings-credentials">
+      <summary>{t("settings.websearch.credentials")}</summary>
+      <div class="websearch-settings-credentials-body">
+      <p class="settings-card-subtitle">{t("settings.websearch.credentialsHint")}</p>
+      <label><span class="settings-form-label">{t("toolCall.websearch.provider")}</span>
         <select class="selector-trigger" aria-label={t("toolCall.websearch.provider")} value={keyProvider()} disabled={busy()} onChange={event => { setKeyProvider(event.currentTarget.value); setKey("") }}>
           <option value="" selected={!keyProvider()}>{t("formRequest.selectPlaceholder")}</option>
           <For each={providers().filter(provider => integrations().some(item => item.id === provider.id && item.methods.some(method => method.type === "key")))}>
@@ -111,8 +122,8 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
         </select>
       </label>
       <Show when={integration()}>{access => <>
-        <For each={access().connections}>{connection => <div>
-          <span>{connection.type === "env" ? connection.name : connection.label}</span>
+        <For each={access().connections}>{connection => <div class="websearch-settings-connection">
+          <span>{connection.type === "env" ? t("settings.websearch.environment", { name: connection.name }) : connection.label}</span>
           <Show when={connection.type === "credential"}><button type="button" class="selector-button" disabled={busy()} onClick={() => {
             if (connection.type !== "credential") return
             const client = getRootClient(props.instanceId), credentialID = connection.id
@@ -126,6 +137,8 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
           void mutate(() => client.integration.connect.key({ integrationID, key: value }))
         }}>{t("settings.configFiles.actions.save")}</button>
       </>}</Show>
+      </div>
+      </details>
     </>}</Show>
   </section>
 }
