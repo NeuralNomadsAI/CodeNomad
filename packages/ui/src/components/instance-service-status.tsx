@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getActiveCatalogLocation } from "../stores/sessions"
 import { PluginActivationControls } from "./plugin-activation-controls"
+import { McpCodeModeControls } from "./mcp-code-mode-controls"
 
 const log = getLogger("session")
 
@@ -15,6 +16,7 @@ interface InstanceServiceStatusProps {
   sections?: ServiceSection[]
   showSectionHeadings?: boolean
   pluginsActive?: boolean
+  mcpActive?: boolean
   class?: string
   initialInstance?: Instance
 }
@@ -178,6 +180,9 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
             }}
           </For>
         </div>
+      </Show>
+      <Show when={mcpServers().length > 0}>
+        <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} active={props.mcpActive} />
       </Show>
     </section>
   )

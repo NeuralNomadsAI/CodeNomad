@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "प्रत्येक सर्भरको परिभाषा स्रोत सम्पादन गर्नुहोस्। पूर्वनिर्धारितमा Code Mode चल्छ; बन्द गर्दा उपकरणहरू सीधै देखिन्छन्। उच्च प्राथमिकताको परिभाषाले सर्भरको सम्पूर्ण कन्फिगरेसन बदल्छ।",
+  "settings.mcpCodeMode.default": "पूर्वनिर्धारित (चालु)",
+  "settings.mcpCodeMode.on": "चालु",
+  "settings.mcpCodeMode.off": "बन्द",
+  "settings.mcpCodeMode.effective": "प्रभावकारी: {mode}",
+  "settings.mcpCodeMode.error": "MCP सेटिङ असफल भयो। हालको अवस्था हेर्न रिफ्रेस गर्नुहोस्।",
   "settings.pluginPackages.check": "{target} का अद्यावधिक जाँच्नुहोस्",
   "settings.pluginPackages.update": "{target} अद्यावधिक गर्नुहोस्",
   "settings.pluginPackages.shared": "यो प्याकेज प्रयोग गर्ने सबै स्थानहरूको साझा OpenCode क्यास अद्यावधिक गर्छ।",

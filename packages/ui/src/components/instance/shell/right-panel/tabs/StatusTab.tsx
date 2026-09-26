@@ -227,7 +227,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderYoloModeSection,
       renderProviderUsage,
       renderBackgroundProcesses,
-      renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} mcpActive={props.isActive() && isSectionExpanded("mcp")} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (
         <InstanceServiceStatus
           initialInstance={props.instance}

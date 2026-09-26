@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "各サーバーの定義元を編集します。既定ではCode Modeを使用し、オフではツールを直接公開します。優先度の高い定義はサーバー設定全体を置き換えます。",
+  "settings.mcpCodeMode.default": "既定（オン）",
+  "settings.mcpCodeMode.on": "オン",
+  "settings.mcpCodeMode.off": "オフ",
+  "settings.mcpCodeMode.effective": "有効な設定: {mode}",
+  "settings.mcpCodeMode.error": "MCP設定に失敗しました。更新して現在の状態を確認してください。",
   "settings.pluginPackages.check": "{target} の更新を確認",
   "settings.pluginPackages.update": "{target} を更新",
   "settings.pluginPackages.shared": "このパッケージを使用する全ディレクトリの共有OpenCodeキャッシュを更新します。",

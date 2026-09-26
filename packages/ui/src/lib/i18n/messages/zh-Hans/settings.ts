@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "编辑声明各服务器的配置源。默认使用 Code Mode；关闭时直接提供工具。更高优先级的定义会替换整个服务器配置。",
+  "settings.mcpCodeMode.default": "默认（开启）",
+  "settings.mcpCodeMode.on": "开启",
+  "settings.mcpCodeMode.off": "关闭",
+  "settings.mcpCodeMode.effective": "生效状态：{mode}",
+  "settings.mcpCodeMode.error": "MCP 设置失败。请刷新以查看当前状态。",
   "settings.pluginPackages.check": "检查 {target} 的更新",
   "settings.pluginPackages.update": "更新 {target}",
   "settings.pluginPackages.shared": "在共享 OpenCode 缓存中为所有使用此包的位置更新该目标。",

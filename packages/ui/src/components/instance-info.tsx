@@ -167,7 +167,7 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
           </div>
         </Show>
 
-        <InstanceServiceStatus initialInstance={props.instance} pluginsActive={props.active} class="space-y-3" />
+        <InstanceServiceStatus initialInstance={props.instance} pluginsActive={props.active} mcpActive={props.active} class="space-y-3" />
 
         <Show when={isLoadingMetadata()}>
           <div class="text-xs text-muted py-1">

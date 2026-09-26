@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "Code Mode MCP",
+  "settings.mcpCodeMode.hint": "Modifiez la source déclarant chaque serveur. Par défaut, Code Mode est actif ; désactivé, les outils sont exposés directement. Une définition prioritaire remplace toute la configuration du serveur.",
+  "settings.mcpCodeMode.default": "Par défaut (actif)",
+  "settings.mcpCodeMode.on": "Activé",
+  "settings.mcpCodeMode.off": "Désactivé",
+  "settings.mcpCodeMode.effective": "Effectif : {mode}",
+  "settings.mcpCodeMode.error": "Échec du réglage MCP. Actualisez pour consulter l’état courant.",
   "settings.pluginPackages.check": "Vérifier les mises à jour de {target}",
   "settings.pluginPackages.update": "Mettre à jour {target}",
   "settings.pluginPackages.shared": "Met à jour cette cible dans le cache OpenCode partagé pour tous les dossiers qui l’utilisent.",

@@ -37,6 +37,8 @@ import { registerUsageRoutes } from "./routes/usage"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
+import { McpCodeMode } from "../opencode/mcp-code-mode"
+import { registerMcpCodeModeRoutes } from "./routes/mcp-code-mode"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
@@ -307,6 +309,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
+  registerMcpCodeModeRoutes(app, new McpCodeMode(configurationControls))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
