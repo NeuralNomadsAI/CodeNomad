@@ -130,7 +130,14 @@ export class BrowserController {
     return true
   }
 
-  removeOwner(owner: WebContents): void {
+  observeOwner(window: BrowserWindow): void {
+    // BrowserWindow's native getters throw once "closed" is emitted. Retain
+    // the owner identity while it is alive; cleanup only compares references.
+    const owner = window.webContents
+    window.once("closed", () => this.removeOwner(owner))
+  }
+
+  private removeOwner(owner: WebContents): void {
     for (const [id, registration] of this.registrations) {
       if (registration.owner === owner) this.registrations.delete(id)
     }
