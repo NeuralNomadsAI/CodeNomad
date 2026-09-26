@@ -82,15 +82,19 @@ export function ProviderAccounts(props: {
         const connection = () => connections().find(item => id === (item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`))!
         const [label, setLabel] = createSignal("")
         const [dirty, setDirty] = createSignal(false)
+        let editRevision = 0
         createEffect(() => { const item = connection(); if (!dirty()) setLabel(item.type === "credential" ? item.label : item.name) })
         return <div class="provider-account" data-account-id={id}>
           <span>{connection().type === "credential" ? (connection() as Extract<ConnectionInfo, { type: "credential" }>).label : (connection() as Extract<ConnectionInfo, { type: "env" }>).name}</span>
           <Show when={index() === 0}><span class="badge-shape">{t("settings.accounts.active")}</span></Show>
           <Show when={connection().type === "credential"} fallback={<span>{t("settings.providers.source.env")}</span>}>
             <input class="providers-input" aria-label={t("settings.accounts.label")} value={label()} maxlength={256} disabled={busy() || props.disabled}
-              onInput={event => { setDirty(true); setLabel(event.currentTarget.value) }} />
+              onInput={event => { editRevision++; setDirty(true); setLabel(event.currentTarget.value) }} />
             <button type="button" class="selector-button" disabled={busy() || props.disabled || !label().trim() || !dirty()}
-              onClick={() => { void run(id.slice(11), "rename", label()).then(saved => { if (saved) setDirty(false) }) }}>{t("settings.configFiles.actions.save")}</button>
+              onClick={() => {
+                const revision = editRevision
+                void run(id.slice(11), "rename", label()).then(saved => { if (saved && revision === editRevision) setDirty(false) })
+              }}>{t("settings.configFiles.actions.save")}</button>
             <button type="button" class="selector-button" disabled={busy() || props.disabled || index() === 0}
               onClick={() => void run(id.slice(11), "activate")}>{t("settings.accounts.activate")}</button>
             <button type="button" class="selector-button" disabled={busy() || props.disabled}
