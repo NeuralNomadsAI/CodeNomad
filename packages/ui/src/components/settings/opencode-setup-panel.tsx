@@ -1,5 +1,6 @@
 import { Show, type ParentProps } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { OpenCodeSetupProgress } from "./opencode-setup-progress"
 import { openCodeSetupStatus as status, openCodeSetupBusy as busy, openCodeSetupError, openCodeSetupCheckError,
   openCodeSetupChecking as checking, openCodeSetupAction as action, openCodeSetupFeedback, openCodeInstallationError,
   isOpenCodeConnected, canContinueOpenCodeSetup, continueOpenCodeSetup,
@@ -11,11 +12,11 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
   const progress = () => checking() ? "settings.opencode.update.checking"
     : action() === "install" ? "settings.opencode.update.updating"
       : action() ? `settings.opencode.setup.progress.${action()}` : undefined
-  return <div class="opencode-setup-panel" aria-busy={disabled()}>
+  return <><OpenCodeSetupProgress /><div class="opencode-setup-panel" aria-busy={disabled()}>
     <Show when={status()} fallback={<p role="status">{t(progress() ?? (openCodeSetupCheckError() ? "settings.opencode.setup.serviceError" : "settings.opencode.update.checking"))}</p>}>
       {data => <>
-        <p class="settings-toggle-title" role="status">{t(progress() ?? (openCodeSetupCheckError() ? "settings.opencode.setup.disconnected" : isOpenCodeConnected() ? "settings.opencode.setup.connected"
-          : data().state === "ready" ? "settings.opencode.setup.disconnected" : `settings.opencode.setup.${data().state}`))}</p>
+        <Show when={!busy()}><p class="settings-toggle-title" role="status">{t(progress() ?? (openCodeSetupCheckError() ? "settings.opencode.setup.disconnected" : isOpenCodeConnected() ? "settings.opencode.setup.connected"
+          : data().state === "ready" ? "settings.opencode.setup.disconnected" : `settings.opencode.setup.${data().state}`))}</p></Show>
         <div class="settings-info-grid">
           <div class="settings-info-row"><span>{t("settings.opencode.update.installed")}</span><span>{data().currentVersion ?? "—"}</span></div>
           <div class="settings-info-row"><span>{t("settings.opencode.setup.daemon")}</span><span>{data().daemonVersion ?? "—"}</span></div>
@@ -24,10 +25,10 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         <Show when={data().installationSource}>
           {source => <p class="settings-toggle-caption">{t(`settings.opencode.setup.source.${source()}`)}</p>}
         </Show>
-        <Show when={data().updateAvailable && data().latestVersion}>
+        <Show when={!busy() && data().updateAvailable && data().latestVersion}>
           <p role="status">{t("settings.opencode.update.available", { version: data().latestVersion ?? "" })}</p>
         </Show>
-        <Show when={data().updateAvailable === false && data().latestVersion && !data().checkError}>
+        <Show when={!busy() && data().updateAvailable === false && data().latestVersion && !data().checkError}>
           <p role="status">{t("settings.opencode.update.upToDate")}</p>
         </Show>
         <Show when={data().target === "wsl"}><p class="settings-toggle-caption">{t("settings.opencode.setup.wsl")}</p></Show>
@@ -88,5 +89,5 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
         </Show>
       </>}
     </Show>
-  </div>
+  </div></>
 }

@@ -5,6 +5,36 @@
   min-width: 0;
 }
 
+.opencode-setup-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--accent-primary);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.opencode-setup-progress p {
+  margin: 0;
+}
+
+.opencode-setup-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.opencode-setup-progress-heading svg {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.opencode-setup-reminder {
+  max-width: min(28rem, calc(100vw - 2rem));
+}
+
 .opencode-setup-panel p {
   margin: 0;
 }

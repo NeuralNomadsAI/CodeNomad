@@ -10,6 +10,8 @@ export const [openCodeSetupCheckError, setOpenCodeSetupCheckError] = createSigna
 export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<"installation_busy" | "installation_in_use">()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
 export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
+export const [openCodeSetupPhase, setOpenCodeSetupPhase] = createSignal<OpenCodeSetupAction | "check">()
+export const [openCodeSetupStartedAt, setOpenCodeSetupStartedAt] = createSignal<number>()
 export const [openCodeSetupChecking, setOpenCodeSetupChecking] = createSignal(false)
 export const [openCodeSetupFeedback, setOpenCodeSetupFeedback] = createSignal<"checked" | "reloaded">()
 let generation = 0
@@ -106,6 +108,8 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
   pending = undefined
   setOpenCodeSetupBusy(true)
   setOpenCodeSetupAction(action)
+  setOpenCodeSetupStartedAt(Date.now())
+  setOpenCodeSetupPhase(action === "install" ? "install" : "check")
   setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupError(false)
   setOpenCodeInstallationError(undefined)
@@ -114,9 +118,11 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
     if (epoch !== generation) return
     // Installation can leave an older shared daemon running. Re-read first so
     // restart remains a separate explicit action, never an implicit interruption.
+    setOpenCodeSetupPhase("check")
     await refreshOpenCodeSetup(true)
     if (epoch !== generation || openCodeSetupCheckError()) return
     if (action !== "restart" && (openCodeSetupStatus()?.serviceState === "restart_required" || openCodeSetupStatus()?.serviceState === "incompatible")) return
+    setOpenCodeSetupPhase(action === "install" ? "start" : action)
     const status = action === "reload" ? await serverApi.reloadOpenCodeConfiguration() : await serverApi.startOpenCode(action === "restart")
     if (epoch !== generation) return
     setOpenCodeSetupStatus(status)
@@ -132,6 +138,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
     }
   } catch (error) {
     if (epoch === generation) {
+      setOpenCodeSetupPhase("check")
       await refreshOpenCodeSetup(true)
       if (epoch !== generation) return
       setOpenCodeSetupError(true)
@@ -142,6 +149,8 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
   } finally {
     setOpenCodeSetupBusy(false)
     setOpenCodeSetupAction(undefined)
+    setOpenCodeSetupPhase(undefined)
+    setOpenCodeSetupStartedAt(undefined)
     if (epoch !== generation) void refreshOpenCodeSetup()
   }
 }
