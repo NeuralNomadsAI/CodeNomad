@@ -6,7 +6,7 @@ import { ChevronDown, PlugZap, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { getProviderModelVisibilityPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
+import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 import { ProviderManagerModal } from "./provider-auth/provider-manager-modal"
 import { isModelVisible, resolvePickerValue } from "../lib/model-visibility"
 const log = getLogger("session")
@@ -43,6 +43,14 @@ type PickerOption = FlatModel | ProviderHeaderOption
 
 const compareIds = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" })
 
+const compareModels = (left: FlatModel, right: FlatModel) => {
+  const providerComparison = compareIds(left.providerId, right.providerId)
+  if (providerComparison !== 0) return providerComparison
+  const nameComparison = compareIds(left.name, right.name)
+  if (nameComparison !== 0) return nameComparison
+  return compareIds(left.id, right.id)
+}
+
 const isProviderHeaderOption = (option: PickerOption): option is ProviderHeaderOption => "type" in option && option.type === "header"
 
 function ComboboxInputValue(props: { value: string }) {
@@ -55,17 +63,11 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
   const [isOpen, setIsOpen] = createSignal(false)
-  const [manualAll, setManualAll] = createSignal(false)
-  const [explicitFavorites, setExplicitFavorites] = createSignal(false)
-  const [autoFavoritesEligibleAtOpen, setAutoFavoritesEligibleAtOpen] = createSignal(false)
   const [inputValue, setInputValue] = createSignal("")
   const [openComboboxValue, setOpenComboboxValue] = createSignal<FlatModel | undefined>()
   const [providersModalOpen, setProvidersModalOpen] = createSignal(false)
   let searchInputRef!: HTMLInputElement
-  let listboxRef!: HTMLUListElement
   let suppressNextClose = false
-  let wasFavoritesOnlyEnabled = false
-  let wasCurrentModelFavorite = false
 
   createEffect(() => {
     if (instanceProviders().length === 0) {
@@ -94,15 +96,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
     ),
   ))
 
-  const sortedModels = createMemo<FlatModel[]>(() =>
-    [...allModels()].sort((left, right) => {
-      const providerComparison = compareIds(left.providerId, right.providerId)
-      if (providerComparison !== 0) return providerComparison
-      const nameComparison = compareIds(left.name, right.name)
-      if (nameComparison !== 0) return nameComparison
-      return compareIds(left.id, right.id)
-    }),
-  )
+  const sortedModels = createMemo<FlatModel[]>(() => [...allModels()].sort(compareModels))
 
   const favoriteKeySet = createMemo(() => {
     const result = new Set<string>()
@@ -139,16 +133,6 @@ export default function ModelSelector(props: ModelSelectorProps) {
     }
   })
 
-  const currentModelIsFavorite = createMemo(() => {
-    const current = props.currentModel
-    return favoriteKeySet().has(`${current.providerId}/${current.modelId}`)
-  })
-
-  const currentModelKey = createMemo(() => {
-    const current = props.currentModel
-    return `${current.providerId}/${current.modelId}`
-  })
-
   const currentModelName = () => currentModelValue()?.name ?? t("modelSelector.none")
 
   const currentModelLabel = createMemo(() =>
@@ -159,17 +143,18 @@ export default function ModelSelector(props: ModelSelectorProps) {
     && inputValue().trim().length > 0
     && inputValue() !== currentModelLabel())
 
-  const favoritesOnlyEnabled = createMemo(() => {
-    if (searchActive()) return false
-    if (manualAll()) return false
-    if (!hasFavorites()) return false
-    return explicitFavorites() || autoFavoritesEligibleAtOpen()
-  })
+  // The favorites/all choice is a stored preference, not a consequence of the
+  // active model, so it survives reopening the picker, model changes and
+  // searching. Searching only filters within the chosen mode.
+  const favoritesOnlyEnabled = createMemo(() => hasFavorites() && getFavoritesOnlyPreference())
 
+  // The active model always stays reachable, whichever mode is chosen, so a
+  // non-favorite selection never silently vanishes from its own picker.
   const visibleOptions = createMemo<FlatModel[]>(() => {
-    const visible = favoritesOnlyEnabled() ? favoriteModels() : sortedModels()
+    const modeModels = favoritesOnlyEnabled() ? favoriteModels() : sortedModels()
     const current = currentModelValue()
-    return current?.unavailable ? [current, ...visible] : visible
+    if (!current || modeModels.some((model) => model.key === current.key)) return modeModels
+    return [...modeModels, current].sort(compareModels)
   })
 
   const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {
@@ -239,39 +224,13 @@ export default function ModelSelector(props: ModelSelectorProps) {
 
   createEffect(() => {
     if (isOpen()) {
-      setManualAll(false)
-      setExplicitFavorites(false)
-      setAutoFavoritesEligibleAtOpen(hasFavorites() && currentModelIsFavorite())
       setTimeout(() => {
         searchInputRef?.focus()
         searchInputRef?.select()
       }, 100)
     } else {
       setInputValue(currentModelLabel())
-      setAutoFavoritesEligibleAtOpen(false)
     }
-  })
-
-  createEffect(() => {
-    if (!isOpen()) {
-      wasFavoritesOnlyEnabled = favoritesOnlyEnabled()
-      wasCurrentModelFavorite = currentModelIsFavorite()
-      return
-    }
-
-    const nowFavoritesOnlyEnabled = favoritesOnlyEnabled()
-    const nowCurrentModelFavorite = currentModelIsFavorite()
-
-    if (wasFavoritesOnlyEnabled && !nowFavoritesOnlyEnabled && wasCurrentModelFavorite && !nowCurrentModelFavorite) {
-      setTimeout(() => {
-        const key = currentModelKey()
-        const target = listboxRef?.querySelector(`[data-key="${key}"]`) as HTMLElement | null
-        target?.scrollIntoView({ block: "nearest" })
-      }, 0)
-    }
-
-    wasFavoritesOnlyEnabled = nowFavoritesOnlyEnabled
-    wasCurrentModelFavorite = nowCurrentModelFavorite
   })
 
   const preventListboxPress = (event: PointerEvent | MouseEvent) => {
@@ -287,16 +246,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const toggleFavoritesOnly = () => {
     if (!hasFavorites()) return
     if (searchActive()) return
-
-    if (favoritesOnlyEnabled()) {
-      setManualAll(true)
-      setExplicitFavorites(false)
-      setAutoFavoritesEligibleAtOpen(false)
-      return
-    }
-
-    setExplicitFavorites(true)
-    setManualAll(false)
+    setFavoritesOnlyPreference(!getFavoritesOnlyPreference())
   }
 
   const favoritesToggleLabel = () => t(favoritesOnlyEnabled()
@@ -452,7 +402,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                 </button>
               </div>
             </div>
-            <Combobox.Listbox ref={listboxRef} class="selector-listbox" />
+            <Combobox.Listbox class="selector-listbox" />
             <div class="selector-footer">
               <button
                 type="button"

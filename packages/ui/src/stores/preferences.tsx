@@ -185,6 +185,7 @@ interface UiStateBucket {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
     thinkingSelections?: Record<string, string>
+    favoritesOnly?: boolean
   }
 }
 
@@ -196,6 +197,7 @@ interface NormalizedUiState {
     recents: ModelPreference[]
     favorites: ModelPreference[]
     thinkingSelections: Record<string, string>
+    favoritesOnly: boolean
   }
 }
 
@@ -489,6 +491,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         return { providerId, modelId }
       }),
       thinkingSelections: normalizeRecord((source.models as any)?.thinkingSelections),
+      favoritesOnly: (source.models as any)?.favoritesOnly === true,
     },
   }
 }
@@ -1053,6 +1056,16 @@ function toggleFavoriteModelPreference(model: ModelPreference): void {
   void patchStateOwner("ui", { models: { favorites: updated } }).catch((error) => log.error("Failed to update model favorites", error))
 }
 
+function getFavoritesOnlyPreference(): boolean {
+  return uiState().models.favoritesOnly
+}
+
+function setFavoritesOnlyPreference(enabled: boolean): void {
+  if (getFavoritesOnlyPreference() === enabled) return
+  void patchStateOwner("ui", { models: { favoritesOnly: enabled } })
+    .catch((error) => log.error("Failed to update favorites-only model mode", error))
+}
+
 function getModelThinkingSelection(model: { providerId: string; modelId: string }): string | undefined {
   if (!model.providerId || !model.modelId) return undefined
   return uiState().models.thinkingSelections[getModelKey(model)]
@@ -1230,6 +1243,8 @@ interface ConfigContextValue {
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
   toggleFavoriteModelPreference: typeof toggleFavoriteModelPreference
+  getFavoritesOnlyPreference: typeof getFavoritesOnlyPreference
+  setFavoritesOnlyPreference: typeof setFavoritesOnlyPreference
   getModelThinkingSelection: typeof getModelThinkingSelection
   setModelThinkingSelection: typeof setModelThinkingSelection
 
@@ -1303,6 +1318,8 @@ const configContextValue: ConfigContextValue = {
   addRecentModelPreference,
   isFavoriteModelPreference,
   toggleFavoriteModelPreference,
+  getFavoritesOnlyPreference,
+  setFavoritesOnlyPreference,
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
@@ -1404,6 +1421,8 @@ export {
   addRecentModelPreference,
   isFavoriteModelPreference,
   toggleFavoriteModelPreference,
+  getFavoritesOnlyPreference,
+  setFavoritesOnlyPreference,
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,

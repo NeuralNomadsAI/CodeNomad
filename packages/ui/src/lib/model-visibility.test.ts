@@ -95,7 +95,7 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   assert.match(source, /id: `\$\{current\.providerId\}\/\$\{current\.id\}`/)
   const grouping = source.slice(source.indexOf("const groupedVisibleOptions"), source.indexOf("const pickerOptions"))
   const openEffectStart = source.indexOf("createEffect(() => {", source.indexOf("const customFilter"))
-  const openEffect = source.slice(openEffectStart, source.indexOf("createEffect(() => {", openEffectStart + 1))
+  const openEffect = source.slice(openEffectStart, source.indexOf("const preventListboxPress", openEffectStart))
   const kobalteOnInput = kobalteInput.slice(kobalteInput.indexOf("const onInput:"), kobalteInput.indexOf("const onKeyDown:"))
   assert.doesNotMatch(grouping, /inputValue|query/)
   assert.doesNotMatch(openEffect.slice(openEffect.indexOf("if (isOpen())"), openEffect.indexOf("} else")), /setInputValue/)
@@ -109,6 +109,36 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   const footer = source.slice(source.indexOf('<div class="selector-footer">'), source.indexOf("</Combobox.Content>"))
   assert.doesNotMatch(footer, /toggleFavoritesOnly/)
   assert.doesNotMatch(footer, /favoritesOnly\.showAll/)
+})
+
+test("the favorites mode is a stored preference that never follows the active model", () => {
+  const source = fs.readFileSync(new URL("../components/model-selector.tsx", import.meta.url), "utf8")
+  const mode = source.slice(source.indexOf("const favoritesOnlyEnabled"), source.indexOf("const visibleOptions"))
+  const visible = source.slice(source.indexOf("const visibleOptions"), source.indexOf("const groupedVisibleOptions"))
+  const toggle = source.slice(source.indexOf("const toggleFavoritesOnly"), source.indexOf("const favoritesToggleLabel"))
+
+  // The effective mode is the stored preference, independent of search and model.
+  assert.match(mode, /createMemo\(\(\) => hasFavorites\(\) && getFavoritesOnlyPreference\(\)\)/)
+  assert.doesNotMatch(mode, /searchActive|currentModelIsFavorite/)
+
+  // The active model is always part of the listed options of the chosen mode.
+  assert.match(visible, /const modeModels = favoritesOnlyEnabled\(\) \? favoriteModels\(\) : sortedModels\(\)/)
+  assert.match(visible, /if \(!current \|\| modeModels\.some\(\(model\) => model\.key === current\.key\)\) return modeModels/)
+  assert.match(visible, /return \[\.\.\.modeModels, current\]\.sort\(compareModels\)/)
+
+  // The toggle writes the preference instead of per-open state.
+  assert.match(toggle, /setFavoritesOnlyPreference\(!getFavoritesOnlyPreference\(\)\)/)
+  for (const removed of [
+    "setManualAll", "setExplicitFavorites", "autoFavoritesEligibleAtOpen",
+    "wasFavoritesOnlyEnabled", "wasCurrentModelFavorite", "currentModelIsFavorite",
+  ]) {
+    assert.doesNotMatch(source, new RegExp(removed))
+  }
+
+  // Normalization only accepts a real boolean for the stored mode.
+  const preferences = fs.readFileSync(new URL("../stores/preferences.tsx", import.meta.url), "utf8")
+  assert.match(preferences, /favoritesOnly: \(source\.models as any\)\?\.favoritesOnly === true/)
+  assert.match(preferences, /models: \{\s*recents: ModelPreference\[\]\s*favorites: ModelPreference\[\]\s*thinkingSelections: Record<string, string>\s*favoritesOnly: boolean\s*\}/)
 })
 
 test("provider auth keeps its catalog location across deferred operation steps", () => {
