@@ -73,6 +73,7 @@ describe("right panel plugin manifests", () => {
       renderBackgroundProcesses: render,
       renderMcpStatus: render,
       renderPluginStatus: render,
+      renderWebSearch: render,
     })
 
     const rightPanelModule = rightPanel.create(host)
@@ -86,6 +87,7 @@ describe("right panel plugin manifests", () => {
       "background-processes",
       "mcp",
       "plugins",
+      "websearch",
     ])
   })
 })

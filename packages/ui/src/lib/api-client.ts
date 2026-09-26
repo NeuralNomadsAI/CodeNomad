@@ -345,6 +345,12 @@ export const serverApi = {
     if (location.workspaceID) params.set("workspaceID", location.workspaceID)
     return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
   },
+  getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
+  },
+  setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+  },
   setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
     return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
       method: "PATCH",

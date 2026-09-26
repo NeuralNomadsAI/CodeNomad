@@ -36,6 +36,8 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
+import { WebSearchSettings } from "../opencode/websearch-settings"
+import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -302,9 +304,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerPluginControlRoutes(app, {
-    controls: new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger }),
-  })
+  const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
+  registerPluginControlRoutes(app, { controls: configurationControls })
+  registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
