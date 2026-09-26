@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "ברירת מחדל / בירושה",
+  "settings.websearch.off": "מושבת",
+  "settings.websearch.random": "ספק אוטומטי",
+  "settings.websearch.defaultHint": "ברירת המחדל משתמשת בהגדרות בירושה או בבחירת החיפוש השמורה ב-OpenCode. הגדרת הפרויקט קודמת להגדרה הכללית.",
+  "settings.websearch.effective": "הגדרה פעילה: {provider}",
+  "settings.websearch.error": "לא ניתן לקרוא או לעדכן את הגדרות החיפוש. רענן כדי לנסות שוב.",
   "settings.opencode.setup.installation_busy": "התקנה אחרת מחזיקה בנעילת ההתקנה של OpenCode. יש לנסות שוב לאחר סיומה. אם היא נקטעה, מיקום הנעילה מופיע ביומן השרת.",
   "settings.opencode.setup.installation_in_use": "קובץ ההפעלה של OpenCode נמצא בשימוש או אינו ניתן לכתיבה. העדכון נדחה לפני שינוי ההתקנה. יש לנסות שוב כשהקובץ זמין.",
   "settings.opencode.setup.source.path": "קובץ ההפעלה נמצא ב-PATH של השרת.",

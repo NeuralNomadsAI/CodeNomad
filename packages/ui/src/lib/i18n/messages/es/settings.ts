@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "Predeterminado / heredado",
+  "settings.websearch.off": "Desactivado",
+  "settings.websearch.random": "Proveedor automático",
+  "settings.websearch.defaultHint": "Se usa la configuración heredada o la elección guardada en OpenCode. Proyecto tiene prioridad sobre Global.",
+  "settings.websearch.effective": "Configuración efectiva: {provider}",
+  "settings.websearch.error": "No se pudo leer o actualizar la búsqueda web. Actualice para reintentar.",
   "settings.opencode.setup.installation_busy": "Otra instalación mantiene el bloqueo de OpenCode. Reintenta cuando termine. Si se interrumpió, consulta la ubicación del bloqueo en el registro del servidor.",
   "settings.opencode.setup.installation_in_use": "El ejecutable de OpenCode está en uso o no permite escritura. La actualización se aplazó antes de modificar la instalación. Reintenta cuando esté disponible.",
   "settings.opencode.setup.source.path": "Ejecutable encontrado en el PATH del servidor.",

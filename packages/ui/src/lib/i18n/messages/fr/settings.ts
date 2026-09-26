@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "Par défaut / hérité",
+  "settings.websearch.off": "Désactivé",
+  "settings.websearch.random": "Fournisseur automatique",
+  "settings.websearch.defaultHint": "Le choix par défaut utilise la configuration héritée ou votre choix de recherche enregistré dans OpenCode. Le réglage Projet prévaut sur Global.",
+  "settings.websearch.effective": "Configuration effective : {provider}",
+  "settings.websearch.error": "Lecture ou mise à jour des réglages web impossible. Actualisez pour réessayer.",
   "settings.opencode.setup.installation_busy": "Une autre installation détient le verrou d’installation d’OpenCode. Réessayez après sa fin. Si elle a été interrompue, le journal du serveur indique l’emplacement du verrou.",
   "settings.opencode.setup.installation_in_use": "L’exécutable OpenCode est utilisé ou non modifiable. La mise à jour a été différée avant toute modification de l’installation. Réessayez lorsque l’exécutable sera disponible.",
   "settings.opencode.setup.source.path": "Exécutable trouvé dans le PATH du serveur.",

@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "Varsayılan / devralınan",
+  "settings.websearch.off": "Devre dışı",
+  "settings.websearch.random": "Otomatik sağlayıcı",
+  "settings.websearch.defaultHint": "Varsayılan, devralınan ayarları veya OpenCode arama seçimini kullanır. Proje ayarı Global ayardan önceliklidir.",
+  "settings.websearch.effective": "Etkin yapılandırma: {provider}",
+  "settings.websearch.error": "Web arama ayarları okunamadı veya güncellenemedi. Tekrar denemek için yenileyin.",
   "settings.opencode.setup.installation_busy": "Başka bir kurulum OpenCode kurulum kilidini tutuyor. Bittiğinde yeniden deneyin. Kesintiye uğradıysa kilidin konumu için sunucu günlüğüne bakın.",
   "settings.opencode.setup.installation_in_use": "OpenCode yürütülebilir dosyası kullanımda veya yazılabilir değil. Kurulum değiştirilmeden güncelleme ertelendi. Dosya kullanılabilir olduğunda yeniden deneyin.",
   "settings.opencode.setup.source.path": "Yürütülebilir dosya sunucunun PATH değişkeninde bulundu.",

@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "Standard / geerbt",
+  "settings.websearch.off": "Deaktiviert",
+  "settings.websearch.random": "Automatischer Anbieter",
+  "settings.websearch.defaultHint": "Standard verwendet geerbte Einstellungen oder die gespeicherte OpenCode-Suchauswahl. Projekt überschreibt Global.",
+  "settings.websearch.effective": "Wirksame Konfiguration: {provider}",
+  "settings.websearch.error": "Websucheinstellungen konnten nicht gelesen oder geändert werden. Bitte aktualisieren.",
   "settings.opencode.setup.installation_busy": "Eine andere Installation hält die OpenCode-Installationssperre. Nach deren Abschluss erneut versuchen. Bei einem Abbruch steht der Sperrpfad im Serverprotokoll.",
   "settings.opencode.setup.installation_in_use": "Die OpenCode-Datei wird verwendet oder ist nicht beschreibbar. Das Update wurde vor Änderungen zurückgestellt. Erneut versuchen, sobald die Datei verfügbar ist.",
   "settings.opencode.setup.source.path": "Programm im PATH des Servers gefunden.",

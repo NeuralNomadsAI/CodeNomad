@@ -297,6 +297,17 @@ export interface ConfigFileContentRequest {
 }
 
 export type PluginControlScope = "global" | "project"
+export type WebSearchSelection = string | false | null
+export interface WebSearchSettingsSnapshot {
+  location: PluginControlLocation
+  effective: WebSearchSelection
+  scopes: Array<{ scope: PluginControlScope; path: string; selection: WebSearchSelection }>
+}
+export interface WebSearchSettingsMutation {
+  location: PluginControlLocation
+  scope: PluginControlScope
+  provider: WebSearchSelection
+}
 export type PluginConfigScope = PluginControlScope | "other" | "virtual"
 
 export interface PluginControlLocation {

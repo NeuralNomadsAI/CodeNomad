@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "По умолчанию / наследуется",
+  "settings.websearch.off": "Отключено",
+  "settings.websearch.random": "Автоматический провайдер",
+  "settings.websearch.defaultHint": "Используются унаследованные настройки или сохранённый выбор поиска OpenCode. Настройки проекта имеют приоритет над глобальными.",
+  "settings.websearch.effective": "Действующая конфигурация: {provider}",
+  "settings.websearch.error": "Не удалось прочитать или обновить настройки поиска. Обновите для повтора.",
   "settings.opencode.setup.installation_busy": "Другая установка удерживает блокировку OpenCode. Повторите после её завершения. Если она прервана, путь блокировки указан в журнале сервера.",
   "settings.opencode.setup.installation_in_use": "Исполняемый файл OpenCode используется или недоступен для записи. Обновление отложено до изменения установки. Повторите, когда файл станет доступен.",
   "settings.opencode.setup.source.path": "Исполняемый файл найден в PATH сервера.",

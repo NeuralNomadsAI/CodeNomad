@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "Default / inherited",
+  "settings.websearch.off": "Disabled",
+  "settings.websearch.random": "Automatic provider",
+  "settings.websearch.defaultHint": "Default uses inherited configuration or your previously saved OpenCode search choice. A Project override takes precedence over Global.",
+  "settings.websearch.effective": "Effective configuration: {provider}",
+  "settings.websearch.error": "Unable to update or read web search settings. Refresh to retry.",
   "settings.opencode.setup.installation_busy": "Another installation holds the OpenCode installation lock. Retry when it finishes. If it was interrupted, check the server log for the lock location.",
   "settings.opencode.setup.installation_in_use": "The OpenCode executable is in use or not writable. The update was deferred before changing the installation. Retry once the executable is available.",
   "settings.opencode.setup.source.path": "Executable found in the server's PATH.",

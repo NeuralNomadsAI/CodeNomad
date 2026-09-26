@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "पूर्वनिर्धारित / विरासत",
+  "settings.websearch.off": "निष्क्रिय",
+  "settings.websearch.random": "स्वचालित प्रदायक",
+  "settings.websearch.defaultHint": "पूर्वनिर्धारितले विरासत सेटिङ वा OpenCode मा सुरक्षित खोज विकल्प प्रयोग गर्छ। परियोजना सेटिङले ग्लोबललाई उछिन्छ।",
+  "settings.websearch.effective": "प्रभावकारी सेटिङ: {provider}",
+  "settings.websearch.error": "वेब खोज सेटिङ पढ्न वा अद्यावधिक गर्न सकिएन। पुनः प्रयास गर्न रिफ्रेस गर्नुहोस्।",
   "settings.opencode.setup.installation_busy": "अर्को स्थापनाले OpenCode स्थापना लक लिएको छ। सकिएपछि फेरि प्रयास गर्नुहोस्। बीचमै रोकिएको भए लकको स्थान सर्भर लगमा हेर्नुहोस्।",
   "settings.opencode.setup.installation_in_use": "OpenCode कार्यान्वयनयोग्य फाइल प्रयोगमा छ वा लेख्न मिल्दैन। स्थापना परिवर्तन गर्नुअघि अद्यावधिक स्थगित गरियो। फाइल उपलब्ध भएपछि फेरि प्रयास गर्नुहोस्।",
   "settings.opencode.setup.source.path": "सर्भरको PATH मा कार्यान्वयनयोग्य फाइल भेटियो।",

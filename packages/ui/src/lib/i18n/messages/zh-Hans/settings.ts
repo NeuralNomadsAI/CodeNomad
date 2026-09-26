@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.websearch.default": "默认 / 继承",
+  "settings.websearch.off": "已禁用",
+  "settings.websearch.random": "自动选择提供商",
+  "settings.websearch.defaultHint": "默认使用继承的配置或 OpenCode 中保存的搜索选择。项目设置优先于全局设置。",
+  "settings.websearch.effective": "有效配置：{provider}",
+  "settings.websearch.error": "无法读取或更新搜索设置。请刷新以重试。",
   "settings.opencode.setup.installation_busy": "另一个安装进程持有 OpenCode 安装锁。请在其完成后重试。如果安装已中断，请在服务器日志中查看锁的位置。",
   "settings.opencode.setup.installation_in_use": "OpenCode 可执行文件正在使用或不可写。更新已在更改安装之前推迟。请在文件可用后重试。",
   "settings.opencode.setup.source.path": "已在服务器 PATH 中找到可执行文件。",
