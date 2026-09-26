@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "ערוך את מקור הגדרת השרת. ברירת המחדל מפעילה Code Mode; כיבוי חושף כלים ישירות. הגדרה בעדיפות גבוהה מחליפה את כל תצורת השרת.",
+  "settings.mcpCodeMode.default": "ברירת מחדל (מופעל)",
+  "settings.mcpCodeMode.on": "מופעל",
+  "settings.mcpCodeMode.off": "כבוי",
+  "settings.mcpCodeMode.effective": "בפועל: {mode}",
+  "settings.mcpCodeMode.error": "עדכון הגדרת MCP נכשל. רענן לצפייה במצב הנוכחי.",
   "settings.pluginPackages.check": "בדוק עדכונים עבור {target}",
   "settings.pluginPackages.update": "עדכן את {target}",
   "settings.pluginPackages.shared": "מעדכן את החבילה במטמון המשותף של OpenCode לכל המיקומים המשתמשים בה.",

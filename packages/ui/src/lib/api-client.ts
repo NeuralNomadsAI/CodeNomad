@@ -348,6 +348,12 @@ export const serverApi = {
   getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
   },
+  getMcpCodeMode(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").McpCodeModeEntry[]> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/mcp-code-mode?${new URLSearchParams({ directory })}`)
+  },
+  setMcpCodeMode(instanceId: string, payload: { location: { directory: string }; scope: "global" | "project"; server: string; mode: boolean | null }): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/mcp-code-mode`, { method: "PUT", body: JSON.stringify(payload) })
+  },
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
   },

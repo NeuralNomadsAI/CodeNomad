@@ -684,3 +684,8 @@ export type {
   OpenCodeBinary,
 }
 export type { PruneRequest, PruneResult } from "./opencode/session-pruning/contract"
+export interface McpCodeModeEntry {
+  server: string
+  effective: boolean
+  scopes: Array<{ scope: PluginControlScope; path: string; mode: boolean | null }>
+}

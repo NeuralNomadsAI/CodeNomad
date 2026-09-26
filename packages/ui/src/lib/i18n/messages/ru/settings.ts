@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "Измените источник определения сервера. По умолчанию Code Mode включён; при отключении инструменты доступны напрямую. Приоритетное определение заменяет всю конфигурацию сервера.",
+  "settings.mcpCodeMode.default": "По умолчанию (вкл.)",
+  "settings.mcpCodeMode.on": "Включён",
+  "settings.mcpCodeMode.off": "Выключен",
+  "settings.mcpCodeMode.effective": "Действует: {mode}",
+  "settings.mcpCodeMode.error": "Не удалось изменить MCP. Обновите текущее состояние.",
   "settings.pluginPackages.check": "Проверить обновления {target}",
   "settings.pluginPackages.update": "Обновить {target}",
   "settings.pluginPackages.shared": "Обновляет пакет в общем кэше OpenCode для всех использующих его каталогов.",

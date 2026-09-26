@@ -1,4 +1,11 @@
 export const settingsMessages = {
+  "settings.mcpCodeMode.title": "MCP Code Mode",
+  "settings.mcpCodeMode.hint": "Sunucuyu tanımlayan kaynağı düzenleyin. Varsayılan Code Mode kullanır; kapalıyken araçlar doğrudan sunulur. Yüksek öncelikli tanımlar tüm sunucu yapılandırmasını değiştirir.",
+  "settings.mcpCodeMode.default": "Varsayılan (açık)",
+  "settings.mcpCodeMode.on": "Açık",
+  "settings.mcpCodeMode.off": "Kapalı",
+  "settings.mcpCodeMode.effective": "Etkin: {mode}",
+  "settings.mcpCodeMode.error": "MCP ayarı başarısız oldu. Güncel durum için yenileyin.",
   "settings.pluginPackages.check": "{target} güncellemelerini denetle",
   "settings.pluginPackages.update": "{target} güncelle",
   "settings.pluginPackages.shared": "Paketi kullanan tüm konumlar için paylaşılan OpenCode önbelleğini günceller.",

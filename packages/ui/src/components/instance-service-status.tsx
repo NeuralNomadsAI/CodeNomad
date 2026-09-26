@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getActiveCatalogLocation } from "../stores/sessions"
 import { PluginActivationControls } from "./plugin-activation-controls"
+import { McpCodeModeControls } from "./mcp-code-mode-controls"
 
 const log = getLogger("session")
 
@@ -179,6 +180,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
           </For>
         </div>
       </Show>
+      <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} />
     </section>
   )
 

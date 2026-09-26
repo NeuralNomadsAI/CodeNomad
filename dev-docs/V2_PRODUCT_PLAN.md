@@ -68,6 +68,10 @@ user config; project precedence is covered by deterministic backend tests.
 
 ## Provider account contract
 
+PR #793 reached zero findings at `ef172992` after fixing parent remounts,
+external activation invalidation and late save acknowledgments:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/793#pullrequestreview-5326686059
+
 Native integration connections are ordered with the active credential first,
 followed by other credentials and environment sources. Isolated 2.0.7 and
 2.0.18 fixtures validate multiple key creation, activation, rename and individual
@@ -84,3 +88,16 @@ retain target-level pending admission across component/view lifetimes. Local,
 builtin and SDK sources do not offer package updates. Isolated local-registry
 fixtures pass on 2.0.7 and 2.0.18: installed 1.0.0, detected 1.1.0, rejected an
 unknown target, updated and observed native reloading without location.reload.
+
+## MCP Code Mode source controls
+
+The native default is on; false exposes direct tools, and removing the field
+restores the default. Global/Project controls edit only an existing declaration,
+since native precedence replaces the entire same-name server object. No cloning
+of inherited credentials and no reconstruction through mcp.add. Targeted JSONC
+edits reuse document conflict/ownership/deletion/connection/WSL admission.
+The compact disclosure loads only while open, reconciles native events/reconnects,
+and fences stale Location responses. Isolated 2.0.7/2.0.18 validation covers native
+global discovery/hot reload, three states, unchanged connection configuration,
+missing-source refusal and foreign-directory refusal. Project precedence is
+tested deterministically; disabled synthetic servers do not exercise MCP calls.
