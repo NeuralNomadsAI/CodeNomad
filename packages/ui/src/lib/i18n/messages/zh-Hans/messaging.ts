@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "技能",
+  "promptInput.skills.remove": "移除技能 {name}",
+  "promptInput.skills.loading": "正在加载技能…",
+  "promptInput.skills.select": "附加技能…",
+  "promptInput.skills.error": "无法加载技能。请关闭后重新打开以重试。",
+  "promptInput.skills.empty": "此目录中没有可用技能。",
   "toolCall.image.label": "图片 {number}",
   "toolCall.image.unavailable": "无法显示此图片。",
   "promptInput.btw.title": "/btw — 旁支问题",

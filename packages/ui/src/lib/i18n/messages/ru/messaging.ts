@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Навыки",
+  "promptInput.skills.remove": "Удалить навык {name}",
+  "promptInput.skills.loading": "Загрузка навыков…",
+  "promptInput.skills.select": "Прикрепить навык…",
+  "promptInput.skills.error": "Не удалось загрузить навыки. Закройте и откройте снова для повтора.",
+  "promptInput.skills.empty": "В этом каталоге нет доступных навыков.",
   "toolCall.image.label": "Изображение {number}",
   "toolCall.image.unavailable": "Не удалось отобразить это изображение.",
   "promptInput.btw.title": "/btw — Отдельный вопрос",

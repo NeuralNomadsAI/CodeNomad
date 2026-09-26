@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "सीपहरू",
+  "promptInput.skills.remove": "सीप {name} हटाउनुहोस्",
+  "promptInput.skills.loading": "सीपहरू लोड हुँदैछन्…",
+  "promptInput.skills.select": "सीप संलग्न गर्नुहोस्…",
+  "promptInput.skills.error": "सीपहरू लोड गर्न सकिएन। पुनः प्रयास गर्न बन्द गरेर खोल्नुहोस्।",
+  "promptInput.skills.empty": "यस डाइरेक्टरीमा कुनै सीप उपलब्ध छैन।",
   "toolCall.image.label": "तस्बिर {number}",
   "toolCall.image.unavailable": "यो तस्बिर देखाउन सकिएन।",
   "promptInput.btw.title": "/btw — छुट्टै प्रश्न",

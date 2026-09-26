@@ -4,6 +4,7 @@ import { after, afterEach, before, describe, it } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
+import { createSkillAttachment } from "../types/attachment"
 import { addInstance, removeInstance, updateInstance } from "./instances.ts"
 import {
   abortSession,
@@ -1012,7 +1013,7 @@ describe("native prompt serialization", () => {
       filename: "reviewer",
       mediaType: "text/plain",
       source: { type: "agent", name: "reviewer" },
-    }], {
+    }, createSkillAttachment("skill", "Skill")], {
       restoredPayload: {
         text: "original @reviewer @skill\n\nhidden note",
         metadata: { displayText: "original @reviewer @skill", source: "queued" },

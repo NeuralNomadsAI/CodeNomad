@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "スキル",
+  "promptInput.skills.remove": "スキル {name} を削除",
+  "promptInput.skills.loading": "スキルを読み込み中…",
+  "promptInput.skills.select": "スキルを添付…",
+  "promptInput.skills.error": "スキルを読み込めません。閉じて開き直してください。",
+  "promptInput.skills.empty": "このディレクトリにはスキルがありません。",
   "toolCall.image.label": "画像 {number}",
   "toolCall.image.unavailable": "この画像を表示できません。",
   "promptInput.btw.title": "/btw — 補足の質問",

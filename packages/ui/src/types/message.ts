@@ -20,6 +20,7 @@ interface TextMessagePart extends PartBase { type: "text"; text: string }
 interface SystemMessagePart extends PartBase { type: "system"; text: string; description?: string }
 interface ReasoningMessagePart extends PartBase { type: "reasoning"; text: string }
 interface FileMessagePart extends PartBase { type: "file"; filename?: string }
+interface SkillMessagePart extends PartBase { type: "skill"; skillId: string; name: string }
 interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?: ToolState }
 interface CompactionMessagePart extends PartBase {
   type: "compaction"
@@ -34,6 +35,7 @@ export type NormalizedMessagePart =
   | SystemMessagePart
   | ReasoningMessagePart
   | FileMessagePart
+  | SkillMessagePart
   | ToolMessagePart
   | CompactionMessagePart
   | StepStartMessagePart
@@ -142,6 +144,7 @@ export function partHasRenderableText(part: ClientPart): boolean {
   if (part.type === "file" && part.filename) {
     return true
   }
+  if (part.type === "skill" && part.name) return true
 
   if (part.type === "tool") {
     return true // Tool parts are always renderable

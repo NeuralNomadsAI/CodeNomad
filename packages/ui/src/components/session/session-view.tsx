@@ -1,7 +1,7 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -472,6 +472,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               return attachment
             }),
             ...(item.payload.agents ?? []).map((agent) => createAgentAttachment(agent.name)),
+            ...(item.payload.skills ?? []).map((skill) => createSkillAttachment(skill.id, skill.name)),
           ]
           clearAttachments(props.instanceId, props.sessionId)
           for (const attachment of restoredAttachments) addAttachment(props.instanceId, props.sessionId, attachment)

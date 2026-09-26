@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Beceriler",
+  "promptInput.skills.remove": "{name} becerisini kaldır",
+  "promptInput.skills.loading": "Beceriler yükleniyor…",
+  "promptInput.skills.select": "Beceri ekle…",
+  "promptInput.skills.error": "Beceriler yüklenemedi. Tekrar denemek için kapatıp yeniden açın.",
+  "promptInput.skills.empty": "Bu dizinde kullanılabilir beceri yok.",
   "toolCall.image.label": "Görsel {number}",
   "toolCall.image.unavailable": "Bu görsel görüntülenemiyor.",
   "promptInput.btw.title": "/btw — Yan soru",
