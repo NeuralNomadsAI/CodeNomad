@@ -792,7 +792,7 @@ describe("instance proxy location enforcement", () => {
     })).statusCode, 403)
     assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/permission/saved" })).statusCode, 403)
     assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/permission/saved/global-rule" })).statusCode, 403)
-    for (const route of ["plugin/check", "plugin/update", "rpc/plugin/method"]) {
+    for (const route of ["plugin/install", "plugin/remove", "rpc/plugin/method"]) {
       assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}` })).statusCode, 403)
     }
     assert.equal(requestCount(), 0)
@@ -831,6 +831,16 @@ describe("instance proxy location enforcement", () => {
     }
     assert.deepEqual(sessionGets, ["foreign"])
     assert.equal(requestCount(), 0)
+  })
+
+  it("allows native plugin package actions only for owned locations", async () => {
+    const { app, requestCount } = await harness()
+    for (const action of ["check", "update"]) {
+      const payload = action === "check" ? { target: "fixture@latest" } : { targets: ["fixture@latest"] }
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/plugin/${action}`, payload })).statusCode, 200)
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/plugin/${action}?location[directory]=/other`, payload })).statusCode, 403)
+    }
+    assert.equal(requestCount(), 2)
   })
 
   it("allows only native credential rename, activate and remove operations with directory ownership", async () => {

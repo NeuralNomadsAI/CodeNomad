@@ -74,3 +74,13 @@ followed by other credentials and environment sources. Isolated 2.0.7 and
 removal without secret material in catalog output. Global mutations use only
 the explicit credential ID. Browser validation covers preserving unsaved labels
 through native invalidations and failed saves without automatic write replay.
+
+## Plugin package updates
+
+Native check/update validates package targets against the Location's fresh native
+inventory, and the native package cache is shared by all Locations. UI actions
+select one target (not a plugin ID), disclose shared scope in their tooltip, and
+retain target-level pending admission across component/view lifetimes. Local,
+builtin and SDK sources do not offer package updates. Isolated local-registry
+fixtures pass on 2.0.7 and 2.0.18: installed 1.0.0, detected 1.1.0, rejected an
+unknown target, updated and observed native reloading without location.reload.

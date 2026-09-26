@@ -1,4 +1,8 @@
 export const settingsMessages = {
+  "settings.pluginPackages.check": "{target} の更新を確認",
+  "settings.pluginPackages.update": "{target} を更新",
+  "settings.pluginPackages.shared": "このパッケージを使用する全ディレクトリの共有OpenCodeキャッシュを更新します。",
+  "settings.pluginPackages.error": "{target} の操作に失敗しました。更新して状態を確認してください。",
   "settings.accounts.title": "アカウント",
   "settings.accounts.global": "アカウントはこのOpenCodeサービス全体で共有されます。",
   "settings.accounts.active": "有効",

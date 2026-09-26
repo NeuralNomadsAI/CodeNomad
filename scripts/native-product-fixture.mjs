@@ -16,13 +16,14 @@ export async function withProductRuntime(cli, prepare, run) {
   const parent = path.join(os.tmpdir(), "opencode")
   await mkdir(parent, { recursive: true })
   const root = await mkdtemp(path.join(parent, "product-native-"))
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_)/i.test(key)))
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
   for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
   const password = randomUUID()
   Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password })
+  Object.assign(env, { npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache") })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   const configuration = await prepare({ root, configDirectory: env.OPENCODE_CONFIG_DIR })
   const requests = []

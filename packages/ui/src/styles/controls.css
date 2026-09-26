@@ -6,6 +6,7 @@
 @import "./components/prompt-skills.css";
 @import "./components/websearch-settings.css";
 @import "./components/provider-accounts.css";
+@import "./components/plugin-package-action.css";
 @import "./components/history-search.css";
 @import "./components/native-titlebar.css";
 @import "./components/badges.css";

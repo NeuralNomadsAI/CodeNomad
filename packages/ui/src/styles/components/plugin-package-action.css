@@ -1,0 +1,3 @@
+.plugin-control-identity { display: flex; align-items: center; gap: 0.25rem; min-width: 0; }
+.plugin-control-identity .plugin-control-name { flex: 1; min-width: 0; }
+.plugin-control-identity .icon-button-compact { flex-shrink: 0; }
