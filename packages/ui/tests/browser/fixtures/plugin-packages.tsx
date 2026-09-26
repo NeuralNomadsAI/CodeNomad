@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js"
+import { Toaster } from "solid-toast"
 import { render } from "solid-js/web"
 import { PluginPackageAction } from "../../../src/components/plugin-package-action"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -20,8 +21,9 @@ const client: any = { plugin: {
 ;(sdkManager as any).clients.set("plugins:/workspaces/plugins/instance", client)
 await applyUiSettings({})
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main>
+  <Toaster />
   <PluginPackageAction instanceId="plugins" location={{ directory: "/a" }} source={source()} active={active()} />
   <PluginPackageAction instanceId="plugins" location={{ directory: "/b" }} source={source()} active={active()} />
   <PluginPackageAction instanceId="plugins" location={{ directory: "/a" }} source={{ type: "local", path: "/plugin" }} />
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { requests, setActive, resolve: () => resolve(), reject: () => reject(), invalidations: () => invalidations }
+;(window as any).fixture = { requests, setActive, refreshSource: () => setSource({ ...source() }), resolve: () => resolve(), reject: () => reject(), invalidations: () => invalidations }

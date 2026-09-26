@@ -1,4 +1,4 @@
-import { Show, createEffect, onCleanup } from "solid-js"
+import { Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { Download, RefreshCw } from "lucide-solid"
 import type { PluginControlLocation, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -8,7 +8,9 @@ import { showToastNotification } from "../lib/notifications"
 export function PluginPackageAction(props: { instanceId: string; location: PluginControlLocation; source?: PluginRuntimeSource; active?: boolean }) {
   const { t } = useI18n()
   let generation = 0
-  createEffect(() => { props.instanceId; props.location.directory; props.source?.type === "package" && props.source.target; props.active; generation++ })
+  const ownership = createMemo(() => JSON.stringify([props.instanceId, props.location.directory,
+    props.source?.type === "package" ? props.source.target : null, props.active !== false]))
+  createEffect(() => { ownership(); generation++ })
   onCleanup(() => { generation++ })
   const source = () => props.source?.type === "package" ? props.source : undefined
   const busy = () => Boolean(source()?.updating || (source() && isPluginPackagePending(props.instanceId, source()!.target)))
