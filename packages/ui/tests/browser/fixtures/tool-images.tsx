@@ -88,6 +88,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
       { tool: "paint", status: phase === "running" ? "running" : "completed", input: { prompt: "sky" } },
       { tool: "fail", status: phase === "running" ? "running" : "error", input: { test: true } },
     ], ...(phase === "running" ? {} : { error: true, truncated: true, outputPath: "/fixture/output.txt" }) }
+    if (phase === "progress") {
+      metadata.toolCalls.push({ tool: "third", status: "running", input: { test: true } })
+      emit("session.tool.progress", { id: "tool", metadata })
+      return
+    }
     if (phase === "running") {
       emit("session.step.started", { agent: "build", model, started: 1 })
       emit("session.tool.input.started", { id: "tool", name: "execute" })
