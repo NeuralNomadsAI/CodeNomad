@@ -1056,14 +1056,29 @@ function toggleFavoriteModelPreference(model: ModelPreference): void {
   void patchStateOwner("ui", { models: { favorites: updated } }).catch((error) => log.error("Failed to update model favorites", error))
 }
 
+// The mode is read back by the picker, so the wanted value is published
+// synchronously and the persisted writes are serialized in click order.
+const [pendingFavoritesOnly, setPendingFavoritesOnly] = createSignal<boolean | undefined>(undefined)
+let favoritesOnlyWriteQueue: Promise<void> = Promise.resolve()
+
 function getFavoritesOnlyPreference(): boolean {
-  return uiState().models.favoritesOnly
+  return pendingFavoritesOnly() ?? uiState().models.favoritesOnly
 }
 
 function setFavoritesOnlyPreference(enabled: boolean): void {
   if (getFavoritesOnlyPreference() === enabled) return
-  void patchStateOwner("ui", { models: { favoritesOnly: enabled } })
-    .catch((error) => log.error("Failed to update favorites-only model mode", error))
+  setPendingFavoritesOnly(enabled)
+
+  const settlePending = () => setPendingFavoritesOnly((current) => (current === enabled ? undefined : current))
+  const previous = favoritesOnlyWriteQueue
+  favoritesOnlyWriteQueue = previous.then(async () => {
+    try {
+      await patchStateOwner("ui", { models: { favoritesOnly: enabled } })
+    } catch (error) {
+      log.error("Failed to update favorites-only model mode", error)
+    }
+    settlePending()
+  })
 }
 
 function getModelThinkingSelection(model: { providerId: string; modelId: string }): string | undefined {

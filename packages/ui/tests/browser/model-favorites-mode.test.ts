@@ -28,7 +28,7 @@ const openPicker = async (page: Page) => {
 }
 
 const closePicker = async (page: Page) => {
-  await page.keyboard.press("Escape")
+  await page.locator("[data-model-selector-control] .selector-trigger").click()
   await page.locator(".selector-favorites-toggle").waitFor({ state: "hidden" })
 }
 
@@ -83,7 +83,9 @@ test("the favorites mode persists and always keeps the current model listed", as
 
     // A fresh selector instance reads the stored mode rather than a per-open guess.
     await closePicker(page)
+    assert.equal(await page.evaluate(() => (window as any).fixture.mounts()), 1)
     await page.locator("#remount").click()
+    await page.waitForFunction(() => (window as any).fixture.mounts() === 2 && (window as any).fixture.cleanups() === 1)
     await openPicker(page)
     assert.equal(await favoritesOnly(page), "true")
     assert.deepEqual(await listed(page), favoritesPlusNonFavorite)
@@ -112,5 +114,83 @@ test("the favorites mode persists and always keeps the current model listed", as
       },
     })
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a rapid double click alternates the mode instead of sticking", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+    await openPicker(page)
+
+    // Both clicks land before the first write settles.
+    await page.evaluate(() => (window as any).fixture.setLatency(150))
+    await page.locator(".selector-favorites-toggle").click()
+    await page.locator(".selector-favorites-toggle").click()
+    assert.equal(await favoritesOnly(page), "false", "the second click is read, not swallowed")
+    await page.waitForFunction(() => (window as any).fixture.state().models.favoritesOnly === false)
+    await page.waitForFunction(() => document.querySelectorAll(".selector-listbox .selector-option-label").length === 4)
+    assert.deepEqual(await listed(page), allModels)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.state().models.favoritesOnly), false)
+
+    // The two writes are serialized in click order, so the last one wins.
+    await page.evaluate(() => (window as any).fixture.setLatency(0))
+    await page.waitForFunction(() => (window as any).fixture.writes().length === 2)
+    await page.waitForFunction(() => (window as any).fixture.state().models.favoritesOnly === false)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes()), [
+      { models: { favoritesOnly: true } },
+      { models: { favoritesOnly: false } },
+    ])
+    assert.equal(await page.evaluate(() => (window as any).fixture.mode()), false)
+    assert.equal(await favoritesOnly(page), "false")
+  } finally { await page.close() }
+})
+
+test("a model hidden by provider visibility stays hidden and unselectable", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+
+    // Hide the active model, which is also a favorite, then look at both modes.
+    await page.locator("#pick-favorite").click()
+    await page.evaluate(() => (window as any).fixture.hideModel("openai", "gpt-6-astra"))
+    await openPicker(page)
+    assert.deepEqual(await listed(page), ["GPT-6 Sol", "Muse Spark", "Zen Other"])
+    const hiddenOption = page.locator(".selector-listbox .selector-option", { hasText: "GPT-6 Astra" })
+    assert.equal(await hiddenOption.count(), 0, "a hidden model is not offered again")
+
+    await page.locator(".selector-favorites-toggle").click()
+    await page.waitForFunction(() => document.querySelectorAll(".selector-listbox .selector-option-label").length === 1)
+    assert.deepEqual(await listed(page), ["GPT-6 Sol"])
+    assert.equal(await page.locator(".selector-listbox .selector-option", { hasText: "GPT-6 Astra" }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("a stored favorites mode without favorites stays visible and revocable", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?favorites=none&mode=favorites`)
+    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+
+    await openPicker(page)
+    assert.deepEqual(await listed(page), allModels, "there is nothing to restrict the list to")
+    assert.equal(await favoritesOnly(page), "true", "the stored mode is still reported")
+    assert.equal(await page.locator(".selector-favorites-toggle").isDisabled(), false, "and can be turned off")
+
+    // Adding a favorite applies the stored mode rather than silently keeping all models.
+    await page.locator(".selector-listbox .selector-option", { hasText: "GPT-6 Astra" })
+      .locator(".selector-option-star").click()
+    await page.waitForFunction(() => document.querySelectorAll(".selector-listbox .selector-option-label").length === 2)
+    assert.equal(await favoritesOnly(page), "true")
+
+    await closePicker(page)
+    await openPicker(page)
+    assert.equal(await favoritesOnly(page), "true")
+    assert.deepEqual(await listed(page), ["GPT-6 Astra", "Zen Other"], "the favorite plus the active model")
   } finally { await page.close() }
 })

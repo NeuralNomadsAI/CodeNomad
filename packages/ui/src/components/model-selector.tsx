@@ -146,14 +146,24 @@ export default function ModelSelector(props: ModelSelectorProps) {
   // The favorites/all choice is a stored preference, not a consequence of the
   // active model, so it survives reopening the picker, model changes and
   // searching. Searching only filters within the chosen mode.
-  const favoritesOnlyEnabled = createMemo(() => hasFavorites() && getFavoritesOnlyPreference())
+  const favoritesOnlyPreference = () => getFavoritesOnlyPreference()
 
-  // The active model always stays reachable, whichever mode is chosen, so a
-  // non-favorite selection never silently vanishes from its own picker.
+  // Without any favorite left there is nothing to restrict the list to, but the
+  // stored choice is kept so it applies again as soon as one is added.
+  const favoritesOnlyEnabled = createMemo(() => hasFavorites() && favoritesOnlyPreference())
+
+  // The active model stays reachable whichever mode is chosen, so a non-favorite
+  // selection never silently vanishes from its own picker. A model the provider
+  // visibility preference hides stays hidden and unselectable.
   const visibleOptions = createMemo<FlatModel[]>(() => {
     const modeModels = favoritesOnlyEnabled() ? favoriteModels() : sortedModels()
     const current = currentModelValue()
     if (!current || modeModels.some((model) => model.key === current.key)) return modeModels
+    const hiddenByPreference = !current.unavailable && !isModelVisible(
+      getProviderModelVisibilityPreference(current.providerId),
+      current.id,
+    )
+    if (hiddenByPreference) return modeModels
     return [...modeModels, current].sort(compareModels)
   })
 
@@ -243,13 +253,17 @@ export default function ModelSelector(props: ModelSelectorProps) {
     }, 0)
   }
 
+  const canChooseFavoritesMode = createMemo(() => hasFavorites() || favoritesOnlyPreference())
+
   const toggleFavoritesOnly = () => {
-    if (!hasFavorites()) return
+    if (!canChooseFavoritesMode()) return
     if (searchActive()) return
-    setFavoritesOnlyPreference(!getFavoritesOnlyPreference())
+    setFavoritesOnlyPreference(!favoritesOnlyPreference())
   }
 
-  const favoritesToggleLabel = () => t(favoritesOnlyEnabled()
+  // The pressed state reports the stored choice, not the temporarily effective
+  // list, so a mode kept without favorites is still visible and revocable.
+  const favoritesToggleLabel = () => t(favoritesOnlyPreference()
     ? "modelSelector.favoritesOnly.showAll"
     : "modelSelector.favoritesOnly.toggle.ariaLabel")
 
@@ -389,16 +403,16 @@ export default function ModelSelector(props: ModelSelectorProps) {
                   class="selector-favorites-toggle"
                   aria-label={favoritesToggleLabel()}
                   title={favoritesToggleLabel()}
-                  aria-pressed={favoritesOnlyEnabled()}
-                  disabled={!hasFavorites() || searchActive()}
-                  data-active={favoritesOnlyEnabled()}
+                  aria-pressed={favoritesOnlyPreference()}
+                  disabled={!canChooseFavoritesMode() || searchActive()}
+                  data-active={favoritesOnlyPreference()}
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
                     toggleFavoritesOnly()
                   }}
                 >
-                  <Star class="w-4 h-4" fill={favoritesOnlyEnabled() ? "currentColor" : "none"} />
+                  <Star class="w-4 h-4" fill={favoritesOnlyPreference() ? "currentColor" : "none"} />
                 </button>
               </div>
             </div>

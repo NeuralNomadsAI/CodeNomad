@@ -86,7 +86,7 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   assert.match(search, /<Combobox\.Input[\s\S]{0,300}value=\{inputValue\(\)\}/)
   assert.match(search, /class="selector-input-group"[\s\S]*class="selector-favorites-toggle"/)
   assert.match(search, /title=\{favoritesToggleLabel\(\)\}/)
-  assert.match(search, /aria-pressed=\{favoritesOnlyEnabled\(\)\}[\s\S]*disabled=\{!hasFavorites\(\) \|\| searchActive\(\)\}[\s\S]*data-active=\{favoritesOnlyEnabled\(\)\}/)
+  assert.match(search, /aria-pressed=\{favoritesOnlyPreference\(\)\}[\s\S]*disabled=\{!canChooseFavoritesMode\(\) \|\| searchActive\(\)\}[\s\S]*data-active=\{favoritesOnlyPreference\(\)\}/)
   assert.doesNotMatch(search, /<input\b/)
   assert.match(source, /onKeyDown=\{\(event\) => \{\s*if \(event\.key === "Escape"\) queueMicrotask\(restoreSelectedInput\)/)
   assert.doesNotMatch(source, /dispatchEvent\(new KeyboardEvent/)
@@ -113,21 +113,26 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
 
 test("the favorites mode is a stored preference that never follows the active model", () => {
   const source = fs.readFileSync(new URL("../components/model-selector.tsx", import.meta.url), "utf8")
-  const mode = source.slice(source.indexOf("const favoritesOnlyEnabled"), source.indexOf("const visibleOptions"))
+  const mode = source.slice(source.indexOf("const favoritesOnlyPreference"), source.indexOf("const visibleOptions"))
   const visible = source.slice(source.indexOf("const visibleOptions"), source.indexOf("const groupedVisibleOptions"))
-  const toggle = source.slice(source.indexOf("const toggleFavoritesOnly"), source.indexOf("const favoritesToggleLabel"))
+  const toggle = source.slice(source.indexOf("const canChooseFavoritesMode"), source.indexOf("const favoritesToggleLabel"))
 
-  // The effective mode is the stored preference, independent of search and model.
-  assert.match(mode, /createMemo\(\(\) => hasFavorites\(\) && getFavoritesOnlyPreference\(\)\)/)
+  // The stored choice is reported as such and is revocable even without favorites.
+  assert.match(mode, /const favoritesOnlyPreference = \(\) => getFavoritesOnlyPreference\(\)/)
+  assert.match(mode, /createMemo\(\(\) => hasFavorites\(\) && favoritesOnlyPreference\(\)\)/)
   assert.doesNotMatch(mode, /searchActive|currentModelIsFavorite/)
+  assert.match(toggle, /const canChooseFavoritesMode = createMemo\(\(\) => hasFavorites\(\) \|\| favoritesOnlyPreference\(\)\)/)
+  assert.match(toggle, /setFavoritesOnlyPreference\(!favoritesOnlyPreference\(\)\)/)
+  assert.doesNotMatch(toggle, /if \(!hasFavorites\(\)\) return/)
 
-  // The active model is always part of the listed options of the chosen mode.
+  // The active model is added to the chosen mode unless its own visibility
+  // preference hides it, which keeps a hidden model unselectable.
   assert.match(visible, /const modeModels = favoritesOnlyEnabled\(\) \? favoriteModels\(\) : sortedModels\(\)/)
   assert.match(visible, /if \(!current \|\| modeModels\.some\(\(model\) => model\.key === current\.key\)\) return modeModels/)
+  assert.match(visible, /const hiddenByPreference = !current\.unavailable && !isModelVisible\([\s\S]{0,140}current\.id,[\s\S]{0,40}\)/)
+  assert.match(visible, /if \(hiddenByPreference\) return modeModels/)
   assert.match(visible, /return \[\.\.\.modeModels, current\]\.sort\(compareModels\)/)
 
-  // The toggle writes the preference instead of per-open state.
-  assert.match(toggle, /setFavoritesOnlyPreference\(!getFavoritesOnlyPreference\(\)\)/)
   for (const removed of [
     "setManualAll", "setExplicitFavorites", "autoFavoritesEligibleAtOpen",
     "wasFavoritesOnlyEnabled", "wasCurrentModelFavorite", "currentModelIsFavorite",
@@ -135,10 +140,14 @@ test("the favorites mode is a stored preference that never follows the active mo
     assert.doesNotMatch(source, new RegExp(removed))
   }
 
-  // Normalization only accepts a real boolean for the stored mode.
+  // The write is published synchronously and serialized in click order.
   const preferences = fs.readFileSync(new URL("../stores/preferences.tsx", import.meta.url), "utf8")
   assert.match(preferences, /favoritesOnly: \(source\.models as any\)\?\.favoritesOnly === true/)
   assert.match(preferences, /models: \{\s*recents: ModelPreference\[\]\s*favorites: ModelPreference\[\]\s*thinkingSelections: Record<string, string>\s*favoritesOnly: boolean\s*\}/)
+  const modeStore = preferences.slice(preferences.indexOf("const [pendingFavoritesOnly"), preferences.indexOf("function getModelThinkingSelection"))
+  assert.match(modeStore, /return pendingFavoritesOnly\(\) \?\? uiState\(\)\.models\.favoritesOnly/)
+  assert.match(modeStore, /if \(getFavoritesOnlyPreference\(\) === enabled\) return\s*setPendingFavoritesOnly\(enabled\)/)
+  assert.match(modeStore, /const previous = favoritesOnlyWriteQueue\s*favoritesOnlyWriteQueue = previous\.then\(async \(\) => \{[\s\S]{0,200}settlePending\(\)/)
 })
 
 test("provider auth keeps its catalog location across deferred operation steps", () => {
