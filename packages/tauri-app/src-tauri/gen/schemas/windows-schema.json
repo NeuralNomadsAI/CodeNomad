@@ -381,6 +381,12 @@
           "markdownDescription": "Enables the browser_target_update command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_stable_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-stable-update",
+          "markdownDescription": "Enables the check_stable_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cli_get_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cli-get-status",
@@ -583,6 +589,12 @@
           "type": "string",
           "const": "deny-browser-target-update",
           "markdownDescription": "Denies the browser_target_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_stable_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-stable-update",
+          "markdownDescription": "Denies the check_stable_update command without any pre-configured scope."
         },
         {
           "description": "Denies the cli_get_status command without any pre-configured scope.",

@@ -12,8 +12,8 @@
 //   TAURI_UPDATER_ENDPOINT  endpoint URL; defaults to the GitHub latest.json
 
 import { readFileSync, writeFileSync } from "node:fs"
-import { fileURLToPath } from "node:url"
-import { join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { join, resolve } from "node:path"
 
 const scriptsDirectory = fileURLToPath(new URL(".", import.meta.url))
 // The Tauri project lives in src-tauri, not at the package root.
@@ -23,16 +23,22 @@ const DEFAULT_ENDPOINT = "https://github.com/NeuralNomadsAI/CodeNomad/releases/l
 export function resolveUpdaterConfig(environment = process.env) {
   const publicKey = (environment.TAURI_UPDATER_PUBKEY ?? "").trim()
   if (!publicKey) return null
+  const decoded = Buffer.from(publicKey, "base64").toString("utf8").trim().split(/\r?\n/)
+  const keyBytes = Buffer.from(decoded[1] ?? "", "base64")
+  if (!decoded[0]?.startsWith("untrusted comment:") || keyBytes.length !== 42 || keyBytes.subarray(0, 2).toString() !== "Ed") {
+    throw new Error("TAURI_UPDATER_PUBKEY must contain a base64-encoded minisign public key")
+  }
+  const endpoint = (environment.TAURI_UPDATER_ENDPOINT ?? "").trim() || DEFAULT_ENDPOINT
+  if (new URL(endpoint).protocol !== "https:") throw new Error("Updater endpoint must use HTTPS")
   return {
-    active: true,
-    dialog: false,
     pubkey: publicKey,
-    endpoints: [(environment.TAURI_UPDATER_ENDPOINT ?? "").trim() || DEFAULT_ENDPOINT],
+    endpoints: [endpoint],
   }
 }
 
 export function applyUpdaterConfig(config, updater) {
   const next = structuredClone(config)
+  next.bundle = { ...next.bundle, createUpdaterArtifacts: Boolean(updater) }
   if (!updater) {
     // No verifiable key: keep the built application free of an updater entry.
     delete next.plugins?.updater
@@ -66,6 +72,6 @@ export function configureUpdater(options = {}) {
   return updater
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` || process.argv[1]?.endsWith("configure-updater.mjs")) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   configureUpdater()
 }

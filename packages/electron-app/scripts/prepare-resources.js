@@ -31,7 +31,7 @@ async function main() {
   ensureServerBuild()
   const staged = stagePackagedServer({ workspaceRoot, serverRoot, log })
   try {
-    copyPackagedServerResources({ serverRoot: staged.stagedServerRoot, serverDest, log })
+    copyPackagedServerResources({ serverRoot: staged.stagedServerRoot, serverDest, target: staged.target, log })
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }

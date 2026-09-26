@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyUpdaterConfig, configPath, configureUpdater, resolveUpdaterConfig } from "./configure-updater.mjs"
 
-const PUBLIC_KEY = "dW50cnVzdGVkIGNvbW5vbWVkIGFwcGxpY2F0aW9uIHB1YmxpYyBrZXk="
+// Structurally valid public-only fixture; not a signing identity.
+const PUBLIC_KEY = Buffer.from(`untrusted comment: test public key\n${Buffer.concat([Buffer.from("Ed"), Buffer.alloc(40)]).toString("base64")}\n`).toString("base64")
 const ENDPOINT = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest/download/latest.json"
 
 function baseConfig() {
@@ -30,8 +31,7 @@ test("an unsigned build ships without any updater configuration", () => {
 
 test("a signed build enables the updater against the release endpoint by default", () => {
   const updater = resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: PUBLIC_KEY })
-  assert.equal(updater.active, true)
-  assert.equal(updater.dialog, false, "the application owns its own update surface")
+  assert.equal(applyUpdaterConfig(baseConfig(), updater).bundle.createUpdaterArtifacts, true)
   assert.equal(updater.pubkey, PUBLIC_KEY)
   assert.deepEqual(updater.endpoints, [ENDPOINT])
 })
@@ -100,10 +100,17 @@ test("the real configuration survives a round trip through the unsigned shape", 
     const after = JSON.parse(readFileSync(copy, "utf8"))
     const original = JSON.parse(before)
     assert.deepEqual(Object.keys(after).sort(), Object.keys(original).sort())
-    assert.deepEqual(after.bundle, original.bundle, "bundle targets and icons are untouched")
+    assert.deepEqual(after.bundle, { ...original.bundle, createUpdaterArtifacts: false })
     assert.equal(after.productName, original.productName)
     assert.equal(after.app.windows.length, original.app.windows.length)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("rejects invalid keys and insecure endpoints before configuring a signed build", () => {
+  assert.throws(() => resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: "placeholder" }), /minisign/)
+  assert.throws(() => resolveUpdaterConfig({ TAURI_UPDATER_PUBKEY: PUBLIC_KEY, TAURI_UPDATER_ENDPOINT: "http://example.com/latest.json" }), /HTTPS/)
+  const config = { ...baseConfig(), bundle: { createUpdaterArtifacts: true } }
+  assert.equal(applyUpdaterConfig(config, null).bundle.createUpdaterArtifacts, false)
 })

@@ -62,6 +62,7 @@ fn main() {
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",
             "install_stable_update",
+            "check_stable_update",
             "open_workspace_target",
             "set_workspace_menu_enabled",
             "browser_target_register",

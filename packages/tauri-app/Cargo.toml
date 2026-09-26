@@ -7,3 +7,4 @@ resolver = "2"
 # Keep the current Tauri API/dependency line; see vendor/README.md for provenance.
 [patch.crates-io]
 tao = { path = "vendor/tao-0.34.6" }
+tauri-plugin-updater = { path = "vendor/tauri-plugin-updater-2.12.0" }

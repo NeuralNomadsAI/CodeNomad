@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "ניתן לפתוח מספר מופעים של אותה תיקייה",
 
   "releases.upgradeRequired.title": "נדרש שדרוג",
+  "releases.desktop.checking": "בודק עדכון עבור CodeNomad…",
+  "releases.desktop.current": "CodeNomad מעודכן.",
+  "releases.desktop.available": "CodeNomad {version} זמין. ההתקנה תפעיל מחדש את היישום.",
+  "releases.desktop.install": "התקנה והפעלה מחדש",
+  "releases.desktop.downloading": "מוריד ומאמת את העדכון…",
+  "releases.desktop.restarting": "שומר חלונות ומתקין את העדכון…",
+  "releases.desktop.failed": "לא ניתן להשלים את העדכון. אפשר לנסות שוב או להוריד אותו מדף הגרסאות.",
   "releases.upgradeRequired.message.withVersion": "שדרג ל-CodeNomad {version} כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.message.noVersion": "שדרג את CodeNomad כדי להשתמש בממשק המעודכן.",
   "releases.upgradeRequired.action.getUpdate": "קבל עדכון",

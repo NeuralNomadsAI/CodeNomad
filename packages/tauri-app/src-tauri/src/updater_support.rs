@@ -1,59 +1,37 @@
-//! Decides whether the Tauri updater may be used on this installation.
-//!
-//! The updater replaces the running application in place. That only works when
-//! the installed artifact is designed for it: the NSIS installer on Windows,
-//! the signed application bundle on macOS, and an AppImage on Linux. A Debian
-//! package installs under `/usr` and must never be replaced in place, so the
-//! updater stays unavailable there and the caller falls back to the release
-//! page. The same rule keeps an unsigned build, which has no updater
-//! configuration at all, from offering an update it cannot verify.
+//! Installation policy, independent of network availability or renderer claims.
+use tauri::utils::{config::BundleType, platform::bundle_type};
 
-/// Whether the current process can replace itself with a downloaded update.
-pub fn updater_supported(target_os: &str, appimage: Option<&str>, app_run: Option<&str>) -> bool {
-    match target_os {
-        // AppImage sets APPIMAGE; APPRUN is set by its runtime entry point.
-        // Either proves the process was launched from the self-contained image.
-        "linux" => appimage.is_some() || app_run.is_some(),
-        "windows" | "macos" | "ios" => true,
+pub fn updater_supported(os: &str, bundle: Option<BundleType>, appimage: Option<&str>) -> bool {
+    match (os, bundle) {
+        ("windows", Some(BundleType::Nsis)) | ("macos", Some(BundleType::App)) => true,
+        ("linux", Some(BundleType::AppImage)) => appimage.is_some_and(|path| !path.is_empty()),
         _ => false,
     }
 }
 
-/// Whether this running process may be replaced in place by a signed update.
-///
-/// Reported at startup so a support log states which update path the current
-/// installation can actually use.
 pub fn current_platform_support() -> bool {
-    let appimage = std::env::var("APPIMAGE").ok();
-    let app_run = std::env::var("APPRUN").ok();
-    updater_supported(std::env::consts::OS, appimage.as_deref(), app_run.as_deref())
+    updater_supported(
+        std::env::consts::OS,
+        bundle_type(),
+        std::env::var("APPIMAGE").ok().as_deref(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::updater_supported;
+    use super::*;
 
     #[test]
-    fn a_debian_installation_never_replaces_itself() {
-        // No APPIMAGE and no APPRUN: installed under /usr by a package manager.
-        assert!(!updater_supported("linux", None, None));
-    }
-
-    #[test]
-    fn an_appimage_execution_is_updatable() {
-        assert!(updater_supported("linux", Some("/tmp/CodeNomad.AppImage"), None));
-        assert!(updater_supported("linux", None, Some("/tmp/.mount_x/AppRun")));
-    }
-
-    #[test]
-    fn windows_and_macos_replace_their_installed_application() {
-        assert!(updater_supported("windows", None, None));
-        assert!(updater_supported("macos", None, None));
-    }
-
-    #[test]
-    fn unsupported_platforms_stay_fallback_only() {
-        assert!(!updater_supported("freebsd", None, None));
-        assert!(!updater_supported("", None, None));
+    fn only_supported_installer_formats_can_update() {
+        assert!(updater_supported("windows", Some(BundleType::Nsis), None));
+        assert!(updater_supported("macos", Some(BundleType::App), None));
+        assert!(updater_supported("linux", Some(BundleType::AppImage), Some("/home/test/app.AppImage")));
+        for bundle in [None, Some(BundleType::Deb), Some(BundleType::Rpm)] {
+            assert!(!updater_supported("linux", bundle, Some("/fake.AppImage")));
+        }
+        assert!(!updater_supported("linux", Some(BundleType::AppImage), None));
+        assert!(!updater_supported("linux", Some(BundleType::AppImage), Some("")));
+        assert!(!updater_supported("windows", None, None));
+        assert!(!updater_supported("ios", Some(BundleType::App), None));
     }
 }

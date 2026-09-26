@@ -18,7 +18,9 @@ mod preferences_window;
 mod shutdown;
 mod updater_support;
 mod view_menu;
-mod windows_update;
+mod desktop_updater;
+#[cfg(test)]
+mod desktop_updater_tests;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -27,8 +29,6 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-#[cfg(any(windows, test))]
-use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -1616,16 +1616,11 @@ fn main() {
     let setup_scope = scope.clone();
     let setup_queue = Arc::clone(&launch_queue);
 
-    tauri::Builder::default()
+    desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        // The updater registers its state even when no signing key was injected,
-        // so a build without an updater configuration still starts. Every call is
-        // gated on an actual check, and a missing key surfaces as an error the
-        // caller turns into a release-page fallback.
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1720,6 +1715,7 @@ fn main() {
             );
             app.manage(client_state);
             app.manage(shutdown::ShutdownCoordinator::default());
+            app.manage(desktop_updater::UpdateState::default());
             build_menu(&app.handle())?;
             local_windows::restore_windows(&app.handle())
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
@@ -1766,7 +1762,8 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
-            windows_update::install_stable_update,
+            desktop_updater::check_stable_update,
+            desktop_updater::install_stable_update,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
             browser_target_register,
@@ -1860,17 +1857,11 @@ fn main() {
                 }
 
                 "get_updates" | "help_get_updates" => {
-                    #[cfg(windows)]
-                    {
-                        let app_handle = app_handle.clone();
-                        tauri::async_runtime::spawn(run_update_with_fallback(
-                            windows_update::install_stable_update_impl(),
-                            move || open_releases_page(&app_handle),
-                        ));
+                    if let Some(window) = local_windows::targeted_window(app_handle) {
+                        let _ = window.emit("menu:action", "get-updates");
+                    } else {
+                        open_releases_page(app_handle);
                     }
-
-                    #[cfg(not(windows))]
-                    open_releases_page(app_handle);
                 }
                 // App menu (macOS)
                 "hide" => {
@@ -2300,17 +2291,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-#[cfg(any(windows, test))]
-async fn run_update_with_fallback(
-    update: impl Future<Output = Result<(), String>>,
-    fallback: impl FnOnce(),
-) {
-    if let Err(err) = update.await {
-        eprintln!("[tauri] WinGet update failed, opening the releases page: {err}");
-        fallback();
-    }
-}
-
 fn open_releases_page(app_handle: &AppHandle) {
     if let Err(err) = app_handle.opener().open_url(RELEASES_URL, None::<&str>) {
         eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
@@ -2335,13 +2315,12 @@ mod menu_tests {
     use super::{
         build_about_metadata, claim_unowned_remote_proxy_session, clear_remote_tls_handler,
         is_allowed_local_origin, is_final_application_window, require_http_url,
-        rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
+        rollback_remote_window_metadata, should_allow_registered_origin,
         should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
         RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use url::Url;
 
     #[test]
@@ -2365,18 +2344,6 @@ mod menu_tests {
         assert_eq!(titlebar_menu_id("file"), Some("menu-file"));
         assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
         assert_eq!(titlebar_menu_id("preferences"), None);
-    }
-
-    #[test]
-    fn failed_update_uses_release_fallback() {
-        let fallback_called = AtomicBool::new(false);
-
-        tauri::async_runtime::block_on(run_update_with_fallback(
-            async { Err("update failed".to_string()) },
-            || fallback_called.store(true, Ordering::Relaxed),
-        ));
-
-        assert!(fallback_called.load(Ordering::Relaxed));
     }
 
     #[test]

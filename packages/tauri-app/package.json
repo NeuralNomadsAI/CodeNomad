@@ -16,6 +16,6 @@
     "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources src-tauri/resources --loading src-tauri/resources/ui-loading"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.4"
+    "@tauri-apps/cli": "^2.10.0"
   }
 }
