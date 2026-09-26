@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "खाताहरू",
+  "settings.accounts.global": "यस OpenCode सेवामा खाताहरू विश्वव्यापी रूपमा साझा हुन्छन्।",
+  "settings.accounts.active": "सक्रिय",
+  "settings.accounts.label": "खाताको नाम",
+  "settings.accounts.activate": "खाता प्रयोग गर्नुहोस्",
+  "settings.accounts.error": "खाता कार्य असफल भयो। हालको अवस्था हेर्न रिफ्रेस गर्नुहोस्।",
   "settings.websearch.default": "पूर्वनिर्धारित / विरासत",
   "settings.websearch.off": "निष्क्रिय",
   "settings.websearch.random": "स्वचालित प्रदायक",

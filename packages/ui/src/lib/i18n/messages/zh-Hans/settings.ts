@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "账户",
+  "settings.accounts.global": "账户由此 OpenCode 服务全局共享。",
+  "settings.accounts.active": "已启用",
+  "settings.accounts.label": "账户名称",
+  "settings.accounts.activate": "使用账户",
+  "settings.accounts.error": "账户操作失败。请刷新以查看当前状态。",
   "settings.websearch.default": "默认 / 继承",
   "settings.websearch.off": "已禁用",
   "settings.websearch.random": "自动选择提供商",

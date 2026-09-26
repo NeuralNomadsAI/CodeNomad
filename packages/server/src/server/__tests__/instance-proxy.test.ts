@@ -833,6 +833,18 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("allows only native credential rename, activate and remove operations with directory ownership", async () => {
+    const { app, requestCount } = await harness()
+    for (const [method, suffix, payload] of [
+      ["PATCH", "account", { label: "Renamed" }], ["POST", "account/activate", undefined], ["DELETE", "account", undefined],
+    ] as const) {
+      assert.equal((await app.inject({ method, url: `/workspaces/workspace/instance/api/credential/${suffix}`, payload })).statusCode, 200)
+      assert.equal((await app.inject({ method, url: `/workspaces/workspace/instance/api/credential/${suffix}?location[directory]=/other`, payload })).statusCode, 403)
+    }
+    assert.equal(requestCount(), 3)
+    assert.equal((await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/credential/account/export" })).statusCode, 403)
+  })
+
   it("validates prompt file ownership before translating root, worktree, and Windows URIs", async () => {
     const mappings = {
       "/repo/notes.txt": "/home/dev/repo/notes.txt",

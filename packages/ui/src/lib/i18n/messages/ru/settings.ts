@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "Аккаунты",
+  "settings.accounts.global": "Аккаунты используются глобально этим сервисом OpenCode.",
+  "settings.accounts.active": "Активен",
+  "settings.accounts.label": "Название аккаунта",
+  "settings.accounts.activate": "Использовать аккаунт",
+  "settings.accounts.error": "Операция не удалась. Обновите для получения текущего состояния.",
   "settings.websearch.default": "По умолчанию / наследуется",
   "settings.websearch.off": "Отключено",
   "settings.websearch.random": "Автоматический провайдер",

@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "Accounts",
+  "settings.accounts.global": "Accounts are shared globally by this OpenCode service.",
+  "settings.accounts.active": "Active",
+  "settings.accounts.label": "Account label",
+  "settings.accounts.activate": "Use account",
+  "settings.accounts.error": "Account operation failed. Refresh to reconcile the current state.",
   "settings.websearch.default": "Default / inherited",
   "settings.websearch.off": "Disabled",
   "settings.websearch.random": "Automatic provider",

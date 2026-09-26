@@ -1,0 +1,8 @@
+.provider-accounts { width: 100%; min-width: 0; }
+.provider-accounts summary { cursor: pointer; font-weight: var(--font-weight-semibold); }
+.provider-accounts p { color: var(--text-secondary); margin-block: 0.5rem; }
+.provider-account { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; padding-block: 0.5rem; border-block-end: 1px solid var(--border-base); }
+.provider-account > span { overflow-wrap: anywhere; }
+.provider-account input { min-width: 0; flex: 1 1 10rem; }
+.provider-accounts .selector-button { width: auto; }
+.providers-card:has(.provider-accounts) { flex-wrap: wrap; }
