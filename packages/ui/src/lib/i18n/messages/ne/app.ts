@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "तपाईंसँग एउटै फोल्डरका धेरै उदाहरणहरू हुन सक्छन्",
 
   "releases.upgradeRequired.title": "अपग्रेड आवश्यक छ",
+  "releases.desktop.checking": "CodeNomad को अद्यावधिक जाँच गर्दै…",
+  "releases.desktop.current": "CodeNomad अद्यावधिक छ।",
+  "releases.desktop.available": "CodeNomad {version} उपलब्ध छ। स्थापना गर्दा अनुप्रयोग पुनः सुरु हुनेछ।",
+  "releases.desktop.install": "स्थापना गरी पुनः सुरु गर्नुहोस्",
+  "releases.desktop.downloading": "अद्यावधिक डाउनलोड र प्रमाणीकरण गर्दै…",
+  "releases.desktop.restarting": "सञ्झ्यालहरू सुरक्षित गरी अद्यावधिक स्थापना गर्दै…",
+  "releases.desktop.failed": "अद्यावधिक पूरा हुन सकेन। फेरि प्रयास गर्नुहोस् वा संस्करण पृष्ठबाट डाउनलोड गर्नुहोस्।",
   "releases.upgradeRequired.message.withVersion": "नयाँ UI प्रयोग गर्न CodeNomad {version} मा अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.message.noVersion": "नयाँ UI प्रयोग गर्न CodeNomad अपडेट गर्नुहोस्।",
   "releases.upgradeRequired.action.getUpdate": "अपडेट प्राप्त गर्नुहोस्",

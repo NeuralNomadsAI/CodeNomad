@@ -442,13 +442,16 @@ async function dragNativeThumb(page: Page, selector: string, fraction: number) {
     const height = Math.max(18, track * element.clientHeight / element.scrollHeight)
     const travel = track - height
     const ratio = element.scrollTop / (element.scrollHeight - element.clientHeight)
-    return { x: rect.right - inset / 2, top: rect.top + inset, height, travel,
+    return { x: rect.right - inset / 2, ratio, travel,
       y: ratio > 0.99 ? rect.bottom - 16 : ratio < 0.01 ? rect.top + 16 : rect.top + inset + height / 2 + travel * ratio }
   })
   await page.mouse.move(geometry.x, geometry.y)
   await page.mouse.down()
   await page.waitForTimeout(750)
-  await page.mouse.move(geometry.x, geometry.top + geometry.height / 2 + geometry.travel * fraction, { steps: 12 })
+  // Native drags retain the grab offset within the thumb. At an end we grab
+  // near its edge, so targeting the future centre undershoots the requested
+  // ratio. Move by the scroll-ratio delta from the actual press instead.
+  await page.mouse.move(geometry.x, geometry.y + geometry.travel * (fraction - geometry.ratio), { steps: 12 })
   await page.mouse.up()
 }
 

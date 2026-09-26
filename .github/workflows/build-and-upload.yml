@@ -411,6 +411,9 @@ jobs:
   build-tauri-macos:
     runs-on: macos-15-intel
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
@@ -445,6 +448,9 @@ jobs:
       - name: Verify bundled Node resource (Tauri macOS x64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-x64
 
+      - name: Configure Tauri updater (macOS x64)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build macOS bundle (Tauri)
         working-directory: packages/tauri-app
         run: npm exec -- tauri build
@@ -460,6 +466,20 @@ jobs:
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-x64-${VERSION}.zip"
           fi
+
+      - name: Stage and publish signed updater (macOS x64)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-x86_64
+
+      - name: Retain updater publication receipt (macOS x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ github.run_id }}-darwin-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/darwin-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Actions artifacts (Tauri macOS)
         if: ${{ inputs.upload_actions_artifacts }}
@@ -484,6 +504,9 @@ jobs:
   build-tauri-macos-arm64:
     runs-on: macos-26
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
@@ -518,6 +541,9 @@ jobs:
       - name: Verify bundled Node resource (Tauri macOS arm64)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@darwin-arm64
 
+      - name: Configure Tauri updater (macOS arm64)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build macOS bundle (Tauri, arm64)
         working-directory: packages/tauri-app
         run: npm exec -- tauri build
@@ -533,6 +559,20 @@ jobs:
           if [ -d "$BUNDLE_ROOT/macos/CodeNomad.app" ]; then
             ditto -ck --sequesterRsrc --keepParent "$BUNDLE_ROOT/macos/CodeNomad.app" "$ARTIFACT_DIR/CodeNomad-Tauri-macos-arm64-${VERSION}.zip"
           fi
+
+      - name: Stage and publish signed updater (macOS arm64)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage darwin-aarch64
+
+      - name: Retain updater publication receipt (macOS arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ github.run_id }}-darwin-aarch64
+          overwrite: true
+          path: packages/tauri-app/release-updater/darwin-aarch64.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Actions artifacts (Tauri macOS arm64)
         if: ${{ inputs.upload_actions_artifacts }}
@@ -557,6 +597,9 @@ jobs:
   build-tauri-windows:
     runs-on: windows-2025
     env:
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
@@ -592,6 +635,9 @@ jobs:
       - name: Verify bundled Node resource (Tauri Windows)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@win32-x64
 
+      - name: Configure Tauri updater (Windows)
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Build Windows bundle (Tauri)
         shell: bash
         working-directory: packages/tauri-app
@@ -610,6 +656,20 @@ jobs:
             $dest = Join-Path $artifactDir ("CodeNomad-Tauri-windows-x64-$env:VERSION.zip")
             Compress-Archive -Path $exe.Directory.FullName -DestinationPath $dest -Force
           }
+
+      - name: Stage and publish signed updater (Windows)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage windows-x86_64
+
+      - name: Retain updater publication receipt (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ github.run_id }}-windows-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/windows-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Actions artifacts (Tauri Windows)
         if: ${{ inputs.upload_actions_artifacts }}
@@ -637,6 +697,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
+      TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -672,6 +735,12 @@ jobs:
       - name: Sync Tauri package version
         run: npm run sync:version --workspace @codenomad/tauri-app
 
+      # The updater is enabled only when a verifiable public key is available.
+      # Its private half stays in a repository secret that an administrator
+      # adds, so an unsigned build never advertises an update it cannot verify.
+      - name: Configure Tauri updater
+        run: npm run configure:updater --workspace @codenomad/tauri-app
+
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
@@ -681,9 +750,89 @@ jobs:
       - name: Verify bundled Node resource (Tauri Linux)
         run: node scripts/verify-bundled-node.cjs packages/tauri-app/src-tauri/resources@linux-x64
 
-      - name: Build Debian package (Tauri)
+      - name: Build Debian package and AppImage (Tauri)
         working-directory: packages/tauri-app
-        run: npm exec -- tauri build --bundles deb
+        env:
+          # Run the bundling tools in extraction mode without requiring FUSE.
+          # --verbose retains linuxdeploy diagnostics if packaging fails.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm exec -- tauri build --bundles deb,appimage --verbose
+
+      - name: Package and verify Tauri AppImage
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="packages/tauri-app/target/release/bundle/appimage"
+          ARTIFACT_DIR="packages/tauri-app/release-tauri"
+          VERSION_TO_USE="${VERSION:-}"
+          if [ -z "$VERSION_TO_USE" ]; then
+            VERSION_TO_USE=$(node -p "require('./packages/tauri-app/package.json').version")
+          fi
+          rm -rf "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
+          shopt -s nullglob
+
+          appimages=("$BUNDLE_ROOT"/*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "Expected one Tauri AppImage under $BUNDLE_ROOT, found ${#appimages[@]}" >&2
+            exit 1
+          fi
+
+          artifact="$(pwd)/$ARTIFACT_DIR/CodeNomad-Tauri-linux-x64-${VERSION_TO_USE}.AppImage"
+          cp "${appimages[0]}" "$artifact"
+          chmod 0755 "$artifact"
+
+          # linuxdeploy must have produced a self-contained image with the runtime
+          # and the bundled server reachable from AppRun.
+          extract_dir=$(mktemp -d)
+          trap 'rm -rf "$extract_dir"' EXIT
+          (cd "$extract_dir" && "$artifact" --appimage-extract >/dev/null)
+          root="$extract_dir/squashfs-root"
+          for required in AppRun usr/bin/codenomad-tauri \
+            usr/lib/CodeNomad/resources/node/linux-x64/bin/node \
+            usr/lib/CodeNomad/resources/server/dist/bin.js \
+            usr/lib/CodeNomad/resources/ui-loading/loading.html; do
+            if [ ! -e "$root/$required" ]; then
+              echo "Missing path in Tauri AppImage: $required" >&2
+              exit 1
+            fi
+          done
+          binary="$root/usr/bin/codenomad-tauri"
+          if [ ! -x "$root/AppRun" ] || [ ! -x "$binary" ]; then
+            echo "Tauri AppImage entry point is not executable" >&2
+            exit 1
+          fi
+          desktop_entries=$(find "$root" -maxdepth 1 -name '*.desktop' | wc -l)
+          if [ "$desktop_entries" -ne 1 ]; then
+            echo "Expected exactly one desktop entry in the Tauri AppImage, found $desktop_entries" >&2
+            exit 1
+          fi
+          node scripts/smoke-packaged-resources.cjs \
+            --resources "$root/usr/lib/CodeNomad/resources" \
+            --loading "$root/usr/lib/CodeNomad/resources/ui-loading" \
+            --target linux-x64
+
+          LD_LIBRARY_PATH="$root/usr/lib:$root/usr/lib/x86_64-linux-gnu" \
+            ldd "$binary" | tee /tmp/codenomad-tauri-appimage-ldd.txt
+          if grep -q "not found" /tmp/codenomad-tauri-appimage-ldd.txt; then
+            echo "Tauri AppImage binary has unresolved shared libraries" >&2
+            exit 1
+          fi
+
+          # An AppImage built on a recent base raises the glibc it needs, which
+          # silently excludes older distributions. Report the floor instead of
+          # leaving it for a user to discover, and keep the job log comparable
+          # between releases. objdump prints the version bare, and GLIBCXX_ and
+          # GLIBC_PRIVATE must not be mistaken for a glibc floor.
+          glibc_floor=$(objdump -T "$binary" \
+            | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V | tail -n 1)
+          if [ -z "$glibc_floor" ]; then
+            echo "Could not determine the GLIBC floor of the Tauri AppImage" >&2
+            exit 1
+          fi
+          echo "Tauri AppImage requires GLIBC_${glibc_floor} or newer"
+          echo "GLIBC_${glibc_floor}" > "$ARTIFACT_DIR/appimage-glibc-floor.txt"
 
       - name: Package and verify Tauri deb
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
@@ -695,8 +844,6 @@ jobs:
           if [ -z "$VERSION_TO_USE" ]; then
             VERSION_TO_USE=$(node -p "require('./packages/tauri-app/package.json').version")
           fi
-          rm -rf "$ARTIFACT_DIR"
-          mkdir -p "$ARTIFACT_DIR"
           shopt -s nullglob
 
           debs=("$BUNDLE_ROOT"/*.deb)
@@ -774,12 +921,28 @@ jobs:
               ! grep -q "not found" /tmp/codenomad-tauri-ldd.txt
             '
 
+      - name: Stage and publish signed updater (Linux)
+        env:
+          UPDATER_UPLOAD: ${{ inputs.upload && inputs.tag != '' }}
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs stage linux-x86_64
+
+      - name: Retain updater publication receipt (Linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ github.run_id }}-linux-x86_64
+          overwrite: true
+          path: packages/tauri-app/release-updater/linux-x86_64.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Actions artifacts (Tauri Linux)
         if: ${{ inputs.upload_actions_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.actions_artifacts_name_prefix }}tauri-linux
-          path: packages/tauri-app/release-tauri/*.deb
+          path: |
+            packages/tauri-app/release-tauri/*.deb
+            packages/tauri-app/release-tauri/*.AppImage
           retention-days: ${{ inputs.actions_artifacts_retention_days }}
           if-no-files-found: error
 
@@ -788,29 +951,51 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(packages/tauri-app/release-tauri/*.deb)
-          if [ "${#files[@]}" -ne 1 ]; then
-            echo "Expected one Tauri Linux release asset, found ${#files[@]}" >&2
+          files=(packages/tauri-app/release-tauri/*.deb packages/tauri-app/release-tauri/*.AppImage)
+          if [ "${#files[@]}" -ne 2 ]; then
+            echo "Expected the Tauri Linux deb and AppImage, found ${#files[@]}" >&2
             exit 1
           fi
 
-          file="${files[0]}"
-          asset_name=$(basename "$file")
-          echo "Uploading $file"
-          gh release upload "$TAG" "$file" --clobber
-          if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
-            echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
-            exit 1
-          fi
+          for file in "${files[@]}"; do
+            asset_name=$(basename "$file")
+            echo "Uploading $file"
+            gh release upload "$TAG" "$file" --clobber
+            if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq -- "$asset_name"; then
+              echo "Uploaded Tauri Linux asset is missing from release: $asset_name" >&2
+              exit 1
+            fi
+          done
 
           gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
             case "$asset" in
-              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.AppImage|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
+              CodeNomad-Tauri-linux-*.zip|CodeNomad-Tauri-linux-*.rpm|CodeNomad-Tauri-linux-*.flatpak)
                 echo "Deleting obsolete Linux asset $asset"
                 gh release delete-asset "$TAG" "$asset" --yes
                 ;;
             esac
           done
+
+  publish-tauri-updater:
+    needs: [build-tauri-windows, build-tauri-macos, build-tauri-macos-arm64, build-tauri-linux]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-${{ github.run_id }}-*
+          path: updater-receipts
+          merge-multiple: true
+      - name: Publish complete updater manifest after all platform uploads
+        run: node packages/tauri-app/scripts/updater-artifacts.mjs publish updater-receipts
 
   build-tauri-linux-arm64:
     if: ${{ false }}

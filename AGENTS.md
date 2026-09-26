@@ -35,6 +35,8 @@
 
 ## Coding Principles
 
+- Tauri updates use `desktop_updater.rs` and the all-window shutdown coordinator. Only verified downloads can become a pending installer, with restart admission atomic with shutdown. Unsigned builds and Debian packages use the release-page fallback. Keep updater/process plugin commands unavailable to renderers; grant only the guarded application commands to local webviews. Publication verifies all four platform receipts before uploading `latest.json`. The vendored updater's Windows exit callback runs only after successful installer launch; see `dev-docs/TAURI_UPDATER.md` and `packages/tauri-app/vendor/README.md`.
+
 - Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for the captured failure and override removal criteria.
 
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.

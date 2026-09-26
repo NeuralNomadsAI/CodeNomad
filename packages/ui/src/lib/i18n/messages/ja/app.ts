@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "同じフォルダのインスタンスを複数作成できます",
 
   "releases.upgradeRequired.title": "アップグレードが必要です",
+  "releases.desktop.checking": "CodeNomadの更新を確認しています…",
+  "releases.desktop.current": "CodeNomadは最新です。",
+  "releases.desktop.available": "CodeNomad {version}が利用可能です。インストールするとアプリが再起動します。",
+  "releases.desktop.install": "インストールして再起動",
+  "releases.desktop.downloading": "更新をダウンロードして検証しています…",
+  "releases.desktop.restarting": "ウィンドウを保存して更新をインストールしています…",
+  "releases.desktop.failed": "更新を完了できませんでした。再試行するか、リリースページからダウンロードしてください。",
   "releases.upgradeRequired.message.withVersion": "最新の UI を使うには CodeNomad {version} に更新してください。",
   "releases.upgradeRequired.message.noVersion": "最新の UI を使うには CodeNomad を更新してください。",
   "releases.upgradeRequired.action.getUpdate": "更新を取得",

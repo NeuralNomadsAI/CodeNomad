@@ -45,6 +45,7 @@
     "allow-desktop-launch-next-folder",
     "allow-desktop-launch-acknowledge-folder",
     "allow-install-stable-update",
+    "allow-check-stable-update",
     "allow-open-workspace-target",
     "allow-set-workspace-menu-enabled",
     "allow-browser-target-register",

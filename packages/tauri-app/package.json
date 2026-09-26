@@ -9,12 +9,13 @@
     "dev:prep": "node ./scripts/dev-prep.js",
     "dev:bootstrap": "npm run dev:prep && npm run dev:ui",
     "sync:version": "node ./scripts/sync-tauri-version.js",
+    "configure:updater": "node ./scripts/configure-updater.mjs",
     "prebuild": "node ./scripts/prebuild.js",
     "bundle:server": "npm run prebuild",
     "build": "tauri build",
     "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources src-tauri/resources --loading src-tauri/resources/ui-loading"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.4"
+    "@tauri-apps/cli": "^2.10.0"
   }
 }

@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "Vous pouvez avoir plusieurs instances du même dossier",
 
   "releases.upgradeRequired.title": "Mise à jour requise",
+  "releases.desktop.checking": "Recherche d’une mise à jour de CodeNomad…",
+  "releases.desktop.current": "CodeNomad est à jour.",
+  "releases.desktop.available": "CodeNomad {version} est disponible. L’installation redémarrera l’application.",
+  "releases.desktop.install": "Installer et redémarrer",
+  "releases.desktop.downloading": "Téléchargement et vérification de la mise à jour…",
+  "releases.desktop.restarting": "Enregistrement des fenêtres et installation de la mise à jour…",
+  "releases.desktop.failed": "La mise à jour n’a pas pu aboutir. Vous pouvez réessayer ou la télécharger depuis la page des versions.",
   "releases.upgradeRequired.message.withVersion": "Mettez à jour vers CodeNomad {version} pour utiliser la dernière UI.",
   "releases.upgradeRequired.message.noVersion": "Mettez à jour CodeNomad pour utiliser la dernière UI.",
   "releases.upgradeRequired.action.getUpdate": "Obtenir la mise à jour",

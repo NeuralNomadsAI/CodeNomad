@@ -1,5 +1,5 @@
 import { createEffect, createSignal } from "solid-js"
-import { invoke } from "@tauri-apps/api/core"
+import { requestDesktopUpdate } from "./desktop-updates"
 import type { ServerMeta, SupportMeta } from "../../../server/src/api-types"
 import { getServerMeta } from "../lib/server-meta"
 import { showToastNotification, ToastHandle } from "../lib/notifications"
@@ -63,7 +63,7 @@ function ensureVisibilityEffect() {
           ? {
               label: tGlobal("releases.upgradeRequired.action.getUpdate"),
               href: support.latestServerUrl,
-              onClick: isTauriHost() && isLocalWindow() && navigator.userAgent.includes("Windows") ? () => invoke("install_stable_update") : undefined,
+              onClick: isTauriHost() && isLocalWindow() ? requestDesktopUpdate : undefined,
             }
           : undefined,
       })

@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "Можно иметь несколько экземпляров одной и той же папки",
 
   "releases.upgradeRequired.title": "Требуется обновление",
+  "releases.desktop.checking": "Проверка обновлений CodeNomad…",
+  "releases.desktop.current": "Установлена последняя версия CodeNomad.",
+  "releases.desktop.available": "Доступна версия CodeNomad {version}. Установка перезапустит приложение.",
+  "releases.desktop.install": "Установить и перезапустить",
+  "releases.desktop.downloading": "Загрузка и проверка обновления…",
+  "releases.desktop.restarting": "Сохранение окон и установка обновления…",
+  "releases.desktop.failed": "Не удалось завершить обновление. Повторите попытку или скачайте его со страницы выпусков.",
   "releases.upgradeRequired.message.withVersion": "Обновите CodeNomad до версии {version}, чтобы использовать последний UI.",
   "releases.upgradeRequired.message.noVersion": "Обновите CodeNomad, чтобы использовать последний UI.",
   "releases.upgradeRequired.action.getUpdate": "Получить обновление",
