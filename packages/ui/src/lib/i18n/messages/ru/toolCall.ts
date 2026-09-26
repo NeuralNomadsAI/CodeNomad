@@ -1,4 +1,6 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Результаты поиска не найдены.",
+  "toolCall.websearch.provider": "Провайдер веб-поиска",
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "Вложенные вызовы инструментов",
   "toolCall.execute.more": "Скрыто дополнительных вызовов: {count}.",
