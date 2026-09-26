@@ -13,6 +13,7 @@ const [directory, setDirectory] = createSignal("/a")
 let connections: any[] = [{ type: "credential", id: "one", label: "First", method: "key" }, { type: "credential", id: "two", label: "Second", method: "oauth" }, { type: "env", name: "PROVIDER_KEY" }]
 const writes: any[] = []
 let fail = false, reads = 0
+let deferParent = false, releaseParent: (() => void) | undefined
 const mutate = async (action: string, input: any) => {
   writes.push({ action, ...input })
   if (fail) { fail = false; throw new Error("fixture failure") }
@@ -21,7 +22,10 @@ const mutate = async (action: string, input: any) => {
   if (action === "rename") found.label = input.label
   if (action === "remove") connections = connections.filter(item => item !== found)
 }
-const client: any = { provider: { list: async () => ({ data: [{ id: "provider", name: "Fixture provider", activation: "enabled", package: "fixture" }] }) },
+const client: any = { provider: { list: async () => {
+  if (deferParent) { deferParent = false; await new Promise<void>(resolve => { releaseParent = resolve }) }
+  return { data: [{ id: "provider", name: "Fixture provider", activation: "enabled", package: "fixture" }] }
+} },
   model: { list: async () => ({ data: [] }) },
   integration: { list: async () => { reads++; return { data: [{ id: "provider", name: "Fixture provider", methods: [{ type: "key", label: "API key" }], connections: structuredClone(connections) }] } } },
   credential: { activate: (input: any) => mutate("activate", input), update: (input: any) => mutate("rename", input), remove: (input: any) => mutate("remove", input) } }
@@ -33,6 +37,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><main style={{ width: 
     : <ProviderAccounts instanceId="accounts" integrationId="provider" client={client} location={{ directory: directory() }} />}
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { writes, reads: () => reads, setDirectory, fail: () => { fail = true },
+  deferParent: () => { deferParent = true }, parentPending: () => Boolean(releaseParent),
+  releaseParent: () => { releaseParent?.(); releaseParent = undefined },
   switchExternally: () => {
     connections = [connections[1], connections[0], ...connections.slice(2)]
     ;(serverEvents as any).dispatch({ type: "instance.event", instanceId: "accounts", event: { type: "credential.switched", data: {} } })
