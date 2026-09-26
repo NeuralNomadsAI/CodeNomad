@@ -1,4 +1,8 @@
 export const settingsMessages = {
+  "settings.pluginPackages.check": "Vérifier les mises à jour de {target}",
+  "settings.pluginPackages.update": "Mettre à jour {target}",
+  "settings.pluginPackages.shared": "Met à jour cette cible dans le cache OpenCode partagé pour tous les dossiers qui l’utilisent.",
+  "settings.pluginPackages.error": "Échec de l’opération sur {target}. Actualisez pour consulter son état.",
   "settings.accounts.title": "Comptes",
   "settings.accounts.global": "Les comptes sont partagés globalement par ce service OpenCode.",
   "settings.accounts.active": "Actif",

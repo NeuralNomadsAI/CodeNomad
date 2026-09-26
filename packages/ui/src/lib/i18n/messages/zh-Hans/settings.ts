@@ -1,4 +1,8 @@
 export const settingsMessages = {
+  "settings.pluginPackages.check": "检查 {target} 的更新",
+  "settings.pluginPackages.update": "更新 {target}",
+  "settings.pluginPackages.shared": "在共享 OpenCode 缓存中为所有使用此包的位置更新该目标。",
+  "settings.pluginPackages.error": "{target} 的包操作失败。请刷新以查看状态。",
   "settings.accounts.title": "账户",
   "settings.accounts.global": "账户由此 OpenCode 服务全局共享。",
   "settings.accounts.active": "已启用",

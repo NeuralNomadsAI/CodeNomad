@@ -1,4 +1,8 @@
 export const settingsMessages = {
+  "settings.pluginPackages.check": "בדוק עדכונים עבור {target}",
+  "settings.pluginPackages.update": "עדכן את {target}",
+  "settings.pluginPackages.shared": "מעדכן את החבילה במטמון המשותף של OpenCode לכל המיקומים המשתמשים בה.",
+  "settings.pluginPackages.error": "פעולת החבילה {target} נכשלה. רענן לבדיקת המצב.",
   "settings.accounts.title": "חשבונות",
   "settings.accounts.global": "החשבונות משותפים לכל שירות OpenCode זה.",
   "settings.accounts.active": "פעיל",

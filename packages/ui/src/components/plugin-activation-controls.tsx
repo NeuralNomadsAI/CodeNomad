@@ -13,6 +13,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
+import { PluginPackageAction } from "./plugin-package-action"
 import "../stores/plugin-controls-events"
 
 interface PluginActivationControlsProps {
@@ -174,12 +175,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const nameId = `${headingId}-name-${pluginId}`
     return (
       <div class="plugin-control-row" data-plugin-id={pluginId} role="group" aria-labelledby={nameId}>
-        <Tooltip placement="top-start" openDelay={300}>
+        <div class="plugin-control-identity"><Tooltip placement="top-start" openDelay={300}>
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{pluginId}</bdi></Tooltip.Trigger>
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
-        </Tooltip>
+        </Tooltip><PluginPackageAction instanceId={props.instanceId} location={requestLocation()} source={control()?.runtime?.source} active={props.active} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
