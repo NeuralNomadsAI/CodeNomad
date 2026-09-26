@@ -2,13 +2,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { startProductFixture } from "./fixtures/product-fixture-server"
 
-test("native usage dashboard renders aggregates, bounds requests, fences stale project reads and stops when disposed", async () => {
-  const fixture = await startProductFixture("project-usage"), page = await fixture.browser.newPage({ viewport: { width: 380, height: 1000 }, locale: "en-US" })
+test("service-wide usage dashboard declares scope, bounds requests, fences stale connection reads and stops when disposed", async () => {
+  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 380, height: 1000 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(fixture.url)
     await page.locator(".usage-metrics").waitFor()
+    await page.getByText(/Entire connected OpenCode service: all projects, independent clones and subsessions/).waitFor()
     assert.equal(await page.locator(".usage-metrics > div").filter({ has: page.getByText("Input tokens", { exact: true }) }).locator("dd").innerText(), "12,345")
     assert.equal(await page.getByRole("rowheader").innerText(), "fixture/synthetic · high")
     assert.equal(await page.locator("meter").count(), 2)
@@ -21,10 +22,11 @@ test("native usage dashboard renders aggregates, bounds requests, fences stale p
     await page.getByRole("alert").waitFor()
     assert.equal(await page.locator(".usage-metrics").count(), 1)
     await page.evaluate(() => { (window as any).fixture.defer(); (window as any).fixture.refresh() })
-    await page.evaluate(() => (window as any).fixture.setDirectory("/other"))
-    await page.getByText("/other", { exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.setInstanceId("other"))
+    const steps = page.locator(".usage-metrics > div").filter({ has: page.getByText("Steps", { exact: true }) }).locator("dd")
+    await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "7")
     await page.evaluate(() => (window as any).fixture.release())
-    assert.equal(await page.locator(".usage-project").innerText(), "/other")
+    assert.equal(await steps.innerText(), "7")
     await page.evaluate(() => (window as any).fixture.setVisible(false))
     const queries = await page.evaluate(() => (window as any).fixture.queries.length)
     await page.evaluate(() => (window as any).fixture.refresh())
@@ -34,7 +36,7 @@ test("native usage dashboard renders aggregates, bounds requests, fences stale p
 })
 
 test("Usage is reachable in the real preferences screen", async () => {
-  const fixture = await startProductFixture("project-usage"), page = await fixture.browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
+  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {

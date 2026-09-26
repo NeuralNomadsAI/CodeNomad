@@ -92,7 +92,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "usage":
-        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} />
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":

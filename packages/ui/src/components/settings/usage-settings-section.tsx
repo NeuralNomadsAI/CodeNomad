@@ -1,26 +1,23 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import type { LocationRef } from "@opencode/client"
-import type { ProjectUsageSnapshot } from "../../../../server/src/api-types"
+import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { serverEvents } from "../../lib/server-events"
 import { activeInstanceId } from "../../stores/instances"
-import { getActiveCatalogLocation } from "../../stores/sessions"
 
-export function UsageSettingsSection(props: { instanceId?: string; location?: LocationRef }) {
+export function UsageSettingsSection(props: { instanceId?: string }) {
   const { t, locale } = useI18n()
   const [days, setDays] = createSignal(30)
-  const [snapshot, setSnapshot] = createSignal<ProjectUsageSnapshot>()
+  const [snapshot, setSnapshot] = createSignal<ServiceUsageSnapshot>()
   const [busy, setBusy] = createSignal(false), [error, setError] = createSignal(false)
   const instanceId = () => props.instanceId ?? activeInstanceId() ?? ""
-  const directory = () => props.location?.directory ?? getActiveCatalogLocation(instanceId())?.directory
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
   let refresh = () => {}
   createEffect(() => {
-    const id = instanceId(), path = directory(), count = days()
+    const id = instanceId(), count = days()
     let disposed = false, reading = false, trailing = false
     setSnapshot(undefined); setError(false); setBusy(false)
-    if (!id || !path) return
+    if (!id) return
     const load = async () => {
       if (disposed) return
       if (reading) { trailing = true; return }
@@ -29,7 +26,7 @@ export function UsageSettingsSection(props: { instanceId?: string; location?: Lo
         trailing = false
         const to = Date.now()
         try {
-          const next = await serverApi.getProjectUsage(id, { directory: path, from: to - count * 86_400_000, to, timezone })
+          const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone })
           if (!disposed && !trailing) { setSnapshot(next); setError(false) }
         } catch { if (!disposed && !trailing) setError(true) }
       } while (!disposed && trailing)
@@ -60,7 +57,7 @@ export function UsageSettingsSection(props: { instanceId?: string; location?: Lo
   return <section class="settings-card usage-dashboard">
     <h3>{t("settings.usage.title")}</h3>
     <p>{t("settings.usage.scope")}</p>
-    <Show when={directory()} fallback={<p role="status">{t("settings.usage.noProject")}</p>}>
+    <Show when={instanceId()} fallback={<p role="status">{t("settings.usage.noProject")}</p>}>
       <div class="usage-toolbar">
         <label>{t("settings.usage.period")}<select class="selector-trigger" aria-label={t("settings.usage.period")} value={days()} onChange={event => setDays(Number(event.currentTarget.value))}>
           <For each={[7, 30, 90, 365]}>{count => <option value={count}>{t("settings.usage.days", { count })}</option>}</For>
@@ -70,7 +67,6 @@ export function UsageSettingsSection(props: { instanceId?: string; location?: Lo
       <Show when={busy()}><p role="status">{t("settings.usage.loading")}</p></Show>
       <Show when={error()}><p role="alert">{t("settings.usage.error")}</p></Show>
       <Show when={snapshot()}>{data => <>
-        <p class="usage-project">{data().directory}</p>
         <p>{new Date(data().stats.range.from).toLocaleString(locale())} — {new Date(data().stats.range.to).toLocaleString(locale())} · {timezone}</p>
         <dl class="usage-metrics">
           <For each={metrics()}>{([label, value]) => <div><dt>{t(`settings.usage.${label}`)}</dt><dd>{number(value)}</dd></div>}</For>
