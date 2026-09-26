@@ -83,7 +83,12 @@ setProviders(new Map([[instanceId, [
   { id: "zen", name: "OpenCode Zen", models: models.filter((model) => model.providerId === "zen") },
 ]]]))
 
-const [current, setCurrent] = createSignal({ providerId: "zen", modelId: "zen-other" })
+// A plain object, because createSignal stores a function initial value as-is.
+const requested = options.get("current")?.split("/") ?? []
+const initialCurrent = requested.length === 2
+  ? { providerId: requested[0], modelId: requested[1] }
+  : { providerId: "zen", modelId: "zen-other" }
+const [current, setCurrent] = createSignal(initialCurrent)
 const [mounted, setMounted] = createSignal(true)
 const changes: { providerId: string; modelId: string }[] = []
 let mounts = 0

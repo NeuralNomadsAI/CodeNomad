@@ -1060,6 +1060,7 @@ function toggleFavoriteModelPreference(model: ModelPreference): void {
 // synchronously and the persisted writes are serialized in click order.
 const [pendingFavoritesOnly, setPendingFavoritesOnly] = createSignal<boolean | undefined>(undefined)
 let favoritesOnlyWriteQueue: Promise<void> = Promise.resolve()
+let latestFavoritesOnlyWrite: Promise<void> | null = null
 
 function getFavoritesOnlyPreference(): boolean {
   return pendingFavoritesOnly() ?? uiState().models.favoritesOnly
@@ -1069,15 +1070,24 @@ function setFavoritesOnlyPreference(enabled: boolean): void {
   if (getFavoritesOnlyPreference() === enabled) return
   setPendingFavoritesOnly(enabled)
 
-  const settlePending = () => setPendingFavoritesOnly((current) => (current === enabled ? undefined : current))
-  const previous = favoritesOnlyWriteQueue
-  favoritesOnlyWriteQueue = previous.catch(() => undefined).then(async () => {
-    try {
-      await patchStateOwner("ui", { models: { favoritesOnly: enabled } })
-    } catch (error) {
-      log.error("Failed to update favorites-only model mode", error)
-    }
-    settlePending()
+  const write = favoritesOnlyWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await patchStateOwner("ui", { models: { favoritesOnly: enabled } })
+      } catch (error) {
+        log.error("Failed to update favorites-only model mode", error)
+      }
+    })
+
+  favoritesOnlyWriteQueue = write
+  latestFavoritesOnlyWrite = write
+  void write.then(() => {
+    // Only the newest write may retire the published intent, so a superseded
+    // write inside a click burst cannot fall back to an older stored value.
+    if (latestFavoritesOnlyWrite !== write) return
+    latestFavoritesOnlyWrite = null
+    setPendingFavoritesOnly((current) => (current === enabled ? undefined : current))
   })
 }
 

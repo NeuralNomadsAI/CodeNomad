@@ -7,6 +7,8 @@ import solid from "vite-plugin-solid"
 
 // Fail fast on a wrong expectation instead of burning the default 30s timeout
 // on every wait in this file.
+// The cold first paint of this fixture is slower than the interactions, so the
+// short budget only applies once the selector is on screen.
 const ACTION_TIMEOUT = 10_000
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -26,14 +28,19 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+const gotoFixture = async (page: Page, query = "") => {
+  await page.goto(`${url}${query}`)
+  await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+}
+
 const openPicker = async (page: Page) => {
   await page.locator("[data-model-selector-control] .selector-trigger").click()
-  await page.locator(".selector-listbox li").first().waitFor({ timeout: ACTION_TIMEOUT })
+  await page.locator(".selector-listbox li").first().waitFor()
 }
 
 const closePicker = async (page: Page) => {
   await page.locator("[data-model-selector-control] .selector-trigger").click()
-  await page.locator(".selector-favorites-toggle").waitFor({ state: "hidden", timeout: ACTION_TIMEOUT })
+  await page.locator(".selector-favorites-toggle").waitFor({ state: "hidden" })
 }
 
 const listed = async (page: Page) =>
@@ -52,13 +59,11 @@ const favoritesPlusNonFavorite = ["GPT-6 Astra", "GPT-6 Sol", "Zen Other"]
 
 test("the favorites mode persists and always keeps the current model listed", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
-  page.setDefaultTimeout(ACTION_TIMEOUT)
   const errors: string[] = []
   page.on("pageerror", (error) => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(url)
-    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+    await gotoFixture(page)
 
     // The catalog starts in the stored "all" mode with a non-favorite current model.
     await openPicker(page)
@@ -124,11 +129,9 @@ test("the favorites mode persists and always keeps the current model listed", as
 
 test("a rapid double click alternates the mode instead of sticking", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
-  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(url)
-    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+    await gotoFixture(page)
     await openPicker(page)
 
     // Both clicks land before the first write settles. The seeded value is
@@ -153,11 +156,9 @@ test("a rapid double click alternates the mode instead of sticking", async () =>
 
 test("a model hidden by provider visibility stays hidden and unselectable", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
-  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(url)
-    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+    await gotoFixture(page)
 
     // Hide the active model, which is also a favorite, then look at both modes.
     await page.locator("#pick-favorite").click()
@@ -176,11 +177,9 @@ test("a model hidden by provider visibility stays hidden and unselectable", asyn
 
 test("a stored favorites mode without favorites stays visible and revocable", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
-  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(`${url}?favorites=none&mode=favorites`)
-    await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
+    await gotoFixture(page, "?favorites=none&mode=favorites")
 
     await openPicker(page)
     assert.deepEqual(await listed(page), allModels, "there is nothing to restrict the list to")
@@ -197,5 +196,57 @@ test("a stored favorites mode without favorites stays visible and revocable", as
     await openPicker(page)
     assert.equal(await favoritesOnly(page), "true")
     assert.deepEqual(await listed(page), ["GPT-6 Astra", "Zen Other"], "the favorite plus the active model")
+  } finally { await page.close() }
+})
+
+test("a three-click burst never lets a superseded write flip the shown mode", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await gotoFixture(page)
+    await openPicker(page)
+
+    await page.evaluate(() => (window as any).fixture.setLatency(150))
+    const toggle = page.locator(".selector-favorites-toggle")
+    await toggle.click()
+    await toggle.click()
+    await toggle.click()
+
+    // Sample the rendered state while the burst is still settling: the newest
+    // intent is "on", so neither the star nor the list may show the older value.
+    const samples: string[] = []
+    while (await page.evaluate(() => (window as any).fixture.applied().length) < 3) {
+      samples.push(`${await toggle.getAttribute("aria-pressed")}/${await page.locator(".selector-listbox .selector-option-label").count()}`)
+      await page.waitForTimeout(20)
+    }
+    assert.ok(samples.every((sample) => sample === "true/3"), `the shown mode never flips: ${samples.join(", ")}`)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.applied()), [
+      { models: { favoritesOnly: true } },
+      { models: { favoritesOnly: false } },
+      { models: { favoritesOnly: true } },
+    ])
+    assert.equal(await page.evaluate(() => (window as any).fixture.state().models.favoritesOnly), true)
+    assert.equal(await favoritesOnly(page), "true")
+    assert.deepEqual(await listed(page), favoritesPlusNonFavorite)
+  } finally { await page.close() }
+})
+
+test("a current model missing from the catalog stays listed as an unavailable row", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await gotoFixture(page, "?current=zen/retired-model")
+
+    await openPicker(page)
+    // Sorted into its own provider group by model name, not prepended.
+    assert.deepEqual(await listed(page), ["GPT-6 Astra", "GPT-6 Sol", "Muse Spark", "retired-model (unavailable)", "Zen Other"])
+    const unavailable = page.locator(".selector-listbox .selector-option", { hasText: "retired-model" })
+    assert.equal(await unavailable.getAttribute("data-disabled"), "", "an unavailable model cannot be selected")
+    assert.equal(await unavailable.locator(".selector-option-star").count(), 0, "and carries no favorite toggle")
+
+    // Favorites-only keeps that placeholder next to the favorites.
+    await page.locator(".selector-favorites-toggle").click()
+    await page.waitForFunction(() => document.querySelectorAll(".selector-listbox .selector-option-label").length === 3)
+    assert.deepEqual(await listed(page), ["GPT-6 Astra", "GPT-6 Sol", "retired-model (unavailable)"])
   } finally { await page.close() }
 })
