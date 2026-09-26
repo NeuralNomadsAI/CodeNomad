@@ -62,7 +62,6 @@ describe("right panel plugin manifests", () => {
   it("defines core right panel tabs and status sections as manifests", () => {
     const render = () => undefined as any
     const rightPanel = createCoreRightPanelManifest({
-      renderGitChangesTab: render,
       renderFilesTab: render,
       renderStatusTab: render,
     })
@@ -77,7 +76,7 @@ describe("right panel plugin manifests", () => {
 
     const rightPanelModule = rightPanel.create(host)
 
-    assert.deepEqual(rightPanelModule.tabs?.map((entry) => entry.id), ["git-changes", "files", "status"])
+    assert.deepEqual(rightPanelModule.tabs?.map((entry) => entry.id), ["files", "status"])
     assert.equal(rightPanelModule.tabs?.find((entry) => entry.id === "status")?.alwaysVisible, true)
     assert.deepEqual(statusSections.statusSections?.map((entry) => entry.id), [
       "tokens",

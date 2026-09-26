@@ -10,6 +10,7 @@ import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
+import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
 
 type UseGitChangesOptions = {
   isActive: Accessor<boolean>
@@ -20,6 +21,7 @@ type UseGitChangesOptions = {
   isPhoneLayout: Accessor<boolean>
   promptInputApi: Accessor<PromptInputApi | null>
   closeGitList: () => void
+  externalDiff?: boolean
 }
 
 export function useGitChanges(options: UseGitChangesOptions) {
@@ -48,6 +50,10 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
   const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+  const gitActionItems = createMemo(() => {
+    const selected = gitBulkSelectedItemIds()
+    return gitListItems().filter(item => selected.size > 0 ? selected.has(item.id) : item.id === gitSelectedItemId())
+  })
   const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
   const cancelGitReads = () => {
     lifecycle += 1
@@ -158,6 +164,32 @@ export function useGitChanges(options: UseGitChangesOptions) {
     return `${item.path}::${item.originalPath ?? ""}::${item.section}::${item.status}::${item.additions}::${item.deletions}`
   }
 
+  const captureGitSelection = () => {
+    const selection = describeGitSelection(gitSelectedItemId())
+    const target = options.externalDiff ? getFilePreview(options.instanceId) : null
+    const preview = target && target.kind !== "workspace" && !target.commit &&
+      target.slug === options.worktreeSlug() && target.path === selection.path &&
+      (target.scope ?? "unstaged") === selection.section &&
+      target.directory === gitLocation(target.slug).directory ? target : null
+    return { selection, preview, version: gitDiffRequestVersion }
+  }
+
+  const reconcileGitSelection = async (previous: ReturnType<typeof captureGitSelection>) => {
+    // A status response is not a new user selection. Fence clicks and reader navigation.
+    if (previous.version !== gitDiffRequestVersion) return
+    const selected = resolveValidGitSelection(previous.selection)
+    const preview = previous.preview
+    if (preview && getFilePreview(options.instanceId) === preview) {
+      const item = gitListItems().find(item => item.id === selected && item.path === preview.path)
+      if (item) {
+        // A fresh target also reloads unchanged content on explicit refresh.
+        openFilePreview(options.instanceId, { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section })
+      } else closeFilePreview(options.instanceId)
+    }
+    if (selected) await openGitFile(selected)
+    else { setGitSelectedItemId(null); clearSelectedGitDiff() }
+  }
+
   const clearSelectedGitDiff = () => {
     setGitSelectedError(null)
     setGitSelectedBefore(null)
@@ -239,6 +271,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     diffController?.abort()
     const controller = diffController = new AbortController()
     setGitSelectedItemId(itemId)
+    if (options.externalDiff) return
     setGitSelectedLoading(true)
     clearSelectedGitDiff()
 
@@ -288,8 +321,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (gitCommitSubmitting()) return
 
     const refresh = passiveGitRefresh = {}
-    const refreshSelectionId = gitSelectedItemId()
-    const previousSelection = describeGitSelection(gitSelectedItemId())
+    const previous = captureGitSelection()
+    const previousSelection = previous.selection
     const previousFingerprint = describeGitSelectionFingerprint(previousSelection.itemId)
     const hadSelectedDiff =
       previousSelection.itemId !== null &&
@@ -298,12 +331,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     try {
       if (!await loadGitStatus(true)) return
       if (passiveGitRefresh !== refresh || !gitActive()) return
-      if (gitSelectedItemId() !== refreshSelectionId) return
+      if (previous.version !== gitDiffRequestVersion) return
       const nextSelection = resolveValidGitSelection(previousSelection)
-      setGitSelectedItemId(nextSelection)
 
       if (!nextSelection) {
-        clearSelectedGitDiff()
+        await reconcileGitSelection(previous)
         return
       }
 
@@ -315,7 +347,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         previousSelection.itemId === nextSelection
 
       if (shouldReloadSelectedDiff) {
-        await openGitFile(nextSelection)
+        await reconcileGitSelection(previous)
       }
     } finally {
       if (passiveGitRefresh !== refresh) return
@@ -331,8 +363,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   const mutateGitFile = async (item: GitChangeListItem, action: "stage" | "unstage") => {
     const context = captureGitContext()
     if (!context.current()) return
-    const currentSelection = describeGitSelection(gitSelectedItemId())
-    const fallbackSelection = currentSelection.path === item.path ? currentSelection : describeGitSelection(item.id)
+    const previous = captureGitSelection()
     const selectedIds = gitBulkSelectedItemIds()
     const selectedItems = gitListItems().filter((candidate) => selectedIds.has(candidate.id))
     const bulkTargets = selectedItems.filter((candidate) => candidate.section === item.section)
@@ -345,16 +376,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
         await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       }
 
-      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      invalidateFilesystemCaches(options.instanceId)
+      if (!context.current()) return
       if (!await loadGitStatus(true) || !context.current()) return
       clearGitBulkSelection()
-      const nextSelection = resolveValidGitSelection(fallbackSelection)
-      setGitSelectedItemId(nextSelection)
-      if (nextSelection) {
-        await openGitFile(nextSelection)
-      } else {
-        clearSelectedGitDiff()
-      }
+      await reconcileGitSelection(previous)
     } catch (error) {
       if (!context.current()) return
       showToastNotification({
@@ -393,18 +419,14 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitCommitSubmitting(true)
     const operation = commitOperation = {}
     const draft = gitCommitMessage()
+    const previous = captureGitSelection()
     try {
       await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
-      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      invalidateFilesystemCaches(options.instanceId)
+      if (!context.current()) return
       if (gitCommitMessage() === draft) setGitCommitMessage("")
       if (!await loadGitStatus(true) || !context.current()) return
-      const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
-      setGitSelectedItemId(nextSelection)
-      if (nextSelection) {
-        await openGitFile(nextSelection)
-      } else {
-        clearSelectedGitDiff()
-      }
+      await reconcileGitSelection(previous)
       if (!context.current()) return
       showToastNotification({
         message: options.t("instanceShell.gitChanges.commit.success"),
@@ -423,14 +445,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
   const refreshGitStatus = async () => {
     const context = captureGitContext()
+    const previous = captureGitSelection()
     if (!await loadGitStatus(true) || !context.current()) return
-    const selected = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))
-    setGitSelectedItemId(selected)
-    if (selected) {
-      void openGitFile(selected)
-    } else {
-      clearSelectedGitDiff()
-    }
+    await reconcileGitSelection(previous)
   }
 
   const insertGitChangeContext = (item: GitChangeListItem, selection: { startLine: number; endLine: number } | null) => {
@@ -501,6 +518,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     gitStatusError,
     gitSelectedItemId,
     gitBulkSelectedItemIds,
+    gitActionItems,
     gitSelectedLoading,
     gitSelectedError,
     gitSelectedBefore,

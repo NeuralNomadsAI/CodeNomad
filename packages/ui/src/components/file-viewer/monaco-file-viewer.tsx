@@ -3,12 +3,13 @@ import { loadMonaco } from "../../lib/monaco/setup"
 import { getOrCreateTextModel } from "../../lib/monaco/model-cache"
 import { inferMonacoLanguageId } from "../../lib/monaco/language"
 import { ensureMonacoLanguageLoaded } from "../../lib/monaco/setup"
-import { useTheme } from "../../lib/theme"
+import { useMonacoTheme } from "../../lib/monaco/theme"
 
 interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  readOnly?: boolean
   wordWrap?: "on" | "off"
   compactGutter?: boolean
   onSave?: (content: string) => void
@@ -16,12 +17,12 @@ interface MonacoFileViewerProps {
 }
 
 export function MonacoFileViewer(props: MonacoFileViewerProps) {
-  const { isDark } = useTheme()
   let host: HTMLDivElement | undefined
 
   let editor: any = null
   let monaco: any = null
   const [ready, setReady] = createSignal(false)
+  useMonacoTheme(() => ready() ? monaco : null)
 
   const disposeEditor = () => {
     try {
@@ -55,11 +56,11 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       if (cancelled) return
       if (!host || !monaco) return
 
-      monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
       editor = monaco.editor.create(host, {
         value: "",
         language: "plaintext",
-        readOnly: false,
+        readOnly: props.readOnly ?? false,
+        occurrencesHighlight: props.readOnly ? "off" : "singleFile",
         automaticLayout: true,
         lineNumbers: "on",
         lineNumbersMinChars: lineNumbersMinChars(props.content),
@@ -89,11 +90,6 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       setReady(false)
       disposeEditor()
     })
-  })
-
-  createEffect(() => {
-    if (!ready() || !monaco || !editor) return
-    monaco.editor.setTheme(isDark() ? "vs-dark" : "vs")
   })
 
   createEffect(() => {

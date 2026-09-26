@@ -1,4 +1,5 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
@@ -366,10 +367,10 @@ export const serverApi = {
       body: JSON.stringify(payload),
     })
   },
-  listWorkspaceFiles(id: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
+  listWorkspaceFiles(id: string, relativePath = ".", directory?: string, signal?: AbortSignal): Promise<FileSystemEntry[]> {
     const params = new URLSearchParams({ path: relativePath })
     if (directory) params.set("directory", directory)
-    return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`)
+    return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`, { signal })
   },
   searchWorkspaceFiles(
     id: string,
@@ -393,6 +394,10 @@ export const serverApi = {
       { signal: opts?.signal },
     )
     return opts?.signal ? retryFileSearch(search, opts.signal) : search()
+  },
+  previewWorkspaceFile(id: string, relativePath: string, directory: string, signal?: AbortSignal): Promise<WorkspaceFileResponse> {
+    const params = new URLSearchParams({ path: relativePath, directory })
+    return request(`/api/workspaces/${encodeURIComponent(id)}/files/preview?${params}`, { signal })
   },
   readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     const params = new URLSearchParams({ path: relativePath })
@@ -421,6 +426,16 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
       { signal },
     )
+  },
+  fetchGitHistory(id: string, slug: string, offset = 0, head?: string, signal?: AbortSignal): Promise<GitHistoryPage> {
+    const query = new URLSearchParams({ offset: String(offset), ...(head ? { head } : {}) })
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history?${query}`, { signal })
+  },
+  fetchGitCommit(id: string, slug: string, commit: string, signal?: AbortSignal): Promise<GitCommitDetails> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}`, { signal })
+  },
+  fetchGitCommitDiff(id: string, slug: string, commit: string, path: string, signal?: AbortSignal): Promise<GitCommitDiff> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}?${new URLSearchParams({ path })}`, { signal })
   },
   fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
     const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
