@@ -10,6 +10,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitRequiredError } from "../../workspaces/git-requirement"
+import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -73,6 +74,31 @@ const WorkspaceFileSearchQuerySchema = z.object({
 })
 
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
+  app.get<{ Params: { id: string } }>("/api/workspaces/:id/files/preview", async (request, reply) => {
+    try {
+      const query = z.object({ path: z.string().min(1), directory: z.string().min(1).optional() }).parse(request.query)
+      return await deps.workspaceManager.previewFile(request.params.id, query.path, query.directory)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
+  app.get<{ Params: { id: string; slug: string } }>("/api/workspaces/:id/worktrees/:slug/git-history", async (request, reply) => {
+    try {
+      const query = z.object({ offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), head: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).optional() }).parse(request.query)
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+      return await getGitHistory(directory, query.offset, query.head)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
+
+  app.get<{ Params: { id: string; slug: string; commit: string } }>("/api/workspaces/:id/worktrees/:slug/git-history/:commit", async (request, reply) => {
+    try {
+      const query = z.object({ path: z.string().min(1).optional() }).parse(request.query)
+      const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).parse(request.params.commit)
+      const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
+      if (!directory) return
+      return query.path === undefined ? await getGitCommit(directory, commit)
+        : await getGitCommitDiff(directory, commit, query.path)
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
   app.get("/api/workspaces", async () => {
     return deps.workspaceManager.list()
   })

@@ -492,6 +492,12 @@ export class WorkspaceManager {
     }
   }
 
+  async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
+    const result = await browser.readFileContent(relativePath, { encoding: "base64" })
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+  }
+
   async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })

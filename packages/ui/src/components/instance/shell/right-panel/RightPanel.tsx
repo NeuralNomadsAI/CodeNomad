@@ -30,6 +30,7 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
+import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
 import { loadRightPanelPluginManifests, type RightPanelPluginLoadError } from "./plugin-manifest"
 import { RIGHT_PANEL_PLUGIN_MANIFESTS } from "./plugins"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
@@ -93,15 +94,20 @@ interface RightPanelProps {
 }
 
 const RightPanel: Component<RightPanelProps> = (props) => {
-  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(readStoredRightPanelTab("git-changes"))
+  const savedTab = readStoredRightPanelTab("files")
+  const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
   let customizationTriggerRef: HTMLButtonElement | undefined
   let customizationPopoverRef: HTMLDivElement | undefined
-  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(
-    parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY)),
-  )
+  let savedCustomization = parseRightPanelCustomization(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY))
+  if (!readClientLayoutValue(FILES_PANEL_MIGRATION_KEY)) {
+    savedCustomization = mergeFilesPanelCustomization(savedCustomization)
+    writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(savedCustomization))
+    writeClientLayoutValue(FILES_PANEL_MIGRATION_KEY, "1")
+  }
+  const [rightPanelCustomization, setRightPanelCustomization] = createSignal<RightPanelCustomization>(savedCustomization)
   const tabGroupId = `right-panel-${createUniqueId()}`
   const tabId = (id: string) => `${tabGroupId}-tab-${id}`
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`

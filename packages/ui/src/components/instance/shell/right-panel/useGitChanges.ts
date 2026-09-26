@@ -20,6 +20,7 @@ type UseGitChangesOptions = {
   isPhoneLayout: Accessor<boolean>
   promptInputApi: Accessor<PromptInputApi | null>
   closeGitList: () => void
+  externalDiff?: boolean
 }
 
 export function useGitChanges(options: UseGitChangesOptions) {
@@ -239,6 +240,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     diffController?.abort()
     const controller = diffController = new AbortController()
     setGitSelectedItemId(itemId)
+    if (options.externalDiff) return
     setGitSelectedLoading(true)
     clearSelectedGitDiff()
 
@@ -345,7 +347,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
         await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       }
 
-      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      invalidateFilesystemCaches(options.instanceId)
+      if (!context.current()) return
       if (!await loadGitStatus(true) || !context.current()) return
       clearGitBulkSelection()
       const nextSelection = resolveValidGitSelection(fallbackSelection)
@@ -395,7 +398,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const draft = gitCommitMessage()
     try {
       await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
-      if (!context.current()) { invalidateFilesystemCaches(options.instanceId); return }
+      invalidateFilesystemCaches(options.instanceId)
+      if (!context.current()) return
       if (gitCommitMessage() === draft) setGitCommitMessage("")
       if (!await loadGitStatus(true) || !context.current()) return
       const nextSelection = resolveValidGitSelection(describeGitSelection(gitSelectedItemId()))

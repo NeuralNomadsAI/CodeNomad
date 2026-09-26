@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { OpenCodeEvent } from "@opencode/client"
+export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.

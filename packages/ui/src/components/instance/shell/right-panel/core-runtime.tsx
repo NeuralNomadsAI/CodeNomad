@@ -1,38 +1,21 @@
-import { createEffect, createMemo, createSignal, lazy, type Accessor } from "solid-js"
-
+import { createEffect, createMemo, createSignal, lazy, on, onCleanup, type Accessor } from "solid-js"
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
-import type { DiffContextMode, DiffViewMode, DiffWordWrapMode, RightPanelTab } from "./types"
+import type { RightPanelTab } from "./types"
 import type { RightPanelCustomization, RightPanelSectionModule } from "./registry"
-
-import {
-  getDefaultWorktreeSlug,
-  getGitRepoStatus,
-  getWorktreeSlugForSession,
-  getWorktrees,
-} from "../../../../stores/worktrees"
-import { writeClientLayoutValue } from "../../../../stores/client-state"
-import {
-  RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY,
-  RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY,
-  RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY,
-  RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
-  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY,
-  RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY,
-  readStoredBool,
-  readStoredEnum,
-} from "../storage"
+import { getDefaultWorktreeSlug, getWorktreeSlugForSession, getWorktrees, getGitRepoStatus } from "../../../../stores/worktrees"
+import { closeFilePreview, openFilePreview, type FilePreviewTarget } from "../../../../stores/files-preview"
+import { showSessionChat } from "../../../../stores/session-previews"
 import { useGitChanges } from "./useGitChanges"
+import { useGitHistory } from "./useGitHistory"
 import { createCoreRightPanelManifest } from "./core-plugin"
-import { createFilesTabRuntime } from "./tabs/files-runtime"
-import { createSplitResize } from "./tabs/split-resize"
+import { useWorkspaceTree } from "./useWorkspaceTree"
+import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
+import { readStoredEnum } from "../storage"
+import { writeClientLayoutValue } from "../../../../stores/client-state"
 
-const LazyGitChangesTab = lazy(() => import("./tabs/GitChangesTab"))
+const LazyFilesPanel = lazy(() => import("./tabs/FilesPanel"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
 
 interface CoreRightPanelRuntimeOptions {
@@ -55,181 +38,54 @@ interface CoreRightPanelRuntimeOptions {
 }
 
 export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOptions) {
-  const [diffViewMode, setDiffViewMode] = createSignal<DiffViewMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["split", "unified"] as const) ?? "unified",
-  )
-  const [diffContextMode, setDiffContextMode] = createSignal<DiffContextMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, ["expanded", "collapsed"] as const) ?? "collapsed",
-  )
-  const [diffWordWrapMode, setDiffWordWrapMode] = createSignal<DiffWordWrapMode>(
-    readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, ["on", "off"] as const) ?? "on",
-  )
-  const [gitChangesListOpen, setGitChangesListOpen] = createSignal(true)
-  const [gitStagedOpen, setGitStagedOpen] = createSignal(true)
-  const [gitUnstagedOpen, setGitUnstagedOpen] = createSignal(true)
-
-  const listLayoutKey = createMemo(() => (options.isPhoneLayout() ? "phone" : "nonphone"))
-
-  const gitListOpenStorageKey = createMemo(() =>
-    listLayoutKey() === "phone" ? RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_PHONE_KEY : RIGHT_PANEL_GIT_CHANGES_LIST_OPEN_NONPHONE_KEY,
-  )
-
-  const gitSectionStorageKey = (section: "staged" | "unstaged") => {
-    const phone = listLayoutKey() === "phone"
-    if (section === "staged") {
-      return phone ? RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_PHONE_KEY : RIGHT_PANEL_GIT_CHANGES_STAGED_OPEN_NONPHONE_KEY
-    }
-    return phone ? RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_PHONE_KEY : RIGHT_PANEL_GIT_CHANGES_UNSTAGED_OPEN_NONPHONE_KEY
-  }
-
-  createEffect(() => {
-    gitListOpenStorageKey()
-    const gitPersisted = readStoredBool(gitListOpenStorageKey())
-    if (gitPersisted !== null) {
-      setGitChangesListOpen(gitPersisted)
-    } else {
-      setGitChangesListOpen(true)
-    }
-
-    setGitStagedOpen(readStoredBool(gitSectionStorageKey("staged")) ?? true)
-    setGitUnstagedOpen(readStoredBool(gitSectionStorageKey("unstaged")) ?? true)
-  })
-
-  createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, diffViewMode()))
-  createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, diffContextMode()))
-  createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, diffWordWrapMode()))
-
-  const gitChangesSplit = createSplitResize({
-    storageKey: RIGHT_PANEL_GIT_CHANGES_SPLIT_WIDTH_KEY,
-    defaultWidth: 320,
-    rightDrawerWidth: options.rightDrawerWidth,
-    rightDrawerWidthInitialized: options.rightDrawerWidthInitialized,
-  })
-
-  const worktreeSlugForViewer = createMemo(() => {
+  const [mode, setMode] = createSignal<FilesPanelMode>(readStoredEnum(FILES_PANEL_MODE_KEY, ["workspace", "changes", "history"] as const) ?? "workspace")
+  createEffect(() => writeClientLayoutValue(FILES_PANEL_MODE_KEY, mode()))
+  const [browsedWorktree, setBrowsedWorktree] = createSignal<string | null>(null)
+  const sessionWorktree = createMemo(() => {
     const sessionId = options.activeSessionId()
-    if (sessionId && sessionId !== "info") {
-      return getWorktreeSlugForSession(options.instanceId, sessionId)
+    return sessionId && sessionId !== "info" ? getWorktreeSlugForSession(options.instanceId, sessionId) : getDefaultWorktreeSlug(options.instanceId)
+  })
+  createEffect(on(() => `${options.activeSessionId()}:${sessionWorktree()}`, () => {
+    setBrowsedWorktree(null)
+    closeFilePreview(options.instanceId)
+  }))
+  const slug = createMemo(() => browsedWorktree() ?? sessionWorktree())
+  const worktrees = createMemo(() => getWorktrees(options.instanceId))
+  const worktree = createMemo(() => worktrees().find(entry => entry.slug === slug()))
+  createEffect(() => {
+    // A removed browsed worktree must never silently turn into a root-file read.
+    if (browsedWorktree() && worktrees().length && !worktree()) {
+      setBrowsedWorktree(null)
+      closeFilePreview(options.instanceId)
     }
-    return getDefaultWorktreeSlug(options.instanceId)
   })
-
-  const gitChangesWorktreeSlug = createMemo(() => {
-    if (getGitRepoStatus(options.instanceId) === false) return null
-    const slug = worktreeSlugForViewer().trim()
-    return slug ? slug : null
-  })
-
-  const gitChangesWorktree = createMemo(() => {
-    const slug = gitChangesWorktreeSlug()
-    if (!slug) return null
-    return getWorktrees(options.instanceId).find((worktree) => worktree.slug === slug) ?? null
-  })
-
-  const gitChangesBranchLabel = createMemo(() => gitChangesWorktree()?.branch?.trim() || null)
-  const gitScopeKey = createMemo(() => `${options.instanceId}:git:${worktreeSlugForViewer()}`)
+  const active = () => options.isActive() && options.rightPanelTab() === "files"
+  const gitAvailable = () => getGitRepoStatus(options.instanceId) !== false
+  createEffect(() => { if (!gitAvailable()) setMode("workspace") })
+  const directory = () => worktree()?.directory ?? options.instance.folder
+  const tree = useWorkspaceTree(options.instanceId, directory, () => active() && mode() === "workspace")
+  const history = useGitHistory(options.instanceId, slug, () => active() && gitAvailable() && mode() === "history")
   const git = useGitChanges({
-    isActive: options.isActive,
-    t: options.t,
-    instanceId: options.instanceId,
-    rightPanelTab: options.rightPanelTab,
-    worktreeSlug: worktreeSlugForViewer,
-    isPhoneLayout: options.isPhoneLayout,
-    promptInputApi: options.promptInputApi,
-    closeGitList: () => setGitChangesListOpen(false),
+    ...options, isActive: () => active() && gitAvailable(), rightPanelTab: () => "git-changes",
+    worktreeSlug: slug, closeGitList: () => {}, externalDiff: true,
   })
-  const renderFilesTab = createFilesTabRuntime({
-    t: options.t,
-    instanceId: options.instanceId,
-    rightPanelTab: options.rightPanelTab,
-    worktreeSlug: worktreeSlugForViewer,
-    isPhoneLayout: options.isPhoneLayout,
-    rightDrawerWidth: options.rightDrawerWidth,
-    rightDrawerWidthInitialized: options.rightDrawerWidthInitialized,
-  })
-
-  const persistGitListOpen = (value: boolean) => {
-    writeClientLayoutValue(gitListOpenStorageKey(), value ? "true" : "false")
+  const openFile = (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => {
+    const sessionId = options.activeSessionId()
+    if (!sessionId || sessionId === "info") return
+    showSessionChat(options.instance.folder)
+    openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory() })
   }
-
-  const persistGitSectionOpen = (section: "staged" | "unstaged", value: boolean) => {
-    writeClientLayoutValue(gitSectionStorageKey(section), value ? "true" : "false")
-  }
-
-  const toggleGitList = () => {
-    setGitChangesListOpen((current) => {
-      const next = !current
-      persistGitListOpen(next)
-      return next
-    })
-  }
-
+  onCleanup(() => closeFilePreview(options.instanceId))
   return createCoreRightPanelManifest({
-    renderGitChangesTab: () => (
-      <LazyGitChangesTab
-        t={options.t}
-        activeSessionId={options.activeSessionId}
-        entries={git.gitStatusEntries}
-        statusLoading={git.gitStatusLoading}
-        statusError={git.gitStatusError}
-        selectedItemId={git.gitSelectedItemId}
-        selectedBulkItemIds={git.gitBulkSelectedItemIds}
-        selectedLoading={git.gitSelectedLoading}
-        selectedError={git.gitSelectedError}
-        selectedBefore={git.gitSelectedBefore}
-        selectedAfter={git.gitSelectedAfter}
-        mostChangedItemId={git.gitMostChangedItemId}
-        scopeKey={gitScopeKey}
-        diffViewMode={diffViewMode}
-        diffContextMode={diffContextMode}
-        diffWordWrapMode={diffWordWrapMode}
-        onViewModeChange={setDiffViewMode}
-        onContextModeChange={setDiffContextMode}
-        onWordWrapModeChange={setDiffWordWrapMode}
-        onRowClick={git.handleGitRowClick}
-        onRefresh={() => void git.refreshGitStatus()}
-        onInsertContext={git.insertGitChangeContext}
-        onStageFile={git.stageGitFile}
-        onUnstageFile={git.unstageGitFile}
-        commitMessage={git.gitCommitMessage}
-        commitSubmitting={git.gitCommitSubmitting}
-        onCommitMessageInput={git.setGitCommitMessage}
-        onSubmitCommit={() => void git.submitGitCommit()}
-        branchLabel={gitChangesBranchLabel}
-        stagedOpen={gitStagedOpen}
-        unstagedOpen={gitUnstagedOpen}
-        onToggleStagedOpen={() => {
-          const next = !gitStagedOpen()
-          setGitStagedOpen(next)
-          persistGitSectionOpen("staged", next)
-        }}
-        onToggleUnstagedOpen={() => {
-          const next = !gitUnstagedOpen()
-          setGitUnstagedOpen(next)
-          persistGitSectionOpen("unstaged", next)
-        }}
-        listOpen={gitChangesListOpen}
-        onToggleList={toggleGitList}
-        splitWidth={gitChangesSplit.splitWidth}
-        onResizeMouseDown={gitChangesSplit.onResizeMouseDown}
-        onResizeTouchStart={gitChangesSplit.onResizeTouchStart}
-        isPhoneLayout={options.isPhoneLayout}
-      />
-    ),
-    renderFilesTab,
-    renderStatusTab: () => (
-      <LazyStatusTab
-        t={options.t}
-        instanceId={options.instanceId}
-        instance={options.instance}
-        activeSession={options.activeSession}
-        isActive={() => options.isActive() && options.rightPanelTab() === "status"}
-        expandedItems={options.expandedItems}
-        onExpandedItemsChange={options.onExpandedItemsChange}
-        customization={options.customization}
-        onCustomizationChange={options.onCustomizationChange}
-        extraSections={options.extraStatusSections()}
-      />
-    ),
+    renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} mode={mode()} onModeChange={setMode}
+      worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
+      branch={history.page()?.branch ?? worktree()?.branch ?? null} onWorktreeChange={value => {
+        setBrowsedWorktree(value)
+        closeFilePreview(options.instanceId)
+      }} onOpenFile={openFile} canOpenFile={Boolean(options.activeSessionId() && options.activeSessionId() !== "info")} />,
+    renderStatusTab: () => <LazyStatusTab t={options.t} instanceId={options.instanceId} instance={options.instance}
+      activeSession={options.activeSession} isActive={() => options.isActive() && options.rightPanelTab() === "status"}
+      expandedItems={options.expandedItems} onExpandedItemsChange={options.onExpandedItemsChange}
+      customization={options.customization} onCustomizationChange={options.onCustomizationChange} extraSections={options.extraStatusSections()} />,
   })
 }

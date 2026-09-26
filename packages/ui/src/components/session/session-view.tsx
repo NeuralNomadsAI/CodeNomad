@@ -23,6 +23,8 @@ import { clearConversationPlaybackForSession } from "../../stores/conversation-s
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
+import { FilesPreviewView } from "../files-preview-view"
+import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
@@ -101,6 +103,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const filePreview = createMemo(() => {
+    const target = getFilePreview(props.instanceId)
+    return target?.sessionId === props.sessionId ? target : null
+  })
+  createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -606,6 +613,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     >
       <div ref={rootRef} class="session-view">
+        <Show when={filePreview()} fallback={
         <Show
           when={preview()?.mode === "preview"}
           fallback={
@@ -649,6 +657,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} />}</Show>
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar

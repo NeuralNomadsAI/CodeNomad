@@ -1,0 +1,19 @@
+.workspace-tree { padding-block: var(--space-sm); font-size: var(--font-size-sm); }
+.workspace-tree-root { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); }
+.workspace-tree-root strong { font-weight: var(--font-weight-medium); overflow: hidden; text-overflow: ellipsis; }
+.workspace-tree-row {
+  display: flex; align-items: center; gap: 5px; width: 100%; min-height: 27px;
+  padding-block: 3px; padding-inline-end: var(--space-sm); text-align: start;
+  color: var(--text-secondary); font-size: var(--font-size-xs);
+}
+.workspace-tree-row > svg { flex-shrink: 0; color: var(--text-muted); }
+.workspace-tree-row > span:not(.workspace-tree-spacer) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-tree-row[aria-selected="true"] { background: var(--selection-neutral-strong-bg); color: var(--text-primary); }
+.workspace-tree-row:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
+.workspace-tree-spacer { width: 12px; flex-shrink: 0; }
+.workspace-image { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: var(--space-lg); }
+.workspace-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.workspace-markdown { flex: 1; min-height: 0; overflow: auto; padding: var(--space-lg); }
+.git-panel-switch { max-width: 100%; }
+.git-panel-switch button { white-space: nowrap; }
+.git-panel-tools { overflow-x: auto; flex-shrink: 0; }

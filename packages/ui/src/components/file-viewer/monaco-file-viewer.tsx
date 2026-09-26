@@ -9,6 +9,7 @@ interface MonacoFileViewerProps {
   scopeKey: string
   path: string
   content: string
+  readOnly?: boolean
   wordWrap?: "on" | "off"
   compactGutter?: boolean
   onSave?: (content: string) => void
@@ -59,7 +60,7 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
       editor = monaco.editor.create(host, {
         value: "",
         language: "plaintext",
-        readOnly: false,
+        readOnly: props.readOnly ?? false,
         automaticLayout: true,
         lineNumbers: "on",
         lineNumbersMinChars: lineNumbersMinChars(props.content),

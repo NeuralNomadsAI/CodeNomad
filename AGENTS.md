@@ -35,6 +35,8 @@
 
 ## Coding Principles
 
+- The Files panel combines Workspace, Changes and Commits in one compact switch, initially on Workspace. Its lazy worktree tree preserves expanded folders while switching modes; tree styles live in `styles/panels/workspace-tree.css`, Git navigation in `styles/panels/git-history.css`. `components/files-preview-view.tsx` chooses the central read-only text/Markdown/image reader or shared diff reader above the composer. Worktree browsing never checks out a branch or moves a session. Historical reads use bounded worker Git commands behind existing worktree ownership checks. Workspace previews use the bounded directory-authorized preview route; Monaco tokenizers ship locally. See `dev-docs/FILES_PANEL.md` for lifecycle, migration and validation.
+
 - Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for the captured failure and override removal criteria.
 
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
