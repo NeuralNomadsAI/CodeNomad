@@ -12,6 +12,7 @@ import "../../../src/index.css"
 const [directory, setDirectory] = createSignal("/a")
 const selections: Record<string, { global: string | false | null; project: string | false | null }> = {}
 const writes: any[] = [], keys: any[] = []
+let integrationLists = 0
 let reject = false, hold = false, release: (() => void) | undefined
 serverApi.getWebSearchSettings = async (_id, directory) => {
   const state = selections[directory] ??= { global: "alpha", project: null }
@@ -26,8 +27,8 @@ serverApi.setWebSearchSettings = async (_id, payload) => {
 }
 const client = {
   websearch: { providers: async () => ({ data: [{ id: "alpha", name: "Alpha" }] }) },
-  integration: { list: async () => ({ data: [{ id: "alpha", name: "Alpha", methods: [{ type: "key" }],
-    connections: [{ type: "env", name: "ALPHA_API_KEY" }, { type: "credential", id: "key-id", label: "Saved key", method: "key" }] }] }),
+  integration: { list: async () => { integrationLists++; return { data: [{ id: "alpha", name: "Alpha", methods: [{ type: "key" }],
+    connections: [{ type: "env", name: "ALPHA_API_KEY" }, { type: "credential", id: "key-id", label: "Saved key", method: "key" }] }] } },
     connect: { key: async (value: any) => { keys.push(value) } } },
   credential: { remove: async (value: any) => { keys.push(value) } },
 }
@@ -36,4 +37,4 @@ await applyUiSettings({})
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main style={{ width: "min(700px, 100%)" }}>
   <WebSearchSettingsCard instanceId="web" location={{ directory: directory() }} />
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { writes, keys, setDirectory, reject: () => { reject = true }, hold: () => { hold = true }, release: () => release?.() }
+;(window as any).fixture = { writes, keys, setDirectory, integrationLists: () => integrationLists, reject: () => { reject = true }, hold: () => { hold = true }, release: () => release?.() }
