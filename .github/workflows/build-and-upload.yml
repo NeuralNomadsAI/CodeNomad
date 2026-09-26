@@ -695,6 +695,12 @@ jobs:
 
       - name: Build Debian package and AppImage (Tauri)
         working-directory: packages/tauri-app
+        env:
+          # linuxdeploy and its AppImage plugin ship as AppImages, which mount
+          # through FUSE. GitHub-hosted runners expose no /dev/fuse, so the
+          # bundler dies with "failed to run linuxdeploy". Extracting instead of
+          # mounting is the supported way to run them there.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm exec -- tauri build --bundles deb,appimage
 
       - name: Package and verify Tauri AppImage
@@ -755,6 +761,21 @@ jobs:
             echo "Tauri AppImage binary has unresolved shared libraries" >&2
             exit 1
           fi
+
+          # An AppImage built on a recent base raises the glibc it needs, which
+          # silently excludes older distributions. Report the floor instead of
+          # leaving it for a user to discover, and keep the job log comparable
+          # between releases. objdump prints the version bare, and GLIBCXX_ and
+          # GLIBC_PRIVATE must not be mistaken for a glibc floor.
+          glibc_floor=$(objdump -T "$root/codenomad-tauri" \
+            | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V | tail -n 1)
+          if [ -z "$glibc_floor" ]; then
+            echo "Could not determine the GLIBC floor of the Tauri AppImage" >&2
+            exit 1
+          fi
+          echo "Tauri AppImage requires GLIBC_${glibc_floor} or newer"
+          echo "GLIBC_${glibc_floor}" > "$ARTIFACT_DIR/appimage-glibc-floor.txt"
 
       - name: Package and verify Tauri deb
         if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
