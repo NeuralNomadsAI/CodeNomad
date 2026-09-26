@@ -19,6 +19,10 @@ external requests are blocked. It does not connect to a CodeNomad backend or an
 OpenCode daemon. It verifies the rendered conversation, connected state,
 agent control, timeline and MCP row, then checks for uncaught renderer errors before saving.
 
+The shell-only scene applies the page-level keyboard-hint preference normally
+set by `App.tsx`. The capture verifies that shortcut hints are hidden, matching
+the default application setting.
+
 The scene is maintained in
 `packages/ui/tests/browser/fixtures/readme-workspace.tsx`. Update its data when
 refreshing documentation; keep product layout and styling in the real components.

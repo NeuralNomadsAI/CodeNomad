@@ -49,6 +49,8 @@ try {
   await page.locator('.message-timeline-segment[data-message-id="msg_01"]').waitFor()
   await page.evaluate(() => document.fonts.ready)
   await page.waitForTimeout(1500)
+  assert.equal(await page.locator(".keyboard-hints:visible, .kbd-hint:visible").count(), 0,
+    "Keyboard shortcut hints must remain hidden with the default preference")
   assert.deepEqual(errors, [], "The documentation fixture must render without uncaught errors")
   await mkdir(path.dirname(output), { recursive: true })
   await page.screenshot({ path: output, animations: "disabled" })

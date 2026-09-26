@@ -1,8 +1,9 @@
 // Public documentation fixture: real workspace components, synthetic session data.
+import { createEffect } from "solid-js"
 import { render } from "solid-js/web"
 import InstanceTabs from "../../../src/components/instance-tabs"
 import InstanceShell from "../../../src/components/instance/instance-shell2"
-import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { ConfigProvider, updatePreferences, useConfig } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
@@ -86,7 +87,18 @@ setActiveParentSession(instanceId, sessionId)
 setActiveSession(instanceId, sessionId)
 await updatePreferences({ locale: "en", showMessageTimeline: true })
 
+function CapturePreferences() {
+  const { preferences } = useConfig()
+  // App.tsx normally applies this page-level attribute. This desktop scene
+  // mounts the workspace shell directly, so retain the real preference default.
+  createEffect(() => {
+    document.documentElement.dataset.keyboardHints = preferences().showKeyboardShortcutHints ? "show" : "hide"
+  })
+  return null
+}
+
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
+  <CapturePreferences />
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <InstanceTabs tabs={[{ id: "instance:readme", kind: "instance", instance },
       { id: "instance:docs", kind: "instance", instance: { ...instance, id: "docs", projectName: "Documentation", folder: "/projects/docs" } }]}
