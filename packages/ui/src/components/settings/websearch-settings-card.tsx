@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import type { IntegrationInfo, LocationRef } from "@opencode/client"
 import type { PluginControlScope, WebSearchSelection, WebSearchSettingsSnapshot } from "../../../../server/src/api-types"
@@ -20,6 +20,11 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
   const [error, setError] = createSignal(false)
   const [keyProvider, setKeyProvider] = createSignal("")
   const [key, setKey] = createSignal("")
+  // The provider manager already reads the whole native catalog for this
+  // screen. Listing integrations again here duplicated that cost on mount and
+  // on every credential/config event, so it is deferred until the disclosure
+  // that actually needs it is opened.
+  const [credentialsEngaged, setCredentialsEngaged] = createSignal(false)
   let refresh = () => {}
   let mutate: (operation: () => Promise<unknown>) => Promise<void> = async () => {}
   const location = () => props.location ?? getActiveCatalogLocation(props.instanceId)
@@ -38,13 +43,16 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
         const captured = revision
         try {
           const client = getRootClient(instanceId)
+          const withAccess = untrack(() => credentialsEngaged())
           const [next, catalog, access] = await Promise.all([
             serverApi.getWebSearchSettings(instanceId, directory),
             client.websearch.providers({ location: { directory } }),
-            client.integration.list({ location: { directory } }),
+            withAccess ? client.integration.list({ location: { directory } }) : undefined,
           ])
           if (!disposed && captured === revision && !trailing) {
-            setSnapshot(next); setProviders(catalog.data); setIntegrations(access.data); setError(false)
+            setSnapshot(next); setProviders(catalog.data)
+            if (access) setIntegrations(access.data)
+            setError(false)
           }
         } catch { if (!disposed && captured === revision && !trailing) setError(true) }
       } while (!disposed && !writing && trailing)
@@ -109,7 +117,11 @@ export function WebSearchSettingsCard(props: { instanceId: string; location?: Lo
       </label>}</For>
       </div>
       <p class="settings-card-subtitle">{t("settings.websearch.defaultHint")}</p>
-      <details class="websearch-settings-credentials">
+      <details class="websearch-settings-credentials" onToggle={event => {
+        if (!event.currentTarget.open) return
+        setCredentialsEngaged(true)
+        refresh()
+      }}>
       <summary>{t("settings.websearch.credentials")}</summary>
       <div class="websearch-settings-credentials-body">
       <p class="settings-card-subtitle">{t("settings.websearch.credentialsHint")}</p>
