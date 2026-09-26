@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "חשבונות",
+  "settings.accounts.global": "החשבונות משותפים לכל שירות OpenCode זה.",
+  "settings.accounts.active": "פעיל",
+  "settings.accounts.label": "שם החשבון",
+  "settings.accounts.activate": "השתמש בחשבון",
+  "settings.accounts.error": "פעולת החשבון נכשלה. רענן לצפייה במצב הנוכחי.",
   "settings.websearch.title": "חיפוש ברשת",
   "settings.websearch.description": "בחרו את ספק החיפוש שבו הסוכנים משתמשים למציאת מידע ברשת. השינויים נשמרים אוטומטית.",
   "settings.websearch.global": "ברירת מחדל לכל הפרויקטים",

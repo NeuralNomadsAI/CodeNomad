@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "Hesaplar",
+  "settings.accounts.global": "Hesaplar bu OpenCode hizmetinde genel olarak paylaşılır.",
+  "settings.accounts.active": "Etkin",
+  "settings.accounts.label": "Hesap adı",
+  "settings.accounts.activate": "Hesabı kullan",
+  "settings.accounts.error": "Hesap işlemi başarısız oldu. Güncel durum için yenileyin.",
   "settings.websearch.title": "Web araması",
   "settings.websearch.description": "Ajanların web üzerinde bilgi aramak için kullanacağı sağlayıcıyı seçin. Değişiklikler otomatik kaydedilir.",
   "settings.websearch.global": "Tüm projeler için varsayılan",

@@ -21,6 +21,7 @@ import { fetchProviders, getActiveCatalogLocation } from "../../stores/sessions"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { getRootClient } from "../../stores/opencode-client"
 import { ProviderAuthForm } from "./provider-auth-form"
+import { ProviderAccounts } from "./provider-accounts"
 import { buildListedProviders, buildProviderVisibilityModels, type ListedProvider as ProviderOption } from "./provider-options"
 import {
   ProviderModelVisibilityManager,
@@ -565,37 +566,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     }
   }
 
-  async function disconnectProvider(providerId: string) {
-    const authClient = client()
-    const provider = availableProviders().find((item) => item.id === providerId)
-    if (!authClient || !provider) return
-    const instanceId = props.instanceId
-    const catalogLocation = currentCatalogLocation()
-    disposePendingAuth()
-    const operationVersion = ++authOperationVersion
-    setActionError(null)
-    setStage("authorizing")
-    try {
-      const disconnectMode = getDisconnectMode(provider)
-      if (disconnectMode === "not-disconnectable") {
-        setActionError(t("settings.providers.errors.envDisconnectUnavailable"))
-        setStage("error")
-        return
-      }
-      if (disconnectMode !== "credential-remove") return
-      await Promise.all(provider.credentialIds.map((credentialID) => authClient.credential.remove({
-        credentialID,
-      }, requestLocationOptions(catalogLocation, { includeDirectory: true }))))
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      await refreshAfterAuth(authClient, instanceId, operationVersion, catalogLocation)
-      if (isCurrentOperation(operationVersion, instanceId, authClient)) resetFlow(null)
-    } catch (error) {
-      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
-      setActionError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.removeFailed")))
-      setStage("idle")
-    }
-  }
-
   function cancelOAuthWait() {
     const providerId = activeProviderId()
     const attemptID = authorization()?.attemptID
@@ -836,31 +806,36 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <Show when={loading()}><div class="providers-loading-row" role="status"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
                     <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                     <div class="providers-grid">
-                      <For each={configuredProviders()}>{(provider) => (
+                      <For each={configuredProviders().map(provider => provider.id)}>{(providerId) => {
+                        const provider = createMemo(() => configuredProviders().find(item => item.id === providerId)!)
+                        return (
                         <article class="providers-card settings-toggle-row settings-toggle-row-compact">
                           <div class="providers-card-copy">
-                            <h4 class="providers-card-title">{provider.name || provider.id}</h4>
+                            <h4 class="providers-card-title">{provider().name || providerId}</h4>
                             <p class="providers-card-meta">
-                              <Show when={provider.name && provider.name !== provider.id}>
-                                <bdi dir="ltr">{provider.id}</bdi><span aria-hidden="true"> • </span>
+                              <Show when={provider().name && provider().name !== providerId}>
+                                <bdi dir="ltr">{providerId}</bdi><span aria-hidden="true"> • </span>
                               </Show>
-                              {configuredProviderSummary(provider)}
+                              {configuredProviderSummary(provider())}
                             </p>
                           </div>
                           <div class="provider-model-card-actions">
                             <button
-                              ref={(element) => manageModelButtons.set(provider.id, element)}
+                              ref={(element) => manageModelButtons.set(providerId, element)}
                               type="button"
                               class="selector-button selector-button-secondary"
                               onClick={() => {
-                                managedProviderTriggerId = provider.id
-                                setManagedProviderId(provider.id)
+                                managedProviderTriggerId = providerId
+                                setManagedProviderId(providerId)
                               }}
                             >{t("settings.providers.actions.manageModels")}</button>
-                            <Show when={getDisconnectMode(provider) === "credential-remove"}><button type="button" class="selector-button selector-button-secondary providers-disconnect-button" disabled={stage() !== "idle"} onClick={() => void disconnectProvider(provider.id)} title={t("settings.providers.actions.disconnect")}>{t("settings.providers.actions.disconnect")}</button></Show>
                           </div>
+                          <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
+                            <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
+                              location={currentCatalogLocation()} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
+                          </Show>
                         </article>
-                      )}</For>
+                      )}}</For>
                     </div>
                   </>
                 }>

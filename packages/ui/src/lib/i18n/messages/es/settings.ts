@@ -1,4 +1,10 @@
 export const settingsMessages = {
+  "settings.accounts.title": "Cuentas",
+  "settings.accounts.global": "Este servicio OpenCode comparte las cuentas globalmente.",
+  "settings.accounts.active": "Activa",
+  "settings.accounts.label": "Nombre de cuenta",
+  "settings.accounts.activate": "Usar cuenta",
+  "settings.accounts.error": "La operación falló. Actualice para consultar el estado actual.",
   "settings.websearch.title": "Búsqueda web",
   "settings.websearch.description": "Elija el proveedor que usan los agentes para buscar información en la web. Los cambios se guardan automáticamente.",
   "settings.websearch.global": "Predeterminado para todos los proyectos",

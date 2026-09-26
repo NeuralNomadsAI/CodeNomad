@@ -55,6 +55,9 @@ file scraping or prompt-body skill injection is used.
 
 ## Web settings boundary
 
+PR #792 gatekeeper reached zero findings at `c3b05383`:
+https://github.com/NeuralNomadsAI/CodeNomad/pull/792#pullrequestreview-5326614696
+
 OpenChamber's `/api/config/websearch` is its own backend endpoint, not a native
 OpenCode 2.0.18 method. CodeNomad edits the selected authorized document via the
 existing host/WSL atomic configuration machinery, preserving foreign fields and
@@ -62,3 +65,12 @@ comments. Native configuration watching applies edits; no `location.reload`.
 The isolated fixture validates global watching on 2.0.7/2.0.18 and project
 document persistence/reset. It disables project discovery to exclude ancestor
 user config; project precedence is covered by deterministic backend tests.
+
+## Provider account contract
+
+Native integration connections are ordered with the active credential first,
+followed by other credentials and environment sources. Isolated 2.0.7 and
+2.0.18 fixtures validate multiple key creation, activation, rename and individual
+removal without secret material in catalog output. Global mutations use only
+the explicit credential ID. Browser validation covers preserving unsaved labels
+through native invalidations and failed saves without automatic write replay.
