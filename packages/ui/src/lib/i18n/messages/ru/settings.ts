@@ -1,5 +1,5 @@
 export const settingsMessages = {
-  "settings.usage.title": "Использование",
+  "settings.usage.title": "Статистика",
   "settings.usage.scope": "Весь подключённый сервис OpenCode: все проекты, независимые клоны и подсессии. Данные не ограничены открытой папкой. Скользящие периоды; активность в указанном часовом поясе.",
   "settings.usage.noProject": "Откройте проект для подключения к OpenCode и просмотра статистики всего сервиса.",
   "settings.usage.period": "Период",

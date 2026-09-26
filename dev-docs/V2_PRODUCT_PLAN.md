@@ -23,6 +23,28 @@ the shared user daemon is not a test target. Runtime requirements follow
 demonstrated contracts, not the dependency pin. Track any adjustments and
 capability boundaries in the relevant PR rather than silently shrinking scope.
 
+## User feedback corrections
+
+The table above records the initial reviewed implementation heads. Follow-up
+reviews are published against the updated heads on the corresponding GitHub PRs.
+
+- #792 now names the search provider's role, explains automatic saves and labels
+  the default for all projects separately from the current-project override.
+  API keys are in a collapsed section explaining their service-wide scope and
+  independence from provider selection; environment connections are read-only.
+  Alpha in browser captures is synthetic fixture data, not a bundled provider.
+- #793 exposes individual controls for already-supported native credentials;
+  it does not introduce multi-credential storage. Its PR description now states
+  that distinction and the absence of per-session account selection.
+- #794 reserves refresh arrows for list refresh. Package checks use PackageSearch
+  and installation uses Download, with a pulse retaining the action icon while busy.
+- #796 is labelled Stats in English/French, with equivalent translations in all
+  other locales. Usage remains the provider subscription panel. Internal API and
+  persisted settings-section identities remain stable.
+
+Follow-up verification uses isolated Chromium fixtures, including the real
+Preferences screen; no shared daemon mutation or desktop relaunch is involved.
+
 ## Contract notes
 
 - Execute: OpenCode 2.0.7 and 2.0.18 `packages/core/src/codemode/tool.ts` expose

@@ -35,14 +35,14 @@ test("service-wide usage dashboard declares scope, bounds requests, fences stale
   } finally { await page.close(); await fixture.close() }
 })
 
-test("Usage is reachable in the real preferences screen", async () => {
+test("Stats is reachable in the real preferences screen", async () => {
   const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(`${fixture.url}?parent`)
     await page.locator(".usage-metrics").waitFor()
-    assert.equal(await page.getByRole("navigation").getByRole("button", { name: "Usage", exact: true }).getAttribute("aria-current"), "page")
+    assert.equal(await page.getByRole("navigation").getByRole("button", { name: "Stats", exact: true }).getAttribute("aria-current"), "page")
     if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE, fullPage: true })
     assert.deepEqual(errors, [])
   } finally { await page.close(); await fixture.close() }
