@@ -806,34 +806,36 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <Show when={loading()}><div class="providers-loading-row" role="status"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
                     <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                     <div class="providers-grid">
-                      <For each={configuredProviders()}>{(provider) => (
+                      <For each={configuredProviders().map(provider => provider.id)}>{(providerId) => {
+                        const provider = createMemo(() => configuredProviders().find(item => item.id === providerId)!)
+                        return (
                         <article class="providers-card settings-toggle-row settings-toggle-row-compact">
                           <div class="providers-card-copy">
-                            <h4 class="providers-card-title">{provider.name || provider.id}</h4>
+                            <h4 class="providers-card-title">{provider().name || providerId}</h4>
                             <p class="providers-card-meta">
-                              <Show when={provider.name && provider.name !== provider.id}>
-                                <bdi dir="ltr">{provider.id}</bdi><span aria-hidden="true"> • </span>
+                              <Show when={provider().name && provider().name !== providerId}>
+                                <bdi dir="ltr">{providerId}</bdi><span aria-hidden="true"> • </span>
                               </Show>
-                              {configuredProviderSummary(provider)}
+                              {configuredProviderSummary(provider())}
                             </p>
                           </div>
                           <div class="provider-model-card-actions">
                             <button
-                              ref={(element) => manageModelButtons.set(provider.id, element)}
+                              ref={(element) => manageModelButtons.set(providerId, element)}
                               type="button"
                               class="selector-button selector-button-secondary"
                               onClick={() => {
-                                managedProviderTriggerId = provider.id
-                                setManagedProviderId(provider.id)
+                                managedProviderTriggerId = providerId
+                                setManagedProviderId(providerId)
                               }}
                             >{t("settings.providers.actions.manageModels")}</button>
                           </div>
-                          <Show when={client() && (provider.credentialIds.length > 0 || provider.source === "env")}>
-                            <ProviderAccounts instanceId={props.instanceId} integrationId={provider.id} client={client()!}
+                          <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
+                            <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
                               location={currentCatalogLocation()} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
                           </Show>
                         </article>
-                      )}</For>
+                      )}}</For>
                     </div>
                   </>
                 }>

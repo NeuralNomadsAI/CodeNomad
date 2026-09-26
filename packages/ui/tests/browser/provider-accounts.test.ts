@@ -51,3 +51,26 @@ test("account identity drives activation, rename, removal and failed-edit preser
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("real provider manager retains other dirty labels and reconciles external activation", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?parent`)
+    await page.getByText("Accounts", { exact: true }).click()
+    const first = page.locator('[data-account-id="credential:one"]'), second = page.locator('[data-account-id="credential:two"]')
+    await first.getByLabel("Account label").fill("Uncommitted first")
+    await second.getByLabel("Account label").fill("Uncommitted second")
+    await second.getByRole("button", { name: "Use account", exact: true }).click()
+    await second.getByText("Active", { exact: true }).waitFor()
+    await page.waitForFunction(() => (window as any).fixture.reads() >= 4)
+    assert.equal(await first.getByLabel("Account label").inputValue(), "Uncommitted first")
+    assert.equal(await second.getByLabel("Account label").inputValue(), "Uncommitted second")
+    await page.evaluate(() => (window as any).fixture.switchExternally())
+    await first.getByText("Active", { exact: true }).waitFor()
+    assert.equal(await first.getByLabel("Account label").inputValue(), "Uncommitted first")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

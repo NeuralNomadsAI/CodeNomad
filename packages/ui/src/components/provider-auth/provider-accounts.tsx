@@ -62,7 +62,7 @@ export function ProviderAccounts(props: {
     }
     const events = serverEvents.on("instance.event", payload => {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
-        && ["integration.updated", "credential.updated"].includes(payload.event.type)) refresh()
+        && ["integration.updated", "credential.updated", "credential.switched"].includes(payload.event.type)) refresh()
     })
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
