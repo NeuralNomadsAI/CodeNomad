@@ -14,7 +14,7 @@ preceding reviewed branch; each PR describes only its own delta.
 | 5 | [#793](https://github.com/NeuralNomadsAI/CodeNomad/pull/793) | `feat/v2-05-provider-accounts` | Individual provider accounts | `ef172992` — zero |
 | 6 | [#794](https://github.com/NeuralNomadsAI/CodeNomad/pull/794) | `feat/v2-06-plugin-updates` | Native plugin check/update controls | `f7cbbf05` — zero |
 | 7 | [#795](https://github.com/NeuralNomadsAI/CodeNomad/pull/795) | `feat/v2-07-mcp-code-mode` | Per-server default/on/off Code Mode | `4f97fa6e` — zero |
-| 8 | [#796](https://github.com/NeuralNomadsAI/CodeNomad/pull/796) | `feat/v2-08-usage` | Native usage dashboard | `a3388fee` — review pending |
+| 8 | [#796](https://github.com/NeuralNomadsAI/CodeNomad/pull/796) | `feat/v2-08-usage` | Native usage dashboard | `d47b75ca` — zero |
 
 Every PR needs focused tests, rendered evidence for UI, and an independent
 gatekeeper review published on GitHub. Findings are corrected and re-reviewed
@@ -167,3 +167,26 @@ recorded as refactor signals, without unrelated refactoring):
 | `packages/ui/src/lib/i18n/messages/{de,en,es,fr,he,ja,ne,ru,tr,zh-Hans}/settings.ts` | 704–718 each |
 | `packages/ui/src/stores/session-actions.ts` | 696 |
 | `packages/ui/src/stores/session-actions.test.ts` | 1,040 |
+
+## Final completion status
+
+All eight deliverables have reached zero actionable gatekeeper findings at the
+implementation heads recorded above. PR #796 was independently re-reviewed at
+`d47b75ca4dbc4e03a33205107a504b8cbc0831cd` after the user explicitly authorized
+service-wide usage. Its earlier physical-Git-family scope and clone-authority
+finding are resolved by that deliberate product-scope change, not by claiming
+native project IDs establish folder ownership.
+
+The final PR #796 pass independently passed 3 backend usage tests, 2 Chromium
+usage tests (including real Preferences), 7 native Preferences tests and the
+UI/server/Electron typechecks. Isolated OpenCode 2.0.7 and 2.0.18 fixtures each
+verified all four service sessions across a repository, its worktree, an unrelated
+repository and an independent same-history clone. The refreshed
+`C:\Users\Admin\AppData\Local\Temp\opencode\v2-service-usage.png` capture was inspected.
+No shared daemon/database, native desktop relaunch or Tauri build was involved.
+
+This final commit changes only this completion document; the implementation head
+remains `d47b75ca`. The concluding published gatekeeper review is pinned to the
+resulting documentation-only PR head and distinguishes these two revisions.
+GitHub verification confirmed PRs #789–#796 are all open, with #789–#795 retaining
+their exact-head zero-finding reviews. All eight PRs remain unmerged as requested.
