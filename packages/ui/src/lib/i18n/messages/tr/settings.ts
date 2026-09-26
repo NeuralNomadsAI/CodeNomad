@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.accounts.add": "Hesap ekle",
+  "settings.accounts.rename": "Hesabı yeniden adlandır",
+  "settings.accounts.remove": "Hesabı kaldır",
   "settings.accounts.title": "Hesaplar",
   "settings.accounts.global": "Hesaplar bu OpenCode hizmetinde genel olarak paylaşılır.",
   "settings.accounts.active": "Etkin",
