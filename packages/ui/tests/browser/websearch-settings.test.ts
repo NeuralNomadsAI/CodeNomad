@@ -32,7 +32,11 @@ test("web settings use explicit scopes, native keys, no mutation replay and fenc
     assert.equal(await page.getByLabel("Override for this project", { exact: true }).inputValue(), "off")
     assert.equal((await page.evaluate(() => (window as any).fixture.writes)).length, 2)
     assert.equal(await page.getByLabel("Web search provider", { exact: true }).isVisible(), false)
+    // The provider manager already lists integrations for this screen, so the
+    // card must not repeat that native read until its disclosure is opened.
+    assert.equal(await page.evaluate(() => (window as any).fixture.integrationLists()), 0)
     await page.locator("summary").filter({ hasText: "Search provider API keys" }).click()
+    await page.waitForFunction(() => (window as any).fixture.integrationLists() === 1)
     await page.getByLabel("Web search provider", { exact: true }).selectOption("alpha")
     await page.getByLabel("API key", { exact: true }).fill("fixture-secret")
     await page.getByRole("button", { name: "Save", exact: true }).click()
