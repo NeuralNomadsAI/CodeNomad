@@ -82,4 +82,22 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.tool.success", { id: "tool", content: content("mixed"), executed: true })
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
+  execute: async (phase: string) => {
+    const input = { code: "const results = await Promise.all([tools.paint({ prompt: 'sky' }), tools.fail({})]);\nreturn results" }
+    const metadata = { toolCalls: [
+      { tool: "paint", status: phase === "running" ? "running" : "completed", input: { prompt: "sky" } },
+      { tool: "fail", status: phase === "running" ? "running" : "error", input: { test: true } },
+    ], ...(phase === "running" ? {} : { error: true, truncated: true, outputPath: "/fixture/output.txt" }) }
+    if (phase === "running") {
+      emit("session.step.started", { agent: "build", model, started: 1 })
+      emit("session.tool.input.started", { id: "tool", name: "execute" })
+      emit("session.tool.called", { id: "tool", input })
+      emit("session.tool.progress", { id: "tool", metadata })
+      return
+    }
+    messages = [{ ...completed("mixed", "execute"), content: [{ id: "tool", type: "tool", name: "execute",
+      time: { created: 1, completed: time }, state: { status: "completed", input, metadata, content: content("mixed") } }] }]
+    if (phase === "history") await loadMessages(instanceId, sessionId, { force: true })
+    else emit("session.tool.success", { id: "tool", content: content("mixed"), metadata, executed: true })
+  },
 }

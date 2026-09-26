@@ -88,3 +88,23 @@ test("failed and unsupported image sources have a fallback and a later replaceme
   }
   assert.equal(await page.evaluate(() => (window as any).unexpectedNavigation), undefined)
 }))
+
+test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("running"))
+  await page.locator(".execute-calls").waitFor()
+  assert.equal(await page.locator('.execute-call-status[data-status="running"]').count(), 2)
+  await page.evaluate(() => (window as any).fixture.execute("complete"))
+  await decodedImages(page, 2)
+  await page.locator('.execute-call-status[data-status="completed"]').waitFor()
+  assert.equal(await page.locator('.execute-calls [data-status="error"]').count(), 1)
+  await page.locator(".execute-calls summary").first().click()
+  await page.getByText('"sky"', { exact: false }).first().waitFor()
+  assert.match(await page.locator(".tool-call-execute").innerText(), /Promise\.all/)
+  assert.match(await page.locator(".tool-call-execute").innerText(), /\/fixture\/output.txt/)
+  await page.evaluate(() => (window as any).fixture.execute("history"))
+  await decodedImages(page, 2)
+  assert.equal(await page.locator('.execute-calls [data-status="error"]').count(), 1)
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_EXECUTE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_EXECUTE_CAPTURE, fullPage: true })
+}))

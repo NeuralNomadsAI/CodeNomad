@@ -1,4 +1,8 @@
 export const toolCallMessages = {
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "Llamadas a herramientas anidadas",
+  "toolCall.execute.more": "Se omitieron {count} llamadas adicionales.",
+  "toolCall.execute.truncated": "Salida nativa truncada. Salida completa:",
   "toolCall.pending.waitingToRun": "Esperando para ejecutar...",
   "toolCall.error.label": "Error:",
 
