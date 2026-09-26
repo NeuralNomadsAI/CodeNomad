@@ -7,12 +7,29 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
+import { sdkManager } from "../../../src/lib/sdk-manager"
 import { getToastHistory } from "../../../src/lib/notifications"
 import "../../../src/index.css"
 
 const instanceId = "plugin-controls-fixture"
 const location = { directory: "/repo" }
 const calls: Array<Record<string, unknown>> = []
+;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, { plugin: {
+  check: async (input: any) => {
+    calls.push({ type: "check", ...input })
+    for (const entry of snapshot.runtime) {
+      if (entry.source.type === "package" && entry.source.target === input.target) entry.source.outdated = true
+    }
+    return { data: [] }
+  },
+  update: async (input: any) => {
+    calls.push({ type: "update", ...input })
+    snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || !input.targets.includes(entry.source.target))
+    const runtime = { key: "recovered.plugin", id: "recovered.plugin", source: { type: "package" as const, target: input.targets[0], version: "2.0.0" }, features: {}, state: { status: "active" as const } }
+    snapshot.runtime.push(runtime)
+    snapshot.controls.push({ id: runtime.id, runtime, builtin: false, effective: "default", global: "default", project: "default" })
+  },
+} })
 let reads = 0
 let mutationGate: Promise<void> | undefined
 let releaseMutation: (() => void) | undefined
@@ -140,6 +157,13 @@ await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   calls,
   reads: () => reads,
+  failedPackagesOnly: () => {
+    snapshot.controls = []
+    snapshot.runtime = ["opencode-ponytail", "opencode-gemini-auth@latest", "opencode-ponytail"].map((target, index) => ({
+      key: `failed-${index}`, source: { type: "package", target }, features: {},
+      state: { status: "failed", error: "Package failed before exporting a plugin ID" },
+    }))
+  },
   isActive: viewActive,
   show: () => setViewActive(true),
   hide: () => setViewActive(false),

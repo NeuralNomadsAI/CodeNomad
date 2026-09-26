@@ -40,6 +40,8 @@
 
 ## Coding Principles
 
+- Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.
+
 - Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `dev-docs/TAURI_WINDOWS_INPUT_DEADLOCK.md` for the captured failure and override removal criteria.
 
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.

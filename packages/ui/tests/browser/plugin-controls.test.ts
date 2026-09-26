@@ -147,6 +147,41 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   await page.close()
 })
 
+test("failed packages without IDs remain actionable and reconcile into loaded plugin rows", async () => {
+  const page = await browser.newPage({ viewport: { width: 380, height: 600 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).fixture.failedPackagesOnly(); (window as any).fixture.setNarrow(); (window as any).fixture.show() })
+    const target = "opencode-gemini-auth@latest"
+    const row = page.locator(`[data-package-target="${target}"]`)
+    await row.waitFor()
+    assert.equal(await page.locator(".plugin-control-row").count(), 2, "duplicate native targets share one recovery row")
+    assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 0, "a package target must never be used as an activation ID")
+    await row.locator(".plugin-control-name").focus()
+    await page.locator(".plugin-control-tooltip").waitFor()
+    assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Failed — Package failed before exporting a plugin ID/)
+    await row.getByRole("button", { name: `Check updates for ${target}`, exact: true }).click()
+    const update = row.getByRole("button", { name: `Update ${target}`, exact: true })
+    await update.waitFor()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {
+      await mkdir(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, { recursive: true })
+      await page.screenshot({ path: join(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, "plugins-failed-packages.png"), fullPage: true })
+    }
+    await update.click()
+    await page.locator('[data-plugin-id="recovered.plugin"]').waitFor()
+    assert.equal(await row.count(), 0, "successful native loading replaces the package-only row")
+    assert.equal(await page.locator(".plugin-control-row").count(), 2)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => ["check", "update"].includes(call.type))), [
+      { type: "check", location: { directory: "/repo" }, target },
+      { type: "update", location: { directory: "/repo" }, targets: [target] },
+    ])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("V2 plugin controls disable Project when it resolves to the Global document", async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 900 }, locale: "en-US" })
   const errors: string[] = []

@@ -6,6 +6,7 @@ import type {
   PluginActivationControl,
   PluginControlLocation,
   PluginControlScope,
+  PluginRuntimeInventoryEntry,
   PluginRuntimeSource,
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -48,6 +49,19 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   ))
   const controlsById = createMemo(() => new Map(controls().map((control) => [control.id, control])))
   const controlIds = createMemo(() => [...controlsById().keys()])
+  // A package can fail before exporting a plugin ID. Keep its native target
+  // actionable without inventing an ID that could become an activation rule.
+  const packagesByTarget = createMemo(() => {
+    const represented = new Set(controls().flatMap(control =>
+      control.runtime?.source.type === "package" ? [control.runtime.source.target] : []))
+    const packages = new Map<string, PluginRuntimeInventoryEntry>()
+    for (const entry of snapshot()?.runtime ?? []) {
+      if (entry.source.type !== "package" || represented.has(entry.source.target)) continue
+      if (!packages.has(entry.source.target)) packages.set(entry.source.target, entry)
+    }
+    return packages
+  })
+  const packageTargets = createMemo(() => [...packagesByTarget().keys()])
   let currentIdentity: string | undefined
   let locationGeneration = 0
   // The admitted write may finish after a project tab or visibility wrapper
@@ -187,6 +201,28 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     )
   }
 
+  const renderPackage = (target: string) => {
+    const entry = () => packagesByTarget().get(target)
+    const nameId = createUniqueId()
+    const details = () => {
+      const current = entry()
+      const lines = [current ? sourceLabel(current.source) : target]
+      if (current?.state.status === "failed") {
+        lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${current.state.error}`)
+      }
+      return lines.map(bidi).join("\n")
+    }
+    return <div class="plugin-control-row" data-package-target={target} role="group" aria-labelledby={nameId}>
+      <div class="plugin-control-identity">
+        <Tooltip placement="top-start" openDelay={300}>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
+          <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
+        </Tooltip>
+        <PluginPackageAction instanceId={props.instanceId} location={requestLocation()} source={entry()?.source} active={props.active} />
+      </div>
+    </div>
+  }
+
   return (
     <section
       class="plugin-controls"
@@ -221,9 +257,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
               : t("instanceServiceStatus.plugins.loading")}</p>
         </div>
       }>
-        <Show when={controls().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
+        <Show when={controlIds().length + packageTargets().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
           <div class="plugin-control-list">
             <For each={controlIds()}>{renderControl}</For>
+            <For each={packageTargets()}>{renderPackage}</For>
           </div>
         </Show>
       </Show>
