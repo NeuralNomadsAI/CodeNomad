@@ -5,6 +5,10 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
+// Fail fast on a wrong expectation instead of burning the default 30s timeout
+// on every wait in this file.
+const ACTION_TIMEOUT = 10_000
+
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
@@ -24,12 +28,12 @@ after(async () => { await browser?.close(); await server?.close() })
 
 const openPicker = async (page: Page) => {
   await page.locator("[data-model-selector-control] .selector-trigger").click()
-  await page.locator(".selector-listbox li").first().waitFor()
+  await page.locator(".selector-listbox li").first().waitFor({ timeout: ACTION_TIMEOUT })
 }
 
 const closePicker = async (page: Page) => {
   await page.locator("[data-model-selector-control] .selector-trigger").click()
-  await page.locator(".selector-favorites-toggle").waitFor({ state: "hidden" })
+  await page.locator(".selector-favorites-toggle").waitFor({ state: "hidden", timeout: ACTION_TIMEOUT })
 }
 
 const listed = async (page: Page) =>
@@ -48,6 +52,7 @@ const favoritesPlusNonFavorite = ["GPT-6 Astra", "GPT-6 Sol", "Zen Other"]
 
 test("the favorites mode persists and always keeps the current model listed", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  page.setDefaultTimeout(ACTION_TIMEOUT)
   const errors: string[] = []
   page.on("pageerror", (error) => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
@@ -119,37 +124,36 @@ test("the favorites mode persists and always keeps the current model listed", as
 
 test("a rapid double click alternates the mode instead of sticking", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
     await page.locator("[data-model-selector-control] .selector-trigger").waitFor()
     await openPicker(page)
 
-    // Both clicks land before the first write settles.
+    // Both clicks land before the first write settles. The seeded value is
+    // already "all models", so the persisted log is the only thing that can
+    // prove the pair was written in order rather than skipped.
     await page.evaluate(() => (window as any).fixture.setLatency(150))
     await page.locator(".selector-favorites-toggle").click()
     await page.locator(".selector-favorites-toggle").click()
     assert.equal(await favoritesOnly(page), "false", "the second click is read, not swallowed")
-    await page.waitForFunction(() => (window as any).fixture.state().models.favoritesOnly === false)
-    await page.waitForFunction(() => document.querySelectorAll(".selector-listbox .selector-option-label").length === 4)
-    assert.deepEqual(await listed(page), allModels)
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.state().models.favoritesOnly), false)
 
-    // The two writes are serialized in click order, so the last one wins.
-    await page.evaluate(() => (window as any).fixture.setLatency(0))
-    await page.waitForFunction(() => (window as any).fixture.writes().length === 2)
-    await page.waitForFunction(() => (window as any).fixture.state().models.favoritesOnly === false)
-    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes()), [
+    await page.waitForFunction(() => (window as any).fixture.applied().length === 2)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.applied()), [
       { models: { favoritesOnly: true } },
       { models: { favoritesOnly: false } },
-    ])
+    ], "an unserialized queue would persist the slow write last")
+    assert.equal(await page.evaluate(() => (window as any).fixture.state().models.favoritesOnly), false)
     assert.equal(await page.evaluate(() => (window as any).fixture.mode()), false)
     assert.equal(await favoritesOnly(page), "false")
+    assert.deepEqual(await listed(page), allModels)
   } finally { await page.close() }
 })
 
 test("a model hidden by provider visibility stays hidden and unselectable", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
@@ -172,6 +176,7 @@ test("a model hidden by provider visibility stays hidden and unselectable", asyn
 
 test("a stored favorites mode without favorites stays visible and revocable", async () => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  page.setDefaultTimeout(ACTION_TIMEOUT)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(`${url}?favorites=none&mode=favorites`)

@@ -10,6 +10,7 @@ const { serverApi } = await import("../../../src/lib/api-client")
 const instanceId = "model-favorites"
 const sessionId = "session"
 const writes: unknown[] = []
+const applied: unknown[] = []
 const calls: string[] = []
 let latency = 0
 
@@ -30,19 +31,32 @@ const merge = (target: any, patch: any) => {
   }
   return target
 }
-const wait = () => latency > 0 ? new Promise((resolve) => setTimeout(resolve, latency)) : undefined
+const wait = (milliseconds: number) => milliseconds > 0
+  ? new Promise((resolve) => setTimeout(resolve, milliseconds))
+  : undefined
+
+// Turning the mode on is the slow write, so an unserialized implementation would
+// persist the following "off" write first and settle on the wrong value. The
+// store test uses the same shape.
+const writeDelay = (patch: unknown) => latency > 0
+  && (patch as { models?: { favoritesOnly?: boolean } })?.models?.favoritesOnly === true
+  ? latency
+  : 0
 
 serverApi.fetchConfigOwner = (async (owner: string) => { calls.push(`fetchConfigOwner:${owner}`); return owner === "ui" ? structuredClone(config) : {} }) as any
 serverApi.patchConfigOwner = (async (owner: string, patch: any) => {
   calls.push(`patchConfigOwner:${owner}`)
-  await wait()
+  await wait(writeDelay(patch))
   return owner === "ui" ? structuredClone(merge(config, patch)) : {}
 }) as any
 serverApi.fetchStateOwner = (async (owner: string) => { calls.push(`fetchStateOwner:${owner}`); return owner === "ui" ? structuredClone(state) : {} }) as any
 serverApi.patchStateOwner = (async (owner: string, patch: any) => {
   calls.push(`patchStateOwner:${owner}`)
   writes.push(JSON.parse(JSON.stringify(patch)))
-  await wait()
+  await wait(writeDelay(patch))
+  // Recorded after the delay so the log shows the order the server actually
+  // persisted in, which is what the store's write queue is responsible for.
+  applied.push(JSON.parse(JSON.stringify(patch)))
   return owner === "ui" ? structuredClone(merge(state, patch)) : {}
 }) as any
 
@@ -107,6 +121,7 @@ function Fixture() {
 render(() => <Fixture />, document.getElementById("root")!)
 ;(window as any).fixture = {
   writes: () => writes,
+  applied: () => applied,
   calls: () => calls,
   state: () => state,
   uiState: () => uiState(),

@@ -1071,7 +1071,7 @@ function setFavoritesOnlyPreference(enabled: boolean): void {
 
   const settlePending = () => setPendingFavoritesOnly((current) => (current === enabled ? undefined : current))
   const previous = favoritesOnlyWriteQueue
-  favoritesOnlyWriteQueue = previous.then(async () => {
+  favoritesOnlyWriteQueue = previous.catch(() => undefined).then(async () => {
     try {
       await patchStateOwner("ui", { models: { favoritesOnly: enabled } })
     } catch (error) {
@@ -1454,3 +1454,4 @@ export {
   setAgentModelPreference,
   getAgentModelPreference,
 }
+

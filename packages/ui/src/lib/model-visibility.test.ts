@@ -147,7 +147,7 @@ test("the favorites mode is a stored preference that never follows the active mo
   const modeStore = preferences.slice(preferences.indexOf("const [pendingFavoritesOnly"), preferences.indexOf("function getModelThinkingSelection"))
   assert.match(modeStore, /return pendingFavoritesOnly\(\) \?\? uiState\(\)\.models\.favoritesOnly/)
   assert.match(modeStore, /if \(getFavoritesOnlyPreference\(\) === enabled\) return\s*setPendingFavoritesOnly\(enabled\)/)
-  assert.match(modeStore, /const previous = favoritesOnlyWriteQueue\s*favoritesOnlyWriteQueue = previous\.then\(async \(\) => \{[\s\S]{0,200}settlePending\(\)/)
+  assert.match(modeStore, /const previous = favoritesOnlyWriteQueue\s*favoritesOnlyWriteQueue = previous\.catch\(\(\) => undefined\)\.then\(async \(\) => \{[\s\S]{0,240}settlePending\(\)/)
 })
 
 test("provider auth keeps its catalog location across deferred operation steps", () => {

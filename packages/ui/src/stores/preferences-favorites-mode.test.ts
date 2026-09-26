@@ -12,10 +12,16 @@ function merge(target: Record<string, any>, patch: Record<string, any>): Record<
   return result
 }
 
-// Preference writes are fire-and-forget like the neighboring favorite toggles;
-// the mode additionally passes through a write queue, so drain several turns.
-const settle = async () => {
-  for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+// Preference writes are fire-and-forget like the neighboring favorite toggles,
+// and the mode additionally passes through a write queue whose mocked writes
+// sleep. Waiting on the observable outcome keeps this independent of machine
+// speed, timer resolution and how many other files the runner has already run.
+async function waitUntil(condition: () => boolean, description: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.fail(`Timed out waiting for ${description}`)
 }
 
 it("stores the favorites-only model mode next to the favorites without disturbing them", async () => {
@@ -45,31 +51,30 @@ it("stores the favorites-only model mode next to the favorites without disturbin
     assert.equal(uiState().models.favoritesOnly, false)
 
     setFavoritesOnlyPreference(true)
-    await settle()
-    assert.deepEqual(patches.at(-1), { models: { favoritesOnly: true } })
+    await waitUntil(() => patches.length === 1, "the mode to be persisted")
+    assert.deepEqual(patches[0], { models: { favoritesOnly: true } })
     assert.equal(getFavoritesOnlyPreference(), true)
 
     // Unstarring a model keeps the stored mode, and vice versa.
     toggleFavoriteModelPreference({ providerId: "openai", modelId: "gpt-6-astra" })
-    await settle()
-    assert.deepEqual(patches.at(-1), { models: { favorites: [] } })
+    await waitUntil(() => patches.length === 2, "the favorite removal to be persisted")
+    assert.deepEqual(patches[1], { models: { favorites: [] } })
     assert.equal(getFavoritesOnlyPreference(), true)
     toggleFavoriteModelPreference({ providerId: "zen", modelId: "zen-other" })
-    await settle()
-    assert.deepEqual(patches.at(-1), { models: { favorites: [{ providerId: "zen", modelId: "zen-other" }] } })
+    await waitUntil(() => patches.length === 3, "the favorite addition to be persisted")
+    assert.deepEqual(patches[2], { models: { favorites: [{ providerId: "zen", modelId: "zen-other" }] } })
     assert.equal(getFavoritesOnlyPreference(), true)
 
     setFavoritesOnlyPreference(false)
-    await settle()
-    assert.deepEqual(patches.at(-1), { models: { favoritesOnly: false } })
+    await waitUntil(() => patches.length === 4, "the mode to be turned off")
+    assert.deepEqual(patches[3], { models: { favoritesOnly: false } })
     assert.equal(getFavoritesOnlyPreference(), false)
     assert.deepEqual(state.models.favorites, [{ providerId: "zen", modelId: "zen-other" }])
 
     // A repeated write of the current mode is not sent again.
-    const before = patches.length
     setFavoritesOnlyPreference(false)
-    await settle()
-    assert.equal(patches.length, before)
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setTimeout(resolve, 5))
+    assert.equal(patches.length, 4)
   } finally { Object.assign(storage, originals) }
 })
 
@@ -103,7 +108,7 @@ it("serializes rapid mode writes in click order and keeps a failed write revocab
     setFavoritesOnlyPreference(true)
     setFavoritesOnlyPreference(false)
     assert.equal(getFavoritesOnlyPreference(), false)
-    await settle()
+    await waitUntil(() => applied.length === 2, "both mode writes to be applied")
     assert.deepEqual(applied, [true, false], "the writes keep their click order")
     assert.equal(state.models.favoritesOnly, false)
     assert.equal(getFavoritesOnlyPreference(), false)
@@ -112,8 +117,7 @@ it("serializes rapid mode writes in click order and keeps a failed write revocab
     fail = true
     setFavoritesOnlyPreference(true)
     assert.equal(getFavoritesOnlyPreference(), true, "the intent is visible while it is in flight")
-    await settle()
-    assert.equal(getFavoritesOnlyPreference(), false, "and released back to the stored value")
+    await waitUntil(() => getFavoritesOnlyPreference() === false, "the failed write to be released")
     assert.equal(state.models.favoritesOnly, false)
   } finally { Object.assign(storage, originals) }
 })
@@ -136,7 +140,7 @@ it("accepts only a real boolean for the stored favorites-only mode", async () =>
     await updatePreferences({})
     assert.equal(getFavoritesOnlyPreference(), false)
     setFavoritesOnlyPreference(true)
-    await settle()
+    await waitUntil(() => getFavoritesOnlyPreference() === true, "the boolean mode to be persisted")
     assert.equal(getFavoritesOnlyPreference(), true)
   } finally { Object.assign(storage, originals) }
 })
