@@ -9,6 +9,7 @@ import os from "node:os"
 import path from "node:path"
 import { installSharedOpenCode, npmExecutable } from "../packages/server/src/opencode-update/shared-installation.ts"
 import { bundledNpm } from "../packages/server/src/opencode-update/npm-runtime.ts"
+import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/runtime-support.ts"
 
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-native-upgrade-"))
 const node = process.env.CODENOMAD_FIXTURE_NODE || process.execPath
@@ -60,10 +61,10 @@ try {
   if (process.platform === "win32") {
     await assert.rejects(async () => { await (await open(binary, "r+")).close() }, "old write-access preflight rejects this live image")
   }
-  await installSharedOpenCode("2.0.16", options)
+  await installSharedOpenCode(RECOMMENDED_OPENCODE_VERSION, options)
   result.after = await info()
   result.installedVersion = (await run(binary, ["--version"])).stdout.trim()
-  assert.match(result.installedVersion, /\bv?2\.0\.16\b/)
+  assert.equal(result.installedVersion.replace(/^opencode2? v?/, ""), RECOMMENDED_OPENCODE_VERSION)
   assert.deepEqual(result.after, result.before, "upgrade must not restart the service")
   result.success = true
 } finally {

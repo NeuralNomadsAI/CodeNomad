@@ -75,7 +75,7 @@ npx @neuralnomads/codenomad-dev --password "your-password" --launch
 
 ## OpenCode V2 and upgrading from 0.19.x
 
-CodeNomad **0.20.0 requires OpenCode V2**: **2.0.7 minimum**, with **2.0.16 recommended and qualified for this release**. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
+CodeNomad **0.20.0 requires OpenCode V2**: **2.0.7 minimum**, with **2.0.18 recommended and qualified for this release**. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
 
 - **One shared OpenCode service** owns sessions and messages. Closing a CodeNomad tab, window, or backend leaves that service running. Desktop tabs, drafts, and layout are restored separately for each window.
 - **Use an existing CLI or install from CodeNomad.** Executables on `PATH` are preferred; the setup screen also supports a selected executable and a shared user npm installation. The former private CodeNomad OpenCode installation is no longer used.
@@ -147,7 +147,7 @@ Add SideCar as:
 
 ## Requirements
 
-- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.0.7 minimum; 2.0.16 recommended for CodeNomad 0.20.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
+- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.0.7 minimum; 2.0.18 recommended for CodeNomad 0.20.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
 - **[Git](https://git-scm.com/downloads)** — a prerequisite for full functionality (repository identity, Git operations and worktrees). Git must be executable in the CodeNomad backend's `PATH`; it is not bundled with the desktop installers.
 - **Node.js and npm** — required for the standalone npm server and source builds, bundled with desktop releases. Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version) (currently 24.20.0).
 
