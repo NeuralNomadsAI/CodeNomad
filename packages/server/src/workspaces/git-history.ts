@@ -35,7 +35,7 @@ export async function getGitCommit(directory: string, revision: string): Promise
   const id = commitId(revision)
   // Validate the object as a commit and read its metadata in one bounded process.
   const metadata = await git(directory, ["show", "-s", "--format=%P%x00%B", `${id}^{commit}`, "--"])
-    .catch(cause => { throw new Error("Object is not a commit", { cause }) })
+    .catch(cause => { throw Object.assign(new Error("Object is not a commit"), { cause }) })
   const separator = metadata.indexOf("\0")
   const parents = metadata.slice(0, separator).trim().split(" ").filter(Boolean)
   const parent = parents[0] ? commitId(parents[0]) : null
