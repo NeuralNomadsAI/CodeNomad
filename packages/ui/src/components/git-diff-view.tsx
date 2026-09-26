@@ -12,7 +12,7 @@ import { readStoredEnum, RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, RIGHT_PANEL_CHA
 
 const MonacoDiffViewer = lazy(() => import("./file-viewer/monaco-diff-viewer").then(module => ({ default: module.MonacoDiffViewer })))
 
-export function GitDiffView(props: { instanceId: string; target: FilePreviewTarget; active: boolean; onClose: () => void }) {
+export function GitDiffView(props: { instanceId: string; target: FilePreviewTarget; active: boolean; onClose: () => void; onInsertComment?: (text: string) => void }) {
   const { t } = useI18n()
   const [content, setContent] = createSignal<{ before: string; after: string } | null>(null)
   const [error, setError] = createSignal<string | null>(null)
@@ -59,6 +59,12 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
   }, { defer: true }))
   onCleanup(() => { cancel(); refresh.cancel() })
 
+  function insertContext(selection: { startLine: number; endLine: number }) {
+    if (!props.active) return
+    const revision = props.target.commit ? `Commit: ${props.target.commit} : ` : ""
+    props.onInsertComment?.(`Git Diff: ${revision}File: ${props.target.path} : ${selection.startLine}-${selection.endLine}`)
+  }
+
   return <section class="git-diff-view" aria-label={t("gitPanel.diff")}>
     <header class="window-header git-diff-header">
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><ArrowLeft size={16} /></button>
@@ -76,6 +82,7 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     <Show when={content()}>{value => <div class="git-diff-content">
       <Suspense fallback={<div class="p-3">{t("instanceInfo.loading")}</div>}>
         <MonacoDiffViewer scopeKey={`${props.instanceId}:${props.target.slug}:${props.target.commit ?? props.target.scope}`} path={props.target.path}
+          onRequestInsertContext={insertContext} insertContextLabel={t("instanceShell.gitChanges.actions.insertContext")}
           before={value().before} after={value().after} viewMode={view()} contextMode={context()} wordWrap={wrap() ? "on" : "off"} />
       </Suspense>
     </div>}</Show>

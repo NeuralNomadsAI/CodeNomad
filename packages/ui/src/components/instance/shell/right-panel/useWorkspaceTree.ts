@@ -68,7 +68,14 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     })
     // Cached children display immediately; collapsed directories may have changed
     // while they were outside visible refresh demand.
-    if (opening) void load(path, true)
+    if (opening) {
+      void load(path, true)
+      for (const row of rows()) {
+        if (row.type === "directory" && row.path.startsWith(`${path}/`) && state().expanded.has(row.path)) {
+          void load(row.path, true)
+        }
+      }
+    }
   }
   function refresh() {
     if (!active()) { dirty = true; return }

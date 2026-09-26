@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "परिवर्तनहरू",
   "instanceShell.gitChanges.actions.insertContext": "प्रम्प्टमा थप्नुहोस्",
   "instanceShell.gitChanges.actions.stage": "फाइल स्टेज गर्नुहोस्",
+  "instanceShell.gitChanges.actions.stageSelected": "चयन गरिएका {count} फाइलहरू स्टेज गर्नुहोस्",
+  "instanceShell.gitChanges.actions.unstageSelected": "चयन गरिएका {count} फाइलहरू अनस्टेज गर्नुहोस्",
   "instanceShell.gitChanges.actions.unstage": "फाइल अनस्टेज गर्नुहोस्",
   "instanceShell.gitChanges.commit.placeholder": "Commit सन्देश प्रविष्ट गर्नुहोस्",
   "instanceShell.gitChanges.commit.submit": "कमिट गर्नुहोस्",

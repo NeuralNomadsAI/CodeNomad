@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "更改",
   "instanceShell.gitChanges.actions.insertContext": "添加到提示词",
   "instanceShell.gitChanges.actions.stage": "暂存文件",
+  "instanceShell.gitChanges.actions.stageSelected": "暂存选中的 {count} 个文件",
+  "instanceShell.gitChanges.actions.unstageSelected": "取消暂存选中的 {count} 个文件",
   "instanceShell.gitChanges.actions.unstage": "取消暂存",
   "instanceShell.gitChanges.commit.placeholder": "输入提交信息",
   "instanceShell.gitChanges.commit.submit": "提交",

@@ -79,7 +79,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   return createCoreRightPanelManifest({
     renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} mode={mode()} onModeChange={setMode}
       worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
-      branch={history.page()?.branch ?? worktree()?.branch ?? null} onWorktreeChange={value => {
+      branch={worktree()?.branch ?? null} onWorktreeChange={value => {
         setBrowsedWorktree(value)
         closeFilePreview(options.instanceId)
       }} onOpenFile={openFile} canOpenFile={Boolean(options.activeSessionId() && options.activeSessionId() !== "info")} />,

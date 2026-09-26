@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "שינויים",
   "instanceShell.gitChanges.actions.insertContext": "הוסף לפרומפט",
   "instanceShell.gitChanges.actions.stage": "העבר ל-staging",
+  "instanceShell.gitChanges.actions.stageSelected": "העבר {count} קבצים נבחרים ל-staging",
+  "instanceShell.gitChanges.actions.unstageSelected": "הסר {count} קבצים נבחרים מ-staging",
   "instanceShell.gitChanges.actions.unstage": "הוצא מ-staging",
   "instanceShell.gitChanges.commit.placeholder": "הזן הודעת commit",
   "instanceShell.gitChanges.commit.submit": "בצע commit",

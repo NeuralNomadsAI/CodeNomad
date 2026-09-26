@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "Изменения",
   "instanceShell.gitChanges.actions.insertContext": "Добавить в промпт",
   "instanceShell.gitChanges.actions.stage": "Подготовить файл",
+  "instanceShell.gitChanges.actions.stageSelected": "Подготовить выбранные файлы: {count}",
+  "instanceShell.gitChanges.actions.unstageSelected": "Убрать выбранные файлы из индекса: {count}",
   "instanceShell.gitChanges.actions.unstage": "Убрать из staging",
   "instanceShell.gitChanges.commit.placeholder": "Введите сообщение коммита",
   "instanceShell.gitChanges.commit.submit": "Коммит",

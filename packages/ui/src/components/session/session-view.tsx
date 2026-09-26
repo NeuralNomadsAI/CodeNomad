@@ -657,7 +657,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
-        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} />}</Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar

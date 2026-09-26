@@ -153,6 +153,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "Değişiklikler",
   "instanceShell.gitChanges.actions.insertContext": "Prompt'a ekle",
   "instanceShell.gitChanges.actions.stage": "Dosyayı stage et",
+  "instanceShell.gitChanges.actions.stageSelected": "Seçili {count} dosyayı stage et",
+  "instanceShell.gitChanges.actions.unstageSelected": "Seçili {count} dosyayı stage’den çıkar",
   "instanceShell.gitChanges.actions.unstage": "Dosyayı unstage et",
   "instanceShell.gitChanges.commit.placeholder": "Commit mesajı girin",
   "instanceShell.gitChanges.commit.submit": "Commit",

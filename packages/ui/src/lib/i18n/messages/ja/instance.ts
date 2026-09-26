@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "変更",
   "instanceShell.gitChanges.actions.insertContext": "プロンプトに追加",
   "instanceShell.gitChanges.actions.stage": "ファイルをステージ",
+  "instanceShell.gitChanges.actions.stageSelected": "選択した {count} ファイルをステージ",
+  "instanceShell.gitChanges.actions.unstageSelected": "選択した {count} ファイルのステージを解除",
   "instanceShell.gitChanges.actions.unstage": "ステージ解除",
   "instanceShell.gitChanges.commit.placeholder": "コミットメッセージを入力",
   "instanceShell.gitChanges.commit.submit": "コミット",

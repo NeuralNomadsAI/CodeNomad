@@ -100,13 +100,22 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <Show when={items().length === 0}><p class="p-3 text-xs text-secondary">{props.git.gitStatusLoading() ? props.t("instanceInfo.loading") : props.t("instanceShell.gitChanges.empty")}</p></Show>
       <For each={["staged", "unstaged"] as const}>{section => <Show when={items().some(item => item.section === section)}>
         <div class="git-panel-section">{props.t(`instanceShell.gitChanges.sections.${section}`)}<span>{items().filter(item => item.section === section).length}</span></div>
-        <For each={items().filter(item => item.section === section)}>{item => <button class="git-panel-file" classList={{ "git-panel-file-selected": props.git.gitSelectedItemId() === item.id || props.git.gitBulkSelectedItemIds().has(item.id) }} aria-pressed={props.git.gitSelectedItemId() === item.id || props.git.gitBulkSelectedItemIds().has(item.id)} title={item.path} disabled={!props.canOpenFile} onClick={event => {
+        <For each={items().filter(item => item.section === section)}>{item => <button class="git-panel-file" classList={{ "git-panel-file-selected": props.git.gitActionItems().some(selected => selected.id === item.id) }} aria-pressed={props.git.gitActionItems().some(selected => selected.id === item.id)} aria-current={props.git.gitSelectedItemId() === item.id ? "true" : undefined} title={item.path} disabled={!props.canOpenFile} onClick={event => {
           props.git.handleGitRowClick(item, event)
           if (!event.ctrlKey && !event.metaKey && !event.shiftKey) props.onOpenFile({ path: item.path, originalPath: item.originalPath, scope: item.section })
         }}><span class="git-file-status">{item.status.slice(0, 1).toUpperCase()}</span><span>{item.path}</span><small><b class="file-list-item-additions">+{item.additions}</b> <b class="file-list-item-deletions">−{item.deletions}</b></small></button>}</For>
       </Show>}</For>
       <Show when={items().length > 0}><details class="git-panel-actions"><summary>{props.t("gitPanel.actions")}</summary>
-        <Show when={items().find(item => item.id === props.git.gitSelectedItemId())}>{item => <button class="git-panel-more" onClick={() => item().section === "staged" ? props.git.unstageGitFile(item()) : props.git.stageGitFile(item())}>{props.t(item().section === "staged" ? "instanceShell.gitChanges.actions.unstage" : "instanceShell.gitChanges.actions.stage")} · {basename(item().path)}</button>}</Show>
+        <For each={["staged", "unstaged"] as const}>{section => {
+          const targets = createMemo(() => props.git.gitActionItems().filter(item => item.section === section))
+          const action = section === "staged" ? "unstage" : "stage"
+          return <Show when={targets().length > 0}><button class="git-panel-more" title={targets().map(item => item.path).join("\n")} onClick={() => {
+            const item = targets()[0]
+            if (item) section === "staged" ? props.git.unstageGitFile(item) : props.git.stageGitFile(item)
+          }}>{targets().length > 1
+            ? props.t(`instanceShell.gitChanges.actions.${action}Selected`, { count: targets().length })
+            : `${props.t(`instanceShell.gitChanges.actions.${action}`)} · ${targets()[0]?.path ?? ""}`}</button></Show>
+        }}</For>
         <textarea aria-label={props.t("instanceShell.gitChanges.commit.placeholder")} placeholder={props.t("instanceShell.gitChanges.commit.placeholder")} value={props.git.gitCommitMessage()} onInput={event => props.git.setGitCommitMessage(event.currentTarget.value)} />
         <button class="git-panel-more" disabled={!props.git.gitCommitMessage().trim() || !items().some(item => item.section === "staged") || props.git.gitCommitSubmitting()} onClick={() => void props.git.submitGitCommit()}>{props.t("instanceShell.gitChanges.commit.submit")}</button>
       </details></Show>

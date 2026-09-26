@@ -25,6 +25,52 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+test("reopening an ancestor revalidates its expanded descendants without reading collapsed folders", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.getByRole("treeitem", { name: "src", exact: true }).click()
+    await page.getByRole("treeitem", { name: "components", exact: true }).click()
+    await page.getByRole("treeitem", { name: "git-panel.tsx", exact: true }).waitFor()
+    await page.getByRole("treeitem", { name: "src", exact: true }).click()
+    await page.evaluate(async () => {
+      const modulePath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(modulePath)
+      const read = serverApi.listWorkspaceFiles
+      serverApi.listWorkspaceFiles = async (...args: any[]) => {
+        const entries = await read(...args)
+        return args[1] === "src/components"
+          ? [{ name: "new.ts", path: "src/components/new.ts", type: "file" }] : entries
+      }
+      ;(window as any).fixture.invalidate()
+    })
+    await page.waitForFunction(() => (window as any).fixture.calls.filter((call: any) => call.kind === "files" && call.path === ".").length >= 2)
+    await page.getByRole("treeitem", { name: "src", exact: true }).click()
+    await page.getByRole("treeitem", { name: "new.ts", exact: true }).waitFor()
+    assert.equal(await page.getByRole("treeitem", { name: "git-panel.tsx", exact: true }).count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.calls.some((call: any) => call.kind === "files" && call.path === "src/styles")), false)
+  } finally { await page.close() }
+})
+
+test("the shared branch label follows current inventory while history is inactive", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Commits", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "history"))
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts", storePath = "/src/stores/worktrees.ts"
+      const { serverApi } = await import(apiPath), { reloadWorktrees } = await import(storePath)
+      const previous = await serverApi.fetchWorktrees("git-prototype")
+      serverApi.fetchWorktrees = async () => ({ ...previous, worktrees: previous.worktrees.map((entry: any) => ({ ...entry, branch: "new-current-branch" })) })
+      await reloadWorktrees("git-prototype")
+    })
+    await page.waitForFunction(() => document.querySelector(".git-panel-context")?.textContent?.includes("new-current-branch"))
+    assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "history").length), 1)
+  } finally { await page.close() }
+})
+
 test("history and local changes open the central diff and preserve the conversation draft", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   const errors: string[] = []
@@ -138,6 +184,57 @@ test("real SessionView keeps its composer while file previews are fenced by sess
     await page.getByRole("combobox", { name: "Worktree à consulter" }).selectOption("review")
     assert.equal(await page.locator(".workspace-file-view").count(), 0)
     assert.equal(await composer.inputValue(), "Mon brouillon dans le vrai composeur")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("central diff inserts local lines and revision-qualified history into the real session composer", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(`${url}?session=1`)
+    const composer = page.locator(".session-view textarea.prompt-input")
+    await composer.fill("Conserver ce brouillon")
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await page.getByRole("button", { name: /src\/components\/git-panel.tsx/ }).click()
+    const modifiedLine = page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' })
+    await modifiedLine.click()
+    await page.keyboard.press("Home")
+    await page.keyboard.press("Shift+End")
+    const insert = page.getByRole("button", { name: "Ajouter au prompt", exact: true })
+    await insert.click()
+    assert.match(await composer.inputValue(), /Conserver ce brouillon/)
+    assert.match(await composer.inputValue(), /Git Diff: File: src\/components\/git-panel.tsx : 3-3/)
+    assert.equal(await composer.evaluate(element => element === document.activeElement), true)
+
+    // Native editor keyboard selection must keep the full range, not just the hovered line.
+    await page.getByRole("button", { name: /src\/styles\/panels\/git-history.css/ }).click()
+    await modifiedLine.click()
+    await page.keyboard.press("Control+Home")
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("Shift+ArrowDown")
+    await page.keyboard.press("Shift+ArrowDown")
+    await insert.click()
+    assert.match(await composer.inputValue(), /Git Diff: File: src\/styles\/panels\/git-history.css : 3-5/)
+
+    await page.getByRole("button", { name: "Commits", exact: true }).first().click()
+    await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
+    await page.getByRole("button", { name: /src\/components\/git-panel.tsx/ }).click()
+    await modifiedLine.click()
+    await page.keyboard.press("Home")
+    await page.keyboard.press("Shift+End")
+    await insert.click()
+    const draft = await composer.inputValue()
+    assert.ok(draft.includes(`Git Diff: Commit: ${"1".repeat(40)} : File: src/components/git-panel.tsx : 3-3`))
+    await page.getByRole("button", { name: "Retour à la conversation" }).click()
+    assert.equal(await composer.inputValue(), draft)
+    await page.evaluate(() => (window as any).fixture.switchSession("other"))
+    assert.equal(await composer.inputValue(), "")
+    await page.evaluate(() => (window as any).fixture.switchSession("session"))
+    assert.equal(await composer.inputValue(), draft)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

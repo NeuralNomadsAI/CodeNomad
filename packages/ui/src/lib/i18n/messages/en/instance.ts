@@ -179,6 +179,8 @@ export const instanceMessages = {
   "instanceShell.gitChanges.sections.unstaged": "Changes",
   "instanceShell.gitChanges.actions.insertContext": "Add to prompt",
   "instanceShell.gitChanges.actions.stage": "Stage file",
+  "instanceShell.gitChanges.actions.stageSelected": "Stage {count} selected files",
+  "instanceShell.gitChanges.actions.unstageSelected": "Unstage {count} selected files",
   "instanceShell.gitChanges.actions.unstage": "Unstage file",
   "instanceShell.gitChanges.commit.placeholder": "Enter commit message",
   "instanceShell.gitChanges.commit.submit": "Commit",
