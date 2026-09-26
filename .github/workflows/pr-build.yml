@@ -331,6 +331,7 @@ jobs:
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
+          packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
           packages/ui/src/stores/message-v2/bus.test.ts
           packages/ui/src/stores/message-v2/transcript-eviction.test.ts
