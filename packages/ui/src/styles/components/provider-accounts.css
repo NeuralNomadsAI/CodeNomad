@@ -1,8 +1,17 @@
 .provider-accounts { width: 100%; min-width: 0; }
-.provider-accounts summary { cursor: pointer; font-weight: var(--font-weight-semibold); }
+.provider-accounts summary { cursor: pointer; font-weight: var(--font-weight-semibold); padding-block: var(--space-sm); }
+.provider-accounts-current { display: inline-flex; flex-wrap: wrap; gap: var(--space-sm); margin-inline-start: var(--space-md); font-weight: var(--font-weight-normal); }
+.provider-accounts-current > span:first-child { overflow-wrap: anywhere; }
+.provider-accounts-toolbar { display: flex; justify-content: end; }
 .provider-accounts p { color: var(--text-secondary); margin-block: 0.5rem; }
 .provider-account { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; padding-block: 0.5rem; border-block-end: 1px solid var(--border-base); }
 .provider-account > span { overflow-wrap: anywhere; }
+.provider-account-name { flex: 1; min-width: 5rem; }
+.provider-account-actions { display: flex; align-items: center; gap: var(--space-xs); margin-inline-start: auto; }
+.provider-account-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); width: 100%; }
 .provider-account input { min-width: 0; flex: 1 1 10rem; }
 .provider-accounts .selector-button { width: auto; }
 .providers-card:has(.provider-accounts) { flex-wrap: wrap; }
+.providers-accounts-list .providers-card { padding: var(--space-md); gap: var(--space-sm); border: 1px solid var(--border-base); }
+.providers-accounts-list .provider-model-card-actions { flex-wrap: wrap; }
+.providers-connect-bar:has(> button:only-child) { display: flex; justify-content: end; }

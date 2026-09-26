@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.accounts.add": "添加账号",
+  "settings.accounts.rename": "重命名账号",
+  "settings.accounts.remove": "删除账号",
   "settings.accounts.title": "账户",
   "settings.accounts.global": "账户由此 OpenCode 服务全局共享。",
   "settings.accounts.active": "已启用",

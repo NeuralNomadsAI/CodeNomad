@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.accounts.add": "アカウントを追加",
+  "settings.accounts.rename": "アカウント名を変更",
+  "settings.accounts.remove": "アカウントを削除",
   "settings.accounts.title": "アカウント",
   "settings.accounts.global": "アカウントはこのOpenCodeサービス全体で共有されます。",
   "settings.accounts.active": "有効",

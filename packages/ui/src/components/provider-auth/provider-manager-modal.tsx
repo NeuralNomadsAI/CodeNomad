@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
 import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, RefreshCw, X } from "lucide-solid"
-import type { FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
+import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
 import { isLocalTauriHost } from "../../lib/runtime-env"
@@ -50,6 +50,7 @@ type NativeAuthMethod = Exclude<IntegrationMethod, { type: "env" }>
 type NativeAuthorization = ProviderAuthAuthorization & { attemptID: string }
 type ListedProvider = ProviderOption & {
   models: ProviderVisibilityModel[]
+  connections: ConnectionInfo[]
 }
 
 interface ProviderManagerModalProps {
@@ -115,6 +116,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
   const configurableProviders = createMemo<ConfigurableProviderOption[]>(() => {
     return availableProviders()
+      .filter(provider => provider.source === "unknown" && provider.canConnect)
       .sort((left, right) => left.id.localeCompare(right.id, undefined, { sensitivity: "base" }))
       .map((listed) => {
         return {
@@ -321,6 +323,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data).map((provider) => ({
         ...provider,
         models: buildProviderVisibilityModels(provider.id, providerResponse.data, modelResponse.data),
+        connections: integrationResponse.data.find(item => item.id === provider.id)?.connections ?? [],
       }))
       const methods = Object.fromEntries(integrationResponse.data.map((integration) => [
         integration.id,
@@ -627,7 +630,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 <PlugZap class="settings-card-heading-icon" />
                 <div>
                   <Dialog.Title class="providers-manager-title">{t("settings.providers.title")}</Dialog.Title>
-                  <p class="settings-card-subtitle">{t("settings.providers.subtitle")}</p>
                 </div>
               </div>
               <button type="button" class="selector-button selector-button-secondary settings-screen-close" onClick={() => handleModalOpenChange(false)} aria-label={t("settings.close")}>
@@ -643,6 +645,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
             <Show when={client()}>
               <div class="providers-connect-bar">
+                <Show when={configurableProviders().length > 0}>
                 <Select<ConfigurableProviderOption>
                   value={selectedProviderOption()}
                   onChange={(option) => option && setSelectedProviderId(option.id)}
@@ -653,17 +656,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <Select.Item item={itemProps.item} class="selector-option selector-option--multiline">
                       <div class="selector-option-content">
                         <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.name}</Select.ItemLabel>
-                        <div class="selector-option-description">
-                          <span dir="ltr">{itemProps.item.rawValue.id}</span>
-                          <span> • </span>
-                          <span>
-                            {itemProps.item.rawValue.modelCount === 1
-                              ? t("settings.providers.models.one", { count: itemProps.item.rawValue.modelCount })
-                              : t("settings.providers.models.other", { count: itemProps.item.rawValue.modelCount })}
-                          </span>
-                          <span> • </span>
-                          <span>{itemProps.item.rawValue.connectionSummary}</span>
-                        </div>
                       </div>
                     </Select.Item>
                   )}
@@ -674,11 +666,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                         {(state) => (
                           <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
                             <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.name ?? t("settings.providers.selectProvider")}</span>
-                            <Show when={state.selectedOption()}>
-                              <span class="selector-trigger-secondary" dir="ltr">
-                                {state.selectedOption()?.id} • {state.selectedOption()?.connectionSummary}
-                              </span>
-                            </Show>
                           </div>
                         )}
                       </Select.Value>
@@ -690,9 +677,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()?.canConnect} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
                   {t("settings.providers.actions.connect")}
                 </button>
-                <button type="button" class="settings-pill-button" disabled={loading()} onClick={() => void refreshProviderData()}>
+                </Show>
+                <button type="button" class="icon-button-compact" title={t("settings.providers.refresh")} aria-label={t("settings.providers.refresh")} disabled={loading()} onClick={() => void refreshProviderData()}>
                   <RefreshCw class={loading() ? "providers-spin-icon" : "providers-button-icon"} />
-                  {t("settings.providers.refresh")}
                 </button>
               </div>
 
@@ -708,7 +695,6 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   <div class="providers-panel-header">
                     <div>
                       <h3 class="settings-card-title">{t("settings.providers.auth.title", { provider: activeProviderName() })}</h3>
-                      <p class="settings-card-subtitle">{t("settings.providers.auth.subtitle")}</p>
                     </div>
                     <button
                       type="button"
@@ -723,7 +709,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
 
                   <Show when={methodOptions().length > 1}>
                     <div class="settings-toggle-row settings-toggle-row-compact providers-method-row">
-                      <div><div class="settings-toggle-title">{t("settings.providers.method.title")}</div><div class="settings-toggle-caption">{t("settings.providers.method.subtitle")}</div></div>
+                      <div class="settings-toggle-title">{t("settings.providers.method.title")}</div>
                       <Select<MethodOption>
                         value={selectedMethodOption()}
                         onChange={(option) => {
@@ -759,14 +745,10 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                     <ProviderAuthForm fields={selectedForm()} answer={formAnswer()} disabled={stage() !== "prompts" && stage() !== "error"} onAnswer={updateFormAnswer} />
                   </Show>
 
-                  <Show when={selectedMethod().type === "oauth" && !selectedForm() && (stage() === "prompts" || stage() === "error" || stage() === "authorizing")}>
-                    <div class="settings-card-message" role="status">{t("settings.providers.oauth.noPrompts")}</div>
-                  </Show>
 
                   <Show when={selectedMethod().type === "command" && (stage() === "prompts" || stage() === "error" || stage() === "authorizing")}>
                     <div class="providers-form-stack">
-                      <div class="settings-card-message" role="status">{t("settings.providers.command.description")}</div>
-                      <div class="providers-command-preview" dir="ltr">{selectedCommand()?.command.join(" ")}</div>
+                      <div class="providers-command-preview" title={t("settings.providers.command.description")} dir="ltr">{selectedCommand()?.command.join(" ")}</div>
                     </div>
                   </Show>
 
@@ -799,7 +781,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                 </section>
               </Show>
 
-              <section class="providers-list-section">
+              <section class="providers-list-section providers-accounts-list">
                 <h3 class="settings-card-title">{t("settings.providers.configured.title")}</h3>
                 <Show when={managedProvider()} fallback={
                   <>
@@ -811,15 +793,14 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                         return (
                         <article class="providers-card settings-toggle-row settings-toggle-row-compact">
                           <div class="providers-card-copy">
-                            <h4 class="providers-card-title">{provider().name || providerId}</h4>
-                            <p class="providers-card-meta">
-                              <Show when={provider().name && provider().name !== providerId}>
-                                <bdi dir="ltr">{providerId}</bdi><span aria-hidden="true"> • </span>
-                              </Show>
-                              {configuredProviderSummary(provider())}
-                            </p>
+                            <h4 class="providers-card-title" title={configuredProviderSummary(provider())}>{provider().name || providerId}</h4>
                           </div>
                           <div class="provider-model-card-actions">
+                            <Show when={provider().canConnect}><button type="button" class="selector-button selector-button-primary"
+                              disabled={stage() !== "idle"} onClick={() => {
+                                resetFlow(providerId)
+                                queueMicrotask(() => document.querySelector<HTMLElement>(".providers-connect-panel")?.scrollIntoView({ block: "nearest" }))
+                              }}>{t("settings.accounts.add")}</button></Show>
                             <button
                               ref={(element) => manageModelButtons.set(providerId, element)}
                               type="button"
@@ -832,6 +813,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                           </div>
                           <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
                             <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
+                              initialConnections={provider().connections}
                               location={currentCatalogLocation()} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
                           </Show>
                         </article>

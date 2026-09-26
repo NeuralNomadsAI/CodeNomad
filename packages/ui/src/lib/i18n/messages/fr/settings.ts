@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.accounts.add": "Ajouter un compte",
+  "settings.accounts.rename": "Renommer le compte",
+  "settings.accounts.remove": "Supprimer le compte",
   "settings.accounts.title": "Comptes",
   "settings.accounts.global": "Les comptes sont partagés globalement par ce service OpenCode.",
   "settings.accounts.active": "Actif",

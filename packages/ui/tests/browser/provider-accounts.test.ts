@@ -29,6 +29,8 @@ test("account identity drives activation, rename, removal and failed-edit preser
     assert.equal(await page.locator('[data-account-id="env:PROVIDER_KEY"] button').count(), 0)
     await second.getByRole("button", { name: "Use account" }).click()
     await second.getByText("Active", { exact: true }).waitFor()
+    assert.equal(await first.getByLabel("Account label").count(), 0)
+    await first.getByRole("button", { name: "Rename account", exact: true }).click()
     await first.getByLabel("Account label").fill("New name")
     await page.evaluate(() => (window as any).fixture.refresh())
     assert.equal(await first.getByLabel("Account label").inputValue(), "New name")
@@ -41,7 +43,7 @@ test("account identity drives activation, rename, removal and failed-edit preser
     await first.getByText("New name", { exact: true }).waitFor()
     if (process.env.CODENOMAD_ACCOUNTS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_ACCOUNTS_CAPTURE, fullPage: true })
     assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
-    await first.getByRole("button", { name: "Remove saved auth", exact: true }).click()
+    await first.getByRole("button", { name: "Remove account", exact: true }).click()
     await first.waitFor({ state: "detached" })
     assert.equal(await second.count(), 1)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [
@@ -53,14 +55,24 @@ test("account identity drives activation, rename, removal and failed-edit preser
 })
 
 test("real provider manager retains other dirty labels and reconciles external activation", async () => {
-  const page = await browser.newPage({ locale: "en-US" })
+  const page = await browser.newPage({ viewport: { width: 380, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(`${url}?parent`)
+    await page.locator(".provider-accounts summary").getByText("First", { exact: true }).waitFor()
+    assert.equal(await page.locator(".providers-card-meta, .provider-accounts p").count(), 0)
+    await page.getByRole("button", { name: "Add account", exact: true }).click()
+    await page.locator(".providers-connect-panel").waitFor()
+    await page.locator(".providers-connect-panel").getByRole("button", { name: "Close", exact: true }).click()
     await page.getByText("Accounts", { exact: true }).click()
     const first = page.locator('[data-account-id="credential:one"]'), second = page.locator('[data-account-id="credential:two"]')
+    await first.waitFor()
+    if (process.env.CODENOMAD_ACCOUNTS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_ACCOUNTS_CAPTURE.replace(".png", "-manager.png"), fullPage: true })
+    assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    await first.getByRole("button", { name: "Rename account", exact: true }).click()
+    await second.getByRole("button", { name: "Rename account", exact: true }).click()
     await first.getByLabel("Account label").fill("Uncommitted first")
     await second.getByLabel("Account label").fill("Uncommitted second")
     await second.getByRole("button", { name: "Use account", exact: true }).click()

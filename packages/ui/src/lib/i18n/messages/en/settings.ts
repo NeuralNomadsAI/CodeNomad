@@ -1,5 +1,8 @@
 export const settingsMessages = {
   "settings.accounts.title": "Accounts",
+  "settings.accounts.add": "Add account",
+  "settings.accounts.rename": "Rename account",
+  "settings.accounts.remove": "Remove account",
   "settings.accounts.global": "Accounts are shared globally by this OpenCode service.",
   "settings.accounts.active": "Active",
   "settings.accounts.label": "Account label",

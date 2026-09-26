@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { ConnectionInfo, LocationRef, OpenCodeClient } from "@opencode/client"
+import { Pencil, RefreshCw, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
@@ -10,6 +11,7 @@ export function ProviderAccounts(props: {
   client: OpenCodeClient
   location: LocationRef
   disabled?: boolean
+  initialConnections?: ConnectionInfo[]
   onChanged?: () => Promise<void>
 }) {
   const { t } = useI18n()
@@ -72,33 +74,58 @@ export function ProviderAccounts(props: {
     void read()
   })
   const ids = () => connections().map(item => item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`)
+  const activeConnection = () => (open() ? connections() : props.initialConnections ?? [])[0]
+  const connectionLabel = (item: ConnectionInfo) => item.type === "credential" ? item.label : item.name
   return <details class="provider-accounts" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>{t("settings.accounts.title")}</summary>
+    <summary title={t("settings.accounts.global")}>
+      <span>{t("settings.accounts.title")}</span>
+      <Show when={activeConnection()}>{item => <span class="provider-accounts-current">
+        <span>{connectionLabel(item())}</span><span class="badge-shape">{t("settings.accounts.active")}</span>
+      </span>}</Show>
+    </summary>
     <Show when={open()}>
-      <p>{t("settings.accounts.global")}</p>
-      <button type="button" class="selector-button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
+      <div class="provider-accounts-toolbar"><button type="button" class="icon-button-compact" disabled={busy()}
+        aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")} onClick={() => refresh()}>
+        <RefreshCw size={14} classList={{ "animate-spin": busy() }} />
+      </button></div>
       <Show when={error()}><p role="alert">{t("settings.accounts.error")}</p></Show>
       <For each={ids()}>{(id, index) => {
         const connection = () => connections().find(item => id === (item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`))!
         const [label, setLabel] = createSignal("")
         const [dirty, setDirty] = createSignal(false)
+        const [editing, setEditing] = createSignal(false)
+        let input: HTMLInputElement | undefined
         let editRevision = 0
         createEffect(() => { const item = connection(); if (!dirty()) setLabel(item.type === "credential" ? item.label : item.name) })
         return <div class="provider-account" data-account-id={id}>
-          <span>{connection().type === "credential" ? (connection() as Extract<ConnectionInfo, { type: "credential" }>).label : (connection() as Extract<ConnectionInfo, { type: "env" }>).name}</span>
+          <span class="provider-account-name">{connectionLabel(connection())}</span>
           <Show when={index() === 0}><span class="badge-shape">{t("settings.accounts.active")}</span></Show>
-          <Show when={connection().type === "credential"} fallback={<span>{t("settings.providers.source.env")}</span>}>
-            <input class="providers-input" aria-label={t("settings.accounts.label")} value={label()} maxlength={256} disabled={busy() || props.disabled}
+          <Show when={connection().type === "credential"} fallback={<span title={t("settings.providers.source.env")} aria-label={t("settings.providers.source.env")}><LockKeyhole size={14} /></span>}>
+            <div class="provider-account-actions">
+            <Show when={index() !== 0}><button type="button" class="selector-button" disabled={busy() || props.disabled}
+              onClick={() => void run(id.slice(11), "activate")}>{t("settings.accounts.activate")}</button></Show>
+            <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
+              title={t("settings.accounts.rename")} aria-label={t("settings.accounts.rename")}
+              onClick={() => { setEditing(true); queueMicrotask(() => { input?.focus(); input?.select() }) }}><Pencil size={14} /></button>
+            <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
+              title={t("settings.accounts.remove")} aria-label={t("settings.accounts.remove")}
+              onClick={() => void run(id.slice(11), "remove")}><Trash2 size={14} /></button>
+            </div>
+            <Show when={editing()}><form class="provider-account-edit" onSubmit={event => {
+              event.preventDefault()
+              if (busy() || props.disabled || !label().trim() || !dirty()) return
+              const revision = editRevision
+              void run(id.slice(11), "rename", label()).then(saved => {
+                if (saved && revision === editRevision) { setDirty(false); setEditing(false) }
+              })
+            }}>
+            <input ref={input} class="providers-input" aria-label={t("settings.accounts.label")} value={label()} maxlength={256} disabled={busy() || props.disabled}
               onInput={event => { editRevision++; setDirty(true); setLabel(event.currentTarget.value) }} />
-            <button type="button" class="selector-button" disabled={busy() || props.disabled || !label().trim() || !dirty()}
-              onClick={() => {
-                const revision = editRevision
-                void run(id.slice(11), "rename", label()).then(saved => { if (saved && revision === editRevision) setDirty(false) })
-              }}>{t("settings.configFiles.actions.save")}</button>
-            <button type="button" class="selector-button" disabled={busy() || props.disabled || index() === 0}
-              onClick={() => void run(id.slice(11), "activate")}>{t("settings.accounts.activate")}</button>
+            <button type="submit" class="selector-button" disabled={busy() || props.disabled || !label().trim() || !dirty()}
+              >{t("settings.configFiles.actions.save")}</button>
             <button type="button" class="selector-button" disabled={busy() || props.disabled}
-              onClick={() => void run(id.slice(11), "remove")}>{t("settings.providers.actions.remove")}</button>
+              onClick={() => { setDirty(false); setEditing(false); setLabel(connectionLabel(connection())) }}>{t("alertDialog.actions.cancel")}</button>
+            </form></Show>
           </Show>
         </div>
       }}</For>
