@@ -73,7 +73,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     const sessionId = options.activeSessionId()
     if (!sessionId || sessionId === "info") return
     showSessionChat(options.instance.folder)
-    openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory() })
+    openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }
   onCleanup(() => closeFilePreview(options.instanceId))
   return createCoreRightPanelManifest({

@@ -206,7 +206,7 @@ test("central diff inserts local lines and revision-qualified history into the r
     const insert = page.getByRole("button", { name: "Ajouter au prompt", exact: true })
     await insert.click()
     assert.match(await composer.inputValue(), /Conserver ce brouillon/)
-    assert.match(await composer.inputValue(), /Git Diff: File: src\/components\/git-panel.tsx : 3-3/)
+    assert.match(await composer.inputValue(), /Git Diff: Worktree: \/CodeNomad : File: src\/components\/git-panel.tsx : 3-3/)
     assert.equal(await composer.evaluate(element => element === document.activeElement), true)
 
     // Native editor keyboard selection must keep the full range, not just the hovered line.
@@ -218,7 +218,7 @@ test("central diff inserts local lines and revision-qualified history into the r
     await page.keyboard.press("Shift+ArrowDown")
     await page.keyboard.press("Shift+ArrowDown")
     await insert.click()
-    assert.match(await composer.inputValue(), /Git Diff: File: src\/styles\/panels\/git-history.css : 3-5/)
+    assert.match(await composer.inputValue(), /Git Diff: Worktree: \/CodeNomad : File: src\/styles\/panels\/git-history.css : 3-5/)
 
     await page.getByRole("button", { name: "Commits", exact: true }).first().click()
     await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
@@ -227,8 +227,32 @@ test("central diff inserts local lines and revision-qualified history into the r
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
     await insert.click()
+    assert.ok((await composer.inputValue()).includes(`Git Diff: Commit: ${"1".repeat(40)} : Worktree: /CodeNomad : File: src/components/git-panel.tsx : 3-3`))
+    // The inventory's native service path is the prompt authority, not the
+    // Windows filesystem translation used by the preview reader for WSL.
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts", storePath = "/src/stores/worktrees.ts"
+      const { serverApi } = await import(apiPath), { reloadWorktrees } = await import(storePath)
+      const previous = await serverApi.fetchWorktrees("git-prototype")
+      serverApi.fetchWorktrees = async () => ({ ...previous, worktrees: previous.worktrees.map((entry: any) => entry.slug === "review"
+        ? { ...entry, directory: "\\\\wsl.localhost\\Ubuntu\\home\\dev\\review", serviceDirectory: "/home/dev/review" } : entry) })
+      await reloadWorktrees("git-prototype")
+    })
+    await page.getByRole("combobox", { name: "Worktree à consulter" }).selectOption("review")
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await page.getByRole("button", { name: /src\/components\/git-panel.tsx/ }).click()
+    await modifiedLine.click()
+    await page.keyboard.press("Home")
+    await page.keyboard.press("Shift+End")
+    await insert.click()
     const draft = await composer.inputValue()
-    assert.ok(draft.includes(`Git Diff: Commit: ${"1".repeat(40)} : File: src/components/git-panel.tsx : 3-3`))
+    assert.ok(draft.includes("Git Diff: Worktree: /home/dev/review : File: src/components/git-panel.tsx : 3-3"))
+    assert.equal(draft.includes("wsl.localhost"), false)
+    assert.equal(await page.evaluate(async () => {
+      const storePath = "/src/stores/session-state.ts"
+      const { sessions } = await import(storePath)
+      return sessions().get("git-prototype").get("session").location.directory
+    }), "/CodeNomad")
     await page.getByRole("button", { name: "Retour à la conversation" }).click()
     assert.equal(await composer.inputValue(), draft)
     await page.evaluate(() => (window as any).fixture.switchSession("other"))

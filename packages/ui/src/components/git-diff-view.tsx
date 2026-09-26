@@ -62,7 +62,8 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
   function insertContext(selection: { startLine: number; endLine: number }) {
     if (!props.active) return
     const revision = props.target.commit ? `Commit: ${props.target.commit} : ` : ""
-    props.onInsertComment?.(`Git Diff: ${revision}File: ${props.target.path} : ${selection.startLine}-${selection.endLine}`)
+    const directory = props.target.serviceDirectory ?? props.target.directory
+    props.onInsertComment?.(`Git Diff: ${revision}Worktree: ${directory} : File: ${props.target.path} : ${selection.startLine}-${selection.endLine}`)
   }
 
   return <section class="git-diff-view" aria-label={t("gitPanel.diff")}>

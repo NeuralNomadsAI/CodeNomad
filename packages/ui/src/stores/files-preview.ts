@@ -5,6 +5,7 @@ export interface FilePreviewTarget {
   sessionId: string
   slug: string
   directory: string
+  serviceDirectory?: string
   path: string
   originalPath?: string | null
   scope?: "staged" | "unstaged"
