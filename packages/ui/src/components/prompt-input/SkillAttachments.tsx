@@ -1,4 +1,6 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, on } from "solid-js"
+import { X } from "lucide-solid"
+import DismissibleWindow from "../dismissible-window"
 import type { SkillInfo } from "@opencode/client"
 import { useI18n } from "../../lib/i18n"
 import { getRootClient } from "../../stores/opencode-client"
@@ -14,13 +16,19 @@ export default function SkillAttachments(props: {
   directory: string
   active: boolean
   disabled: boolean
+  open: boolean
+  onClose: () => void
+  returnFocus?: () => HTMLElement | undefined
 }) {
   const { t } = useI18n()
-  const [open, setOpen] = createSignal(false)
+  const id = createUniqueId()
+  let select: HTMLSelectElement | undefined
   const [items, setItems] = createSignal<SkillSummary[]>([])
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal(false)
   const selected = () => getAttachments(props.instanceId, props.sessionId).filter(item => item.source.type === "skill")
+  createEffect(() => { if (!props.active) props.onClose() })
+  createEffect(on(() => [props.instanceId, props.sessionId, props.directory], () => props.onClose(), { defer: true }))
   // Each visible demand reads the owning native Location, with no cross-session
   // cache of skill content. A view/directory change fences late responses.
   createEffect(() => {
@@ -30,7 +38,7 @@ export default function SkillAttachments(props: {
     setItems([])
     setError(false)
     setLoading(false)
-    if (!active || !open()) return
+    if (!active || !props.open) return
     const refresh = async () => {
       if (disposed) return
       if (inFlight) { trailing = true; return }
@@ -60,15 +68,19 @@ export default function SkillAttachments(props: {
     onCleanup(() => { disposed = true; unsubscribe(); status(); reconnect() })
     void refresh()
   })
-  createEffect(() => { if (!props.active) setOpen(false) })
-  return <div class="prompt-skill-attachments">
-    <button type="button" class="selector-button" disabled={props.disabled} aria-expanded={open()}
-      onClick={() => setOpen(value => !value)}>{t("promptInput.skills.title")}</button>
+  return <>
+    <Show when={selected().length}><div class="prompt-skill-attachments">
     <For each={selected()}>{item => <button type="button" class="badge-shape selector-button" disabled={props.disabled}
       aria-label={t("promptInput.skills.remove", { name: item.filename })}
       onClick={() => removeAttachment(props.instanceId, props.sessionId, item.id)}>{item.filename} ×</button>}</For>
-    <Show when={open()}>
-      <select class="selector-trigger" aria-label={t("promptInput.skills.title")} disabled={props.disabled || loading()}
+    </div></Show>
+    <DismissibleWindow id={id} open={props.open && props.active} onClose={props.onClose}
+      title={t("promptInput.skills.title")} class="prompt-skills-window" initialFocus={() => select} returnFocus={props.returnFocus}>
+      <header class="window-header"><strong class="window-title">{t("promptInput.skills.title")}</strong>
+        <button class="window-action-button" aria-label={t("common.close")} onClick={props.onClose}><X size={16} /></button>
+      </header>
+      <div class="window-body">
+      <select ref={select} class="selector-trigger" aria-label={t("promptInput.skills.title")} disabled={props.disabled || loading()}
         value="" onChange={event => {
           const skill = items().find(item => item.id === event.currentTarget.value)
           if (skill && !selected().some(item => item.source.type === "skill" && item.source.id === skill.id)) {
@@ -81,6 +93,7 @@ export default function SkillAttachments(props: {
       </select>
       <Show when={error()}><span role="alert">{t("promptInput.skills.error")}</span></Show>
       <Show when={!loading() && !error() && items().length === 0}><span>{t("promptInput.skills.empty")}</span></Show>
-    </Show>
-  </div>
+      </div>
+    </DismissibleWindow>
+  </>
 }

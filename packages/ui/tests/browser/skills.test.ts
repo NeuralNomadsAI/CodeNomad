@@ -29,9 +29,16 @@ test("skills are Location-scoped, removable and fence stale catalog responses", 
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Skills", exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "Skills", exact: true }).count(), 0)
+    const openSkills = async () => {
+      await page.locator(".prompt-input-container textarea").first().fill("/skills")
+      await page.locator(".send-button").click()
+    }
+    await openSkills()
     await page.waitForFunction(() => (window as any).fixture.pending().length === 1)
     await page.evaluate(() => (window as any).fixture.setSession("b"))
+    await page.getByRole("dialog").waitFor({ state: "hidden" })
+    await openSkills()
     await page.waitForFunction(() => (window as any).fixture.pending().length === 2)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.pending()), ["/a", "/b"])
     await page.evaluate(() => { (window as any).fixture.resolve(1, "current"); (window as any).fixture.resolve(0, "stale") })
@@ -54,6 +61,7 @@ test("skills are Location-scoped, removable and fence stale catalog responses", 
     await page.evaluate(() => { (window as any).fixture.resolve(3, "late"); (window as any).fixture.invalidate() })
     assert.equal(await page.getByRole("combobox").count(), 0)
     assert.equal((await page.evaluate(() => (window as any).fixture.pending())).length, 4)
+    assert.deepEqual(await page.evaluate(() => [(window as any).fixture.sends, (window as any).fixture.commands]), [[], []])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
