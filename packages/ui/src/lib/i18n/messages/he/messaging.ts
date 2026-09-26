@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "מיומנויות",
+  "promptInput.skills.remove": "הסרת מיומנות {name}",
+  "promptInput.skills.loading": "טוען מיומנויות…",
+  "promptInput.skills.select": "צירוף מיומנות…",
+  "promptInput.skills.error": "טעינת המיומנויות נכשלה. סגור ופתח מחדש כדי לנסות שוב.",
+  "promptInput.skills.empty": "אין מיומנויות זמינות בתיקייה זו.",
   "toolCall.image.label": "תמונה {number}",
   "toolCall.image.unavailable": "לא ניתן להציג את התמונה הזו.",
   "promptInput.btw.title": "/btw — שאלה צדדית",

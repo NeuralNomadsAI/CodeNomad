@@ -23,6 +23,7 @@ import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import { usePromptAside } from "./prompt-input/usePromptAside"
 import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
+import SkillAttachments from "./prompt-input/SkillAttachments"
 import {
   initializePromptInputHeight,
   persistPromptInputHeight,
@@ -1056,6 +1057,8 @@ export default function PromptInput(props: PromptInputProps) {
           </div>
         </div>
 
+        <SkillAttachments instanceId={props.instanceId} sessionId={props.sessionId} directory={props.instanceFolder}
+          active={props.isActive !== false} disabled={Boolean(props.disabled) || mode() !== "normal"} />
         <div class="prompt-input-footer">
           <div class="prompt-input-footer-context">{props.footerControls}</div>
           <div class="prompt-input-footer-actions">

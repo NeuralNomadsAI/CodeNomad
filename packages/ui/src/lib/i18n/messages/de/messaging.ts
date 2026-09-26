@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Skills",
+  "promptInput.skills.remove": "Skill {name} entfernen",
+  "promptInput.skills.loading": "Skills werden geladen…",
+  "promptInput.skills.select": "Skill anhängen…",
+  "promptInput.skills.error": "Skills konnten nicht geladen werden. Zum Wiederholen schließen und erneut öffnen.",
+  "promptInput.skills.empty": "Keine Skills in diesem Verzeichnis verfügbar.",
   "toolCall.image.label": "Bild {number}",
   "toolCall.image.unavailable": "Dieses Bild kann nicht angezeigt werden.",
   "promptInput.btw.title": "/btw — Zwischenfrage",

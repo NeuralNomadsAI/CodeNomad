@@ -1,0 +1,4 @@
+.prompt-skill-attachments { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem; min-width: 0; }
+.prompt-skill-attachments select { max-width: 15rem; min-width: 0; }
+.prompt-skill-attachments .badge-shape { overflow-wrap: anywhere; }
+.prompt-skill-attachments .selector-button { width: auto; }

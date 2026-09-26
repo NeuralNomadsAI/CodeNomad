@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Skills",
+  "promptInput.skills.remove": "Retirer le skill {name}",
+  "promptInput.skills.loading": "Chargement des skills…",
+  "promptInput.skills.select": "Joindre un skill…",
+  "promptInput.skills.error": "Chargement impossible. Fermez et rouvrez pour réessayer.",
+  "promptInput.skills.empty": "Aucun skill disponible dans ce dossier.",
   "toolCall.image.label": "Image {number}",
   "toolCall.image.unavailable": "Impossible d’afficher cette image.",
   "promptInput.btw.title": "/btw — Question à part",
