@@ -65,6 +65,21 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
 })
 
+test("mission admission proceeds when an unrelated workspace connection is stalled", { timeout: 2_000 }, async t => {
+  const f = fixture()
+  let unblock!: () => void
+  const stalled = new Promise<void>(resolve => { unblock = resolve })
+  t.after(() => unblock())
+  const connection = f.manager.getSharedServiceConnection
+  f.manager.list = () => [{ id: "unrelated" }, { id: "workspace" }]
+  const manager = { ...f.manager, getSharedServiceConnection: async (id: string) => {
+    if (id === "unrelated") { await stalled; throw new Error("Unrelated connection unavailable") }
+    return connection()
+  } }
+  await admitMissionInput(manager as never, f.fence, "ses_coordinator", f.command, new AbortController().signal)
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "prompt"])
+})
+
 test("rejects foreign ownership, changed selection, forged contracts and deletion before native writes", async () => {
   for (const mutate of [
     (f: ReturnType<typeof fixture>) => { f.state.owned = false },

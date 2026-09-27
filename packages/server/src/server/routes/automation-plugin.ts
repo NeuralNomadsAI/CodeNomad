@@ -57,9 +57,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     } catch {
       return reply.code(404).send({ error: "Session not found" })
     }
-    const owned = (await Promise.all(deps.workspaceManager.list().map((workspace) =>
-      deps.workspaceManager.ownsLocation(workspace.id, location).catch(() => false),
-    ))).some(Boolean)
+    // One validated owner is sufficient. Waiting for every unrelated inventory
+    // can exceed the plugin's discovery deadline despite a ready local owner.
+    const owned = await Promise.any(deps.workspaceManager.list().map(async workspace => {
+      if (!await deps.workspaceManager.ownsLocation(workspace.id, location)) throw new Error("Not an owner")
+      return true
+    })).catch(() => false)
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
 
     if (body.mode === "mission-input") {

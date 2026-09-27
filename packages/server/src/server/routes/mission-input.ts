@@ -30,19 +30,19 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 // values leave this backend; both native writes share ownership, connection and fence.
 export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal) {
   const { kind, input } = inputSchema.parse(command)
-  const owners = []
-  for (const workspace of manager.list()) {
+  const owner = await Promise.any(manager.list().map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
-    if (!connection) continue
+    if (!connection) throw new Error("Workspace is not ready")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID })
     const target = await connection.client.session.get({ sessionID: input.sessionID })
     if (await manager.ownsLocation(workspace.id, coordinator.location, connection.client)
-      && await manager.ownsLocation(workspace.id, target.location, connection.client)) owners.push({ workspace, connection, coordinator, target })
-  }
+      && await manager.ownsLocation(workspace.id, target.location, connection.client)) return { workspace, connection, coordinator, target }
+    throw new Error("Not a mission owner")
+  })).catch(() => undefined)
   // Duplicate logical tabs in one backend share the profile; bridge discovery
   // already rejects multiple backends that could supply different profiles.
-  if (!owners.length) throw new Error("Missing mission owner")
-  const { workspace, connection, coordinator, target } = owners[0]
+  if (!owner) throw new Error("Missing mission owner")
+  const { workspace, connection, coordinator, target } = owner
   const client = connection.client
   if (coordinator.parentID || target.parentID || coordinator.projectID !== target.projectID
     || !await manager.ownsLocation(workspace.id, target.location, client)) throw new Error("Foreign mission actor")
