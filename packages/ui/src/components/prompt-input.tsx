@@ -968,7 +968,21 @@ export default function PromptInput(props: PromptInputProps) {
               open={showPicker()}
               mode={pickerMode()}
               onClose={handlePickerClose}
-              onSelect={handlePickerSelect}
+              onSelect={(item, action) => {
+                // "/skills" never reaches native submission: selecting it opens
+                // the skill picker directly and drops the "/skills" token.
+                if (item.type === "command" && item.command.name === "skills") {
+                  const currentPrompt = prompt()
+                  const afterSlash = currentPrompt.slice(1)
+                  const firstWhitespaceIndex = afterSlash.search(/\s/)
+                  const tokenEnd = firstWhitespaceIndex === -1 ? currentPrompt.length : firstWhitespaceIndex + 1
+                  setPrompt(currentPrompt.substring(tokenEnd))
+                  handlePickerClose()
+                  setSkillsOpen(true)
+                  return
+                }
+                handlePickerSelect(item, action)
+              }}
               onSubmitWithoutSelection={() => {
                 handlePickerClose()
                 void handleSend()

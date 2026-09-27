@@ -1,9 +1,10 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
 import type { Agent } from "../types/session"
-import type { CommandInfo } from "@opencode/client"
+import type { CommandInfo, SkillInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { getRootClient } from "../stores/opencode-client"
 import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
 
@@ -69,8 +70,11 @@ function mapEntriesToFileItems(entries: { path: string; type: "file" | "director
 
 type PickerItem =
   | { type: "agent"; agent: Agent }
+  | { type: "skill"; skill: SkillSummary }
   | { type: "file"; file: FileItem }
   | { type: "command"; command: CommandInfo }
+
+type SkillSummary = Pick<SkillInfo, "id" | "name" | "description">
 
 export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
 
@@ -94,6 +98,9 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
   const [files, setFiles] = createSignal<FileItem[]>([])
   const [filteredAgents, setFilteredAgents] = createSignal<Agent[]>([])
+  const [skills, setSkills] = createSignal<SkillSummary[]>([])
+  const [skillsLoading, setSkillsLoading] = createSignal(false)
+  const [skillsError, setSkillsError] = createSignal(false)
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [loadingState, setLoadingState] = createSignal<LoadingState>("idle")
   const [allFiles, setAllFiles] = createSignal<FileItem[]>([])
@@ -251,6 +258,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     clearQueryDebounce()
     setFiles([])
     setAllFiles([])
+    setFilteredAgents([])
+    setSkills([])
+    setSkillsLoading(false)
+    setSkillsError(false)
     setCachedWorkspaceId(null)
     setIsInitialized(false)
     setSelectedIndex(0)
@@ -294,6 +305,43 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       const shouldSkipDebounce = workspaceChanged || normalizeQuery(props.searchQuery).length === 0
       scheduleLoadFilesForQuery(props.searchQuery, props.workspaceId, shouldSkipDebounce)
     }
+  })
+
+  // Skills come from the owning native Location, like the SkillAttachments
+  // window. The list is fetched once per picker opening and filtered locally.
+  createEffect(() => {
+    if (!props.open || mode() !== "mention") return
+    const workspaceId = props.workspaceId
+    const directory = props.directory ?? ""
+    if (!workspaceId || !directory) return
+    let disposed = false
+    setSkills([])
+    setSkillsError(false)
+    setSkillsLoading(true)
+    void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
+      (response) => {
+        if (disposed) return
+        setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
+        setSkillsLoading(false)
+      },
+      (error) => {
+        if (disposed) return
+        log.error(`[UnifiedPicker] Failed to load skills:`, error)
+        setSkillsError(true)
+        setSkillsLoading(false)
+      },
+    )
+    onCleanup(() => { disposed = true })
+  })
+
+  const filteredSkills = createMemo(() => {
+    if (mode() !== "mention") return []
+    const query = props.searchQuery.trim().toLowerCase()
+    if (!query) return skills()
+    return skills().filter((skill) =>
+      skill.name.toLowerCase().includes(query) ||
+      (skill.description ?? "").toLowerCase().includes(query),
+    )
   })
 
   createEffect(() => {
@@ -375,9 +423,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       items.push({ type: "file", file: rootFile })
     }
 
-    // Don't show agents for exact root path queries
+    // Don't show agents or skills for exact root path queries
     if (!isExactRootQuery) {
       filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+      filteredSkills().forEach((skill) => items.push({ type: "skill", skill }))
     }
     files().forEach((file) => items.push({ type: "file", file }))
     return items
@@ -439,6 +488,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
   const commandCount = () => filteredCommands().length
   const agentCount = () => filteredAgents().length
+  const skillCount = () => filteredSkills().length
   const fileCount = () => files().length
   const isLoading = () => mode() === "mention" && loadingState() !== "idle"
   const loadingMessage = () => {
@@ -470,8 +520,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         </div>
 
         <div ref={scrollContainerRef} class="dropdown-content max-h-60 overflow-x-auto">
-          <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && fileCount() === 0)}>
+          <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && skillCount() === 0 && fileCount() === 0 && !skillsLoading())}>
             <div class="dropdown-empty">{t("unifiedPicker.empty")}</div>
+          </Show>
+          <Show when={mode() === "mention" && skillsLoading()}>
+            <div class="dropdown-empty">{t("promptInput.skills.loading")}</div>
+          </Show>
+          <Show when={mode() === "mention" && skillsError()}>
+            <div class="dropdown-empty" role="alert">{t("promptInput.skills.error")}</div>
           </Show>
 
           <Show when={mode() === "command" && commandCount() > 0}>
@@ -549,6 +605,56 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
                             {agent.description && agent.description.length > 80
                               ? agent.description.slice(0, 80) + "..."
                               : agent.description}
+                          </div>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
+
+          <Show when={mode() === "mention" && skillCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
+            <div class="dropdown-section-header">
+              {t("unifiedPicker.sections.skills")}
+            </div>
+            <For each={filteredSkills()}>
+              {(skill) => {
+                const itemIndex = allItems().findIndex(
+                  (item) => item.type === "skill" && item.skill.id === skill.id,
+                )
+                return (
+                  <div
+                    class={`dropdown-item ${
+                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
+                    }`}
+                    data-picker-selected={itemIndex === selectedIndex()}
+                    onClick={() => props.onSelect({ type: "skill", skill }, "click")}
+                  >
+                    <div class="flex items-start gap-2">
+                      <svg
+                        class="dropdown-icon-accent h-4 w-4 mt-0.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+                        />
+                      </svg>
+                      <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-medium">{skill.name}</span>
+                        </div>
+                        <Show when={skill.description}>
+                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                            {skill.description && skill.description.length > 100
+                              ? skill.description.slice(0, 100) + "..."
+                              : skill.description}
                           </div>
                         </Show>
                       </div>
