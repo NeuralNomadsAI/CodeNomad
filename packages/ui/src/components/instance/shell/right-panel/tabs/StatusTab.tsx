@@ -229,7 +229,10 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderProviderUsage,
       renderBackgroundProcesses,
       renderWebSearch: () => <Show when={props.isActive() && isSectionExpanded("websearch")}>
-        <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="project" />
+        <div class="websearch-status-stack">
+          <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="global" />
+          <WebSearchSettingsCard instanceId={props.instanceId} location={shellLocation()} scope="project" />
+        </div>
       </Show>,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
       renderPluginStatus: () => (

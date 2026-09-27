@@ -23,8 +23,8 @@ test("web settings use explicit scopes, native keys, no mutation replay and fenc
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(`${url}?project`)
-    assert.equal(await page.getByLabel("Default for all projects", { exact: true }).count(), 0)
-    assert.equal(await page.getByText("Search provider API keys", { exact: true }).count(), 0)
+    assert.equal(await page.getByLabel("Default for all projects", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("Search provider API keys", { exact: true }).count(), 1)
     await page.getByLabel("Override for this project", { exact: true }).selectOption("off")
     await page.waitForFunction(() => document.querySelector('select[title="Search in this project: Disabled"]'))
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [{ location: { directory: "/a" }, scope: "project", provider: false }])
