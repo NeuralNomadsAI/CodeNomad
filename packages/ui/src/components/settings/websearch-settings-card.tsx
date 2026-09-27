@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { RefreshCw, Trash2 } from "lucide-solid"
 import type { IntegrationInfo, LocationRef } from "@opencode/client"
 import type { PluginControlScope, WebSearchSelection, WebSearchSettingsSnapshot } from "../../../../server/src/api-types"
@@ -137,9 +137,10 @@ export function WebSearchCredentialsCard(props: { instanceId: string; location?:
         const captured = revision
         try {
           const client = getRootClient(instanceId)
+          const withAccess = untrack(() => engaged())
           const [catalog, access] = await Promise.all([
             client.websearch.providers({ location: { directory } }),
-            engaged() ? client.integration.list({ location: { directory } }) : undefined,
+            withAccess ? client.integration.list({ location: { directory } }) : undefined,
           ])
           if (!disposed && captured === revision && !trailing) {
             setProviders(catalog.data)
