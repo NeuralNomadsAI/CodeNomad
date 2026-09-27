@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
-import { WebSearchSettingsCard } from "../../../src/components/settings/websearch-settings-card"
+import { WebSearchCredentialsCard, WebSearchSettingsCard } from "../../../src/components/settings/websearch-settings-card"
 import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/StatusTab"
 import { parseRightPanelCustomization } from "../../../src/components/instance/shell/right-panel/registry"
 import { shellStore } from "../../../src/stores/shells"
@@ -48,6 +48,7 @@ function ProjectStatus() {
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><main style={{ width: "min(700px, 100%)" }}>
   {new URLSearchParams(location.search).has("project") ? <ProjectStatus />
-    : <WebSearchSettingsCard instanceId="web" location={{ directory: directory() }} scope="global" />}
+    : <><WebSearchSettingsCard instanceId="web" location={{ directory: directory() }} scope="global" />
+      <WebSearchCredentialsCard instanceId="web" location={{ directory: directory() }} /></>}
 </main></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { writes, keys, setDirectory, setActive, integrationLists: () => integrationLists, reject: () => { reject = true }, hold: () => { hold = true }, release: () => release?.() }
