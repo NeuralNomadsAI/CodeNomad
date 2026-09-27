@@ -1,7 +1,8 @@
 import { For, Show, createMemo } from "solid-js"
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, FileCode, FileText, Image, File, RefreshCw, TerminalSquare } from "lucide-solid"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
-import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../../../../action-overflow-menu"
+import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
+import FileRowActions from "../FileRowActions"
 import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { canOpenWorkspacePaths, openWorkspacePath } from "../../../../../lib/workspace-open"
@@ -137,13 +138,7 @@ export function WorkspaceTree(props: {
           </Show>
           <Show when={isFolder} fallback={<Icon size={14} />}><Show when={expanded()} fallback={<Folder size={14} />}><FolderOpen size={14} /></Show></Show>
           <span class="workspace-tree-label">{row.name}</span><Show when={props.tree.busy().has(row.path)}><RefreshCw size={12} class="animate-spin" /></Show>
-          <span class="workspace-row-menu" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
-            <ActionOverflowMenu
-              items={rowActions(row)}
-              label={props.t("instanceShell.filesShell.actions.more", { name: row.name })}
-              triggerClass="git-change-row-action workspace-row-menu-trigger"
-            />
-          </span>
+          <FileRowActions items={rowActions(row)} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
         </div>
       }}</For>
     </div>

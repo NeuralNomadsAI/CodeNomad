@@ -48,7 +48,8 @@
 .git-panel-file-selected { background: var(--selection-neutral-bg); }
 .git-panel-file-row { display: flex; align-items: center; }
 .git-panel-file-main { flex: 1; min-width: 0; width: auto; }
-.git-panel-file-stage { flex-shrink: 0; opacity: 0; margin-inline-end: var(--space-sm); }
+.git-panel-file-stage { flex-shrink: 0; opacity: 0; margin-inline-end: var(--space-sm); background: transparent; }
+.git-panel-file-stage:hover:not(:disabled) { background: transparent; box-shadow: none; color: var(--text-primary); opacity: 1; }
 .git-panel-file-row:hover .git-panel-file-stage,
 .git-panel-file-row:focus-within .git-panel-file-stage { opacity: 1; }
 .git-drop-zone { min-height: var(--space-md); }

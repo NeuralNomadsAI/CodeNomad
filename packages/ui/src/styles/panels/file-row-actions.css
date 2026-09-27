@@ -1,0 +1,79 @@
+.file-row-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+
+.file-row-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.file-row-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.file-row-icon-button:hover:not(:disabled),
+.file-row-icon-button:focus-visible:not(:disabled) {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.file-row-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.file-row-icon-button:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+
+.file-row-actions > .action-overflow-trigger {
+  display: none;
+}
+
+.file-row-actions[data-compact="true"] > .action-overflow-trigger {
+  display: inline-flex;
+}
+
+.file-row-actions[data-compact="true"] .file-row-inline-actions {
+  position: absolute;
+  inset-inline-end: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.workspace-tree-row .file-row-actions,
+.git-panel-file-row .file-row-actions {
+  opacity: 0;
+}
+
+.workspace-tree-row:hover .file-row-actions,
+.workspace-tree-row:focus-within .file-row-actions,
+.git-panel-file-row:hover .file-row-actions,
+.git-panel-file-row:focus-within .file-row-actions {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .workspace-tree-row .file-row-actions,
+  .git-panel-file-row .file-row-actions {
+    opacity: 1;
+  }
+}

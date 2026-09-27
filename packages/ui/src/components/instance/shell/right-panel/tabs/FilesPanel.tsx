@@ -8,7 +8,7 @@ import {
   transformStyle,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
-import { ArrowLeft, ChevronRight, GitBranch, GitCommitHorizontal, Minus, Plus, RefreshCw } from "lucide-solid"
+import { ArrowLeft, GitBranch, GitCommitHorizontal, Minus, Plus, RefreshCw } from "lucide-solid"
 import type { useGitChanges } from "../useGitChanges"
 import type { useGitHistory } from "../useGitHistory"
 import type { FilePreviewTarget } from "../../../../../stores/files-preview"
@@ -115,7 +115,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
           <div class="git-commit-files">
           <For each={details().files}>{file => <button class="git-panel-file" title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} disabled={!props.canOpenFile} onClick={() => props.onOpenFile({
             path: file.path, commit: details().id, subject: details().message.split("\n")[0],
-          })}><span class={`git-file-status git-file-status-${file.status}`}>{file.status}</span><span>{file.path}</span><ChevronRight size={12} /></button>}</For>
+          })}><span class={`git-file-status git-file-status-${file.status}`}>{file.status}</span><span>{file.path}</span></button>}</For>
           </div>
         </>}</Show>
       </Show>
