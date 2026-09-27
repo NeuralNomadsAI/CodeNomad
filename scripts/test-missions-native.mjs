@@ -47,7 +47,8 @@ const provider = createServer(async (request, response) => {
     const body = JSON.parse(raw)
     if (request.headers["x-fixture-kind"] === "primary") {
       requests.push({ session: request.headers["x-fixture-session"], model: body.model,
-        tools: (body.tools ?? []).map(tool => tool.function?.name) })
+        tools: (body.tools ?? []).map(tool => tool.function?.name),
+        messages: JSON.stringify(body.messages ?? []) })
       if (hold) { hold = false; await new Promise(resolve => { held = resolve }) }
     }
     if (!body.stream) {
@@ -173,6 +174,7 @@ try {
   await client.session.wait({ sessionID: actorID }, { signal: AbortSignal.timeout(20_000) })
   await probe(actorID, "changed")
   await invoke("report", { taskKey: task.taskKey, outcome: "completed", summary: "Native verified" }, actorID)
+  await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes("Native verified")))
   await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
   await probe(coordinator.id, "changed")
 
@@ -193,7 +195,15 @@ try {
   assert.equal(withdrawn.replacedByTaskKey, "native-revision-replacement")
   assert.equal(revised.mission.tasks.find(task => task.key === "native-revision-replacement").replacesTaskKey, queued.taskKey)
   assert.equal(revised.mission.history.at(-1).reason, "Replace the queued review with a focused follow-up")
+  hold = true
+  await client.session.prompt({ sessionID: coordinator.id, text: "Busy coordinator before review result" })
+  await until(() => Boolean(held))
   const lateReport = await invoke("report", { taskKey: queued.taskKey, outcome: "completed", summary: "Late native result" }, actorID)
+  assert((await client.session.inbox.list({ sessionID: coordinator.id })).some(item =>
+    item.type === "synthetic" && item.payload.text.includes("Late native result")), "Busy coordinator retains the report")
+  held(); held = undefined
+  await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes("Late native result")))
+  await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
   assert.equal(lateReport.mission.tasks.find(task => task.key === queued.taskKey).status, "withdrawn")
   assert.equal(lateReport.mission.tasks.find(task => task.key === queued.taskKey).lateReports.at(-1).late, true)
   assert(lateReport.mission.reports.some(report => report.taskKey === queued.taskKey && report.late === true))
@@ -240,7 +250,7 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, reports, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator report resumption, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error

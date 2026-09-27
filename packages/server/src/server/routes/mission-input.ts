@@ -13,7 +13,10 @@ const inputSchema = z.object({
   input: z.object({
     sessionID: z.string().regex(/^ses/).max(240),
     id: z.string().regex(/^msg_/).max(240),
-    text: z.string().min(1).max(100_000),
+    // Objective + brief (20k each) and title (240) can expand 5x in XML.
+    // Leave room for role instructions/dependencies. The bridge also bounds the
+    // JSON wire body at 512 KiB, including worst-case control-character escapes.
+    text: z.string().min(1).max(250_000),
     description: z.string().max(240).optional(),
     metadata: z.object({ "codenomad.mission": z.object({
       version: z.literal(1), missionID: z.string().max(100), kind: z.enum(["assignment", "report"]),

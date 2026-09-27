@@ -7,6 +7,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { admitMissionInput } from "./mission-input"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
+import { parseDelegateInput, parseInspectInput } from "../../opencode/missions-plugin"
 
 function fixture() {
   const mission = {
@@ -63,6 +64,32 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[0].input.variables.TEMP, "first")
   assert.equal(f.calls[2].input.variables.TEMP, "changed")
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
+})
+
+test("the authenticated bridge admits maximum contracts after XML and JSON escaping", async () => {
+  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] as const) {
+    for (const character of ["&", "\u0000", "界"]) {
+      const f = fixture()
+      const start = parseInspectInput({ start: { objective: character.repeat(20_000), template } }).start!
+      const task = parseDelegateInput({ taskKey: "review", title: character.repeat(240),
+        brief: character.repeat(20_000), role: "validator",
+        blockedBy: Array.from({ length: 24 }, (_, index) => `${index}`.padEnd(64, "a")) })
+      Object.assign(f.mission, start)
+      Object.assign(f.mission.tasks[0], task)
+      const command = { kind: "prompt", input: assignmentInput(f.mission, f.mission.tasks[0]) }
+      const app = Fastify()
+      registerAutomationPluginRoute(app, { workspaceManager: f.manager, worktreeDeletionFence: f.fence,
+        authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: {}, developerCdp: {} } as never)
+      try {
+        const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+          payload: { mode: "mission-input", sessionID: "ses_coordinator", command },
+          headers: { "x-codenomad-automation-token": "fixture" } })
+        assert.equal(response.statusCode, 200, `${template}: ${JSON.stringify(character)} ${response.body}`)
+        assert.deepEqual(f.calls.map(call => call.kind), ["environment", "prompt"])
+        assert.equal(f.calls[1].input.text, command.input.text)
+      } finally { await app.close() }
+    }
+  }
 })
 
 test("admits a late report synthetic from a withdrawn task's durable late-report history", async () => {
