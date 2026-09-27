@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { ConnectionInfo, LocationRef, OpenCodeClient } from "@opencode/client"
-import { Pencil, RefreshCw, Trash2, LockKeyhole } from "lucide-solid"
+import { Pencil, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
@@ -24,7 +24,9 @@ export function ProviderAccounts(props: {
   createEffect(() => {
     const client = props.client, instanceId = props.instanceId, integrationID = props.integrationId, location = { ...props.location }
     let disposed = false, reading = false, writing = false, trailing = false
-    setConnections([]); setError(false); setBusy(false)
+    // Cache-first: keep the catalog snapshot while the authoritative read
+    // revalidates behind it.
+    setConnections(props.initialConnections ?? []); setError(false); setBusy(false)
     if (!open()) return
     const read = async () => {
       if (disposed) return
@@ -84,10 +86,6 @@ export function ProviderAccounts(props: {
       </span>}</Show>
     </summary>
     <Show when={open()}>
-      <div class="provider-accounts-toolbar"><button type="button" class="icon-button-compact" disabled={busy()}
-        aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")} onClick={() => refresh()}>
-        <RefreshCw size={14} classList={{ "animate-spin": busy() }} />
-      </button></div>
       <Show when={error()}><p role="alert">{t("settings.accounts.error")}</p></Show>
       <For each={ids()}>{(id, index) => {
         const connection = () => connections().find(item => id === (item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`))!
