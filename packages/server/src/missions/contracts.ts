@@ -144,7 +144,8 @@ export function resolvePocockImplementerSessionID(
   const liveImplementers = tasks.filter(task => task.role === "implementer" && task.status === "completed" && task.actorSessionId)
   const dependencyImplementers = liveImplementers.filter(task => ancestors.has(task.key))
   const candidates = dependencyImplementers.length > 0 ? dependencyImplementers : liveImplementers
-  return candidates.length === 1 ? candidates[0]?.actorSessionId : undefined
+  const candidateSessionIDs = [...new Set(candidates.flatMap(task => task.actorSessionId ? [task.actorSessionId] : []))]
+  return candidateSessionIDs.length === 1 ? candidateSessionIDs[0] : undefined
 }
 
 export function validateMissionCompletionPolicy(input: {

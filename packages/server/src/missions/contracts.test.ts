@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
+import { resolvePocockImplementerSessionID, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 
 test("accepts a green Pocock validation contract only when every check category is reported", () => {
   const artifact = {
@@ -92,4 +92,24 @@ test("selects the implementer connected to Pocock review dependencies and reject
       ? { key: task.key, role: task.role, status: "completed" as const, blockedBy: [], actorSessionId: task.actorSessionId }
       : task),
   }), /unambiguous/)
+})
+
+test("resolves a Pocock chain with multiple implementer tasks to their one shared actor", () => {
+  const tasks = [
+    { key: "diagnose", role: "diagnostician", status: "completed" as const, blockedBy: [] },
+    { key: "fix-part-one", role: "implementer", status: "completed" as const, blockedBy: ["diagnose"], actorSessionId: "ses_implementer" },
+    { key: "fix-part-two", role: "implementer", status: "completed" as const, blockedBy: ["fix-part-one"], actorSessionId: "ses_implementer" },
+    { key: "standards", role: "review-standards", status: "completed" as const, blockedBy: ["fix-part-two"] },
+    { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["fix-part-two"] },
+  ]
+  assert.equal(resolvePocockImplementerSessionID(tasks, ["standards", "spec"]), "ses_implementer")
+  assert.doesNotThrow(() => validateMissionDelegationPolicy({
+    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_implementer",
+    blockedBy: ["standards", "spec"], tasks,
+  }))
+
+  const ambiguous = [...tasks,
+    { key: "other-fix", role: "implementer", status: "completed" as const, blockedBy: ["diagnose"], actorSessionId: "ses_other" },
+  ].map(task => task.key === "spec" ? { ...task, blockedBy: ["fix-part-two", "other-fix"] } : task)
+  assert.equal(resolvePocockImplementerSessionID(ambiguous, ["standards", "spec"]), undefined)
 })
