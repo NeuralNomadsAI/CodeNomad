@@ -15,7 +15,7 @@ export const missionsRightPanelManifest: RightPanelManifest = {
       id: "missions",
       labelKey: "instanceShell.rightPanel.tabs.missions",
       order: 25,
-      render: () => <MissionControl instanceId={host.instanceId} activeSessionId={host.activeSessionId} t={host.t} />,
+      render: () => <MissionControl instanceId={host.instanceId} activeSessionId={host.activeSessionId} t={host.t} onRevealConversation={host.revealConversation} />,
     }],
   }),
 }

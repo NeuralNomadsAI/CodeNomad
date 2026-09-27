@@ -69,33 +69,14 @@
 
 .mission-report { background: var(--surface-base); }
 
-.mission-report summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-sm);
-  padding: var(--space-sm);
-  cursor: pointer;
-  list-style: none;
-}
-
-.mission-report summary::-webkit-details-marker { display: none; }
-
-.mission-report summary > span:nth-child(2) {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.mission-report summary strong {
-  overflow: hidden;
+.mission-report-heading strong {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-regular);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.mission-report summary small {
+.mission-actor-signal[data-status="waiting"] { background: var(--status-warning); box-shadow: 0 0 0 1px var(--status-warning); }
+
+.mission-report .mission-disclosure-trigger small {
   color: var(--text-muted);
   font-family: var(--font-family-mono);
   font-size: 10px;
@@ -103,6 +84,7 @@
 }
 
 .mission-report-mark {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   margin-top: 3px;
@@ -113,6 +95,7 @@
 .mission-report-mark[data-outcome="failed"] { background: var(--status-error); }
 
 .mission-report-detail {
+  overflow-wrap: anywhere;
   padding-block: 0 var(--space-md);
   padding-inline: calc(var(--space-md) + 16px) var(--space-md);
   color: var(--text-secondary);

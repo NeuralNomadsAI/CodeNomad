@@ -12,13 +12,21 @@ Missions are a thin coordination plane over native OpenCode V2 sessions. They in
 | Checkout isolation and Git policy | Existing CodeNomad worktree/Git modules |
 | Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
 
-The plugin exposes only `mission.inspect`, `mission.delegate`, and `mission.report`. The coordinator is the sole topology writer. Specialists receive one bounded assignment and report through a correlated synthetic inbox item. Delegation uses native `queue` delivery and `resume: true`, so a busy actor keeps the work in its durable inbox while an idle actor can begin immediately.
+The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, and `mission.report`. The coordinator is the sole topology writer. Specialists receive one bounded assignment and report through a correlated synthetic inbox item. Delegation uses native `queue` delivery and `resume: true`, so a busy actor keeps the work in its durable inbox while an idle actor can begin immediately.
 
 ## Durability and recovery
 
 The map is an append-only event journal in native plugin storage. Events have deterministic identities, and native prompt/synthetic admissions use deterministic message IDs. Retrying after a plugin or CodeNomad restart therefore resumes an incomplete dispatch without creating a second task, actor, or inbox item.
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads a snapshot after reconnect because native event subscriptions are live-only.
+
+The Centre of mission manages map metadata through the authenticated CodeNomad routes `POST /api/workspaces/:id/missions`, `PATCH /api/workspaces/:id/missions/:missionID`, and `DELETE /api/workspaces/:id/missions/:missionID`. These broker only the typed `create`, `update`, and `delete` methods of `codenomad.missions`; they do not expose generic RPC. Create uses a stable request ID, may attach an owned root session or create a new root without prompting, and update uses revision compare-and-swap for objective/notes. Delete appends a tombstone: the map disappears from snapshots and membership, but OpenCode sessions and their conversations are never deleted or aborted. Late reports for a tombstoned mission cannot recreate its map. Tombstones remain subject to the project journal event limit.
+
+`mission.revise` is a coordinator-only, append-only plan change with `expectedRevision`, stable `requestID`, and a required reason. It can update objective/notes, add tasks with new keys linked to retired predecessors, retire tasks, and rewrite dependencies in one atomic event. A retired task is not completed evidence. Every remaining dependent must explicitly point to a live task or remove that dependency; cycles and edits to already dispatched dependencies are rejected. Existing task contracts and reports are immutable. A late report from retired admitted work remains visible as late history and never changes the task back to completed. No session is aborted and no busy actor is reconfigured.
+
+Mission snapshots expose the latest 50 plan changes (`history`, with `historyTruncated` when older entries are omitted), including human objective/notes edits and coordinator revisions. Each entry has a revision and timestamp; `source` distinguishes `user` from `coordinator`. Human edits intentionally have no synthetic actor session or reason; coordinator entries retain their actor and required reason. Older history entries without `source` are coordinator-originated. Snapshots also expose task lineage (`replacesTaskKey`/`replacedByTaskKey`), late reports, and `outstandingExecution`. A withdrawn task with admitted native work must receive a terminal report before the mission can be finished; runtime idle is not proof that queued/admitted work stopped. This is bookkeeping, not native cancellation or a guarantee that an external actor has stopped working.
+
+`node scripts/test-missions-native.mjs <absolute-isolated-opencode-cli>` exercises native tool registration/restart plus revision, late-report delivery, lifecycle create/update/delete replay, tombstone projection, and transcript preservation. It provisions its own home/config/database/provider and must never be pointed at the shared daemon.
 
 ## Native execution selection (2.0.11)
 
@@ -58,7 +66,7 @@ This transport reuses desktop bridge discovery, not browser automation or its vi
 - At most 8 actors, 96 tasks, 20 missions, and 2,000 stored events in one project view.
 - Existing root actors may be reused, but an actor cannot join two active missions.
 - Dependency tasks are mapped as blocked and are never auto-dispatched.
-- Completing a mission green requires every task to have a completed report.
+- Completing a mission green requires every active task to have a completed report and every withdrawn task with admitted work to have a terminal report. Pocock's completed-role evidence gates still apply; retirement cannot satisfy a gate.
 
 ## Included playbooks
 

@@ -11,6 +11,7 @@ import {
   type MissionEvent,
   type MissionMap,
   type MissionReport,
+  type MissionRevisedEvent,
   type MissionSnapshot,
 } from "./model"
 import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "./recipes"
@@ -20,6 +21,10 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import type {
   MissionDelegateInput,
+  MissionCreateInput,
+  MissionUpdateInput,
+  MissionDeleteInput,
+  MissionReviseInput,
   MissionInspectInput,
   MissionInspection,
   MissionProject,
@@ -54,6 +59,272 @@ export class MissionControl {
 
   snapshot(): Promise<MissionSnapshot> {
     return this.journal.snapshot()
+  }
+
+  create(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
+    return this.mutate(() => this.createCurrent(input))
+  }
+
+  private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
+    const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
+    const eventID = this.eventID(missionID, "created")
+    const existingEvent = await this.journal.event(missionID, eventID)
+    let snapshot = await this.snapshot()
+    const existing = snapshot.missions.find((mission) => mission.id === missionID)
+    if (existingEvent) {
+      if (existingEvent.type !== "mission.created" || existingEvent.objective !== input.objective
+        || existingEvent.notes !== input.notes || existingEvent.template !== input.template
+        || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
+        throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
+      }
+      if (!existing) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
+      return { mission: existing }
+    }
+    if (snapshot.missions.length >= MISSION_MAX_MISSIONS) throw new MissionControlError("Project mission limit reached", "mission-limit")
+    await this.journal.assertCanAppend()
+
+    let coordinator: NativeMissionSession
+    if (input.coordinatorSessionID) {
+      coordinator = await this.ownedRootSession(input.coordinatorSessionID)
+      if (snapshot.missions.some((mission) => mission.status === "active"
+        && mission.actors.some((actor) => actor.sessionId === coordinator.id))) {
+        throw new MissionControlError("Coordinator session already belongs to an active mission", "already-member")
+      }
+    } else {
+      const sessionID = `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
+      try {
+        coordinator = await this.options.sessions.get({ sessionID })
+      } catch {
+        coordinator = await this.options.sessions.create({
+          id: sessionID,
+          title: `Mission coordinator: ${input.objective}`.slice(0, 160),
+          location: this.options.project.location,
+          metadata: this.metadata(missionID, "coordinator", { role: "coordinator" }),
+        })
+      }
+      this.assertOwnedRoot(coordinator)
+    }
+
+    const createdAt = this.timestamp(snapshot)
+    await this.journal.append({
+      version: MISSION_SCHEMA_VERSION,
+      id: eventID,
+      type: "mission.created",
+      missionID,
+      projectID: this.options.project.id,
+      projectCanonical: this.options.project.canonical,
+      objective: input.objective,
+      notes: input.notes,
+      template: input.template,
+      requestID: input.requestID,
+      coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
+      createdAt,
+    })
+    snapshot = await this.snapshot()
+    await this.emitChanged(missionID, snapshot)
+    return { mission: this.requireMission(snapshot, missionID) }
+  }
+
+  update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
+    return this.mutate(() => this.updateCurrent(input))
+  }
+
+  private async updateCurrent(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
+    const eventID = this.eventID(input.missionID, `updated-${input.requestID}`)
+    const previous = await this.journal.event(input.missionID, eventID)
+    let snapshot = await this.snapshot()
+    const mission = snapshot.missions.find((candidate) => candidate.id === input.missionID)
+    if (previous) {
+      if (previous.type !== "mission.updated" || previous.objective !== input.objective
+        || previous.notesSpecified !== (input.notes !== undefined)
+        || (input.notes !== undefined && previous.notes !== input.notes)
+        || previous.expectedRevision !== input.expectedRevision) throw new MissionControlError("Update request ID was already used with a different edit", "request-conflict")
+      if (!mission) throw new MissionControlError("Mission not found", "mission-not-found")
+      return { mission }
+    }
+    if (!mission) throw new MissionControlError("Mission not found", "mission-not-found")
+    if (mission.status !== "active") throw new MissionControlError("Only active missions can be edited", "mission-finished")
+    if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before editing", "revision-conflict")
+    const notes = input.notes === undefined ? mission.notes : input.notes
+    await this.journal.append({
+      version: MISSION_SCHEMA_VERSION, id: eventID, type: "mission.updated", missionID: mission.id,
+      projectID: mission.projectID, requestID: input.requestID, expectedRevision: input.expectedRevision,
+      objective: input.objective, notes, notesSpecified: input.notes !== undefined, createdAt: this.timestamp(snapshot),
+    })
+    snapshot = await this.snapshot()
+    await this.emitChanged(mission.id, snapshot)
+    return { mission: this.requireMission(snapshot, mission.id) }
+  }
+
+  delete(input: MissionDeleteInput): Promise<{ deleted: true }> {
+    return this.mutate(() => this.deleteCurrent(input))
+  }
+
+  revise(sessionID: string, input: MissionReviseInput): Promise<{ mission: MissionMap }> {
+    return this.mutate(() => this.reviseCurrent(sessionID, input))
+  }
+
+  private async reviseCurrent(sessionID: string, input: MissionReviseInput): Promise<{ mission: MissionMap }> {
+    await this.ownedRootSession(sessionID)
+    let snapshot = await this.snapshot()
+    let mission = this.selectMission(snapshot, sessionID, input.missionID)
+    if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
+    this.assertCoordinator(mission, sessionID)
+    const eventID = this.eventID(mission.id, `revised-${input.requestID}`)
+    const previous = await this.journal.event(mission.id, eventID)
+    if (previous) {
+      if (previous.type !== "mission.revised" || previous.actorSessionID !== sessionID
+        || previous.expectedRevision !== input.expectedRevision || !sameRevisionRequest(previous, input)) {
+        throw new MissionControlError("Revision request ID was already used with a different change", "request-conflict")
+      }
+      return { mission }
+    }
+    if (mission.status !== "active") throw new MissionControlError("The mission is already finished", "mission-finished")
+    if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before revising", "revision-conflict")
+    const addedTasks = await this.validateRevision(mission, input, sessionID)
+    await this.journal.append({
+      version: MISSION_SCHEMA_VERSION,
+      id: eventID,
+      type: "mission.revised",
+      missionID: mission.id,
+      projectID: mission.projectID,
+      requestID: input.requestID,
+      expectedRevision: input.expectedRevision,
+      actorSessionID: sessionID,
+      reason: input.reason,
+      ...(input.objective === undefined ? {} : { objective: input.objective }),
+      notesSpecified: input.notes !== undefined,
+      ...(input.notes === undefined ? {} : { notes: input.notes }),
+      retiredTasks: input.retireTasks,
+      addedTasks,
+      dependencyUpdates: input.dependencyUpdates,
+      createdAt: this.timestamp(snapshot),
+    })
+    snapshot = await this.snapshot()
+    mission = this.requireMission(snapshot, mission.id)
+    await this.emitChanged(mission.id, snapshot)
+    return { mission }
+  }
+
+  private async validateRevision(mission: MissionMap, input: MissionReviseInput, coordinatorID: string) {
+    if (input.objective === undefined && input.notes === undefined && input.retireTasks.length === 0
+      && input.addTasks.length === 0 && input.dependencyUpdates.length === 0) {
+      throw new MissionControlError("A revision must change the objective, notes, tasks, or dependencies", "empty-revision")
+    }
+    if (mission.tasks.length + input.addTasks.length > MISSION_MAX_TASKS) {
+      throw new MissionControlError("Mission task limit reached", "task-limit")
+    }
+
+    const current = new Map(mission.tasks.map((task) => [task.key, task]))
+    const retired = new Map<string, string | undefined>()
+    for (const item of input.retireTasks) {
+      const task = current.get(item.taskKey)
+      if (!task || task.status === "withdrawn") throw new MissionControlError(`Cannot retire unknown or already withdrawn task: ${item.taskKey}`, "invalid-revision")
+      if (retired.has(item.taskKey)) throw new MissionControlError(`Task is retired more than once: ${item.taskKey}`, "invalid-revision")
+      retired.set(item.taskKey, item.replacementTaskKey)
+    }
+
+    const addKeys = new Set<string>()
+    const addedTasks: Array<MissionRevisedEvent["addedTasks"][number]> = []
+    const addInputs = new Map(input.addTasks.map((task) => [task.taskKey, task]))
+    if (addInputs.size !== input.addTasks.length) throw new MissionControlError("Replacement task keys must be unique", "invalid-revision")
+    for (const item of input.addTasks) {
+      if (current.has(item.taskKey) || addKeys.has(item.taskKey)) throw new MissionControlError(`Task key already exists: ${item.taskKey}`, "task-conflict")
+      addKeys.add(item.taskKey)
+      if (!retired.has(item.replacesTaskKey) || retired.get(item.replacesTaskKey) !== item.taskKey) {
+        throw new MissionControlError(`Replacement ${item.taskKey} must match a retired task`, "invalid-revision")
+      }
+      const taskInput: MissionDelegateInput = {
+        taskKey: item.taskKey, title: item.title, brief: item.brief, role: item.role,
+        blockedBy: item.blockedBy, delivery: "queue", execution: item.execution,
+      }
+      try {
+        validateMissionDelegationPolicy({
+          template: mission.template,
+          role: item.role,
+          targetSessionID: item.role === "resolver"
+            ? mission.actors.find((actor) => actor.roles.includes("implementer"))?.sessionId
+            : undefined,
+          actors: mission.actors,
+          tasks: mission.tasks.filter((task) => !retired.has(task.key)).map(({ role, status }) => ({ role, status }))
+            .concat(addedTasks.map(({ role }) => ({ role, status: "ready" as const }))),
+        })
+        await this.options.validateExecution?.(taskInput, coordinatorID)
+      } catch (error) {
+        throw new MissionControlError(error instanceof Error ? error.message : "Replacement task contract is invalid", "invalid-role-policy")
+      }
+      addedTasks.push({
+        id: `tsk_${stableToken(`${mission.id}\0${item.taskKey}`, 24)}`,
+        key: item.taskKey, title: item.title, brief: item.brief, role: item.role,
+        ...(item.execution === undefined ? {} : { execution: item.execution }),
+        blockedBy: [...item.blockedBy], replacesTaskKey: item.replacesTaskKey,
+      })
+    }
+    for (const [oldKey, replacementKey] of retired) {
+      if (replacementKey !== undefined && !addKeys.has(replacementKey)) {
+        throw new MissionControlError(`Replacement task does not exist: ${replacementKey}`, "invalid-revision")
+      }
+    }
+    if ([...retired.values()].filter((value) => value !== undefined).length !== addKeys.size) {
+      throw new MissionControlError("Every replacement task must replace exactly one retired task", "invalid-revision")
+    }
+
+    const dependencyTargets = new Set<string>()
+    for (const update of input.dependencyUpdates) {
+      const task = current.get(update.taskKey)
+      if (!task || retired.has(update.taskKey) || dependencyTargets.has(update.taskKey)) {
+        throw new MissionControlError(`Invalid or duplicate dependency update: ${update.taskKey}`, "invalid-revision")
+      }
+      if (task.status !== "ready" && task.status !== "blocked") {
+        throw new MissionControlError(`Cannot change dependencies after dispatch: ${update.taskKey}`, "invalid-revision")
+      }
+      dependencyTargets.add(update.taskKey)
+    }
+    for (const task of mission.tasks) {
+      if (retired.has(task.key) || task.status === "withdrawn") continue
+      if (task.blockedBy.some((key) => retired.has(key)) && !dependencyTargets.has(task.key)) {
+        throw new MissionControlError(`Dependency update required for ${task.key}`, "dependency-update-required")
+      }
+    }
+
+    const planned = new Map<string, { blockedBy: string[]; retired: boolean }>()
+    for (const task of mission.tasks) {
+      if (retired.has(task.key) || task.status === "withdrawn") continue
+      const update = input.dependencyUpdates.find((item) => item.taskKey === task.key)
+      planned.set(task.key, { blockedBy: update?.blockedBy ?? task.blockedBy, retired: false })
+    }
+    for (const task of addedTasks) planned.set(task.key, { blockedBy: task.blockedBy, retired: false })
+    for (const [taskKey, task] of planned) {
+      if (task.blockedBy.includes(taskKey) || new Set(task.blockedBy).size !== task.blockedBy.length) {
+        throw new MissionControlError(`Invalid dependency list for ${taskKey}`, "invalid-revision")
+      }
+      const unknown = task.blockedBy.find((key) => !planned.has(key))
+      if (unknown) throw new MissionControlError(`Dependency ${unknown} is unknown, retired, or being removed`, "invalid-blocker")
+    }
+    assertAcyclicDependencies(planned)
+    return addedTasks
+  }
+
+  private async deleteCurrent(input: MissionDeleteInput): Promise<{ deleted: true }> {
+    const eventID = this.eventID(input.missionID, `deleted-${input.requestID}`)
+    const previous = await this.journal.event(input.missionID, eventID)
+    const snapshot = await this.snapshot()
+    const mission = snapshot.missions.find((candidate) => candidate.id === input.missionID)
+    if (previous) {
+      if (previous.type !== "mission.deleted" || previous.expectedRevision !== input.expectedRevision) {
+        throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
+      }
+      return { deleted: true }
+    }
+    if (!mission) throw new MissionControlError("Mission not found", "mission-not-found")
+    if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before deleting", "revision-conflict")
+    await this.journal.append({
+      version: MISSION_SCHEMA_VERSION, id: eventID, type: "mission.deleted", missionID: mission.id,
+      projectID: mission.projectID, requestID: input.requestID, expectedRevision: input.expectedRevision,
+      createdAt: this.timestamp(snapshot),
+    })
+    await this.emitChanged(mission.id, await this.snapshot(), input.expectedRevision + 1)
+    return { deleted: true }
   }
 
   inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
@@ -164,6 +435,7 @@ export class MissionControl {
       if (!same) throw new MissionControlError("Task key already exists with a different contract", "task-conflict")
     }
 
+    if (task.status === "withdrawn") throw new MissionControlError("This task was withdrawn; create new work with a new task key", "task-withdrawn")
     if (task.report || task.status === "queued") return { disposition: "existing", mission }
     if (task.status === "blocked") return { disposition: "blocked", mission }
     if (task.status === "dispatching") {
@@ -212,7 +484,10 @@ export class MissionControl {
       this.assertCoordinator(mission, sessionID)
       if (mission.status !== "active") return { disposition: "existing", mission }
       if (input.outcome === "blocked") throw new MissionControlError("A final mission outcome must be completed or failed", "invalid-final-outcome")
-      if (input.outcome === "completed" && mission.tasks.some((task) => task.status !== "completed")) {
+      if (mission.tasks.some((task) => task.outstandingExecution)) {
+        throw new MissionControlError("Withdrawn native work needs a terminal report before the mission can finish", "outstanding-execution")
+      }
+      if (input.outcome === "completed" && mission.tasks.some((task) => task.status !== "completed" && task.status !== "withdrawn")) {
         throw new MissionControlError("Every mission task must be complete before a green finish", "open-tasks")
       }
       try {
@@ -237,11 +512,17 @@ export class MissionControl {
     }
 
     const task = this.reportTask(mission, sessionID, input.taskKey)
+    const lateReport = task.lateReports?.at(-1)
+    if (lateReport) {
+      await this.notifyCoordinator(mission, lateReport)
+      return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id) }
+    }
     if (task.report) {
       await this.notifyCoordinator(mission, task.report)
       return { disposition: "existing", mission: this.requireMission(await this.snapshot(), mission.id) }
     }
-    if (task.status !== "queued" && task.status !== "dispatching") {
+    const late = task.status === "withdrawn"
+    if (!late && task.status !== "queued" && task.status !== "dispatching") {
       throw new MissionControlError("The assigned task has not been dispatched", "task-not-dispatched")
     }
 
@@ -265,6 +546,7 @@ export class MissionControl {
       evidence: input.evidence,
       next: input.next,
       artifact,
+      ...(late ? { late: true } : {}),
       createdAt: this.timestamp(snapshot),
     }
     await this.journal.append({
@@ -481,8 +763,8 @@ export class MissionControl {
     return { "codenomad.mission": { version: MISSION_SCHEMA_VERSION, missionID, kind, ...extra } }
   }
 
-  private async emitChanged(missionID: string, snapshot: MissionSnapshot): Promise<void> {
-    const revision = snapshot.missions.find((mission) => mission.id === missionID)?.revision ?? 0
+  private async emitChanged(missionID: string, snapshot: MissionSnapshot, revisionOverride?: number): Promise<void> {
+    const revision = revisionOverride ?? snapshot.missions.find((mission) => mission.id === missionID)?.revision ?? 0
     await this.options.changed?.(missionID, revision).catch(() => undefined)
   }
 
@@ -498,4 +780,31 @@ function pathContains(root: string, candidate: string): boolean {
 
 function equalStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sameRevisionRequest(event: MissionRevisedEvent, input: MissionReviseInput): boolean {
+  const added = event.addedTasks.map((task) => ({
+    taskKey: task.key, title: task.title, brief: task.brief, role: task.role,
+    ...(task.execution === undefined ? {} : { execution: task.execution }),
+    blockedBy: task.blockedBy, replacesTaskKey: task.replacesTaskKey,
+  }))
+  return event.reason === input.reason && event.objective === input.objective
+    && event.notesSpecified === (input.notes !== undefined) && event.notes === input.notes
+    && JSON.stringify(event.retiredTasks) === JSON.stringify(input.retireTasks)
+    && JSON.stringify(added) === JSON.stringify(input.addTasks)
+    && JSON.stringify(event.dependencyUpdates) === JSON.stringify(input.dependencyUpdates)
+}
+
+function assertAcyclicDependencies(tasks: ReadonlyMap<string, { blockedBy: string[] }>): void {
+  const visited = new Set<string>()
+  const visiting = new Set<string>()
+  const visit = (key: string): void => {
+    if (visiting.has(key)) throw new MissionControlError("Mission dependencies cannot contain a cycle", "dependency-cycle")
+    if (visited.has(key)) return
+    visiting.add(key)
+    for (const dependency of tasks.get(key)?.blockedBy ?? []) visit(dependency)
+    visiting.delete(key)
+    visited.add(key)
+  }
+  for (const key of tasks.keys()) visit(key)
 }

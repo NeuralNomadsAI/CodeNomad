@@ -3,6 +3,10 @@ import {
 } from "../missions/control"
 import type {
   MissionDelegateInput,
+  MissionCreateInput,
+  MissionUpdateInput,
+  MissionDeleteInput,
+  MissionReviseInput,
   MissionInspectInput,
   MissionReportInput,
   MissionSessionAdapter,
@@ -60,10 +64,15 @@ interface MissionsPluginContext extends MissionCatalogClient {
   tool: {
     transform(callback: (draft: ToolDraft) => void): Promise<Registration>
   }
-  rpc: {
-    register(
-      definition: typeof CODENOMAD_MISSIONS_RPC,
-      handlers: { snapshot(input: unknown): Promise<unknown> },
+    rpc: {
+      register(
+        definition: typeof CODENOMAD_MISSIONS_RPC,
+      handlers: {
+        snapshot(input: unknown): Promise<unknown>
+        create(input: unknown): Promise<unknown>
+        update(input: unknown): Promise<unknown>
+        delete(input: unknown): Promise<unknown>
+      },
     ): Promise<Registration & { events: { emit(name: "changed", data: { missionID: string; revision: number }): Promise<void> } }>
   }
 }
@@ -96,6 +105,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   try {
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
+      create: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.create(parseCreateMissionInput(input)))) },
+      update: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.update(parseUpdateMissionInput(input)))) },
+      delete: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.delete(parseDeleteMissionInput(input)))) },
     })
     registrations.push(rpcRegistration)
 
@@ -129,6 +141,17 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           assertActive()
           await tool.progress({ status: "Delegating mission task" })
           return textResult(await control.delegate(tool.sessionID, parseDelegateInput(input)))
+        },
+      })
+      draft.add({
+        name: "revise",
+        description: "Revise the current mission plan with a reason and expected revision. Coordinator only. Retire and replace tasks or rewrite dependencies atomically; this does not cancel work already admitted to native sessions.",
+        input: reviseSchema,
+        options: { namespace: "mission", codemode: false },
+        execute: async (input, tool) => {
+          assertActive()
+          await tool.progress({ status: "Revising mission plan" })
+          return textResult(await control.revise(tool.sessionID, parseReviseInput(input)))
         },
       })
       draft.add({
@@ -236,6 +259,86 @@ export function parseInspectInput(input: unknown): MissionInspectInput {
   }
 }
 
+const reviseSchema = {
+  type: "object",
+  properties: {
+    missionID: { type: "string", maxLength: 100 },
+    expectedRevision: { type: "integer", minimum: 1 },
+    requestID: { type: "string", minLength: 1, maxLength: 128 },
+    reason: { type: "string", minLength: 1, maxLength: 2_000 },
+    objective: { type: "string", minLength: 1, maxLength: 20_000 },
+    notes: { type: "string", maxLength: 20_000 },
+    retireTasks: {
+      type: "array", maxItems: 24, items: {
+        type: "object", properties: {
+          taskKey: { type: "string", minLength: 2, maxLength: 64 },
+          replacementTaskKey: { type: "string", minLength: 2, maxLength: 64 },
+        }, required: ["taskKey"], additionalProperties: false,
+      },
+    },
+    addTasks: {
+      type: "array", maxItems: 24, items: {
+        type: "object", properties: {
+          taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
+          title: { type: "string", minLength: 1, maxLength: 240 },
+          brief: { type: "string", minLength: 1, maxLength: 20_000 },
+          role: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
+          execution: executionSchema,
+          blockedBy: { type: "array", maxItems: 24, items: { type: "string", maxLength: 64 } },
+          replacesTaskKey: { type: "string", minLength: 2, maxLength: 64 },
+        }, required: ["taskKey", "title", "brief", "role", "blockedBy", "replacesTaskKey"], additionalProperties: false,
+      },
+    },
+    dependencyUpdates: {
+      type: "array", maxItems: 96, items: {
+        type: "object", properties: {
+          taskKey: { type: "string", minLength: 2, maxLength: 64 },
+          blockedBy: { type: "array", maxItems: 24, items: { type: "string", maxLength: 64 } },
+        }, required: ["taskKey", "blockedBy"], additionalProperties: false,
+      },
+    },
+  },
+  required: ["expectedRevision", "requestID", "reason"],
+  additionalProperties: false,
+}
+
+function parseCreateMissionInput(input: unknown): MissionCreateInput {
+  const value = object(input)
+  const template = requiredText(value.template, "template", 40)
+  if (!isTemplate(template)) throw new Error("template is unsupported")
+  return {
+    requestID: requiredText(value.requestID, "requestID", 128),
+    objective: requiredText(value.objective, "objective", 20_000),
+    notes: optionalBodyText(value.notes, "notes", 20_000),
+    template,
+    coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
+  }
+}
+
+function parseUpdateMissionInput(input: unknown): MissionUpdateInput {
+  const value = object(input)
+  const expectedRevision = value.expectedRevision
+  if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) throw new Error("expectedRevision must be a positive integer")
+  return {
+    missionID: requiredText(value.missionID, "missionID", 100),
+    requestID: requiredText(value.requestID, "requestID", 128),
+    objective: requiredText(value.objective, "objective", 20_000),
+    notes: optionalBodyText(value.notes, "notes", 20_000),
+    expectedRevision: Number(expectedRevision),
+  }
+}
+
+function parseDeleteMissionInput(input: unknown): MissionDeleteInput {
+  const value = object(input)
+  const expectedRevision = value.expectedRevision
+  if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) throw new Error("expectedRevision must be a positive integer")
+  return {
+    missionID: requiredText(value.missionID, "missionID", 100),
+    requestID: requiredText(value.requestID, "requestID", 128),
+    expectedRevision: Number(expectedRevision),
+  }
+}
+
 export function parseDelegateInput(input: unknown): MissionDelegateInput {
   const value = object(input)
   const taskKey = identifier(value.taskKey, "taskKey")
@@ -285,6 +388,60 @@ function requiredText(value: unknown, name: string, max: number): string {
 
 function optionalText(value: unknown, name: string, max: number): string | undefined {
   return value === undefined ? undefined : requiredText(value, name, max)
+}
+
+export function parseReviseInput(input: unknown): MissionReviseInput {
+  const value = object(input)
+  const expectedRevision = value.expectedRevision
+  if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) throw new Error("expectedRevision must be a positive integer")
+  const requestID = requiredText(value.requestID, "requestID", 128)
+  const reason = requiredText(value.reason, "reason", 2_000)
+  const retireTasks = value.retireTasks === undefined ? [] : value.retireTasks
+  if (!Array.isArray(retireTasks) || retireTasks.length > 24) throw new Error("retireTasks must contain at most 24 entries")
+  const addTasks = value.addTasks === undefined ? [] : value.addTasks
+  if (!Array.isArray(addTasks) || addTasks.length > 24) throw new Error("addTasks must contain at most 24 entries")
+  const dependencyUpdates = value.dependencyUpdates === undefined ? [] : value.dependencyUpdates
+  if (!Array.isArray(dependencyUpdates) || dependencyUpdates.length > 96) throw new Error("dependencyUpdates must contain at most 96 entries")
+  const parseKey = (item: unknown, name: string) => identifier(item, name)
+  const parsedRetire = retireTasks.map((item, index) => {
+    const entry = object(item)
+    return {
+      taskKey: parseKey(entry.taskKey, `retireTasks[${index}].taskKey`),
+      ...(entry.replacementTaskKey === undefined ? {} : { replacementTaskKey: parseKey(entry.replacementTaskKey, `retireTasks[${index}].replacementTaskKey`) }),
+    }
+  })
+  const parsedAdd = addTasks.map((item, index) => {
+    const entry = object(item)
+    return {
+      taskKey: identifier(entry.taskKey, `addTasks[${index}].taskKey`),
+      title: requiredText(entry.title, `addTasks[${index}].title`, 240),
+      brief: requiredText(entry.brief, `addTasks[${index}].brief`, 20_000),
+      role: identifier(entry.role, `addTasks[${index}].role`),
+      ...(entry.execution === undefined ? {} : { execution: parseExecution(entry.execution) }),
+      blockedBy: stringList(entry.blockedBy, `addTasks[${index}].blockedBy`, 24, 64),
+      replacesTaskKey: identifier(entry.replacesTaskKey, `addTasks[${index}].replacesTaskKey`),
+    }
+  })
+  const parsedDependencies = dependencyUpdates.map((item, index) => {
+    const entry = object(item)
+    return {
+      taskKey: identifier(entry.taskKey, `dependencyUpdates[${index}].taskKey`),
+      blockedBy: stringList(entry.blockedBy, `dependencyUpdates[${index}].blockedBy`, 24, 64),
+    }
+  })
+  const objective = value.objective === undefined ? undefined : requiredText(value.objective, "objective", 20_000)
+  const notes = optionalBodyText(value.notes, "notes", 20_000)
+  return {
+    missionID: optionalText(value.missionID, "missionID", 100),
+    expectedRevision: Number(expectedRevision), requestID, reason, objective, notes,
+    retireTasks: parsedRetire, addTasks: parsedAdd, dependencyUpdates: parsedDependencies,
+  }
+}
+
+function optionalBodyText(value: unknown, name: string, max: number): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string" || value.length > max) throw new Error(`${name} must be a string of at most ${max} characters`)
+  return value
 }
 
 function identifier(value: unknown, name: string): string {

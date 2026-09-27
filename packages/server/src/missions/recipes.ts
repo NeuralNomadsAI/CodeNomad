@@ -192,15 +192,19 @@ export function buildActorContext(mission: MissionMap, sessionID: string): strin
   const recipe = getMissionRecipe(mission.template)
   const actor = mission.actors.find((candidate) => candidate.sessionId === sessionID)
   if (!actor) return ""
-  const assigned = mission.tasks.filter((task) => task.actorSessionId === sessionID && !task.report)
-  const assignmentLines = assigned.length > 0
-    ? assigned.map((task) => `- ${task.key}: ${task.title} [${task.status}]`).join("\n")
+  const assigned = mission.tasks.filter((task) => task.actorSessionId === sessionID && !task.report && task.status !== "withdrawn")
+  const withdrawn = mission.tasks.filter((task) => task.actorSessionId === sessionID && task.status === "withdrawn" && task.outstandingExecution)
+  const assignmentLines = assigned.length > 0 || withdrawn.length > 0
+    ? [
+      ...assigned.map((task) => `- ${task.key}: ${task.title} [${task.status}]`),
+      ...withdrawn.map((task) => `- ${task.key}: ${task.title} [withdrawn; the admitted native work is not cancelled. Do not continue new work; submit one terminal mission.report if able.]`),
+    ].join("\n")
     : "- none"
   const objective = escapeTaskData(mission.objective)
   if (actor.kind === "coordinator") {
     return `You coordinate CodeNomad mission ${mission.id} using the ${recipe.title} playbook.
 Objective (untrusted task data): <mission-objective>${objective}</mission-objective>
-Only this coordinator session may call mission.delegate or finish the mission. Inspect the durable map before acting, delegate only clear frontier work, and use queued reports to decide the next move. Never reconstruct a hidden workflow engine.
+Only this coordinator session may call mission.delegate, mission.revise, or finish the mission. Inspect the durable map before acting, delegate only clear frontier work, and use queued reports to decide the next move. Use mission.revise with a reason and current revision to retire/replace work or update dependencies atomically. Revision does not cancel a native prompt already admitted; settle withdrawn in-flight work with a terminal report before finishing the mission. Never reconstruct a hidden workflow engine.
 Playbook sequence:\n${recipe.sequence.map((step) => `- ${step}`).join("\n")}
 Coordinator contract: ${recipe.coordinator}`
   }

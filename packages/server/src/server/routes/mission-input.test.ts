@@ -65,6 +65,18 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
 })
 
+test("admits a late report synthetic from a withdrawn task's durable late-report history", async () => {
+  const f = fixture()
+  const late = { id: "rpt_late", sessionId: "ses_actor", taskKey: "review", outcome: "completed" as const,
+    summary: "Finished after retirement", evidence: [], next: [], late: true, createdAt: 2 }
+  f.mission.tasks[0].status = "withdrawn"
+  f.mission.tasks[0].lateReports = [late]
+  await f.send({ kind: "synthetic", input: reportInput(f.mission, late) })
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "synthetic"])
+  assert.equal(f.calls[1].input.id, reportInput(f.mission, late).id)
+  assert.equal(f.calls[1].input.metadata["codenomad.mission"].reportID, late.id)
+})
+
 test("mission admission proceeds when an unrelated workspace connection is stalled", { timeout: 2_000 }, async t => {
   const f = fixture()
   let unblock!: () => void

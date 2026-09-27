@@ -56,9 +56,12 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
   }
   const task = mission.tasks.find(task => task.key === metadata.taskKey)
   if (!task) throw new Error("Missing mission task")
+  const report = task.report?.id === metadata.reportID
+    ? task.report
+    : task.lateReports?.find(candidate => candidate.id === metadata.reportID)
   const expected = kind === "prompt" && mission.status === "active" && task.status === "dispatching"
     ? assignmentInput(mission, task)
-    : kind === "synthetic" && task.report ? reportInput(mission, task.report) : undefined
+    : kind === "synthetic" && report ? reportInput(mission, report) : undefined
   if (!expected || !isDeepStrictEqual(input, expected)) throw new Error("Mission input differs from its durable contract")
   if (kind === "prompt" && !matchesExecution(task.execution, target)) throw new Error("Mission execution selection changed")
   const identities = await Promise.all([target, coordinator].map(session =>

@@ -23,6 +23,7 @@
 - Appearance mode and the saved light/dark selections are independent (`lib/appearance-preferences.ts`). Message/tool cards use the muted surface, inset output and the composer use the base canvas, and preferences use the same secondary surface as the main panels. Use `--surface-hover-overlay` for a subtle local rollover; preserve selected backgrounds beneath that overlay instead of replacing them with a generic panel color.
 - Right-panel base-canvas button rollover overrides live in `styles/panels/control-hover.css`; do not substitute the secondary surface merely to show hover.
 - Project and right-panel tabs share `components/tab-scroll.tsx` and `styles/components/tab-scroll.css`. Keep their native scrollbar above upright content without mirrored transforms, negative border overlaps or permanent compositing hints. Validate shared scrollbar styling and adjoining edges at fractional zoom in the browser and isolated Electron renderer fixtures (`tests/browser/tab-chrome.test.ts`).
+- Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. Keep disclosure/selection/reader identities in the native per-window layout via `stores/mission-view-state.ts`, independent of refreshed snapshot object identity. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles remain under `styles/panels/mission-*.css`.
 
 ## Coding Principles
 

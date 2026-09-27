@@ -60,3 +60,7 @@
 .session-center-column[data-session-header-density="4"] .session-view .prompt-input-footer::after {
   display: none;
 }
+
+.session-view.mission-reading:has(> .session-timeline-slot .message-timeline-sidebar) { padding-inline-end: 0; }
+.session-view.mission-reading .session-timeline-slot,
+.session-view.mission-reading .prompt-input-footer::after { display: none; }

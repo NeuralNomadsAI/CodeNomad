@@ -38,7 +38,7 @@ const { createAutomationBridgeRegistration, publishAutomationBridge } = await ts
 const { registerAutomationPluginRoute } = await tsImport("../packages/server/src/server/routes/automation-plugin.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
-let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false
+let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 let requests = []
 const provider = createServer(async (request, response) => {
   try {
@@ -110,7 +110,8 @@ try {
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   const url = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
   const endpoint = { url, auth: { type: "basic", username: "opencode", password: process.env.OPENCODE_SERVER_PASSWORD } }
-  const info = await (await fetch(`${url}/api/info`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })).json()
+  const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+  const info = await (await fetch(`${url}/api/info`, { headers: { authorization } })).json()
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   let variables = { MISSION_FIXTURE: "first" }
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
@@ -174,6 +175,61 @@ try {
   await invoke("report", { taskKey: task.taskKey, outcome: "completed", summary: "Native verified" }, actorID)
   await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
   await probe(coordinator.id, "changed")
+
+  // Exercise the native plan-revision tool and prove that a late report is history, not a reactivation.
+  stage = "mission.revise and late report"
+  const beforeRevision = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  const current = beforeRevision.missions[0]
+  const revised = await invoke("revise", {
+    missionID: current.id, expectedRevision: current.revision, requestID: "native-revise-1",
+    reason: "Replace the queued review with a focused follow-up",
+    retireTasks: [{ taskKey: queued.taskKey, replacementTaskKey: "native-revision-replacement" }],
+    addTasks: [{ taskKey: "native-revision-replacement", title: "Focused follow-up", brief: "Recheck the selected behavior.",
+      role: "reviewer", blockedBy: [], replacesTaskKey: queued.taskKey }],
+    dependencyUpdates: [],
+  })
+  const withdrawn = revised.mission.tasks.find(task => task.key === queued.taskKey)
+  assert.equal(withdrawn.status, "withdrawn")
+  assert.equal(withdrawn.replacedByTaskKey, "native-revision-replacement")
+  assert.equal(revised.mission.tasks.find(task => task.key === "native-revision-replacement").replacesTaskKey, queued.taskKey)
+  assert.equal(revised.mission.history.at(-1).reason, "Replace the queued review with a focused follow-up")
+  const lateReport = await invoke("report", { taskKey: queued.taskKey, outcome: "completed", summary: "Late native result" }, actorID)
+  assert.equal(lateReport.mission.tasks.find(task => task.key === queued.taskKey).status, "withdrawn")
+  assert.equal(lateReport.mission.tasks.find(task => task.key === queued.taskKey).lateReports.at(-1).late, true)
+  assert(lateReport.mission.reports.some(report => report.taskKey === queued.taskKey && report.late === true))
+  assert((await client.session.get({ sessionID: actorID })).id === actorID, "Revision keeps the original actor conversation")
+
+  // Native lifecycle RPC is the same typed capability brokered by the authenticated UI routes.
+  stage = "lifecycle CRUD and transcript preservation"
+  const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom" }
+  const crudCreated = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
+  const crudReplay = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
+  assert.equal(crudReplay.mission.id, crudCreated.mission.id)
+  assert.equal(crudReplay.mission.coordinatorSessionId, crudCreated.mission.coordinatorSessionId)
+  const crudCoordinator = crudCreated.mission.coordinatorSessionId
+  await client.session.prompt({ sessionID: crudCoordinator, text: "Conversation retained by tombstone" })
+  await client.session.wait({ sessionID: crudCoordinator }, { signal: AbortSignal.timeout(20_000) })
+  const messagesBefore = await client.message.list({ sessionID: crudCoordinator, limit: { order: "asc", limit: 50 } })
+  const crudUpdated = await client.rpc(CODENOMAD_MISSIONS_RPC).update({
+    missionID: crudCreated.mission.id, requestID: "native-crud-update", expectedRevision: crudCreated.mission.revision,
+    objective: "Updated but retained", notes: "Updated notes",
+  }, { location })
+  const updateReplay = await client.rpc(CODENOMAD_MISSIONS_RPC).update({
+    missionID: crudCreated.mission.id, requestID: "native-crud-update", expectedRevision: crudCreated.mission.revision,
+    objective: "Updated but retained", notes: "Updated notes",
+  }, { location })
+  assert.equal(updateReplay.mission.revision, crudUpdated.mission.revision)
+  assert.equal(updateReplay.mission.notes, "Updated notes")
+  const deletion = { missionID: crudCreated.mission.id, requestID: "native-crud-delete", expectedRevision: crudUpdated.mission.revision }
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
+  const afterDeleteSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert(!afterDeleteSnapshot.missions.some(mission => mission.id === crudCreated.mission.id), "Tombstone hides the mission map")
+  assert.equal((await client.session.get({ sessionID: crudCoordinator })).id, crudCoordinator, "Tombstone preserves the coordinator session")
+  const messagesAfter = await client.message.list({ sessionID: crudCoordinator, limit: { order: "asc", limit: 50 } })
+  assert.deepEqual(messagesAfter, messagesBefore, "Tombstone preserves the native conversation transcript")
+
+  stage = "presence restart and durable replay"
   const beforeRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   await plugin.stop()
   await until(async () => { try { await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); return false } catch { return true } })
@@ -184,9 +240,9 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, reports, presence restart and idempotence; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, reports, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
 } catch (error) {
-  console.error(`Fixture failed at ${root}: ${output.slice(-8000)}`)
+  console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error
 } finally {
   held?.()

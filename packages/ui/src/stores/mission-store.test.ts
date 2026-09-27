@@ -27,6 +27,8 @@ const available = (objective: string): MissionListResponse => ({
     createdAt: 1,
     updatedAt: 1,
     revision: 1,
+    history: [],
+    historyTruncated: false,
   }],
 })
 

@@ -4,6 +4,8 @@ import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView } from "../../stores/mission-view-state"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -100,6 +102,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const readingMission = () => props.isActive && Boolean(missionProjectView(props.instanceFolder).reader)
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -600,9 +603,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </div>
       }
     >
-      <div ref={rootRef} class="session-view">
+      <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
+        <div class="mission-transcript-surface">
+        <div class="mission-transcript-content" inert={readingMission()}
+          style={{ visibility: readingMission() ? "hidden" : undefined }}>
         <Show
-          when={preview()?.mode === "preview"}
+          when={preview()?.mode === "preview" && !readingMission()}
           fallback={
             <MessageSection
               timelineMount={timelineMount()}
@@ -644,6 +650,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           />
         </Show>
 
+        </div>
+        <Show when={readingMission()}>
+          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+        </Show>
+        </div>
+
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar
             attachments={attachments()}
@@ -684,7 +696,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
           registerPromptInputApi={registerPromptInputApi}
         />
-        <div class="session-timeline-slot" ref={setTimelineMount} />
+        <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
       </div>
     </Show>
   )

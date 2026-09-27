@@ -12,7 +12,8 @@ Use a mission when independent root sessions should cooperate while remaining vi
 3. Give every task a stable lowercase `taskKey`. Use `blockedBy` for real dependencies. A blocked task is mapped but not dispatched.
 4. Omit `targetSessionID` to create a visible root actor, or provide a same-project root session to reuse it. Prefer `queue`; it is safe when that actor is busy.
 5. Actors must call `mission.report`. Reports are delivered back to the coordinator through the native durable inbox and resume it when possible.
-6. Inspect after reports, choose the next frontier task, and finish through `mission.report({ final: true, ... })` only when the objective is actually met.
+6. Inspect after reports and choose the next frontier task. When discoveries change the plan, use coordinator-only `mission.revise` with the current revision, a stable request identity, and a reason. Add linked replacement tasks instead of overwriting historical contracts or reports; rewrite affected dependencies explicitly.
+7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retiring work does not abort its native admission or count as success: admitted retired work still needs a terminal report, and playbook proof requirements still apply.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
 The mission `role` is independent of `execution.agent`. To pin execution, pass

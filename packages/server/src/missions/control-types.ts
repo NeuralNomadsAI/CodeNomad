@@ -91,6 +91,45 @@ export interface MissionInspection {
   }
 }
 
+export interface MissionCreateInput extends MissionStartInput {
+  requestID: string
+  coordinatorSessionID?: string
+}
+
+export interface MissionUpdateInput {
+  missionID: string
+  objective: string
+  notes?: string
+  expectedRevision: number
+  requestID: string
+}
+
+export interface MissionDeleteInput {
+  missionID: string
+  expectedRevision: number
+  requestID: string
+}
+
+export interface MissionReviseInput {
+  missionID?: string
+  expectedRevision: number
+  requestID: string
+  reason: string
+  objective?: string
+  notes?: string
+  retireTasks: Array<{ taskKey: string; replacementTaskKey?: string }>
+  addTasks: Array<{
+    taskKey: string
+    title: string
+    brief: string
+    role: string
+    execution?: MissionExecution
+    blockedBy: string[]
+    replacesTaskKey: string
+  }>
+  dependencyUpdates: Array<{ taskKey: string; blockedBy: string[] }>
+}
+
 export interface MissionInputTransport {
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>

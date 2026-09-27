@@ -11,6 +11,7 @@ import type {
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
+  MissionMap,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
@@ -508,6 +509,15 @@ export const serverApi = {
   },
   fetchMissions(instanceId: string): Promise<MissionListResponse> {
     return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  },
+  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`, { method: "POST", body: JSON.stringify(input) })
+  },
+  editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "PATCH", body: JSON.stringify(input) })
+  },
+  deleteMission(instanceId: string, missionId: string, input: { expectedRevision: number; requestId: string }): Promise<{ deleted: true }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "DELETE", body: JSON.stringify(input) })
   },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {

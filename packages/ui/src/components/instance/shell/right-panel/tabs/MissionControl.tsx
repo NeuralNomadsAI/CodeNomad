@@ -1,18 +1,32 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMount, type Component, type JSX } from "solid-js"
-import { AlertTriangle, ArrowUpRight, Check, Flag, GitBranch, Loader2, Radio, RefreshCw, Users } from "lucide-solid"
+import { AlertTriangle, ArrowUpRight, Check, Flag, Loader2, Radio, RefreshCw, Users } from "lucide-solid"
 
-import type { MissionActor, MissionMap, MissionReport, MissionTask } from "../../../../../../../server/src/api-types"
+import type { MissionActor, MissionMap, MissionReport } from "../../../../../../../server/src/api-types"
 import { missionStore } from "../../../../../stores/missions"
 import { refreshSessionCatalog, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
+import { instances, getPermissionQueue } from "../../../../../stores/instances"
+import { getFormQueue } from "../../../../../stores/forms"
+import { showSessionChat } from "../../../../../stores/session-previews"
+import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
+import { MissionDisclosure } from "../../../../mission-disclosure"
+import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
+import { MissionWork } from "../../../../mission-work"
+import { MissionHistory } from "../../../../mission-history"
+import { MissionAttention } from "../../../../mission-attention"
 
 interface MissionControlProps {
   instanceId: string
   activeSessionId: () => string | null
+  onRevealConversation?: () => void
   t: (key: string, vars?: Record<string, any>) => string
 }
 
 const MissionControl: Component<MissionControlProps> = (props) => {
-  const [selectedMissionId, setSelectedMissionId] = createSignal<string>()
+  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const selectedMissionId = () => missionProjectView(scope()).selected
+  const setSelectedMissionId = (selected: string) => updateMissionProjectView(scope(), { selected })
+  const [editor, setEditor] = createSignal<MissionEditorAction>()
+  const [navigationError, setNavigationError] = createSignal(false)
   const state = () => missionStore.state(props.instanceId)
   const missions = () => state().missions
 
@@ -20,26 +34,48 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
   createEffect(() => {
     const available = missions()
+    if (state().status !== "ready" || available.length === 0) return
     const current = selectedMissionId()
     if (current && available.some((mission) => mission.id === current)) return
     const activeSession = props.activeSessionId()
     const related = activeSession
       ? available.find((mission) => mission.actors.some((actor) => actor.sessionId === activeSession))
       : undefined
-    setSelectedMissionId((related ?? available.find((mission) => mission.status === "active") ?? available[0])?.id)
+    setSelectedMissionId((related ?? available.find((mission) => mission.status === "active") ?? available[0]).id)
   })
 
   const mission = createMemo(() => missions().find((candidate) => candidate.id === selectedMissionId()) ?? missions()[0])
 
   const openActor = async (sessionId: string) => {
+    setNavigationError(false)
     if (!sessions().get(props.instanceId)?.has(sessionId)) {
       try {
         await refreshSessionCatalog(props.instanceId)
       } catch {
+        setNavigationError(true)
         return
       }
     }
+    if (!sessions().get(props.instanceId)?.has(sessionId)) {
+      setNavigationError(true)
+      return
+    }
     setActiveSessionFromList(props.instanceId, sessionId)
+    showSessionChat(scope())
+    updateMissionProjectView(scope(), { reader: undefined })
+    props.onRevealConversation?.()
+  }
+
+  const read = async (target: MissionReaderTarget) => {
+    const active = props.activeSessionId()
+    if (!active || active === "info") {
+      const coordinator = missions().find(m => m.id === target.missionId)?.coordinatorSessionId
+      if (coordinator) await openActor(coordinator)
+      if (!coordinator || !sessions().get(props.instanceId)?.has(coordinator)) return
+    }
+    showSessionChat(scope())
+    updateMissionProjectView(scope(), { reader: target })
+    props.onRevealConversation?.()
   }
 
   return (
@@ -65,6 +101,22 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           </Show>
         </button>
       </header>
+      <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
+      <div class="mission-control-actions">
+        <button type="button" class="button-secondary" disabled={state().status === "unavailable" || Boolean(editor())}
+          onClick={() => setEditor({ kind: "create" })}>{props.t("missions.control.create")}</button>
+        <Show when={mission()}>{selected => <>
+          <button type="button" class="button-secondary" disabled={Boolean(editor()) || selected().status !== "active"} onClick={() => setEditor({ kind: "edit", mission: selected() })}>{props.t("missions.control.edit")}</button>
+          <button type="button" class="button-secondary" disabled={Boolean(editor())} onClick={() => setEditor({ kind: "delete", mission: selected() })}>{props.t("missions.control.delete")}</button>
+        </>}</Show>
+      </div>
+      <Show when={editor()} keyed>{action => <MissionEditor instanceId={props.instanceId} action={action}
+        onCancel={() => setEditor(undefined)}
+        onSaved={saved => {
+          setEditor(undefined)
+          if (!saved && action.mission) forgetMissionView(scope(), action.mission.id)
+          void missionStore.refresh(props.instanceId).then(() => { if (saved) setSelectedMissionId(saved.id) })
+        }} />}</Show>
 
       <Switch>
         <Match when={state().status === "loading" && missions().length === 0}>
@@ -105,19 +157,23 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 </div>
               </Show>
               <Show when={missions().length > 1}>
-                <MissionIndex
+                <MissionDisclosure missionId={scope()} name="index" title={props.t("missions.control.mapLabel")}><MissionIndex
                   missions={missions()}
                   selectedId={selected().id}
                   onSelect={setSelectedMissionId}
                   t={props.t}
-                />
+                /></MissionDisclosure>
               </Show>
-              <MissionOverview mission={selected()} t={props.t} />
-              <MissionRoute
+              <MissionOverview mission={selected()} t={props.t} onRead={() => void read({ missionId: selected().id, kind: "overview" })} />
+              <button type="button" class="button-secondary" onClick={() => void openActor(selected().coordinatorSessionId)}>{props.t("missions.control.openCoordinator")}</button>
+              <MissionAttention mission={selected()} instanceId={props.instanceId} onOpenActor={openActor} />
+              <MissionWork
                 mission={selected()}
+                instanceId={props.instanceId}
                 activeSessionId={props.activeSessionId()}
                 onOpenActor={openActor}
-                t={props.t}
+                onRead={task => void read({ missionId: selected().id, kind: "task", itemId: task.id })}
+                onReport={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })}
               />
               <MissionMesh
                 mission={selected()}
@@ -126,7 +182,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onOpenActor={openActor}
                 t={props.t}
               />
-              <MissionReports reports={selected().reports} t={props.t} />
+              <MissionReports missionId={selected().id} tasks={selected().tasks} reports={selected().reports} t={props.t}
+                onRead={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })} />
+              <MissionHistory mission={selected()} onRead={revision => void read({ missionId: selected().id, kind: "change", itemId: String(revision) })} />
             </>
           )}
         </Match>
@@ -176,14 +234,17 @@ const MissionIndex: Component<{
   </nav>
 )
 
-const MissionOverview: Component<{ mission: MissionMap; t: MissionControlProps["t"] }> = (props) => (
+const MissionOverview: Component<{ mission: MissionMap; t: MissionControlProps["t"]; onRead: () => void }> = (props) => (
+  <MissionDisclosure missionId={props.mission.id} name="overview" title={props.t("missions.control.overview")}>
   <div class="mission-control-overview">
     <div class="mission-control-kicker">
       <span>{props.t(templateKey(props.mission.template))}</span>
       <span class="mission-status" data-status={props.mission.status}>{props.t(statusKey(props.mission.status))}</span>
     </div>
-    <h3>{props.mission.objective}</h3>
-    <Show when={props.mission.summary}><p>{props.mission.summary}</p></Show>
+    <h3 class="mission-text-excerpt">{props.mission.objective}</h3>
+    <Show when={props.mission.notes}><p class="mission-text-excerpt">{props.mission.notes}</p></Show>
+    <Show when={props.mission.summary}><p class="mission-text-excerpt">{props.mission.summary}</p></Show>
+    <button type="button" class="button-secondary mission-read-button" onClick={props.onRead}>{props.t("missions.control.read")}</button>
     <div class="mission-control-metrics" aria-label={props.t("missions.control.metrics.label")}>
       <Metric value={props.mission.actors.length} label={props.t("missions.control.metrics.actors")} />
       <Metric value={props.mission.tasks.length} label={props.t("missions.control.metrics.tasks")} />
@@ -191,60 +252,11 @@ const MissionOverview: Component<{ mission: MissionMap; t: MissionControlProps["
       <Metric value={props.mission.claims.length} label={props.t("missions.control.metrics.claims")} />
     </div>
   </div>
+  </MissionDisclosure>
 )
 
 const Metric: Component<{ value: number; label: string }> = (props) => (
   <div class="mission-control-metric"><strong>{props.value}</strong><span>{props.label}</span></div>
-)
-
-const MissionRoute: Component<{
-  mission: MissionMap
-  activeSessionId: string | null
-  onOpenActor: (sessionId: string) => Promise<void>
-  t: MissionControlProps["t"]
-}> = (props) => (
-  <MissionSection icon={<GitBranch class="h-4 w-4" />} title={props.t("missions.control.route.title")}>
-    <Show when={props.mission.tasks.length > 0} fallback={<p class="mission-control-empty-line">{props.t("missions.control.route.empty")}</p>}>
-      <ol class="mission-route-list">
-        <For each={props.mission.tasks}>
-          {(task) => (
-            <li class="mission-route-task" data-status={task.status}>
-              <span class="mission-route-node" aria-hidden="true" />
-              <div class="mission-route-content">
-                <div class="mission-route-heading">
-                  <div><code>{task.key}</code><strong>{task.title}</strong></div>
-                  <span class="mission-task-status">{props.t(taskStatusKey(task.status))}</span>
-                </div>
-                <div class="mission-route-meta">
-                  <span>{task.role}</span>
-                  <Show when={task.execution?.agent}>{agent => <code>{agent()}</code>}</Show>
-                  <Show when={task.execution?.model}>
-                    {model => <code>{model().providerID}/{model().id}{model().variant ? `#${model().variant}` : ""}</code>}
-                  </Show>
-                  <Show when={task.blockedBy.length > 0}>
-                    <span>{props.t("missions.control.task.blockedBy", { tasks: task.blockedBy.join(", ") })}</span>
-                  </Show>
-                </div>
-                <Show when={task.actorSessionId}>
-                  {(sessionId) => (
-                    <button
-                      type="button"
-                      class="mission-inline-session"
-                      classList={{ "mission-inline-session-active": props.activeSessionId === sessionId() }}
-                      onClick={() => void props.onOpenActor(sessionId())}
-                    >
-                      <span>{shortSession(sessionId())}</span>
-                      <ArrowUpRight class="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  )}
-                </Show>
-              </div>
-            </li>
-          )}
-        </For>
-      </ol>
-    </Show>
-  </MissionSection>
 )
 
 const MissionMesh: Component<{
@@ -254,7 +266,7 @@ const MissionMesh: Component<{
   onOpenActor: (sessionId: string) => Promise<void>
   t: MissionControlProps["t"]
 }> = (props) => (
-  <MissionSection icon={<Users class="h-4 w-4" />} title={props.t("missions.control.mesh.title")}>
+  <MissionDisclosure missionId={props.mission.id} name="actors" title={<><Users class="h-4 w-4" /><span>{props.t("missions.control.mesh.title")}</span></>}>
     <div class="mission-mesh-list">
       <For each={props.mission.actors}>
         {(actor) => {
@@ -284,47 +296,44 @@ const MissionMesh: Component<{
         }}
       </For>
     </div>
-  </MissionSection>
+  </MissionDisclosure>
 )
 
-const MissionReports: Component<{ reports: MissionReport[]; t: MissionControlProps["t"] }> = (props) => (
-  <MissionSection icon={<Check class="h-4 w-4" />} title={props.t("missions.control.reports.title")}>
+const MissionReports: Component<{ missionId: string; tasks: MissionMap["tasks"]; reports: MissionReport[]; t: MissionControlProps["t"]; onRead: (report: MissionReport) => void }> = (props) => (
+  <MissionDisclosure missionId={props.missionId} name="reports" title={<><Check class="h-4 w-4" /><span>{props.t("missions.control.reports.title")}</span></>}>
     <Show when={props.reports.length > 0} fallback={<p class="mission-control-empty-line">{props.t("missions.control.reports.empty")}</p>}>
       <div class="mission-report-list">
-        <For each={[...props.reports].reverse()}>
-          {(report) => (
-            <details class="mission-report">
-              <summary>
-                <span class="mission-report-mark" data-outcome={report.outcome} aria-hidden="true" />
-                <span><code>{report.taskKey}</code><strong>{report.summary}</strong></span>
-                <small>{props.t(reportOutcomeKey(report.outcome))}</small>
-              </summary>
-              <ReportList label={props.t("missions.control.report.evidence")} values={report.evidence} />
-              <ReportList label={props.t("missions.control.report.next")} values={report.next} />
-            </details>
-          )}
+        <For each={props.reports.map(report => report.id).reverse()}>
+          {id => {
+            const report = () => props.reports.find(report => report.id === id)!
+            return <MissionDisclosure class="mission-report" missionId={props.missionId} name={`report:${id}`} defaultOpen={false}
+              label={`${props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey} — ${props.t(reportOutcomeKey(report().outcome))}`}
+              title={<><span class="mission-report-mark" data-outcome={report().outcome} aria-hidden="true" />
+                <span class="mission-report-heading"><span>{props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey}</span><strong>{report().summary}</strong></span>
+                <small>{props.t(reportOutcomeKey(report().outcome))}</small></>}>
+              <button type="button" class="button-secondary mission-read-button" onClick={() => props.onRead(report())}>{props.t("missions.control.read")}</button>
+              <Show when={report().late}><p class="mission-report-detail">{props.t("missions.control.report.late")}</p></Show>
+              <ReportList label={props.t("missions.control.report.evidence")} values={report().evidence} />
+              <ReportList label={props.t("missions.control.report.next")} values={report().next} />
+            </MissionDisclosure>
+          }}
         </For>
       </div>
     </Show>
-  </MissionSection>
+  </MissionDisclosure>
 )
 
 const ReportList: Component<{ label: string; values: string[] }> = (props) => (
   <Show when={props.values.length > 0}>
-    <div class="mission-report-detail"><strong>{props.label}</strong><ul><For each={props.values}>{(value) => <li>{value}</li>}</For></ul></div>
+    <div class="mission-report-detail"><strong>{props.label}</strong><ul><For each={props.values}>{(value) => <li class="mission-text-excerpt">{value}</li>}</For></ul></div>
   </Show>
 )
 
-const MissionSection: Component<{ icon: JSX.Element; title: string; children: JSX.Element }> = (props) => (
-  <section class="mission-control-section">
-    <h3>{props.icon}<span>{props.title}</span></h3>
-    {props.children}
-  </section>
-)
-
-function actorRuntimeStatus(instanceId: string, actor: MissionActor): "working" | "idle" | "unknown" {
+function actorRuntimeStatus(instanceId: string, actor: MissionActor): "working" | "idle" | "waiting" | "unknown" {
+  if (getFormQueue(instanceId).some(form => form.sessionID === actor.sessionId)
+    || getPermissionQueue(instanceId).some(permission => permission.sessionID === actor.sessionId)) return "waiting"
   const session = sessions().get(instanceId)?.get(actor.sessionId)
-  if (!session) return "unknown"
+  if (!session || session.runtimeStatusKnown === false) return "unknown"
   return session.status === "working" || session.status === "compacting" ? "working" : "idle"
 }
 
@@ -338,10 +347,6 @@ function templateKey(template: MissionMap["template"]): string {
 
 function statusKey(status: MissionMap["status"]): string {
   return `missions.control.status.${status}`
-}
-
-function taskStatusKey(status: MissionTask["status"]): string {
-  return `missions.control.task.status.${status}`
 }
 
 function reportOutcomeKey(outcome: MissionReport["outcome"]): string {

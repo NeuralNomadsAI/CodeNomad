@@ -59,6 +59,37 @@ function manager(options: {
   }
 }
 
+function mutationManager(options: { owns?: boolean } = {}) {
+  const calls: Array<{ method: string; value: unknown }> = []
+  const value = {
+    get: (id: string) => id === "workspace-1" ? { id } : undefined,
+    getServiceLocation: (id: string) => id === "workspace-1" ? { directory: "/owned/repo" } : undefined,
+    ownsLocation: async (_id: string, location: { directory: string }) => {
+      calls.push({ method: "owns", value: location })
+      return options.owns ?? location.directory !== "/foreign"
+    },
+    getSharedServiceClient: async () => ({
+      location: { get: async ({ location }: { location: { directory: string } }) => ({
+        directory: location.directory, project: { id: "project-1" },
+      }) },
+      session: { get: async ({ sessionID }: { sessionID: string }) => ({
+        id: sessionID, projectID: "project-1", location: { directory: "/owned/repo" },
+      }) },
+      plugin: { list: async ({ location }: { location: { directory: string } }) => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }], location }) },
+      rpc: (definition: { id: string }) => {
+        calls.push({ method: "rpc", value: definition.id })
+        return {
+          create: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "create", value: { input, rpcOptions } }); return { mission: { id: "msn_1" } } },
+          update: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "update", value: { input, rpcOptions } }); return { mission: { id: "msn_1" } } },
+          delete: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "delete", value: { input, rpcOptions } }); return { deleted: true } },
+          snapshot: async () => snapshot,
+        }
+      },
+    }) as never,
+  }
+  return { calls, value: value as never }
+}
+
 test("brokers only the reviewed mission snapshot RPC at the owned workspace location", async () => {
   const fake = manager()
   const app = Fastify({ logger: false })
@@ -111,5 +142,40 @@ test("rejects unknown workspaces before touching OpenCode", async () => {
   const response = await app.inject({ method: "GET", url: "/api/workspaces/foreign/missions" })
   assert.equal(response.statusCode, 404)
   assert.deepEqual(fake.calls, [])
+  await app.close()
+})
+
+test("brokers typed mission create, update and delete only at authorized project locations", async () => {
+  const fake = mutationManager()
+  const app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: fake.value })
+  const create = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions", payload: {
+    objective: "Ship it", template: "wayfinder", coordinatorSessionId: "ses_existing", directory: "/owned/repo", requestId: "create-1",
+  } })
+  assert.equal(create.statusCode, 200)
+  assert.deepEqual(create.json(), { mission: { id: "msn_1" } })
+  assert.deepEqual(fake.calls.find((call) => call.method === "create")?.value, {
+    input: { requestID: "create-1", objective: "Ship it", template: "wayfinder", coordinatorSessionID: "ses_existing" },
+    rpcOptions: { location: { directory: "/owned/repo" } },
+  })
+  const update = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", payload: {
+    objective: "Updated", expectedRevision: 1, requestId: "update-1",
+  } })
+  assert.equal(update.statusCode, 200)
+  const deletion = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1", payload: {
+    expectedRevision: 2, requestId: "delete-1",
+  } })
+  assert.equal(deletion.statusCode, 200)
+  assert.deepEqual(deletion.json(), { deleted: true })
+  const callsBeforeForeign = fake.calls.length
+  const foreign = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions", payload: {
+    objective: "No", template: "custom", directory: "/foreign", requestId: "foreign-1",
+  } })
+  assert.equal(foreign.statusCode, 403)
+  assert.equal(fake.calls.slice(callsBeforeForeign).some((call) => call.method === "rpc"), false)
+  const invalid = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", payload: {
+    objective: "Bad", expectedRevision: 0, requestId: "invalid-1",
+  } })
+  assert.equal(invalid.statusCode, 400)
   await app.close()
 })

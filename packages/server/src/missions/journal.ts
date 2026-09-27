@@ -2,12 +2,14 @@ import { createHash } from "node:crypto"
 
 import {
   MISSION_MAX_EVENTS,
+  MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   reduceMissionEvents,
   type MissionEvent,
   type MissionJsonValue,
   type MissionLocation,
   type MissionReport,
+  type MissionRevisedEvent,
   type MissionSnapshot,
   type MissionTemplateId,
 } from "./model"
@@ -67,6 +69,18 @@ export class MissionJournal {
     return runMissionExclusive(`append:${this.projectToken}`, () => this.appendUnlocked(event))
   }
 
+  async event(missionID: string, eventID: string): Promise<MissionEvent | undefined> {
+    const value = await this.storage.get(`${this.prefix()}/${safeKey(missionID)}/${safeKey(eventID)}`)
+    const parsed = value === undefined ? undefined : parseMissionEvent(value)
+    return parsed?.projectID === this.projectID ? parsed : undefined
+  }
+
+  async assertCanAppend(): Promise<void> {
+    if (await this.storedEventCount() >= MISSION_MAX_EVENTS) {
+      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
+    }
+  }
+
   private async appendUnlocked(event: MissionEvent): Promise<void> {
     if (event.projectID !== this.projectID) throw new Error("Mission event belongs to another project")
     const normalized = JSON.parse(JSON.stringify(event)) as unknown
@@ -120,7 +134,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       const location = parseLocation(input.coordinator.location)
       if (!location || !text(input.coordinator.sessionID, MAX_SHORT_TEXT)
         || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
-      if (input.notes !== undefined && !text(input.notes, MAX_TEXT)) return undefined
+      if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
       return {
         ...eventBase(input),
         type: "mission.created",
@@ -133,6 +147,55 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
           title: input.coordinator.title,
           location,
         },
+        ...(input.requestID === undefined ? {} : { requestID: input.requestID as string }),
+      }
+    }
+    case "mission.updated":
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || typeof input.notesSpecified !== "boolean" || !text(input.objective, MAX_TEXT)
+        || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))) return undefined
+      return { ...eventBase(input), type: "mission.updated", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), notesSpecified: input.notesSpecified, objective: input.objective, notes: input.notes as string | undefined }
+    case "mission.deleted":
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
+      return { ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision) }
+    case "mission.revised": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || !text(input.actorSessionID, MAX_SHORT_TEXT) || !text(input.reason, 2_000)
+        || (input.objective !== undefined && !text(input.objective, MAX_TEXT))
+        || typeof input.notesSpecified !== "boolean"
+        || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))
+        || !Array.isArray(input.retiredTasks) || input.retiredTasks.length > 24
+        || !Array.isArray(input.addedTasks) || input.addedTasks.length > 24
+        || !Array.isArray(input.dependencyUpdates) || input.dependencyUpdates.length > MISSION_MAX_TASKS) return undefined
+      const retiredTasks: MissionRevisedEvent["retiredTasks"] = []
+      for (const retired of input.retiredTasks) {
+        if (!record(retired) || !text(retired.taskKey, MAX_SHORT_TEXT)
+          || (retired.replacementTaskKey !== undefined && !text(retired.replacementTaskKey, MAX_SHORT_TEXT))) return undefined
+        retiredTasks.push({ taskKey: retired.taskKey, ...(retired.replacementTaskKey === undefined ? {} : { replacementTaskKey: retired.replacementTaskKey }) })
+      }
+      const addedTasks: MissionRevisedEvent["addedTasks"] = []
+      for (const added of input.addedTasks) {
+        if (!record(added) || !text(added.id, MAX_SHORT_TEXT) || !text(added.key, MAX_SHORT_TEXT)
+          || !text(added.title, MAX_SHORT_TEXT) || !text(added.brief, MAX_TEXT) || !text(added.role, MAX_SHORT_TEXT)
+          || !text(added.replacesTaskKey, MAX_SHORT_TEXT) || !stringArray(added.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+        let execution
+        try { execution = parseExecution(added.execution) } catch { return undefined }
+        addedTasks.push({
+          id: added.id, key: added.key, title: added.title, brief: added.brief, role: added.role,
+          ...(execution === undefined ? {} : { execution }), blockedBy: added.blockedBy, replacesTaskKey: added.replacesTaskKey,
+        })
+      }
+      const dependencyUpdates: MissionRevisedEvent["dependencyUpdates"] = []
+      for (const update of input.dependencyUpdates) {
+        if (!record(update) || !text(update.taskKey, MAX_SHORT_TEXT) || !stringArray(update.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+        dependencyUpdates.push({ taskKey: update.taskKey, blockedBy: update.blockedBy })
+      }
+      return {
+        ...eventBase(input), type: "mission.revised", requestID: input.requestID,
+        expectedRevision: Number(input.expectedRevision), actorSessionID: input.actorSessionID,
+        reason: input.reason, objective: input.objective as string | undefined,
+        notesSpecified: input.notesSpecified, notes: input.notes as string | undefined,
+        retiredTasks, addedTasks, dependencyUpdates,
       }
     }
     case "task.created": {
@@ -195,7 +258,8 @@ function parseReport(input: unknown): MissionReport | undefined {
     || !["completed", "blocked", "failed"].includes(String(input.outcome))
     || !stringArray(input.evidence, 12, 2_000) || !stringArray(input.next, 12, 2_000)
     || !Number.isSafeInteger(input.createdAt) || Number(input.createdAt) <= 0
-    || (input.artifact !== undefined && !isJsonValue(input.artifact))) return undefined
+    || (input.artifact !== undefined && !isJsonValue(input.artifact))
+    || (input.late !== undefined && typeof input.late !== "boolean")) return undefined
   return {
     id: input.id,
     taskKey: input.taskKey,
@@ -205,6 +269,7 @@ function parseReport(input: unknown): MissionReport | undefined {
     evidence: input.evidence,
     next: input.next,
     artifact: input.artifact,
+    ...(input.late === undefined ? {} : { late: input.late }),
     createdAt: Number(input.createdAt),
   }
 }
@@ -246,6 +311,10 @@ function stringArray(value: unknown, maxItems: number, maxLength: number): value
 
 function text(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength
+}
+
+function boundedText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length <= maxLength
 }
 
 function record(value: unknown): value is Record<string, any> {

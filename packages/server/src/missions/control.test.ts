@@ -91,6 +91,65 @@ function harness() {
   return { storage, sessions, changed, create }
 }
 
+test("mission create is idempotent, creates only a native root, and does not prompt", async () => {
+  const { create, sessions, storage } = harness()
+  const control = create()
+  const input = { requestID: "ui-create-1", objective: "Investigate", notes: "Start broad", template: "wayfinder" as const }
+  const first = await control.create(input)
+  const replay = await create().create(input)
+  assert.equal(first.mission.id, replay.mission.id)
+  assert.equal(first.mission.coordinatorSessionId, replay.mission.coordinatorSessionId)
+  assert.equal(sessions.sessions.size, 2)
+  assert.equal(sessions.prompts.length, 0)
+  assert.equal(storage.values.size, 1)
+  await assert.rejects(create().create({ ...input, objective: "Changed request" }), /different mission/)
+})
+
+test("mission creation rejects foreign/child coordinators and active membership", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  sessions.sessions.set("ses_foreign", { ...sessions.sessions.get("ses_coordinator")!, id: "ses_foreign", projectID: "foreign" })
+  sessions.sessions.set("ses_child", { ...sessions.sessions.get("ses_coordinator")!, id: "ses_child", parentID: "ses_coordinator" })
+  await assert.rejects(control.create({ requestID: "foreign-create", objective: "No", template: "custom", coordinatorSessionID: "ses_foreign" }), /another project/)
+  await assert.rejects(control.create({ requestID: "child-create", objective: "No", template: "custom", coordinatorSessionID: "ses_child" }), /root sessions only/)
+  await control.create({ requestID: "first-active", objective: "Yes", template: "custom", coordinatorSessionID: "ses_coordinator" })
+  await assert.rejects(create().create({ requestID: "second-active", objective: "No", template: "custom", coordinatorSessionID: "ses_coordinator" }), /already belongs/)
+})
+
+test("mission update uses CAS and request replay; deletion tombstones only the map", async () => {
+  const { create, sessions, storage } = harness()
+  const control = create()
+  const created = await control.create({ requestID: "create-cas", objective: "Initial", notes: "Keep", template: "custom", coordinatorSessionID: "ses_coordinator" })
+  const updated = await control.update({ missionID: created.mission.id, requestID: "update-cas", objective: "Revised", expectedRevision: created.mission.revision })
+  assert.equal(updated.mission.objective, "Revised")
+  assert.equal(updated.mission.notes, "Keep")
+  assert.deepEqual(await create().update({ missionID: created.mission.id, requestID: "update-cas", objective: "Revised", expectedRevision: created.mission.revision }), updated)
+  await assert.rejects(create().update({ missionID: created.mission.id, requestID: "stale", objective: "Stale", expectedRevision: created.mission.revision }), /changed/)
+  const cleared = await control.update({ missionID: created.mission.id, requestID: "clear-notes", objective: "Revised", notes: "", expectedRevision: updated.mission.revision })
+  assert.equal(cleared.mission.notes, "")
+  await assert.rejects(create().update({ missionID: created.mission.id, requestID: "clear-notes", objective: "Revised", expectedRevision: updated.mission.revision }), /different edit/)
+  await control.delete({ missionID: created.mission.id, requestID: "delete-cas", expectedRevision: cleared.mission.revision })
+  await create().delete({ missionID: created.mission.id, requestID: "delete-cas", expectedRevision: cleared.mission.revision })
+  assert.deepEqual((await create().snapshot()).missions, [])
+  assert.ok(sessions.sessions.has("ses_coordinator"), "deleting a mission must not delete its native conversation")
+  assert.equal(storage.values.size, 4, "created, both updates and deleted events remain in the journal")
+  await assert.rejects(create().update({ missionID: created.mission.id, requestID: "late", objective: "Late", expectedRevision: cleared.mission.revision }), /Mission not found/)
+})
+
+test("deleted mission rejects late task reports without deleting actor sessions", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Keep conversation", template: "custom" } }, "start-for-delete")
+  const task = { taskKey: "late-report", title: "Late", brief: "Work", role: "research", blockedBy: [], delivery: "queue" as const }
+  const dispatched = await control.delegate("ses_coordinator", task)
+  const actorID = dispatched.mission.tasks[0]!.actorSessionId!
+  const revision = dispatched.mission.revision
+  await control.delete({ missionID: dispatched.mission.id, requestID: "delete-with-actor", expectedRevision: revision })
+  await assert.rejects(create().report(actorID, { missionID: dispatched.mission.id, taskKey: task.taskKey, outcome: "completed", summary: "Late result", evidence: [], next: [], final: false }), /No mission is associated|Mission is not visible/)
+  assert.ok(sessions.sessions.has(actorID))
+  assert.equal((await create().snapshot()).missions.length, 0)
+})
+
 test("persists native execution through a failed admission and restart without switching an existing actor", async () => {
   const { create, sessions } = harness()
   const control = create()
@@ -241,6 +300,120 @@ test("derives blocked frontier tasks without automatically interpreting a workfl
     role: "decision", blockedBy: ["choose-store"], delivery: "queue",
   })
   assert.equal(dispatched.disposition, "dispatched")
+})
+
+test("revises tasks atomically, preserves lineage, and records late reports without completing withdrawn work", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Change the plan", template: "wayfinder" } }, "revise-start")
+  const first = await control.delegate("ses_coordinator", {
+    taskKey: "old-store", title: "Choose a store", brief: "Pick storage.", role: "decision", blockedBy: [], delivery: "queue",
+  })
+  await control.delegate("ses_coordinator", {
+    taskKey: "dependent", title: "Pick a schema", brief: "Based on the store.", role: "decision", blockedBy: ["old-store"], delivery: "queue",
+  })
+  const beforeRevision = (await control.snapshot()).missions[0]!
+  const oldActor = beforeRevision.tasks.find((task) => task.key === "old-store")!.actorSessionId!
+  const revise = {
+    missionID: beforeRevision.id,
+    expectedRevision: beforeRevision.revision,
+    requestID: "revise-store-1",
+    reason: "New compatibility requirement",
+    retireTasks: [{ taskKey: "old-store", replacementTaskKey: "new-store" }],
+    addTasks: [{
+      taskKey: "new-store", title: "Choose compatible storage", brief: "Select storage for the added platform.",
+      role: "decision", blockedBy: [], replacesTaskKey: "old-store",
+    }],
+    dependencyUpdates: [{ taskKey: "dependent", blockedBy: ["new-store"] }],
+  }
+  const changed = await control.revise("ses_coordinator", revise)
+  const replay = await create().revise("ses_coordinator", revise)
+  assert.equal(replay.mission.revision, changed.mission.revision)
+  await assert.rejects(control.revise("ses_coordinator", {
+    ...revise, requestID: "revise-store-stale", reason: "Stale editor submit",
+  }), (error: unknown) => error instanceof MissionControlError && error.code === "revision-conflict")
+  assert.equal(changed.mission.tasks.find((task) => task.key === "old-store")?.status, "withdrawn")
+  assert.equal(changed.mission.tasks.find((task) => task.key === "old-store")?.replacedByTaskKey, "new-store")
+  assert.equal(changed.mission.tasks.find((task) => task.key === "new-store")?.replacesTaskKey, "old-store")
+  assert.deepEqual(changed.mission.tasks.find((task) => task.key === "dependent")?.blockedBy, ["new-store"])
+  assert.equal(changed.mission.history[0]?.reason, "New compatibility requirement")
+  assert.deepEqual(changed.mission.history[0]?.dependencyUpdates[0], {
+    taskKey: "dependent", before: ["old-store"], after: ["new-store"],
+  })
+  assert.equal(changed.mission.tasks.find((task) => task.key === "old-store")?.outstandingExecution, true)
+  await assert.rejects(control.report("ses_coordinator", {
+    final: true, outcome: "completed", summary: "Done", evidence: [], next: [],
+  }), /terminal report/)
+
+  const late = await control.report(oldActor, {
+    taskKey: "old-store", outcome: "completed", summary: "The retired choice was finished anyway.", evidence: [], next: [], final: false,
+  })
+  assert.equal(late.mission.tasks.find((task) => task.key === "old-store")?.status, "withdrawn")
+  assert.equal(late.mission.tasks.find((task) => task.key === "old-store")?.lateReports?.[0]?.late, true)
+  assert.equal(late.mission.tasks.find((task) => task.key === "old-store")?.outstandingExecution, false)
+  assert.equal(late.mission.frontier.includes("dependent"), false)
+  const lateReplay = await control.report(oldActor, {
+    taskKey: "old-store", outcome: "completed", summary: "A second completion must not replace it.", evidence: [], next: [], final: false,
+  })
+  assert.equal(lateReplay.disposition, "existing")
+  assert.equal(lateReplay.mission.tasks.find((task) => task.key === "old-store")?.lateReports?.length, 1)
+  assert.equal(sessions.sessions.has(oldActor), true)
+  assert.equal(sessions.prompts.length, 1)
+})
+
+test("projects human edits and coordinator revisions once in an attributed ordered history", async () => {
+  const { create } = harness()
+  const control = create()
+  const started = await control.inspect("ses_coordinator", {
+    start: { objective: "Initial objective", notes: "Initial notes", template: "custom" },
+  }, "history-attribution-start")
+  const update = {
+    missionID: started.mission!.id, requestID: "human-edit-1", expectedRevision: started.mission!.revision,
+    objective: "Human-edited objective", notes: "Human-edited notes",
+  }
+  const edited = await control.update(update)
+  const replay = await create().update(update)
+  assert.equal(replay.mission.revision, edited.mission.revision)
+  assert.equal(replay.mission.history.length, 1, "An idempotent replay does not duplicate history")
+  assert.deepEqual(replay.mission.history[0], {
+    revision: update.expectedRevision + 1,
+    source: "user",
+    objective: { before: "Initial objective", after: "Human-edited objective" },
+    notes: { before: "Initial notes", after: "Human-edited notes" },
+    addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [],
+    createdAt: replay.mission.history[0]!.createdAt,
+  })
+  assert.equal(replay.mission.history[0]?.actorSessionId, undefined)
+  assert.equal(replay.mission.history[0]?.reason, undefined)
+
+  const revised = await control.revise("ses_coordinator", {
+    missionID: edited.mission.id, expectedRevision: edited.mission.revision,
+    requestID: "coordinator-revise-after-edit", reason: "Plan needs one more pass", objective: "Coordinator-revised objective",
+    retireTasks: [], addTasks: [], dependencyUpdates: [],
+  })
+  assert.equal(revised.mission.history.length, 2)
+  assert.equal(revised.mission.history[0]?.source, "user")
+  assert.equal(revised.mission.history[1]?.source, "coordinator")
+  assert.equal(revised.mission.history[1]?.actorSessionId, "ses_coordinator")
+  assert.equal(revised.mission.history[1]?.reason, "Plan needs one more pass")
+  assert(revised.mission.history[0]!.revision < revised.mission.history[1]!.revision)
+})
+
+test("requires dependents of withdrawn tasks to be explicitly rewritten", async () => {
+  const { create } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Revise safely", template: "custom" } }, "revise-dependencies")
+  const first = await control.delegate("ses_coordinator", {
+    taskKey: "base", title: "Base", brief: "Base work.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  await control.delegate("ses_coordinator", {
+    taskKey: "followup", title: "Follow up", brief: "Dependent work.", role: "specialist", blockedBy: ["base"], delivery: "queue",
+  })
+  const beforeRevision = (await control.snapshot()).missions[0]!
+  await assert.rejects(control.revise("ses_coordinator", {
+    missionID: beforeRevision.id, expectedRevision: beforeRevision.revision, requestID: "withdraw-base",
+    reason: "No longer needed", retireTasks: [{ taskKey: "base" }], addTasks: [], dependencyUpdates: [],
+  }), (error: unknown) => error instanceof MissionControlError && error.code === "dependency-update-required")
 })
 
 test("keeps task and admission identities idempotent across retries", async () => {

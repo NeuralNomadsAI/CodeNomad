@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { parseDelegateInput, parseInspectInput, parseReportInput, setupMissionsPlugin } from "./missions-plugin"
+import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
 
 test("validates the compact mission tool contracts", () => {
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "pocock-fix-bug" } }), {
@@ -30,13 +30,19 @@ test("validates the compact mission tool contracts", () => {
   })
   assert.throws(() => parseDelegateInput({ taskKey: "Bad Key", title: "x", brief: "x", role: "x" }), /lowercase/)
   assert.throws(() => parseInspectInput({ start: { objective: "x", template: "pipeline" } }), /unsupported/)
+  assert.deepEqual(parseReviseInput({ expectedRevision: 1, requestID: "revise-1", reason: "New facts", notes: "", retireTasks: [] }), {
+    missionID: undefined, expectedRevision: 1, requestID: "revise-1", reason: "New facts", objective: undefined, notes: "",
+    retireTasks: [], addTasks: [], dependencyUpdates: [],
+  })
+  assert.throws(() => parseReviseInput({ expectedRevision: 1, requestID: "bad", reason: "Missing contract", addTasks: [{ taskKey: "bad" }] }), /title/)
 })
 
-test("registers three tools, typed snapshot RPC, and role context", async () => {
+test("registers four tools, typed snapshot RPC, and role context", async () => {
   const values = new Map<string, unknown>()
   const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
   let snapshotHandler: (() => Promise<unknown>) | undefined
+  let createHandler: ((input: unknown) => Promise<unknown>) | undefined
   const emitted: unknown[] = []
   const registration = () => ({ dispose: async () => {} })
   const cleanup = await setupMissionsPlugin({
@@ -68,14 +74,15 @@ test("registers three tools, typed snapshot RPC, and role context", async () => 
       },
     },
     rpc: {
-      register: async (_definition: unknown, handlers: { snapshot(): Promise<unknown> }) => {
+      register: async (_definition: unknown, handlers: { snapshot(): Promise<unknown>; create(input: unknown): Promise<unknown>; update(input: unknown): Promise<unknown>; delete(input: unknown): Promise<unknown> }) => {
         snapshotHandler = handlers.snapshot
+        createHandler = handlers.create
         return { ...registration(), events: { emit: async (...event: unknown[]) => { emitted.push(event) } } }
       },
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "report"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report"])
   const inspect = tools.find((tool) => tool.name === "inspect")!
   await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},
@@ -90,7 +97,17 @@ test("registers three tools, typed snapshot RPC, and role context", async () => 
   assert.equal(event.system[0]?.type, "text")
   assert.match(event.system[0]?.text ?? "", /Only this coordinator session/)
   assert.ok(event.tools.mission_delegate)
+  const revise = tools.find((tool) => tool.name === "revise")!
+  await revise.execute({ expectedRevision: 1, requestID: "revise-from-tool", reason: "User clarified", objective: "Revised objective" }, {
+    sessionID: "ses_coordinator", messageID: "msg_2", id: "call_2", progress: async () => {},
+  })
+  const revised = await snapshotHandler!() as { missions: Array<{ objective: string; history: Array<{ reason: string }> }> }
+  assert.equal(revised.missions[0]?.objective, "Revised objective")
+  assert.equal(revised.missions[0]?.history[0]?.reason, "User clarified")
+  assert.equal(emitted.length, 2)
   await cleanup()
+  await assert.rejects(createHandler!({ requestID: "post-dispose", objective: "No", template: "custom" }), /no longer available/)
+  await assert.rejects(revise.execute({}, { sessionID: "ses_coordinator", id: "stale-revise" }), /no longer available/)
   await assert.rejects(inspect.execute({}, {
     sessionID: "ses_coordinator", id: "stale-tool", progress: async () => {},
   }), /no longer available/)

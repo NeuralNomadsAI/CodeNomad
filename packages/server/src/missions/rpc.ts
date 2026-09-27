@@ -29,6 +29,7 @@ const report = {
     evidence: stringArray,
     next: stringArray,
     artifact: {},
+    late: { type: "boolean" },
     createdAt: { type: "number" },
   },
   required: ["id", "taskKey", "sessionId", "outcome", "summary", "evidence", "next", "createdAt"],
@@ -77,19 +78,40 @@ const mission = {
           role: { type: "string" },
           execution: executionSchema,
           blockedBy: stringArray,
-          status: { type: "string", enum: ["blocked", "ready", "dispatching", "queued", "completed", "needs-input", "failed"] },
+          replacesTaskKey: { type: "string" },
+          replacedByTaskKey: { type: "string" },
+          status: { type: "string", enum: ["blocked", "ready", "dispatching", "queued", "completed", "needs-input", "failed", "withdrawn"] },
           actorSessionId: { type: "string" },
           admissionId: { type: "string" },
           delivery: { type: "string", enum: ["queue", "steer"] },
           createdAt: { type: "number" },
           updatedAt: { type: "number" },
           report,
+          lateReports: { type: "array", items: report },
+          outstandingExecution: { type: "boolean" },
         },
-        required: ["id", "key", "title", "brief", "role", "blockedBy", "status", "createdAt", "updatedAt"],
+        required: ["id", "key", "title", "brief", "role", "blockedBy", "status", "createdAt", "updatedAt", "outstandingExecution"],
         additionalProperties: false,
       },
     },
     reports: { type: "array", items: report },
+    history: {
+      type: "array", maxItems: 50, items: {
+        type: "object", properties: {
+          revision: { type: "integer" }, source: { type: "string", enum: ["user", "coordinator"] },
+          actorSessionId: { type: "string" }, reason: { type: "string" },
+          objective: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, required: ["before", "after"], additionalProperties: false },
+          notes: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, additionalProperties: false },
+          addedTaskKeys: stringArray,
+          retiredTasks: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, replacementTaskKey: { type: "string" } }, required: ["taskKey"], additionalProperties: false } },
+          dependencyUpdates: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, before: stringArray, after: stringArray }, required: ["taskKey", "before", "after"], additionalProperties: false } },
+          createdAt: { type: "number" },
+        },
+        required: ["revision", "addedTaskKeys", "retiredTasks", "dependencyUpdates", "createdAt"],
+        additionalProperties: false,
+      },
+    },
+    historyTruncated: { type: "boolean" },
     frontier: stringArray,
     claims: stringArray,
     createdAt: { type: "number" },
@@ -98,10 +120,19 @@ const mission = {
   },
   required: [
     "version", "id", "projectID", "projectCanonical", "objective", "template", "status", "coordinatorSessionId",
-    "actors", "tasks", "reports", "frontier", "claims", "createdAt", "updatedAt", "revision",
+    "actors", "tasks", "reports", "history", "historyTruncated", "frontier", "claims", "createdAt", "updatedAt", "revision",
   ],
   additionalProperties: false,
 } as const
+
+const mutationMissionResult = {
+  type: "object",
+  properties: { mission },
+  required: ["mission"],
+  additionalProperties: false,
+} as const
+
+const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
 
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
@@ -119,6 +150,39 @@ export const CODENOMAD_MISSIONS_RPC = {
         },
         required: ["version", "projectID", "generatedAt", "missions", "discardedEvents"],
         additionalProperties: false,
+      },
+    },
+    create: {
+      input: {
+        type: "object", properties: {
+          requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
+          notes: { type: "string", maxLength: 20_000 },
+          template: { type: "string", enum: ["custom", "wayfinder", "pocock-fix-bug"] },
+          coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
+        }, required: ["requestID", "objective", "template"], additionalProperties: false,
+      },
+      output: mutationMissionResult,
+    },
+    update: {
+      input: {
+        type: "object", properties: {
+          missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID,
+          objective: { type: "string", minLength: 1, maxLength: 20_000 },
+          notes: { type: "string", maxLength: 20_000 }, expectedRevision: { type: "integer", minimum: 1 },
+        }, required: ["missionID", "requestID", "objective", "expectedRevision"], additionalProperties: false,
+      },
+      output: mutationMissionResult,
+    },
+    delete: {
+      input: {
+        type: "object", properties: {
+          missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID,
+          expectedRevision: { type: "integer", minimum: 1 },
+        }, required: ["missionID", "requestID", "expectedRevision"], additionalProperties: false,
+      },
+      output: {
+        type: "object", properties: { deleted: { type: "boolean", const: true } },
+        required: ["deleted"], additionalProperties: false,
       },
     },
   },

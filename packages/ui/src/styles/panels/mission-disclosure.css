@@ -1,0 +1,32 @@
+.mission-disclosure { min-width: 0; padding: var(--space-sm) 0; }
+.mission-disclosure > h3 { margin: 0; font-size: var(--font-size-sm); }
+.mission-disclosure-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-sm);
+  text-align: start;
+  color: var(--text-secondary);
+}
+.mission-disclosure-trigger:hover { background: var(--surface-hover-overlay); }
+.mission-disclosure-trigger:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.mission-disclosure-trigger > span { min-width: 0; overflow-wrap: anywhere; }
+.mission-disclosure > div:not([hidden]) { padding-top: var(--space-sm); }
+.mission-disclosure > [hidden] { display: none; }
+.mission-report-heading { display: grid; gap: var(--space-xs); flex: 1; }
+.mission-report-heading strong, .mission-text-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.mission-control-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-read-button { margin: var(--space-sm) 0; }
+.mission-task-dependencies { display: grid; gap: var(--space-xs); }
+.mission-task-link { text-align: start; color: var(--text-secondary); overflow-wrap: anywhere; }
+.mission-task-link:hover { color: var(--accent-primary); text-decoration: underline; }
+.mission-history-list { display: grid; gap: var(--space-md); padding: 0; list-style: none; }
+.mission-history-list > li { padding: var(--space-sm); border-inline-start: 1px solid var(--border-base); }

@@ -4,17 +4,8 @@
   gap: var(--space-sm);
   margin: 0;
   padding-block: 0;
-  padding-inline-start: var(--space-lg);
+  padding-inline-start: 0;
   list-style: none;
-}
-
-.mission-route-list::before {
-  position: absolute;
-  inset-block: var(--space-sm);
-  inset-inline-start: 5px;
-  width: 1px;
-  background: var(--border-strong);
-  content: "";
 }
 
 .mission-route-task {
@@ -51,7 +42,7 @@
   gap: var(--space-sm);
 }
 
-.mission-route-heading > div {
+.mission-route-heading > span:first-child {
   display: grid;
   min-width: 0;
   gap: 2px;

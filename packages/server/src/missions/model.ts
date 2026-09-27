@@ -5,6 +5,7 @@ export const MISSION_MAX_ACTORS = 8
 export const MISSION_MAX_EVENTS = 2_000
 export const MISSION_MAX_MISSIONS = 20
 export const MISSION_MAX_TASKS = 96
+export const MISSION_MAX_HISTORY = 50
 
 export type MissionJsonValue = null | boolean | number | string | readonly MissionJsonValue[] | {
   readonly [key: string]: MissionJsonValue
@@ -20,6 +21,7 @@ export type MissionTaskStatus =
   | "completed"
   | "needs-input"
   | "failed"
+  | "withdrawn"
 export type MissionReportOutcome = "completed" | "blocked" | "failed"
 export type MissionActorRuntimeStatus = "working" | "idle" | "unknown"
 
@@ -48,6 +50,7 @@ export interface MissionReport {
   evidence: string[]
   next: string[]
   artifact?: MissionJsonValue
+  late?: boolean
   createdAt: number
 }
 
@@ -59,6 +62,8 @@ export interface MissionTask {
   role: string
   execution?: MissionExecution
   blockedBy: string[]
+  replacesTaskKey?: string
+  replacedByTaskKey?: string
   status: MissionTaskStatus
   actorSessionId?: string
   admissionId?: string
@@ -66,6 +71,37 @@ export interface MissionTask {
   createdAt: number
   updatedAt: number
   report?: MissionReport
+  lateReports?: MissionReport[]
+  outstandingExecution: boolean
+}
+
+export interface MissionDependencyUpdate {
+  taskKey: string
+  blockedBy: string[]
+}
+
+export interface MissionDependencyChange {
+  taskKey: string
+  before: string[]
+  after: string[]
+}
+
+export interface MissionRetiredTask {
+  taskKey: string
+  replacementTaskKey?: string
+}
+
+export interface MissionPlanChange {
+  revision: number
+  source?: "user" | "coordinator"
+  actorSessionId?: string
+  reason?: string
+  objective?: { before: string; after: string }
+  notes?: { before?: string; after?: string }
+  addedTaskKeys: string[]
+  retiredTasks: MissionRetiredTask[]
+  dependencyUpdates: MissionDependencyChange[]
+  createdAt: number
 }
 
 export interface MissionMap {
@@ -87,6 +123,8 @@ export interface MissionMap {
   createdAt: number
   updatedAt: number
   revision: number
+  history: MissionPlanChange[]
+  historyTruncated: boolean
 }
 
 export interface MissionSnapshot {
@@ -128,6 +166,45 @@ export interface MissionCreatedEvent extends MissionEventBase {
     title: string
     location: MissionLocation
   }
+  requestID?: string
+}
+
+export interface MissionUpdatedEvent extends MissionEventBase {
+  type: "mission.updated"
+  requestID: string
+  expectedRevision: number
+  notesSpecified: boolean
+  objective: string
+  notes?: string
+}
+
+export interface MissionDeletedEvent extends MissionEventBase {
+  type: "mission.deleted"
+  requestID: string
+  expectedRevision: number
+}
+
+export interface MissionRevisedEvent extends MissionEventBase {
+  type: "mission.revised"
+  requestID: string
+  expectedRevision: number
+  actorSessionID: string
+  reason: string
+  objective?: string
+  notesSpecified: boolean
+  notes?: string
+  retiredTasks: MissionRetiredTask[]
+  addedTasks: Array<{
+    id: string
+    key: string
+    title: string
+    brief: string
+    role: string
+    execution?: MissionExecution
+    blockedBy: string[]
+    replacesTaskKey: string
+  }>
+  dependencyUpdates: MissionDependencyUpdate[]
 }
 
 export interface MissionTaskCreatedEvent extends MissionEventBase {
@@ -180,6 +257,9 @@ export interface MissionFinishedEvent extends MissionEventBase {
 
 export type MissionEvent =
   | MissionCreatedEvent
+  | MissionUpdatedEvent
+  | MissionDeletedEvent
+  | MissionRevisedEvent
   | MissionTaskCreatedEvent
   | MissionTaskDispatchingEvent
   | MissionTaskDispatchedEvent
@@ -218,10 +298,15 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     return undefined
   }
 
+  if (events.some((event) => event.type === "mission.deleted")) return undefined
+
   const tasks = new Map<string, MissionTask>()
   const actors = new Map<string, MissionActor>()
   const reports: MissionReport[] = []
+  const history: MissionPlanChange[] = []
   let status: MissionStatus = "active"
+  let objective = created.objective
+  let notes = created.notes
   let updatedAt = created.createdAt
 
   actors.set(created.coordinator.sessionID, {
@@ -240,6 +325,69 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       discarded.count += 1
       continue
     }
+    if (event.type === "mission.updated") {
+      const previousObjective = objective
+      const previousNotes = notes
+      objective = event.objective
+      notes = event.notes
+      history.push({
+        revision: event.expectedRevision + 1,
+        source: "user",
+        objective: { before: previousObjective, after: objective },
+        ...(event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
+        addedTaskKeys: [],
+        retiredTasks: [],
+        dependencyUpdates: [],
+        createdAt: event.createdAt,
+      })
+      continue
+    }
+    if (event.type === "mission.deleted") continue
+    if (event.type === "mission.revised") {
+      const previousObjective = objective
+      const previousNotes = notes
+      if (event.objective !== undefined) objective = event.objective
+      if (event.notesSpecified) notes = event.notes
+      for (const retired of event.retiredTasks) {
+        const task = tasks.get(retired.taskKey)
+        if (!task || task.status === "withdrawn") { discarded.count += 1; continue }
+        task.status = "withdrawn"
+        task.replacedByTaskKey = retired.replacementTaskKey
+        task.updatedAt = event.createdAt
+      }
+      const dependencyChanges: MissionDependencyChange[] = []
+      for (const update of event.dependencyUpdates) {
+        const task = tasks.get(update.taskKey)
+        if (!task || task.status === "withdrawn") { discarded.count += 1; continue }
+        dependencyChanges.push({ taskKey: update.taskKey, before: [...task.blockedBy], after: [...update.blockedBy] })
+        task.blockedBy = [...new Set(update.blockedBy)]
+        task.updatedAt = event.createdAt
+      }
+      for (const added of event.addedTasks) {
+        if (tasks.has(added.key) || tasks.size >= MISSION_MAX_TASKS) { discarded.count += 1; continue }
+        tasks.set(added.key, {
+          ...added,
+          blockedBy: [...new Set(added.blockedBy)],
+          status: "ready",
+          outstandingExecution: false,
+          createdAt: event.createdAt,
+          updatedAt: event.createdAt,
+        })
+      }
+      history.push({
+        revision: event.expectedRevision + 1,
+        source: "coordinator",
+        actorSessionId: event.actorSessionID,
+        reason: event.reason,
+        ...(event.objective === undefined ? {} : { objective: { before: previousObjective, after: objective } }),
+        ...(!event.notesSpecified ? {} : { notes: { before: previousNotes, after: notes } }),
+        addedTaskKeys: event.addedTasks.map((task) => task.key),
+        retiredTasks: event.retiredTasks.map((task) => ({ ...task })),
+        dependencyUpdates: dependencyChanges,
+        createdAt: event.createdAt,
+      })
+      continue
+    }
     if (event.type === "task.created") {
       if (tasks.has(event.task.key) || tasks.size >= MISSION_MAX_TASKS) {
         discarded.count += 1
@@ -249,6 +397,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         ...event.task,
         blockedBy: [...new Set(event.task.blockedBy)],
         status: "ready",
+        outstandingExecution: false,
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
       })
@@ -295,7 +444,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     }
     if (event.type === "task.reported") {
       const task = tasks.get(event.report.taskKey)
-      if (!task || task.report || task.actorSessionId !== event.report.sessionId) {
+      if (!task || task.actorSessionId !== event.report.sessionId) {
+        discarded.count += 1
+        continue
+      }
+      if (task.status === "withdrawn" && event.report.late && !task.report) {
+        task.lateReports = [...(task.lateReports ?? []), event.report]
+        task.updatedAt = event.createdAt
+        reports.push(event.report)
+        continue
+      }
+      if (task.report || task.status === "withdrawn" || event.report.late) {
         discarded.count += 1
         continue
       }
@@ -311,9 +470,12 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 
   for (const task of tasks.values()) {
-    if (task.status !== "ready") continue
-    const waiting = task.blockedBy.some((key) => tasks.get(key)?.status !== "completed")
-    task.status = waiting ? "blocked" : "ready"
+    task.outstandingExecution = task.status === "withdrawn" && Boolean(task.admissionId)
+      && !task.report && (task.lateReports?.length ?? 0) === 0
+    if (task.status === "ready") {
+      const waiting = task.blockedBy.some((key) => tasks.get(key)?.status !== "completed")
+      task.status = waiting ? "blocked" : "ready"
+    }
   }
 
   const taskList = [...tasks.values()].sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
@@ -322,8 +484,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     id: created.missionID,
     projectID: created.projectID,
     projectCanonical: created.projectCanonical,
-    objective: created.objective,
-    notes: created.notes,
+    objective,
+    notes,
     template: created.template,
     status,
     summary: [...events].reverse().find((event): event is MissionFinishedEvent => event.type === "mission.finished")?.summary,
@@ -336,6 +498,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     createdAt: created.createdAt,
     updatedAt,
     revision: events.length,
+    history: history.slice(-MISSION_MAX_HISTORY),
+    historyTruncated: history.length > MISSION_MAX_HISTORY,
   }
 }
 
