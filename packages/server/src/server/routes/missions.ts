@@ -5,6 +5,7 @@ import type { MissionListResponse, MissionMap, MissionSnapshot } from "../../mis
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions } from "../../opencode/compatibility/location"
+import { readMissionMutationError } from "../../missions/rpc-errors"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation">
@@ -152,12 +153,8 @@ async function mutationLocation(workspaceID: string, requestedDirectory: string 
 }
 
 function mutationError(reply: import("fastify").FastifyReply, error: unknown) {
-  const message = error instanceof Error ? error.message : "Mission operation failed"
-  if (/revision-conflict|request-conflict|task-conflict|already-member|mission-finished|Mission changed|request ID was already used|already belongs|already finished|Only active missions/.test(message)) {
-    return reply.code(409).send({ error: message })
-  }
-  if (/mission-not-found|mission-deleted/.test(message)) return reply.code(404).send({ error: message })
-  if (/foreign-session|child-session|target-claimed|belongs to another project|root sessions only/.test(message)) return reply.code(403).send({ error: message })
+  const rejection = readMissionMutationError(error)
+  if (rejection) return reply.code(rejection.status).send({ error: rejection.message, code: rejection.code })
   reply.code(503).send({ error: "Mission plugin unavailable" })
 }
 

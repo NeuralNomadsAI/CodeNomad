@@ -1,4 +1,5 @@
 import { executionSchema } from "./execution"
+import { missionMutationErrors } from "./rpc-errors"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -154,6 +155,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       },
     },
     create: {
+      errors: missionMutationErrors,
       input: {
         type: "object", properties: {
           requestID, objective: { type: "string", minLength: 1, maxLength: 20_000 },
@@ -165,6 +167,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: mutationMissionResult,
     },
     update: {
+      errors: missionMutationErrors,
       input: {
         type: "object", properties: {
           missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID,
@@ -175,6 +178,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: mutationMissionResult,
     },
     delete: {
+      errors: missionMutationErrors,
       input: {
         type: "object", properties: {
           missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID,

@@ -59,7 +59,7 @@ function manager(options: {
   }
 }
 
-function mutationManager(options: { owns?: boolean } = {}) {
+function mutationManager(options: { owns?: boolean; error?: unknown } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const value = {
     get: (id: string) => id === "workspace-1" ? { id } : undefined,
@@ -80,7 +80,11 @@ function mutationManager(options: { owns?: boolean } = {}) {
         calls.push({ method: "rpc", value: definition.id })
         return {
           create: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "create", value: { input, rpcOptions } }); return { mission: { id: "msn_1" } } },
-          update: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "update", value: { input, rpcOptions } }); return { mission: { id: "msn_1" } } },
+          update: async (input: unknown, rpcOptions: unknown) => {
+            calls.push({ method: "update", value: { input, rpcOptions } })
+            if (options.error) throw options.error
+            return { mission: { id: "msn_1" } }
+          },
           delete: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "delete", value: { input, rpcOptions } }); return { deleted: true } },
           snapshot: async () => snapshot,
         }
@@ -178,4 +182,26 @@ test("brokers typed mission create, update and delete only at authorized project
   } })
   assert.equal(invalid.statusCode, 400)
   await app.close()
+})
+
+test("maps only declared native mutation codes and keeps opaque plugin failures unavailable", async () => {
+  for (const [error, status] of [
+    [{ type: "mission.rejected", message: "Reload", data: { code: "revision-conflict" } }, 409],
+    [{ type: "mission.rejected", message: "Different request", data: { code: "request-conflict" } }, 409],
+    [{ type: "mission.rejected", message: "Missing", data: { code: "mission-not-found" } }, 404],
+    [{ type: "mission.rejected", message: "Foreign", data: { code: "foreign-session" } }, 403],
+    [{ type: "rpc.internal", message: "revision-conflict: private failure", data: { code: "revision-conflict" } }, 503],
+    [{ type: "mission.rejected", message: "private failure", data: { code: "constructor" } }, 503],
+    [new Error("Mission changed; private failure"), 503],
+  ] as const) {
+    const app = Fastify()
+    try {
+      registerMissionRoutes(app, { workspaceManager: mutationManager({ error }).value })
+      const response = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1",
+        payload: { requestId: "edit", objective: "Edited", expectedRevision: 1 } })
+      assert.equal(response.statusCode, status)
+      if (status === 503) assert.deepEqual(response.json(), { error: "Mission plugin unavailable" })
+      else assert.equal(response.json().error, error.message)
+    } finally { await app.close() }
+  }
 })

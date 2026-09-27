@@ -1,5 +1,6 @@
 import {
   MissionControl,
+  MissionControlError,
 } from "../missions/control"
 import type {
   MissionDelegateInput,
@@ -17,6 +18,22 @@ import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
 import { MissionNotificationOutbox } from "../missions/notification-outbox"
+import { MISSION_RPC_REJECTION, missionMutationStatus } from "../missions/rpc-errors"
+
+interface MutationContext {
+  error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string }): unknown
+}
+
+async function mutationResult(context: MutationContext, action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return JSON.parse(JSON.stringify(await action()))
+  } catch (error) {
+    if (error instanceof MissionControlError && missionMutationStatus(error.code)) {
+      return context.error(MISSION_RPC_REJECTION, error.message, { code: error.code })
+    }
+    throw error
+  }
+}
 
 interface Registration {
   dispose(): Promise<void>
@@ -70,9 +87,9 @@ interface MissionsPluginContext extends MissionCatalogClient {
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
         snapshot(input: unknown): Promise<unknown>
-        create(input: unknown): Promise<unknown>
-        update(input: unknown): Promise<unknown>
-        delete(input: unknown): Promise<unknown>
+        create(input: unknown, context: MutationContext): Promise<unknown>
+        update(input: unknown, context: MutationContext): Promise<unknown>
+        delete(input: unknown, context: MutationContext): Promise<unknown>
       },
     ): Promise<Registration & { events: { emit(name: "changed", data: { missionID: string; revision: number }): Promise<void> } }>
   }
@@ -109,9 +126,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   try {
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
-      create: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.create(parseCreateMissionInput(input)))) },
-      update: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.update(parseUpdateMissionInput(input)))) },
-      delete: async (input) => { assertActive(); return JSON.parse(JSON.stringify(await control.delete(parseDeleteMissionInput(input)))) },
+      create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
+      update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
+      delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     })
     registrations.push(rpcRegistration)
 

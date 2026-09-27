@@ -36,6 +36,7 @@ const { DesktopPluginLifecycle } = await tsImport("../packages/server/src/openco
 const { resolveDesktopPluginPaths } = await tsImport("../packages/server/src/opencode/desktop-plugin-paths.ts", import.meta.url)
 const { createAutomationBridgeRegistration, publishAutomationBridge } = await tsImport("../packages/server/src/opencode/automation-plugin.ts", import.meta.url)
 const { registerAutomationPluginRoute } = await tsImport("../packages/server/src/server/routes/automation-plugin.ts", import.meta.url)
+const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
@@ -126,6 +127,7 @@ try {
   const paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
   assert.equal(paths.config, process.env.OPENCODE_CONFIG_DIR)
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
+  registerMissionRoutes(bridge, { workspaceManager: manager })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence(),
     authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
@@ -263,9 +265,36 @@ try {
   }, { location })
   assert.equal(updateReplay.mission.revision, crudUpdated.mission.revision)
   assert.equal(updateReplay.mission.notes, "Updated notes")
+  stage = "native mutation errors through HTTP routes"
+  const missionURL = `/api/workspaces/${workspace.id}/missions`
+  const rejectedMutation = async (method, suffix, payload, status, code) => {
+    const response = await bridge.inject({ method, url: missionURL + suffix, payload })
+    assert.equal(response.statusCode, status, `${method} ${suffix}: ${response.body}`)
+    assert.equal(response.json().code, code)
+  }
+  await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
+    requestId: "stale-update", expectedRevision: 1, objective: "Stale edit",
+  }, 409, "revision-conflict")
+  await rejectedMutation("DELETE", `/${crudCreated.mission.id}`, {
+    requestId: "stale-delete", expectedRevision: 1,
+  }, 409, "revision-conflict")
+  await rejectedMutation("POST", "", {
+    requestId: crudInput.requestID, objective: "Different creation", template: "custom",
+  }, 409, "request-conflict")
+  await rejectedMutation("PATCH", `/${crudCreated.mission.id}`, {
+    requestId: "native-crud-update", expectedRevision: 1, objective: "Different edit",
+  }, 409, "request-conflict")
+  for (const method of ["PATCH", "DELETE"]) await rejectedMutation(method, "/msn_unknown", {
+    requestId: `unknown-${method}`, expectedRevision: 1, ...(method === "PATCH" ? { objective: "Unknown" } : {}),
+  }, 404, "mission-not-found")
+  assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }))
+    .missions.find(mission => mission.id === crudCreated.mission.id).revision, crudUpdated.mission.revision)
   const deletion = { missionID: crudCreated.mission.id, requestID: "native-crud-delete", expectedRevision: crudUpdated.mission.revision }
   assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
   assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
+  await rejectedMutation("DELETE", `/${crudCreated.mission.id}`, {
+    requestId: deletion.requestID, expectedRevision: 1,
+  }, 409, "request-conflict")
   const afterDeleteSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert(!afterDeleteSnapshot.missions.some(mission => mission.id === crudCreated.mission.id), "Tombstone hides the mission map")
   assert.equal((await client.session.get({ sessionID: crudCoordinator })).id, crudCoordinator, "Tombstone preserves the coordinator session")
@@ -283,7 +312,7 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, revise/late report, lifecycle create/update/delete idempotence, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error

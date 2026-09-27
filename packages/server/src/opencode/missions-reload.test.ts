@@ -23,6 +23,9 @@ test("independent plugin bundles preserve project CAS exclusion across dispose/s
   const gate = new Promise<void>(resolve => { release = resolve })
   t.after(() => release())
   const registration = () => ({ dispose: async () => {} })
+  const rpcContext = { error: (type: string, message: string, data: unknown) => {
+    throw Object.assign(new Error(message), { type, data })
+  } }
   async function setup(bundle: typeof bundles[number], old: boolean) {
     let handlers: any
     const dispose = await bundle.setupMissionsPlugin({
@@ -53,11 +56,11 @@ test("independent plugin bundles preserve project CAS exclusion across dispose/s
   const old = await setup(bundles[0], true)
   const { mission } = await old.handlers.create({ requestID: "create", objective: "Original", template: "custom", coordinatorSessionID: "ses_coordinator" })
   pauseScan = true
-  const first = old.handlers.update({ missionID: mission.id, requestID: "old-edit", expectedRevision: 1, objective: "Old edit" })
+  const first = old.handlers.update({ missionID: mission.id, requestID: "old-edit", expectedRevision: 1, objective: "Old edit" }, rpcContext)
   await entered
   await old.dispose()
   const current = await setup(bundles[1], false)
-  const second = current.handlers.update({ missionID: mission.id, requestID: "new-edit", expectedRevision: 1, objective: "New edit" })
+  const second = current.handlers.update({ missionID: mission.id, requestID: "new-edit", expectedRevision: 1, objective: "New edit" }, rpcContext)
   // Let the second bundle attempt entry while the first holds its captured snapshot.
   await new Promise<void>(resolve => setImmediate(resolve))
   release()
