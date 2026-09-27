@@ -675,7 +675,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   <Select.Portal><Select.Content class="selector-popover"><Select.Listbox class="selector-listbox" /></Select.Content></Select.Portal>
                 </Select>
                 <button type="button" class="selector-button selector-button-primary" disabled={!selectedProviderOption()?.canConnect} onClick={() => resetFlow(selectedProviderOption()?.id ?? null)}>
-                  {t("settings.providers.actions.connect")}
+                  {t("settings.accounts.add")}
                 </button>
                 </Show>
                 <button type="button" class="icon-button-compact" title={t("settings.providers.refresh")} aria-label={t("settings.providers.refresh")} disabled={loading()} onClick={() => void refreshProviderData()}>
