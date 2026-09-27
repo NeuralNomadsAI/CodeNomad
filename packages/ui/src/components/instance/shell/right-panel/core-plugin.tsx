@@ -17,6 +17,7 @@ interface CoreStatusSectionRenderers {
   renderBackgroundProcesses: () => JSX.Element
   renderMcpStatus: () => JSX.Element
   renderPluginStatus: () => JSX.Element
+  renderWebSearch: () => JSX.Element
 }
 
 export function createCoreRightPanelManifest(renderers: CoreRightPanelRenderers): RightPanelManifest {
@@ -63,6 +64,7 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     "background-processes": renderers.renderBackgroundProcesses,
     mcp: renderers.renderMcpStatus,
     plugins: renderers.renderPluginStatus,
+    websearch: renderers.renderWebSearch,
   }
 
   return {
