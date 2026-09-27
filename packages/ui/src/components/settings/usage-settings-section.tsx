@@ -4,6 +4,7 @@ import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { serverEvents } from "../../lib/server-events"
 import { activeInstanceId } from "../../stores/instances"
+import { getCachedServiceUsage, markServiceUsageStale, setCachedServiceUsage } from "../../stores/service-usage-cache"
 
 export function UsageSettingsSection(props: { instanceId?: string }) {
   const { t, locale } = useI18n()
@@ -16,7 +17,10 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
   createEffect(() => {
     const id = instanceId(), count = days()
     let disposed = false, reading = false, trailing = false
-    setSnapshot(undefined); setError(false); setBusy(false)
+    // Cache-first: the last snapshot (memory, else restoration storage)
+    // displays immediately and revalidates lazily.
+    const cached = id ? getCachedServiceUsage(id, count, timezone) : undefined
+    setSnapshot(cached?.snapshot); setError(false); setBusy(false)
     if (!id) return
     const load = async () => {
       if (disposed) return
@@ -27,7 +31,10 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
         const to = Date.now()
         try {
           const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone })
-          if (!disposed && !trailing) { setSnapshot(next); setError(false) }
+          if (!disposed && !trailing) {
+            setSnapshot(next); setError(false)
+            setCachedServiceUsage(id, count, timezone, next)
+          }
         } catch { if (!disposed && !trailing) setError(true) }
       } while (!disposed && trailing)
       reading = false
@@ -35,15 +42,24 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     }
     refresh = () => { void load() }
     // Native stats are durable aggregates: refresh at settled session changes,
-    // never per token/delta and never by loading transcript messages.
+    // never per token/delta and never by loading transcript messages. Events
+    // mark the cache stale; the visible section revalidates lazily.
+    const markStale = () => { if (id) markServiceUsageStale(id) }
     const events = serverEvents.on("instance.event", payload => {
-      if (payload.type === "instance.event" && payload.instanceId === id && ["session.idle", "session.deleted", "rpc.codenomad.session-pruning.pruned"].includes(payload.event.type)) refresh()
+      if (payload.type === "instance.event" && payload.instanceId === id && ["session.idle", "session.deleted", "rpc.codenomad.session-pruning.pruned"].includes(payload.event.type)) {
+        markStale()
+        refresh()
+      }
     })
     const status = serverEvents.on("instance.eventStatus", payload => {
-      if (payload.type === "instance.eventStatus" && payload.instanceId === id && payload.status === "connected") refresh()
+      if (payload.type === "instance.eventStatus" && payload.instanceId === id && payload.status === "connected") {
+        markStale()
+        refresh()
+      }
     })
-    const reconnect = serverEvents.onOpen(() => refresh())
+    const reconnect = serverEvents.onOpen(() => { markStale(); refresh() })
     onCleanup(() => { disposed = true; events(); status(); reconnect() })
+    // A restored snapshot is stale by definition: revalidate behind it.
     void load()
   })
   const number = (value: number) => new Intl.NumberFormat(locale()).format(value)
