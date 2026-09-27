@@ -16,7 +16,7 @@ import {
 } from "./model"
 import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
-import { validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
+import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import type {
@@ -33,6 +33,14 @@ import type {
   MissionInputTransport,
   NativeMissionSession,
 } from "./control-types"
+
+const MISSION_NOTIFICATION_BATCH_SIZE = 10
+
+export interface MissionNotificationRetryResult {
+  attempted: number
+  failed: number
+  cursor?: string
+}
 
 export class MissionControlError extends Error {
   constructor(message: string, readonly code: string) {
@@ -165,6 +173,7 @@ export class MissionControl {
   }
 
   private async reviseCurrent(sessionID: string, input: MissionReviseInput): Promise<{ mission: MissionMap }> {
+    input = normalizeRevisionDependencies(input)
     await this.ownedRootSession(sessionID)
     let snapshot = await this.snapshot()
     let mission = this.selectMission(snapshot, sessionID, input.missionID)
@@ -239,15 +248,22 @@ export class MissionControl {
         blockedBy: item.blockedBy, delivery: "queue", execution: item.execution,
       }
       try {
+        const policyTasks: Array<Pick<MissionMap["tasks"][number],
+          "key" | "role" | "status" | "blockedBy" | "actorSessionId" | "replacedByTaskKey">> = [
+          ...mission.tasks.filter((task) => !retired.has(task.key)),
+          ...addedTasks.map((task) => ({
+            key: task.key, role: task.role, status: "ready" as const, blockedBy: task.blockedBy,
+            actorSessionId: undefined, replacedByTaskKey: undefined,
+          })),
+        ]
         validateMissionDelegationPolicy({
           template: mission.template,
           role: item.role,
           targetSessionID: item.role === "resolver"
-            ? mission.actors.find((actor) => actor.roles.includes("implementer"))?.sessionId
+            ? resolvePocockImplementerSessionID(policyTasks, item.blockedBy)
             : undefined,
-          actors: mission.actors,
-          tasks: mission.tasks.filter((task) => !retired.has(task.key)).map(({ role, status }) => ({ role, status }))
-            .concat(addedTasks.map(({ role }) => ({ role, status: "ready" as const }))),
+          blockedBy: item.blockedBy,
+          tasks: policyTasks,
         })
         await this.options.validateExecution?.(taskInput, coordinatorID)
       } catch (error) {
@@ -386,12 +402,13 @@ export class MissionControl {
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
     this.assertCoordinator(mission, sessionID)
     if (mission.status !== "active") throw new MissionControlError("The mission is already finished", "mission-finished")
+    const blockedBy = normalizeBlockedBy(input.blockedBy)
     try {
       validateMissionDelegationPolicy({
         template: mission.template,
         role: input.role,
         targetSessionID: input.targetSessionID,
-        actors: mission.actors,
+        blockedBy,
         tasks: mission.tasks,
       })
     } catch (error) {
@@ -403,9 +420,9 @@ export class MissionControl {
       if (input.targetSessionID) await this.ownedRootSession(input.targetSessionID)
       await this.options.validateExecution?.(input, sessionID)
       if (mission.tasks.length >= MISSION_MAX_TASKS) throw new MissionControlError("Mission task limit reached", "task-limit")
-      if (input.blockedBy.includes(input.taskKey)) throw new MissionControlError("A task cannot block itself", "invalid-blocker")
+      if (blockedBy.includes(input.taskKey)) throw new MissionControlError("A task cannot block itself", "invalid-blocker")
       const existingTasks = mission.tasks
-      const unknownBlocker = input.blockedBy.find((key) => !existingTasks.some((candidate) => candidate.key === key))
+      const unknownBlocker = blockedBy.find((key) => !existingTasks.some((candidate) => candidate.key === key))
       if (unknownBlocker) throw new MissionControlError(`Unknown blocker: ${unknownBlocker}`, "invalid-blocker")
       await this.journal.append({
         version: MISSION_SCHEMA_VERSION,
@@ -420,7 +437,7 @@ export class MissionControl {
           brief: input.brief,
           role: input.role,
           ...(input.execution === undefined ? {} : { execution: input.execution }),
-          blockedBy: input.blockedBy,
+          blockedBy,
         },
         createdAt: this.timestamp(snapshot),
       })
@@ -430,7 +447,7 @@ export class MissionControl {
       await this.emitChanged(mission.id, snapshot)
     } else {
       const same = task.title === input.title && task.brief === input.brief && task.role === input.role
-        && equalStrings(task.blockedBy, input.blockedBy)
+        && equalStrings(task.blockedBy, blockedBy)
         && sameExecution(task.execution, input.execution)
       if (!same) throw new MissionControlError("Task key already exists with a different contract", "task-conflict")
     }
@@ -449,7 +466,7 @@ export class MissionControl {
         throw new MissionControlError("Target agent/model differs from the task contract; select another actor instead of switching a busy session", "execution-conflict")
       }
     }
-    const actor = await this.selectActor(snapshot, mission, sessionID, task.role, task.title, input.targetSessionID)
+    const actor = await this.selectActor(snapshot, mission, sessionID, task, input.targetSessionID)
     const admissionID = this.messageID(`assignment\0${mission.id}\0${task.key}`)
     await this.journal.append({
       version: MISSION_SCHEMA_VERSION,
@@ -472,6 +489,39 @@ export class MissionControl {
 
   report(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
     return this.mutate(() => this.reportCurrent(sessionID, input))
+  }
+
+  retryPendingNotifications(isActive: () => boolean = () => true, after?: string): Promise<MissionNotificationRetryResult> {
+    return this.mutate(async () => {
+      if (!isActive()) return { attempted: 0, failed: 0 }
+      const snapshot = await this.snapshot()
+      const pending = snapshot.missions
+        .filter((mission) => mission.status === "active")
+        .flatMap((mission) => mission.reports
+          .filter((report) => report.notificationStatus !== "admitted")
+          .map((report) => ({ missionID: mission.id, report, cursor: `${mission.id}\0${report.id}` })))
+        .sort((left, right) => left.cursor.localeCompare(right.cursor))
+      if (pending.length === 0) return { attempted: 0, failed: 0 }
+      const first = after ? pending.findIndex((item) => item.cursor > after) : 0
+      const start = first < 0 ? 0 : first
+      const batch = Array.from({ length: Math.min(MISSION_NOTIFICATION_BATCH_SIZE, pending.length) }, (_, index) =>
+        pending[(start + index) % pending.length]!)
+      let attempted = 0
+      let failed = 0
+      let cursor: string | undefined
+      for (const item of batch) {
+        if (!isActive()) break
+        cursor = item.cursor
+        attempted += 1
+        try {
+          await this.notifyCoordinator(this.requireMission(await this.snapshot(), item.missionID), item.report, isActive)
+        } catch {
+          // Keep failed durable outbox entries pending; later bounded passes retry them.
+          failed += 1
+        }
+      }
+      return { attempted, failed, cursor }
+    })
   }
 
   private async reportCurrent(sessionID: string, input: MissionReportInput): Promise<{ disposition: "reported" | "finished" | "existing"; mission: MissionMap }> {
@@ -606,8 +656,7 @@ export class MissionControl {
     snapshot: MissionSnapshot,
     mission: MissionMap,
     coordinatorID: string,
-    role: string,
-    taskTitle: string,
+    task: MissionMap["tasks"][number],
     targetSessionID?: string,
   ): Promise<{ sessionID: string; title: string; location: MissionActor["location"]; managed: boolean }> {
     if (targetSessionID === coordinatorID) throw new MissionControlError("The coordinator cannot delegate a task to itself", "invalid-target")
@@ -621,15 +670,15 @@ export class MissionControl {
       if (foreignMission) throw new MissionControlError("Target session already belongs to another active mission", "target-claimed")
       return {
         sessionID: target.id,
-        title: target.title ?? `${role}: ${taskTitle}`,
+        title: target.title ?? `${task.role}: ${task.title}`,
         location: target.location,
         managed: false,
       }
     }
     if (mission.actors.length >= MISSION_MAX_ACTORS) throw new MissionControlError("Mission actor limit reached", "actor-limit")
     return {
-      sessionID: `ses_${stableToken(`${mission.id}\0${role}\0${taskTitle}\0${mission.tasks.length}`, 26)}`,
-      title: `Mission · ${role}: ${taskTitle}`.slice(0, 160),
+      sessionID: `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`,
+      title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),
       location: (await this.ownedRootSession(coordinatorID)).location,
       managed: true,
     }
@@ -658,12 +707,22 @@ export class MissionControl {
     }
   }
 
-  private async notifyCoordinator(mission: MissionMap, report: MissionReport): Promise<void> {
-    const notification = reportInput(mission, report)
+  private async notifyCoordinator(mission: MissionMap, report: MissionReport, isActive: () => boolean = () => true): Promise<void> {
+    if (!isActive()) return
+    const fresh = await this.snapshot()
+    const currentMission = fresh.missions.find((candidate) => candidate.id === mission.id)
+    const currentReport = currentMission?.reports.find((candidate) => candidate.id === report.id)
+    if (!currentMission || currentMission.status !== "active" || !currentReport
+      || currentReport.notificationStatus === "admitted" || !isActive()) return
+    const notification = reportInput(currentMission, currentReport)
     const admissionID = notification.id
-    if (this.options.transport) await this.options.transport.synthetic(mission.coordinatorSessionId, notification)
+    if (this.options.transport) await this.options.transport.synthetic(currentMission.coordinatorSessionId, notification)
     else await this.options.sessions.synthetic(notification)
+    if (!isActive()) return
     const snapshot = await this.snapshot()
+    const afterAdmission = snapshot.missions.find((candidate) => candidate.id === mission.id)
+    if (!afterAdmission || afterAdmission.status !== "active"
+      || afterAdmission.reports.find((candidate) => candidate.id === report.id)?.notificationStatus === "admitted") return
     await this.journal.append({
       version: MISSION_SCHEMA_VERSION,
       id: this.eventID(mission.id, `report-${report.id}-notified`),
@@ -672,7 +731,7 @@ export class MissionControl {
       projectID: mission.projectID,
       reportID: report.id,
       admissionID,
-      createdAt: report.createdAt + 1,
+      createdAt: Math.max(report.createdAt + 1, this.timestamp(snapshot)),
     })
     const updated = await this.snapshot()
     await this.emitChanged(mission.id, updated)
@@ -782,7 +841,28 @@ function equalStrings(left: readonly string[], right: readonly string[]): boolea
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
+function normalizeBlockedBy(blockedBy: readonly string[]): string[] {
+  return [...new Set(blockedBy)]
+}
+
+function normalizeRevisionDependencies(input: MissionReviseInput): MissionReviseInput {
+  return {
+    ...input,
+    addTasks: input.addTasks.map(task => ({ ...task, blockedBy: normalizeBlockedBy(task.blockedBy) })),
+    dependencyUpdates: input.dependencyUpdates.map(update => ({ ...update, blockedBy: normalizeBlockedBy(update.blockedBy) })),
+  }
+}
+
+function normalizeRevisionEventDependencies(event: MissionRevisedEvent): MissionRevisedEvent {
+  return {
+    ...event,
+    addedTasks: event.addedTasks.map(task => ({ ...task, blockedBy: normalizeBlockedBy(task.blockedBy) })),
+    dependencyUpdates: event.dependencyUpdates.map(update => ({ ...update, blockedBy: normalizeBlockedBy(update.blockedBy) })),
+  }
+}
+
 function sameRevisionRequest(event: MissionRevisedEvent, input: MissionReviseInput): boolean {
+  event = normalizeRevisionEventDependencies(event)
   const added = event.addedTasks.map((task) => ({
     taskKey: task.key, title: task.title, brief: task.brief, role: task.role,
     ...(task.execution === undefined ? {} : { execution: task.execution }),

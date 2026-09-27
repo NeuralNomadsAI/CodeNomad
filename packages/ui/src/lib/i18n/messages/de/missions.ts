@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "Bericht gespeichert. Benachrichtigung des Koordinators ausstehend; automatischer erneuter Versuch.",
   "instanceShell.rightPanel.modules.missions": "Missionen",
   "instanceShell.rightPanel.modules.missions.description": "Plan, Ergebnisse und Unterhaltungen Ihrer Missionen verfolgen.",
   "instanceShell.rightPanel.tabs.missions": "Missionen",

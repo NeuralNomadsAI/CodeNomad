@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "Rapor kaydedildi. Koordinatöre bildirim bekliyor; otomatik olarak yeniden deneniyor.",
   "instanceShell.rightPanel.modules.missions": "Görevler",
   "instanceShell.rightPanel.modules.missions.description": "Görevlerinizin planını, sonuçlarını ve konuşmalarını izleyin.",
   "instanceShell.rightPanel.tabs.missions": "Görevler",

@@ -140,6 +140,27 @@ test("edits keep drafts and original revision during refresh, and creation retri
   } catch (error) { console.error(await page.locator("body").innerText()); throw error } finally { await page.close() }
 })
 
+test("a saved report remains visibly pending until native notification admission is acknowledged", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    await setup(page)
+    const value = mission("outbox")
+    value.reports[0].notificationStatus = "pending"
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: {
+      available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
+    } }))
+    await page.goto(url)
+    const pending = page.getByRole("status").filter({ hasText: "Coordinator notification pending" })
+    await pending.waitFor()
+    await page.getByRole("button", { name: "Inspect evidence — Complete", exact: true }).waitFor()
+    value.reports[0].notificationStatus = "admitted"
+    value.revision++
+    await fixtureCall(page, "refresh")
+    await pending.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "Inspect evidence — Complete", exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
 test("dependency navigation reveals the linked task and revised plans retain readable old and new context", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 800 } })
   try {

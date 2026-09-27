@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-import type { MissionActor, MissionJsonValue, MissionReportOutcome, MissionTask, MissionTemplateId } from "./model"
+import type { MissionJsonValue, MissionReportOutcome, MissionTask, MissionTemplateId } from "./model"
 
 const DiagnosisArtifact = z.object({
   kind: z.literal("diagnosis"),
@@ -98,8 +98,8 @@ export function validateMissionDelegationPolicy(input: {
   template: MissionTemplateId
   role: string
   targetSessionID?: string
-  actors: readonly MissionActor[]
-  tasks: readonly Pick<MissionTask, "role" | "status">[]
+  blockedBy?: readonly string[]
+  tasks: readonly Pick<MissionTask, "key" | "role" | "status" | "blockedBy" | "actorSessionId" | "replacedByTaskKey">[]
 }): void {
   if (input.template === "custom") return
   const roles = input.template === "pocock-fix-bug"
@@ -111,15 +111,40 @@ export function validateMissionDelegationPolicy(input: {
     throw new Error(`The Pocock ${input.role} role requires a fresh root session`)
   }
   if (input.role === "resolver") {
-    const implementer = input.actors.find((actor) => actor.roles.includes("implementer"))
-    if (!input.targetSessionID || input.targetSessionID !== implementer?.sessionId) {
-      throw new Error("The Pocock resolver must reuse the implementer root session")
+    const implementerSessionID = resolvePocockImplementerSessionID(input.tasks, input.blockedBy ?? [])
+    if (!implementerSessionID) {
+      throw new Error("The Pocock resolver needs one unambiguous live completed implementer from its review dependencies")
+    }
+    if (!input.targetSessionID || input.targetSessionID !== implementerSessionID) {
+      throw new Error("The Pocock resolver must reuse the live implementer root session")
     }
   }
   const missing = pocockPrerequisites[input.role]?.find((role) => !input.tasks.some((task) => task.role === role && task.status === "completed"))
   if (missing) {
     throw new Error(`The Pocock ${input.role} role requires completed ${missing} evidence`)
   }
+}
+
+export function resolvePocockImplementerSessionID(
+  tasks: readonly Pick<MissionTask, "key" | "role" | "status" | "blockedBy" | "actorSessionId" | "replacedByTaskKey">[],
+  blockedBy: readonly string[],
+): string | undefined {
+  const byKey = new Map(tasks.map(task => [task.key, task]))
+  const ancestors = new Set<string>()
+  const visit = (key: string) => {
+    if (ancestors.has(key)) return
+    ancestors.add(key)
+    const task = byKey.get(key)
+    if (!task) return
+    for (const blocker of task.blockedBy) visit(blocker)
+    if (task.replacedByTaskKey) visit(task.replacedByTaskKey)
+  }
+  for (const key of blockedBy) visit(key)
+
+  const liveImplementers = tasks.filter(task => task.role === "implementer" && task.status === "completed" && task.actorSessionId)
+  const dependencyImplementers = liveImplementers.filter(task => ancestors.has(task.key))
+  const candidates = dependencyImplementers.length > 0 ? dependencyImplementers : liveImplementers
+  return candidates.length === 1 ? candidates[0]?.actorSessionId : undefined
 }
 
 export function validateMissionCompletionPolicy(input: {

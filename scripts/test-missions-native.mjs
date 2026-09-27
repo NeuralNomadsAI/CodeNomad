@@ -209,6 +209,39 @@ try {
   assert(lateReport.mission.reports.some(report => report.taskKey === queued.taskKey && report.late === true))
   assert((await client.session.get({ sessionID: actorID })).id === actorID, "Revision keeps the original actor conversation")
 
+  // A durable report must wake its coordinator after transport recovery, without
+  // another report call or human prompt. Exercise both live recovery and reload.
+  for (const restart of [false, true]) {
+    stage = `report outbox recovery (restart=${restart})`
+    const taskKey = restart ? "outbox-restart" : "outbox-live"
+    const summary = `Recovered report ${taskKey}`
+    await invoke("delegate", { ...task, taskKey, targetSessionID: actorID })
+    await client.session.wait({ sessionID: actorID }, { signal: AbortSignal.timeout(20_000) })
+    await removeBridge(); removeBridge = undefined
+    await assert.rejects(invoke("report", { taskKey, outcome: "completed", summary }, actorID))
+    const pending = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+    assert.equal(pending.tasks.find(task => task.key === taskKey).report.summary, summary)
+    assert.equal(pending.tasks.find(task => task.key === taskKey).report.notificationStatus, "pending")
+    assert(!requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
+    if (restart) {
+      await plugin.stop()
+      await until(async () => { try { await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); return false } catch { return true } })
+    }
+    removeBridge = await publishAutomationBridge(registration)
+    if (restart) { plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths) }
+    await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
+    await until(async () => (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+      .reports.find(report => report.taskKey === taskKey)?.notificationStatus === "admitted")
+    await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
+    const count = requests.filter(request => request.session === coordinator.id).length
+    assert.equal((await invoke("report", { taskKey, outcome: "completed", summary }, actorID)).disposition, "existing")
+    await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
+    assert.equal(requests.filter(request => request.session === coordinator.id).length, count, "Acknowledged report replay does not wake the coordinator again")
+    const transcript = await client.message.list({ sessionID: coordinator.id, limit: { order: "asc", limit: 100 } })
+    assert.equal(transcript.data.filter(message => message.type === "synthetic"
+      && message.metadata?.["codenomad.mission"]?.taskKey === taskKey).length, 1, "One correlated native report survives recovery and replay")
+  }
+
   // Native lifecycle RPC is the same typed capability brokered by the authenticated UI routes.
   stage = "lifecycle CRUD and transcript preservation"
   const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom" }
@@ -250,7 +283,7 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator report resumption, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, revise/late report, lifecycle create/update/delete idempotence and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error

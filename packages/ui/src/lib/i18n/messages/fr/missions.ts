@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "Rapport enregistré. Notification du coordinateur en attente ; nouvelle tentative automatique.",
   "instanceShell.rightPanel.modules.missions": "Missions",
   "instanceShell.rightPanel.modules.missions.description": "Suivez le plan, les résultats et les conversations de vos missions.",
   "instanceShell.rightPanel.tabs.missions": "Missions",

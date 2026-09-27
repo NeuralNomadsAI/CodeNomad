@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "Informe guardado. Notificación al coordinador pendiente; se reintentará automáticamente.",
   "instanceShell.rightPanel.modules.missions": "Misiones",
   "instanceShell.rightPanel.modules.missions.description": "Sigue el plan, los resultados y las conversaciones de tus misiones.",
   "instanceShell.rightPanel.tabs.missions": "Misiones",

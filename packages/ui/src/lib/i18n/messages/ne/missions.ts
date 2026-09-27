@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "प्रतिवेदन सुरक्षित गरियो। संयोजकलाई सूचना पठाउन बाँकी छ; स्वतः पुनः प्रयास गरिँदै छ।",
   "instanceShell.rightPanel.modules.missions": "मिसनहरू",
   "instanceShell.rightPanel.modules.missions.description": "तपाईंका मिसनहरूको योजना, परिणाम र कुराकानीहरू पछ्याउनुहोस्।",
   "instanceShell.rightPanel.tabs.missions": "मिसनहरू",

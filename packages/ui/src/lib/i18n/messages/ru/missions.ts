@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "Отчёт сохранён. Уведомление координатора ожидает отправки; повторная попытка выполняется автоматически.",
   "instanceShell.rightPanel.modules.missions": "Миссии",
   "instanceShell.rightPanel.modules.missions.description": "Следите за планом, результатами и разговорами ваших миссий.",
   "instanceShell.rightPanel.tabs.missions": "Миссии",

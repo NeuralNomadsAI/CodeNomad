@@ -166,6 +166,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
               </Show>
               <MissionOverview mission={selected()} t={props.t} onRead={() => void read({ missionId: selected().id, kind: "overview" })} />
               <button type="button" class="button-secondary" onClick={() => void openActor(selected().coordinatorSessionId)}>{props.t("missions.control.openCoordinator")}</button>
+              <Show when={selected().status === "active" && selected().reports.some(report => report.notificationStatus === "pending")}>
+                <p class="mission-control-stale" role="status">{props.t("missions.control.report.notificationPending")}</p>
+              </Show>
               <MissionAttention mission={selected()} instanceId={props.instanceId} onOpenActor={openActor} />
               <MissionWork
                 mission={selected()}

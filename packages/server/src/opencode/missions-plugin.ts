@@ -16,6 +16,7 @@ import { MISSION_SCHEMA_VERSION, type MissionJsonValue, type MissionTemplateId }
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
+import { MissionNotificationOutbox } from "../missions/notification-outbox"
 
 interface Registration {
   dispose(): Promise<void>
@@ -79,10 +80,13 @@ interface MissionsPluginContext extends MissionCatalogClient {
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport): Promise<() => Promise<void>> {
   let active = true
+  let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
   const assertActive = () => { if (!active) throw new Error("CodeNomad Missions is no longer available") }
   const dispose = async () => {
     active = false
+    notificationOutbox?.dispose()
+    notificationOutbox = undefined
     await Promise.allSettled(registrations.map(registration => registration.dispose()))
   }
   let rpcRegistration: Awaited<ReturnType<MissionsPluginContext["rpc"]["register"]>> | undefined
@@ -183,6 +187,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       }
     })
     registrations.push(contextHook)
+    notificationOutbox = new MissionNotificationOutbox(
+      `${context.location.project.id}\0${context.location.project.canonical}`,
+      (isActive, after) => control.retryPendingNotifications(isActive, after),
+    )
+    notificationOutbox.start()
     return dispose
   } catch (error) {
     await dispose()

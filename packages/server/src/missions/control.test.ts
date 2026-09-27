@@ -14,12 +14,21 @@ import { MissionJournal, parseMissionEvent, type MissionStorage } from "./journa
 
 class MemoryStorage implements MissionStorage {
   readonly values = new Map<string, MissionJsonValue>()
+  failNextEventType?: string
 
   async get(key: string) {
     return this.values.get(key)
   }
 
   async set(key: string, value: MissionJsonValue) {
+    const eventType = value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { readonly [key: string]: MissionJsonValue }).type
+      : undefined
+    if (this.failNextEventType && eventType === this.failNextEventType) {
+      const failedType = this.failNextEventType
+      this.failNextEventType = undefined
+      throw new Error(`failed to persist ${failedType}`)
+    }
     this.values.set(key, structuredClone(value))
   }
 
@@ -39,6 +48,8 @@ class FakeSessions implements MissionSessionAdapter {
   readonly sessions = new Map<string, NativeMissionSession>()
   readonly prompts: Array<Parameters<MissionSessionAdapter["prompt"]>[0]> = []
   readonly synthetics: Array<Parameters<MissionSessionAdapter["synthetic"]>[0]> = []
+  failNextSynthetic = false
+  failSyntheticCount = 0
 
   async get({ sessionID }: { sessionID: string }) {
     const session = this.sessions.get(sessionID)
@@ -67,6 +78,11 @@ class FakeSessions implements MissionSessionAdapter {
 
   async synthetic(input: Parameters<MissionSessionAdapter["synthetic"]>[0]) {
     this.synthetics.push(input)
+    if (this.failNextSynthetic || this.failSyntheticCount > 0) {
+      this.failNextSynthetic = false
+      this.failSyntheticCount = Math.max(0, this.failSyntheticCount - 1)
+      throw new Error("synthetic admission unavailable")
+    }
   }
 }
 
@@ -302,6 +318,179 @@ test("derives blocked frontier tasks without automatically interpreting a workfl
   assert.equal(dispatched.disposition, "dispatched")
 })
 
+test("recovers only pending report notifications after transient failure and restart", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Recover report wakeups", template: "custom" } }, "notification-outbox")
+  const dispatched = await control.delegate("ses_coordinator", {
+    taskKey: "fix", title: "Fix", brief: "Make the change.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  const actor = actorFor(dispatched.mission, "specialist")
+  sessions.failNextSynthetic = true
+  await assert.rejects(control.report(actor, {
+    taskKey: "fix", outcome: "completed", summary: "Fixed.", evidence: [], next: [], final: false,
+  }), /synthetic admission unavailable/)
+  const pending = (await control.snapshot()).missions[0]!
+  assert.equal(pending.reports[0]?.notificationStatus, "pending")
+  assert.equal(pending.tasks[0]?.status, "completed")
+  assert.deepEqual(pending.frontier, [])
+  const originalMessageID = sessions.synthetics[0]?.id
+
+  const restarted = create()
+  assert.equal((await restarted.retryPendingNotifications()).attempted, 1)
+  const admitted = (await restarted.snapshot()).missions[0]!
+  assert.equal(admitted.reports[0]?.notificationStatus, "admitted")
+  assert.equal(sessions.synthetics[1]?.id, originalMessageID)
+  assert.equal((await restarted.retryPendingNotifications()).attempted, 0)
+  assert.equal(sessions.synthetics.length, 2)
+  assert.equal(sessions.prompts.length, 1, "notification recovery must not dispatch or prompt tasks")
+})
+
+test("notification recovery honors lifecycle fences and skips tombstoned missions", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Fence notification recovery", template: "custom" } }, "notification-fences")
+  const dispatched = await control.delegate("ses_coordinator", {
+    taskKey: "task", title: "Task", brief: "Work.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  sessions.failNextSynthetic = true
+  await assert.rejects(control.report(actorFor(dispatched.mission, "specialist"), {
+    taskKey: "task", outcome: "completed", summary: "Done.", evidence: [], next: [], final: false,
+  }), /synthetic admission unavailable/)
+  const before = sessions.synthetics.length
+  assert.equal((await control.retryPendingNotifications(() => false)).attempted, 0)
+  assert.equal(sessions.synthetics.length, before)
+  const mission = (await control.snapshot()).missions[0]!
+  await control.delete({ missionID: mission.id, expectedRevision: mission.revision, requestID: "tombstone-before-notify" })
+  assert.equal((await create().retryPendingNotifications()).attempted, 0)
+  assert.equal(sessions.synthetics.length, before)
+})
+
+test("reuses the deterministic notification ID when admission succeeded but its ack was lost", async () => {
+  const { create, sessions, storage } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Recover an unacknowledged admission", template: "custom" } }, "notification-ack-loss")
+  const dispatched = await control.delegate("ses_coordinator", {
+    taskKey: "task", title: "Task", brief: "Work.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  const actor = actorFor(dispatched.mission, "specialist")
+  storage.failNextEventType = "report.notified"
+  await assert.rejects(control.report(actor, {
+    taskKey: "task", outcome: "completed", summary: "Done.", evidence: [], next: [], final: false,
+  }), /failed to persist report\.notified/)
+  const admittedID = sessions.synthetics[0]?.id
+  assert.equal((await control.snapshot()).missions[0]?.reports[0]?.notificationStatus, "pending")
+  assert.equal((await create().retryPendingNotifications()).attempted, 1)
+  assert.equal(sessions.synthetics[1]?.id, admittedID)
+  assert.equal((await control.snapshot()).missions[0]?.reports[0]?.notificationStatus, "admitted")
+})
+
+test("rotates bounded notification batches so persistent failures cannot starve later reports", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Drain notifications fairly", template: "custom" } }, "notification-fairness")
+  sessions.sessions.set("ses_shared_actor", {
+    id: "ses_shared_actor", projectID: "project-1", title: "Shared actor", location: { directory: "/repo" },
+  })
+  const reports = 12
+  for (let index = 0; index < reports; index += 1) {
+    const taskKey = `report-${String(index).padStart(2, "0")}`
+    await control.delegate("ses_coordinator", {
+      taskKey, title: taskKey, brief: "Complete this task.", role: "specialist", blockedBy: [],
+      targetSessionID: "ses_shared_actor", delivery: "queue",
+    })
+    sessions.failNextSynthetic = true
+    await assert.rejects(control.report("ses_shared_actor", {
+      taskKey, outcome: "completed", summary: "Done.", evidence: [], next: [], final: false,
+    }), /synthetic admission unavailable/)
+  }
+
+  sessions.failSyntheticCount = 10
+  const first = await control.retryPendingNotifications()
+  assert.equal(first.attempted, 10)
+  assert.equal(first.failed, 10)
+  assert.ok(first.cursor)
+  const second = await control.retryPendingNotifications(() => true, first.cursor)
+  assert.equal(second.attempted, 10)
+  assert.equal(second.failed, 0)
+  assert.ok((await control.snapshot()).missions[0]?.reports.filter(report => report.notificationStatus === "admitted").length >= 10)
+  const third = await control.retryPendingNotifications(() => true, second.cursor)
+  assert.equal(third.attempted, 2)
+  assert.equal((await control.snapshot()).missions[0]?.reports.filter(report => report.notificationStatus === "pending").length, 0)
+})
+
+test("assigns distinct stable actors to deferred tasks with identical role and title", async () => {
+  const { create, sessions } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Dispatch both deferred tasks", template: "custom" } }, "deferred-actor-identity")
+  const base = await control.delegate("ses_coordinator", {
+    taskKey: "base", title: "Shared title", brief: "Unblock both tasks.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  const deferredInput = (taskKey: string) => ({
+    taskKey, title: "Same deferred title", brief: "Same deferred contract.", role: "specialist", blockedBy: ["base"], delivery: "queue" as const,
+  })
+  const firstBlocked = await control.delegate("ses_coordinator", deferredInput("deferred-one"))
+  const secondBlocked = await control.delegate("ses_coordinator", deferredInput("deferred-two"))
+  assert.equal(firstBlocked.disposition, "blocked")
+  assert.equal(secondBlocked.disposition, "blocked")
+  await control.report(actorFor(base.mission, "specialist"), {
+    taskKey: "base", outcome: "completed", summary: "Base complete", evidence: [], next: [], final: false,
+  })
+  const first = await control.delegate("ses_coordinator", deferredInput("deferred-one"))
+  const second = await control.delegate("ses_coordinator", deferredInput("deferred-two"))
+  const firstActor = first.mission.tasks.find(task => task.key === "deferred-one")!.actorSessionId!
+  const secondActor = second.mission.tasks.find(task => task.key === "deferred-two")!.actorSessionId!
+  assert.notEqual(firstActor, secondActor)
+  assert.notEqual(first.mission.tasks.find(task => task.key === "deferred-one")!.id,
+    first.mission.tasks.find(task => task.key === "deferred-two")!.id)
+  assert(sessions.sessions.has(firstActor))
+  assert(sessions.sessions.has(secondActor))
+  const retry = await control.delegate("ses_coordinator", deferredInput("deferred-one"))
+  assert.equal(retry.mission.tasks.find(task => task.key === "deferred-one")?.actorSessionId, firstActor)
+})
+
+test("normalizes duplicate dependency keys before persistence and replay comparison", async () => {
+  const { create, storage } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", { start: { objective: "Retry duplicate dependencies", template: "custom" } }, "duplicate-dependency-start")
+  await control.delegate("ses_coordinator", {
+    taskKey: "base", title: "Base", brief: "Unblock the retry.", role: "specialist", blockedBy: [], delivery: "queue",
+  })
+  const duplicated = {
+    taskKey: "child", title: "Child", brief: "Depends on base.", role: "specialist", blockedBy: ["base", "base"], delivery: "queue" as const,
+  }
+  const first = await control.delegate("ses_coordinator", duplicated)
+  assert.equal(first.disposition, "blocked")
+  assert.deepEqual(first.mission.tasks.find(task => task.key === "child")?.blockedBy, ["base"])
+  const retry = await control.delegate("ses_coordinator", duplicated)
+  assert.equal(retry.disposition, "blocked")
+  assert.deepEqual(retry.mission.tasks.find(task => task.key === "child")?.blockedBy, ["base"])
+  const taskEvent = [...storage.values.values()].find((event: any) => event?.type === "task.created" && event.task?.key === "child") as any
+  assert.deepEqual(taskEvent.task.blockedBy, ["base"])
+  const reviseInput = {
+    missionID: first.mission.id, expectedRevision: first.mission.revision, requestID: "duplicate-dependency-revision",
+    reason: "Keep the same dependency", dependencyUpdates: [{ taskKey: "child", blockedBy: ["base", "base"] }],
+    retireTasks: [], addTasks: [],
+  }
+  const revised = await control.revise("ses_coordinator", reviseInput)
+  const revisedEvent = [...storage.values.entries()].find(([, value]) => (value as any)?.type === "mission.revised"
+    && (value as any)?.requestID === reviseInput.requestID)
+  assert.ok(revisedEvent)
+  const legacy = structuredClone(revisedEvent![1]) as any
+  legacy.dependencyUpdates[0].blockedBy = ["base", "base"]
+  storage.values.set(revisedEvent![0], legacy)
+  const reviseReplay = await create().revise("ses_coordinator", reviseInput)
+  assert.equal(reviseReplay.mission.revision, revised.mission.revision)
+  assert.deepEqual(reviseReplay.mission.tasks.find(task => task.key === "child")?.blockedBy, ["base"])
+  const baseActorSessionID = revised.mission.tasks.find(task => task.key === "base")?.actorSessionId!
+  await control.report(baseActorSessionID, {
+    taskKey: "base", outcome: "completed", summary: "Base complete.", evidence: [], next: [], final: false,
+  })
+  const afterUnblock = await control.delegate("ses_coordinator", duplicated)
+  assert.equal(afterUnblock.disposition, "dispatched")
+  assert.equal(afterUnblock.mission.tasks.find(task => task.key === "child")?.status, "queued")
+})
+
 test("revises tasks atomically, preserves lineage, and records late reports without completing withdrawn work", async () => {
   const { create, sessions } = harness()
   const control = create()
@@ -436,7 +625,7 @@ test("keeps task and admission identities idempotent across retries", async () =
   }
   await control.report(actor.sessionId, report)
   await control.report(actor.sessionId, report)
-  assert.equal(sessions.synthetics[0]?.id, sessions.synthetics[1]?.id)
+  assert.equal(sessions.synthetics.length, 1, "an acknowledged notification is not resent on explicit report replay")
   assert.equal((await control.snapshot()).missions[0]?.reports.length, 1)
 })
 
@@ -617,6 +806,78 @@ test("runs the Pocock evidence gates dynamically while reusing the implementer f
   assert.equal(finished.mission.status, "completed")
   assert.equal(finished.mission.tasks.length, 6)
   assert.equal(finished.mission.actors.length, 6)
+})
+
+test("routes Pocock resolver to the live replacement implementer through revise and delegate", async () => {
+  const { create } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", {
+    start: { objective: "Replace a completed fix and resolve its reviews", template: "pocock-fix-bug" },
+  }, "pocock-replaced-implementer")
+  const diagnosis = await control.delegate("ses_coordinator", {
+    taskKey: "diagnose", title: "Diagnose", brief: "Confirm the cause.", role: "diagnostician", blockedBy: [], delivery: "queue",
+  })
+  const diagnostician = actorFor(diagnosis.mission, "diagnostician")
+  await reportCompleted(control, diagnostician, "diagnose", pocockArtifact("diagnostician"))
+  const oldFix = await control.delegate("ses_coordinator", {
+    taskKey: "old-fix", title: "Implement the fix", brief: "First implementation.", role: "implementer", blockedBy: ["diagnose"], delivery: "queue",
+  })
+  const oldImplementer = oldFix.mission.tasks.find(task => task.key === "old-fix")!.actorSessionId!
+  await reportCompleted(control, oldImplementer, "old-fix", pocockArtifact("implementer"))
+
+  const beforeReplace = (await control.snapshot()).missions[0]!
+  const replacement = await control.revise("ses_coordinator", {
+    missionID: beforeReplace.id, expectedRevision: beforeReplace.revision, requestID: "replace-old-fix",
+    reason: "The original fix does not cover the updated contract",
+    retireTasks: [{ taskKey: "old-fix", replacementTaskKey: "new-fix" }],
+    addTasks: [{ taskKey: "new-fix", title: "Implement the revised fix", brief: "Use the expanded contract.",
+      role: "implementer", blockedBy: ["diagnose"], replacesTaskKey: "old-fix" }],
+    dependencyUpdates: [],
+  })
+  const newFixDispatch = await control.delegate("ses_coordinator", {
+    taskKey: "new-fix", title: "Implement the revised fix", brief: "Use the expanded contract.",
+    role: "implementer", blockedBy: ["diagnose"], delivery: "queue",
+  })
+  const newImplementer = newFixDispatch.mission.tasks.find(task => task.key === "new-fix")!.actorSessionId!
+  assert.notEqual(newImplementer, oldImplementer)
+  await reportCompleted(control, newImplementer, "new-fix", pocockArtifact("implementer"))
+
+  const standards = await control.delegate("ses_coordinator", {
+    taskKey: "standards", title: "Standards review", brief: "Review new fix.", role: "review-standards", blockedBy: ["new-fix"], delivery: "queue",
+  })
+  const specification = await control.delegate("ses_coordinator", {
+    taskKey: "specification", title: "Spec review", brief: "Review new fix.", role: "review-spec", blockedBy: ["new-fix"], delivery: "queue",
+  })
+  await reportCompleted(control, actorFor(standards.mission, "review-standards"), "standards", pocockArtifact("review-standards"))
+  await reportCompleted(control, actorFor(specification.mission, "review-spec"), "specification", pocockArtifact("review-spec"))
+
+  const firstResolver = await control.delegate("ses_coordinator", {
+    taskKey: "resolver-first", title: "Resolve reviews", brief: "Address the new reviews.", role: "resolver",
+    blockedBy: ["standards", "specification"], targetSessionID: newImplementer, delivery: "queue",
+  })
+  await reportCompleted(control, newImplementer, "resolver-first", pocockArtifact("resolver"))
+  const beforeResolverReplacement = (await control.snapshot()).missions[0]!
+  const revisedResolver = await control.revise("ses_coordinator", {
+    missionID: beforeResolverReplacement.id, expectedRevision: beforeResolverReplacement.revision,
+    requestID: "replace-resolver", reason: "The review outcomes require one more resolution pass",
+    retireTasks: [{ taskKey: "resolver-first", replacementTaskKey: "resolver-final" }],
+    addTasks: [{ taskKey: "resolver-final", title: "Resolve updated reviews", brief: "Address all review findings.",
+      role: "resolver", blockedBy: ["standards", "specification"], replacesTaskKey: "resolver-first" }],
+    dependencyUpdates: [],
+  })
+  assert.equal(revisedResolver.mission.tasks.find(task => task.key === "resolver-first")?.status, "withdrawn")
+  await assert.rejects(control.delegate("ses_coordinator", {
+    taskKey: "resolver-final", title: "Resolve updated reviews", brief: "Address all review findings.", role: "resolver",
+    blockedBy: ["standards", "specification"], targetSessionID: oldImplementer, delivery: "queue",
+  }), (error: unknown) => error instanceof MissionControlError && error.code === "invalid-role-policy")
+  const finalResolver = await control.delegate("ses_coordinator", {
+    taskKey: "resolver-final", title: "Resolve updated reviews", brief: "Address all review findings.", role: "resolver",
+    blockedBy: ["standards", "specification"], targetSessionID: newImplementer, delivery: "queue",
+  })
+  assert.equal(finalResolver.mission.tasks.find(task => task.key === "resolver-final")?.actorSessionId, newImplementer)
+  assert.equal(actorFor(finalResolver.mission, "resolver"), newImplementer)
+  await reportCompleted(control, newImplementer, "resolver-final", pocockArtifact("resolver"))
+  assert(firstResolver.mission.tasks.some(task => task.key === "resolver-first"))
 })
 
 test("enforces Pocock evidence gates even when the coordinator omits dependency keys", async () => {

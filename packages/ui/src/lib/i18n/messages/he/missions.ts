@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "הדוח נשמר. ההודעה למתאם ממתינה; יתבצע ניסיון נוסף אוטומטית.",
   "instanceShell.rightPanel.modules.missions": "משימות",
   "instanceShell.rightPanel.modules.missions.description": "עקבו אחר התוכנית, התוצאות והשיחות של המשימות שלכם.",
   "instanceShell.rightPanel.tabs.missions": "משימות",

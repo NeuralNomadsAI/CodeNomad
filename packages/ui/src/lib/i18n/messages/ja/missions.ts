@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "レポートを保存しました。コーディネーターへの通知は保留中です。自動的に再試行します。",
   "instanceShell.rightPanel.modules.missions": "ミッション",
   "instanceShell.rightPanel.modules.missions.description": "ミッションの計画、結果、会話を追跡します。",
   "instanceShell.rightPanel.tabs.missions": "ミッション",

@@ -56,27 +56,40 @@ test("requires structured evidence only for completed Pocock roles", () => {
 })
 
 test("fences fresh Pocock reviewers and implementer-session resolution without fixed task keys", () => {
-  const actors = [{
-    sessionId: "ses_fix",
-    kind: "specialist" as const,
-    managed: true,
-    title: "Implementer",
-    roles: ["implementer"],
-    location: { directory: "/repo" },
-    joinedAt: 1,
-  }]
+  const tasks = [
+    { key: "fix", role: "implementer", status: "completed" as const, blockedBy: [], actorSessionId: "ses_fix" },
+    { key: "standards", role: "review-standards", status: "completed" as const, blockedBy: ["fix"] },
+    { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["fix"] },
+  ]
   assert.doesNotThrow(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_fix", actors,
-    tasks: [{ role: "review-standards", status: "completed" }, { role: "review-spec", status: "completed" }],
+    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_fix", blockedBy: ["standards", "spec"], tasks,
   }))
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "resolver", actors,
-    tasks: [{ role: "review-standards", status: "completed" }, { role: "review-spec", status: "completed" }],
-  }), /reuse the implementer/)
+    template: "pocock-fix-bug", role: "resolver", blockedBy: ["standards", "spec"], tasks,
+  }), /reuse the live implementer/)
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "pocock-fix-bug", role: "review-spec", targetSessionID: "ses_fix", actors, tasks: [],
+    template: "pocock-fix-bug", role: "review-spec", targetSessionID: "ses_fix", tasks: [],
   }), /fresh root session/)
   assert.throws(() => validateMissionDelegationPolicy({
-    template: "wayfinder", role: "implementer", actors, tasks: [],
+    template: "wayfinder", role: "implementer", tasks: [],
   }), /not a wayfinder/)
+})
+
+test("selects the implementer connected to Pocock review dependencies and rejects ambiguous lineage", () => {
+  const tasks = [
+    { key: "old-fix", role: "implementer", status: "withdrawn" as const, blockedBy: [], actorSessionId: "ses_old", replacedByTaskKey: "new-fix" },
+    { key: "new-fix", role: "implementer", status: "completed" as const, blockedBy: [], actorSessionId: "ses_new" },
+    { key: "other-fix", role: "implementer", status: "completed" as const, blockedBy: [], actorSessionId: "ses_other" },
+    { key: "standards", role: "review-standards", status: "completed" as const, blockedBy: ["old-fix"] },
+    { key: "spec", role: "review-spec", status: "completed" as const, blockedBy: ["new-fix"] },
+  ]
+  assert.doesNotThrow(() => validateMissionDelegationPolicy({
+    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_new", blockedBy: ["standards", "spec"], tasks,
+  }))
+  assert.throws(() => validateMissionDelegationPolicy({
+    template: "pocock-fix-bug", role: "resolver", targetSessionID: "ses_other", blockedBy: ["standards", "spec"],
+    tasks: tasks.map(task => task.key === "old-fix"
+      ? { key: task.key, role: task.role, status: "completed" as const, blockedBy: [], actorSessionId: task.actorSessionId }
+      : task),
+  }), /unambiguous/)
 })

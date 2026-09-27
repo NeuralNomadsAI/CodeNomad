@@ -30,6 +30,7 @@ const report = {
     next: stringArray,
     artifact: {},
     late: { type: "boolean" },
+    notificationStatus: { type: "string", enum: ["pending", "admitted"] },
     createdAt: { type: "number" },
   },
   required: ["id", "taskKey", "sessionId", "outcome", "summary", "evidence", "next", "createdAt"],

@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.control.report.notificationPending": "报告已保存。协调者通知待发送，将自动重试。",
   "instanceShell.rightPanel.modules.missions": "任务",
   "instanceShell.rightPanel.modules.missions.description": "跟踪任务的计划、结果和会话。",
   "instanceShell.rightPanel.tabs.missions": "任务",

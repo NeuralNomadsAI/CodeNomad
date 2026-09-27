@@ -51,6 +51,7 @@ export interface MissionReport {
   next: string[]
   artifact?: MissionJsonValue
   late?: boolean
+  notificationStatus?: "pending" | "admitted"
   createdAt: number
 }
 
@@ -303,6 +304,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   const tasks = new Map<string, MissionTask>()
   const actors = new Map<string, MissionActor>()
   const reports: MissionReport[] = []
+  const notifiedReportIDs = new Set<string>()
   const history: MissionPlanChange[] = []
   let status: MissionStatus = "active"
   let objective = created.objective
@@ -466,6 +468,10 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       reports.push(event.report)
       continue
     }
+    if (event.type === "report.notified") {
+      notifiedReportIDs.add(event.reportID)
+      continue
+    }
     if (event.type === "mission.finished") status = event.outcome
   }
 
@@ -479,6 +485,14 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 
   const taskList = [...tasks.values()].sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
+  const notificationStatus = (report: MissionReport): MissionReport => ({
+    ...report,
+    notificationStatus: notifiedReportIDs.has(report.id) ? "admitted" : "pending",
+  })
+  for (const task of taskList) {
+    if (task.report) task.report = notificationStatus(task.report)
+    if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
+  }
   return {
     version: MISSION_SCHEMA_VERSION,
     id: created.missionID,
@@ -492,7 +506,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
     tasks: taskList,
-    reports: reports.sort((left, right) => left.createdAt - right.createdAt),
+    reports: reports.sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
     frontier: taskList.filter((task) => task.status === "ready").map((task) => task.key),
     claims: taskList.filter((task) => task.status === "dispatching" || task.status === "queued").map((task) => task.key),
     createdAt: created.createdAt,

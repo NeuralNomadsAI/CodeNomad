@@ -28,6 +28,7 @@
 ## Coding Principles
 
 - Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Mission prompt/report admission uses the authenticated desktop bridge, authoritative typed snapshot, ownership/connection/worktree fences and per-send profile environment. See `dev-docs/MISSIONS.md`; validate with the isolated `scripts/test-missions-native.mjs` fixture.
+- A durable mission report and its coordinator notification are distinct. Recover only unacknowledged report notifications through the existing bridge with stable native message IDs and lifecycle fencing; never turn notification recovery into task dispatch or a workflow engine. An admission acknowledgement is not proof of model consumption or mission completion.
 
 - Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies. See `dev-docs/SESSION_ENVIRONMENT.md`.
 
