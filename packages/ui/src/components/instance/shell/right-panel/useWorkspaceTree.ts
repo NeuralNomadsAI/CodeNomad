@@ -19,6 +19,10 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   const requests = new Map<string, AbortController>()
   let current = directory()
   let dirty = false
+  // Filesystem-invalidation version seen by each loaded directory. Reopening a
+  // directory serves its cached children unless the filesystem changed since
+  // they were read; collapsed subtrees are never re-read on expand.
+  const loadedVersions = new Map<string, number>()
 
   async function load(path: string, force = false) {
     if (!active() || requests.has(path) || (!force && state().directories.has(path))) return
@@ -30,6 +34,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       const entries = await backgroundReads.run(controller.signal,
         () => serverApi.listWorkspaceFiles(instanceId, path, scope, controller.signal), "visible")
       if (controller.signal.aborted || directory() !== scope) return
+      loadedVersions.set(path, filesystemInvalidationVersion(instanceId))
       setState(previous => ({ ...previous, directories: new Map(previous.directories).set(path, entries
         .slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name))) }))
     } catch (error) {
@@ -66,16 +71,17 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       if (opening) expanded.add(path); else expanded.delete(path)
       return { ...previous, expanded }
     })
-    // Cached children display immediately; collapsed directories may have changed
-    // while they were outside visible refresh demand.
-    if (opening) {
+    if (!opening) return
+    // Cache-first expand: reuse loaded children unless the filesystem changed
+    // since they were read. Only the reopened visible subtree revalidates.
+    if (loadedVersions.get(path) !== filesystemInvalidationVersion(instanceId)) {
       void load(path, true)
       for (const row of rows()) {
         if (row.type === "directory" && row.path.startsWith(`${path}/`) && state().expanded.has(row.path)) {
           void load(row.path, true)
         }
       }
-    }
+    } else void load(path)
   }
   function refresh() {
     if (!active()) { dirty = true; return }
@@ -91,13 +97,17 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     cache.set(current, state())
     if (cache.size > 8) cache.delete(cache.keys().next().value!)
     current = value
+    loadedVersions.clear()
     setState(cache.get(value) ?? empty())
     setErrors(new Map())
     dirty = false
   }))
   createEffect(on(() => active() ? directory() : null, value => {
     if (value === null) { cancel(); return }
-    refresh()
+    // Cache-first: a visited directory keeps its rows. Pending invalidations
+    // revalidate through the debounced refresh below.
+    if (!state().directories.has(".")) void load(".", true)
+    else if (dirty) refresh()
   }))
   createEffect(on(() => filesystemInvalidationVersion(instanceId), () => {
     dirty = true

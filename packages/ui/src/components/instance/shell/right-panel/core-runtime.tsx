@@ -66,7 +66,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const tree = useWorkspaceTree(options.instanceId, directory, () => active() && mode() === "workspace")
   const history = useGitHistory(options.instanceId, slug, () => active() && gitAvailable() && mode() === "history")
   const git = useGitChanges({
-    ...options, isActive: () => active() && gitAvailable(), rightPanelTab: () => "git-changes",
+    ...options, isActive: () => active() && gitAvailable() && mode() === "changes", rightPanelTab: () => "git-changes",
     worktreeSlug: slug, closeGitList: () => {}, externalDiff: true,
   })
   const openFile = (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => {
@@ -78,7 +78,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   onCleanup(() => closeFilePreview(options.instanceId))
   return createCoreRightPanelManifest({
     renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} mode={mode()} onModeChange={setMode}
-      worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
+      instanceId={options.instanceId} worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
       branch={worktree()?.branch ?? null} onWorktreeChange={value => {
         setBrowsedWorktree(value)
         closeFilePreview(options.instanceId)

@@ -7,7 +7,12 @@
   color: var(--text-secondary); font-size: var(--font-size-xs);
 }
 .workspace-tree-row > svg { flex-shrink: 0; color: var(--text-muted); }
-.workspace-tree-row > span:not(.workspace-tree-spacer) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-tree-row > span:not(.workspace-tree-spacer):not(.workspace-row-menu) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-tree-label { flex: 1; min-width: 0; }
+.workspace-row-menu { margin-inline-start: auto; flex-shrink: 0; opacity: 0; }
+.workspace-tree-row:hover .workspace-row-menu,
+.workspace-tree-row:focus-within .workspace-row-menu { opacity: 1; }
+.workspace-row-menu-trigger { opacity: inherit; }
 .workspace-tree-row[aria-selected="true"] { background: var(--selection-neutral-strong-bg); color: var(--text-primary); }
 .workspace-tree-row:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
 .workspace-tree-spacer { width: 12px; flex-shrink: 0; }

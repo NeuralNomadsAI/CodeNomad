@@ -14,6 +14,8 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
   let listController: AbortController | undefined
   let detailController: AbortController | undefined
   let pending = false
+  // Invalidations while the history mode is inactive only mark the cached page
+  // stale; the refetch happens lazily on the next visit.
 
   async function refresh(more = false) {
     if (!active()) return
@@ -65,13 +67,19 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     setDetailLoading(false)
   }
   createEffect(on(slug, () => { cancel(); setPage(null); setDetails(null); setSelected(null); setError(null) }))
+  let historyStale = false
   createEffect(on(() => active() ? slug() : null, value => {
     if (value === null) { cancel(); return }
-    void refresh()
+    // Commit history is cache-first: file writes must not refetch it on every
+    // visit. Mutations and explicit refreshes still revalidate.
+    if (!page() || historyStale) { historyStale = false; void refresh() }
     if (selected() && !details()) void select(selected()!)
   }))
   const debounced = createDebouncedRefresh(() => void refresh())
-  createEffect(on(() => filesystemInvalidationVersion(instanceId), () => { if (active()) debounced.trigger() }, { defer: true }))
+  createEffect(on(() => filesystemInvalidationVersion(instanceId), () => {
+    if (active()) debounced.trigger()
+    else historyStale = true
+  }, { defer: true }))
   onCleanup(() => { cancel(); debounced.cancel() })
   return { page, details, selected, loading, detailLoading, error, refresh, select,
     back: () => { detailController?.abort(); setSelected(null); setDetails(null); setError(null); setDetailLoading(false) } }

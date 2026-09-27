@@ -1,5 +1,5 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
-import { ArrowLeft, WrapText } from "lucide-solid"
+import { WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useTheme } from "../lib/theme"
 import { serverApi } from "../lib/api-client"
@@ -63,7 +63,6 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   onCleanup(() => { cancel(); refresh.cancel() })
   return <section class="git-diff-view workspace-file-view" aria-label={t("filesPanel.viewer")}>
     <header class="window-header git-diff-header">
-      <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><ArrowLeft size={16} /></button>
       <div class="git-diff-heading"><strong title={props.target.path}>{props.target.path}</strong>
         <span title={props.target.directory}>{props.target.directory} · {t("filesPanel.readOnly")}</span></div>
       <button class="file-viewer-toolbar-button" disabled={loading()} onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button>
@@ -73,6 +72,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <Show when={content()?.text !== undefined && (!markdown() || source())}>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
+      <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={loading() && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>

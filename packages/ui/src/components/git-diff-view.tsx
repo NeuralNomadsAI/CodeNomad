@@ -1,5 +1,5 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
-import { ArrowLeft, WrapText } from "lucide-solid"
+import { WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { serverApi } from "../lib/api-client"
 import { previewReads } from "../lib/background-read-queue"
@@ -70,7 +70,6 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
 
   return <section class="git-diff-view" aria-label={t("gitPanel.diff")}>
     <header class="window-header git-diff-header">
-      <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><ArrowLeft size={16} /></button>
       <div class="git-diff-heading">
         <strong title={props.target.path}>{props.target.path}</strong>
         <span title={props.target.directory}>{props.target.slug} · {props.target.commit
@@ -79,6 +78,7 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
       </div>
       <DiffToolbar viewMode={view()} contextMode={context()} onViewModeChange={setView} onContextModeChange={setContext} />
       <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
+      <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={loading() && !content()}><div class="p-3 text-secondary">{t("instanceInfo.loading")}</div></Show>

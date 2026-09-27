@@ -491,7 +491,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
     }
     if (previousGitChangesActivationKey === activationKey) return
     previousGitChangesActivationKey = activationKey
-    void passiveRefreshGitStatus()
+    // Cache-first: revisits reuse the status rows. Absence (cleared while the
+    // Changes mode was inactive) or a previous load error revalidates.
+    if (gitStatusEntries() === null || gitStatusError() !== null) void passiveRefreshGitStatus()
   }))
 
   const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))

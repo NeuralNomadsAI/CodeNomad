@@ -10,7 +10,15 @@ The last selected mode and existing diff/wrap preferences use client layout
 storage. Migration merges the old Git and Files tab positions and visibility
 once, retaining access when either entry was previously visible. Each mode
 retains its mounted navigation while switching between them. Tree snapshots are
-scoped to the physical worktree directory; collapsed folders revalidate on open.
+scoped to the physical worktree directory. All three modes are cache-first:
+listings, git status and history serve cached data and revalidate lazily on
+filesystem invalidation, mode activation (when absent or marked stale) or
+explicit refresh. Reopening a folder re-reads its visible subtree only when the
+filesystem changed since it was loaded; collapsed folders are never re-read on
+expand. Workspace rows expose a hover/focus `…` menu (folder: open, terminal,
+copy path; file: open, reveal, copy path). Changes rows carry an explicit
+per-file stage/unstage button and accept drag-and-drop between the staged and
+unstaged sections; single click still opens the preview.
 
 ## Central reader
 
