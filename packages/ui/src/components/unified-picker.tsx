@@ -4,6 +4,7 @@ import type { CommandInfo, SkillInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
+import { serverEvents } from "../lib/server-events"
 import { getRootClient } from "../stores/opencode-client"
 import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
@@ -307,31 +308,52 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     }
   })
 
-  // Skills come from the owning native Location, like the SkillAttachments
-  // window. The list is fetched once per picker opening and filtered locally.
+  // Skills come from the owning native Location. The list is fetched when the
+  // @ menu opens and refreshed on skill/config updates while it stays open,
+  // with concurrent refreshes coalesced and late responses fenced.
   createEffect(() => {
     if (!props.open || mode() !== "mention") return
     const workspaceId = props.workspaceId
     const directory = props.directory ?? ""
     if (!workspaceId || !directory) return
-    let disposed = false
+    let disposed = false, inFlight = false, trailing = false
     setSkills([])
     setSkillsError(false)
     setSkillsLoading(true)
-    void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
-      (response) => {
-        if (disposed) return
-        setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
-        setSkillsLoading(false)
-      },
-      (error) => {
-        if (disposed) return
-        log.error(`[UnifiedPicker] Failed to load skills:`, error)
-        setSkillsError(true)
-        setSkillsLoading(false)
-      },
-    )
-    onCleanup(() => { disposed = true })
+    const load = () => {
+      if (disposed) return
+      if (inFlight) { trailing = true; return }
+      inFlight = true
+      setSkillsLoading(true)
+      void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
+        (response) => {
+          if (disposed) return
+          if (trailing) { inFlight = false; trailing = false; load(); return }
+          setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
+          setSkillsError(false)
+          inFlight = false
+          setSkillsLoading(false)
+        },
+        (error) => {
+          if (disposed) return
+          if (trailing) { inFlight = false; trailing = false; load(); return }
+          log.error(`[UnifiedPicker] Failed to load skills:`, error)
+          setSkillsError(true)
+          inFlight = false
+          setSkillsLoading(false)
+        },
+      )
+    }
+    const unsubscribe = serverEvents.on("instance.event", payload => {
+      if (payload.type !== "instance.event" || payload.instanceId !== workspaceId) return
+      if (["skill.updated", "config.updated"].includes(payload.event.type)) load()
+    })
+    const status = serverEvents.on("instance.eventStatus", payload => {
+      if (payload.type === "instance.eventStatus" && payload.instanceId === workspaceId && payload.status === "connected") load()
+    })
+    const reconnect = serverEvents.onOpen(() => load())
+    onCleanup(() => { disposed = true; unsubscribe(); status(); reconnect() })
+    load()
   })
 
   const filteredSkills = createMemo(() => {

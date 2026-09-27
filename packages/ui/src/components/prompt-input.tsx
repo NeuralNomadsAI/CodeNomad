@@ -23,7 +23,7 @@ import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import { usePromptAside } from "./prompt-input/usePromptAside"
 import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
-import SkillAttachments from "./prompt-input/SkillAttachments"
+import SkillAttachmentBadges from "./prompt-input/SkillAttachmentBadges"
 import {
   initializePromptInputHeight,
   persistPromptInputHeight,
@@ -92,12 +92,10 @@ export default function PromptInput(props: PromptInputProps) {
     sessionId: () => props.sessionId,
     active: () => props.isActive !== false,
   })
-  const [skillsOpen, setSkillsOpen] = createSignal(false)
   // Local utility commands never reach native prompt/command submission.
   const promptCommands = () => [
     { name: "btw", description: t("promptInput.btw.commandDescription") },
-    { name: "skills", description: t("promptInput.skills.select") },
-    ...getCommands(props.instanceId).filter(command => !["btw", "skills"].includes(command.name)),
+    ...getCommands(props.instanceId).filter(command => command.name !== "btw"),
   ]
   initializePromptInputHeight()
   const [, setIsFocused] = createSignal(false)
@@ -532,13 +530,6 @@ export default function PromptInput(props: PromptInputProps) {
     const restoredPayload = restoredQueuedPayload
 
     const isShellMode = mode() === "shell"
-    if (!isShellMode && /^\/skills(?:\s|$)/.test(text)) {
-      setPrompt(draftText.replace(/^\s*\/skills\s*/, ""))
-      setShowPicker(false)
-      setMode("normal")
-      setSkillsOpen(true)
-      return
-    }
     const retainedImageTokens = () => currentAttachments.flatMap(attachment => {
       if (attachment.source.type !== "file") return []
       const placeholder = getAttachmentPlaceholder(attachment.display)
@@ -968,21 +959,7 @@ export default function PromptInput(props: PromptInputProps) {
               open={showPicker()}
               mode={pickerMode()}
               onClose={handlePickerClose}
-              onSelect={(item, action) => {
-                // "/skills" never reaches native submission: selecting it opens
-                // the skill picker directly and drops the "/skills" token.
-                if (item.type === "command" && item.command.name === "skills") {
-                  const currentPrompt = prompt()
-                  const afterSlash = currentPrompt.slice(1)
-                  const firstWhitespaceIndex = afterSlash.search(/\s/)
-                  const tokenEnd = firstWhitespaceIndex === -1 ? currentPrompt.length : firstWhitespaceIndex + 1
-                  setPrompt(currentPrompt.substring(tokenEnd))
-                  handlePickerClose()
-                  setSkillsOpen(true)
-                  return
-                }
-                handlePickerSelect(item, action)
-              }}
+              onSelect={handlePickerSelect}
               onSubmitWithoutSelection={() => {
                 handlePickerClose()
                 void handleSend()
@@ -1080,9 +1057,8 @@ export default function PromptInput(props: PromptInputProps) {
           </div>
         </div>
 
-        <SkillAttachments instanceId={props.instanceId} sessionId={props.sessionId} directory={props.instanceFolder}
-          open={skillsOpen()} onClose={() => setSkillsOpen(false)} returnFocus={() => textareaRef}
-          active={props.isActive !== false} disabled={Boolean(props.disabled) || mode() !== "normal"} />
+        <SkillAttachmentBadges instanceId={props.instanceId} sessionId={props.sessionId}
+          disabled={Boolean(props.disabled) || mode() !== "normal"} />
         <div class="prompt-input-footer">
           <div class="prompt-input-footer-context">{props.footerControls}</div>
           <div class="prompt-input-footer-actions">
