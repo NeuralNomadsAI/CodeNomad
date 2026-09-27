@@ -11,8 +11,10 @@ test("package actions address native target once across rows and retain pending 
   try {
     await page.goto(fixture.url)
     await page.getByRole("button", { name: "Check updates for fixture-plugin@latest" }).first().click()
+    await page.getByRole("menuitem", { name: "Check updates for fixture-plugin@latest" }).click()
     assert.equal(await page.locator("main button").count(), 2)
     await page.getByRole("button", { name: "Update fixture-plugin@latest", exact: true }).first().click()
+    await page.getByRole("menuitem", { name: "Update fixture-plugin@latest", exact: true }).first().click()
     assert.equal(await page.locator("main button:disabled").count(), 2)
     await page.evaluate(() => (window as any).fixture.setActive(false))
     await page.evaluate(() => (window as any).fixture.setActive(true))
@@ -26,6 +28,7 @@ test("package actions address native target once across rows and retain pending 
     ])
     assert.deepEqual(errors, [])
     await page.getByRole("button", { name: "Update fixture-plugin@latest", exact: true }).first().click()
+    await page.getByRole("menuitem", { name: "Update fixture-plugin@latest", exact: true }).first().click()
     await page.evaluate(() => (window as any).fixture.refreshSource())
     await page.evaluate(() => (window as any).fixture.reject())
     await page.getByText("Package operation failed for fixture-plugin@latest. Refresh to reconcile its status.", { exact: true }).waitFor()

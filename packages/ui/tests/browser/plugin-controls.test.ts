@@ -163,6 +163,7 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
     await page.locator(".plugin-control-tooltip").waitFor()
     assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Failed — Package failed before exporting a plugin ID/)
     await row.getByRole("button", { name: `Check updates for ${target}`, exact: true }).click()
+    await page.getByRole("menuitem", { name: `Check updates for ${target}`, exact: true }).click()
     const update = row.getByRole("button", { name: `Update ${target}`, exact: true })
     await update.waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
@@ -171,6 +172,7 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
       await page.screenshot({ path: join(process.env.CODENOMAD_PLUGIN_SCREENSHOTS, "plugins-failed-packages.png"), fullPage: true })
     }
     await update.click()
+    await page.getByRole("menuitem", { name: `Update ${target}`, exact: true }).click()
     await page.locator('[data-plugin-id="recovered.plugin"]').waitFor()
     assert.equal(await row.count(), 0, "successful native loading replaces the package-only row")
     assert.equal(await page.locator(".plugin-control-row").count(), 2)
