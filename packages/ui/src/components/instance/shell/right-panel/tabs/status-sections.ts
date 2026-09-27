@@ -37,4 +37,10 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     tooltipKey: "instanceShell.rightPanel.sections.plugins.tooltip",
     order: 60,
   },
+  {
+    id: "websearch",
+    labelKey: "settings.websearch.title",
+    tooltipKey: "settings.websearch.defaultHint",
+    order: 70,
+  },
 ]
