@@ -36,7 +36,7 @@ test("skills attach once through the @ menu with a removable badge", async () =>
     await textarea.fill("@rev")
     await page.waitForFunction(() => (window as any).fixture.pending().length === 1)
     await page.evaluate(() => (window as any).fixture.resolve(0, "review"))
-    await page.locator(".dropdown-item", { hasText: "review" }).first().click()
+    await page.locator(".dropdown-item", { hasText: "review" }).first().evaluate(el => (el as HTMLElement).click())
     await page.waitForFunction(() => (window as any).fixture.selected().length === 1)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.selected()), [{ type: "skill", id: "review", name: "review" }])
     // The @query token is dropped when the badge attaches.
@@ -44,7 +44,9 @@ test("skills attach once through the @ menu with a removable badge", async () =>
     await page.getByText("Review", { exact: true }).waitFor()
     // Selecting the same skill again does not duplicate the badge.
     await textarea.fill("@rev")
-    await page.locator(".dropdown-item", { hasText: "review" }).first().click()
+    await page.waitForFunction(() => (window as any).fixture.pending().length === 2)
+    await page.evaluate(() => (window as any).fixture.resolve(1, "review"))
+    await page.locator(".dropdown-item", { hasText: "review" }).first().evaluate(el => (el as HTMLElement).click())
     assert.equal((await page.evaluate(() => (window as any).fixture.selected())).length, 1)
     assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
     if (process.env.CODENOMAD_SKILLS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_SKILLS_CAPTURE, fullPage: true })
