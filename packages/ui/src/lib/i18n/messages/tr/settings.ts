@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "OpenCode kuruluyor…",
+  "settings.opencode.setup.elapsed": "Geçen süre: {elapsed}",
+  "settings.opencode.setup.keepOpen": "İndirme ve kurulum birkaç dakika sürebilir. Kurulum tamamlanana kadar CodeNomad’i açık tutun.",
   "settings.opencode.setup.installation_busy": "Başka bir kurulum OpenCode kurulum kilidini tutuyor. Bittiğinde yeniden deneyin. Kesintiye uğradıysa kilidin konumu için sunucu günlüğüne bakın.",
   "settings.opencode.setup.installation_in_use": "OpenCode yürütülebilir dosyası kullanımda veya yazılabilir değil. Kurulum değiştirilmeden güncelleme ertelendi. Dosya kullanılabilir olduğunda yeniden deneyin.",
   "settings.opencode.setup.source.path": "Yürütülebilir dosya sunucunun PATH değişkeninde bulundu.",
