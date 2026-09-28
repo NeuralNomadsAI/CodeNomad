@@ -7,6 +7,7 @@ import { matchesExecution } from "../../missions/execution"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { syncSessionGitContext } from "../../workspaces/session-git-context"
 
 const inputSchema = z.object({
   kind: z.enum(["prompt", "synthetic"]),
@@ -85,6 +86,13 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     signal.throwIfAborted()
     connection.assertCurrent()
     await client.session.environment({ sessionID: target.id, variables }, { signal })
+    signal.throwIfAborted()
+    connection.assertCurrent()
+    try {
+      await syncSessionGitContext(client, target.id, signal)
+    } catch {
+      // Git context is advisory; never expose SDK bodies or block on its failure.
+    }
     signal.throwIfAborted()
     connection.assertCurrent()
     if (kind === "prompt") await client.session.prompt(input, { signal })

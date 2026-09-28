@@ -23,9 +23,15 @@ function fixture() {
   const state = { current: true, owned: true, variables: { TEMP: "first" }, failEnvironment: false,
     preparing: () => {}, onEnvironment: () => {} }
   const calls: Array<{ kind: string; input: any }> = []
+  const gitContext: Array<{ kind: string; input: any }> = []
+  const gitState = { onWrite: () => {} }
   const client = {
     rpc: () => ({ snapshot: async () => ({ projectID: "project", missions: [mission] }) }),
     session: {
+      instructions: { entry: {
+        put: async (input: unknown) => { gitContext.push({ kind: "put", input }); gitState.onWrite() },
+        remove: async (input: unknown) => { gitContext.push({ kind: "remove", input }); gitState.onWrite() },
+      } },
       get: async ({ sessionID }: { sessionID: keyof typeof sessions }) => structuredClone(sessions[sessionID]),
       environment: async (input: unknown) => {
         calls.push({ kind: "environment", input })
@@ -48,7 +54,7 @@ function fixture() {
   const command = { kind: "prompt" as const, input: assignmentInput(mission, mission.tasks[0]) }
   const send = (input: unknown = command, signal = new AbortController().signal) =>
     admitMissionInput(manager as never, fence, "ses_coordinator", input, signal)
-  return { mission, sessions, state, calls, manager, fence, command, send }
+  return { mission, sessions, state, calls, manager, fence, command, send, gitContext, gitState }
 }
 
 test("mission inputs refresh profile environment on every admission, including synthetic reports", async () => {
@@ -64,6 +70,51 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[0].input.variables.TEMP, "first")
   assert.equal(f.calls[2].input.variables.TEMP, "changed")
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
+})
+
+test("mission assignments and reports refresh degraded Git context and clear it on recovery", async () => {
+  const f = fixture()
+  const originalPath = process.env.PATH
+  try {
+    process.env.PATH = ""
+    await f.send()
+    assert.equal(f.gitContext[0].kind, "put")
+    assert.equal(f.gitContext[0].input.sessionID, "ses_actor")
+    assert.equal(f.gitContext[0].input.key, "codenomad.git-availability")
+    assert.equal(f.gitContext[0].input.value.gitAvailable, false)
+    f.mission.tasks[0].report = { id: "rpt_git", sessionId: "ses_actor", taskKey: "review", outcome: "completed",
+      summary: "Done", evidence: [], next: [], createdAt: 1 }
+    await f.send({ kind: "synthetic", input: reportInput(f.mission, f.mission.tasks[0].report) })
+    assert.equal(f.gitContext[1].kind, "put")
+    assert.equal(f.gitContext[1].input.sessionID, "ses_coordinator")
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+  }
+  await f.send()
+  assert.equal(f.gitContext[2].kind, "remove")
+  assert.deepEqual(f.gitContext[2].input, { sessionID: "ses_actor", key: "codenomad.git-availability" })
+})
+
+test("Git context failures stay advisory while cancellation and retirement still fence mission sends", async () => {
+  for (const mode of ["advisory", "abort", "stale"] as const) {
+    const f = fixture()
+    const abort = new AbortController()
+    f.gitState.onWrite = () => {
+      if (mode === "abort") abort.abort()
+      if (mode === "stale") f.state.current = false
+      throw new Error("SECRET instruction failure")
+    }
+    if (mode === "advisory") {
+      await f.send(f.command, abort.signal)
+      assert.deepEqual(f.calls.map(call => call.kind), ["environment", "prompt"])
+    } else {
+      await assert.rejects(f.send(f.command, abort.signal))
+      assert.deepEqual(f.calls.map(call => call.kind), ["environment"])
+    }
+    assert.equal(f.gitContext.length, 1)
+    await f.fence.run("repo", ["/repo"], async () => {})
+  }
 })
 
 test("the authenticated bridge admits maximum contracts after XML and JSON escaping", async () => {
