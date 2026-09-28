@@ -1,6 +1,6 @@
 # CodeNomad Server
 
-**CodeNomad Server** is the high-performance engine behind the CodeNomad cockpit. It transforms your machine into a robust development host, managing the lifecycle of multiple OpenCode instances and providing the low-latency data streams that long-haul builders demand. It bridges your local filesystem with the UI, ensuring that whether you are on localhost or a remote tunnel, you have the speed, clarity, and control of a native workspace.
+**CodeNomad Server** connects the desktop and browser UI to your projects and one shared OpenCode V2 background service. It provides workspace access, Git operations, authentication, and live event delivery. OpenCode owns the sessions, messages, and agent execution; closing CodeNomad leaves the shared OpenCode service running.
 
 ## Features & Capabilities
 
@@ -13,18 +13,18 @@
 
 ### ⚡️ Workspace Power
 
-- **Multi-Instance**: Juggle multiple OpenCode sessions side-by-side with per-instance tabs.
-- **Long-Context Native**: Scroll through massive transcripts without hitches.
+- **Multiple projects**: Work across project tabs and sessions over the same OpenCode service.
+- **Long conversations**: Bounded transcript loading, full-history search, and timeline navigation.
 - **Deep Task Awareness**: Monitor background tasks and child sessions without losing your flow.
 - **Command Palette**: A single, global palette to jump tabs, launch tools, and fire shortcuts.
 
 ## Prerequisites
 
 - **Git**: A prerequisite in the backend process's `PATH` for repository identity, Git operations and worktree management. Without Git, directory-only conversations in the explicitly opened physical folder remain available so the user can ask the agent for installation help. Owned session prompts/custom commands update the native `codenomad.git-availability` instruction; it reports the backend platform and is removed when Git becomes available. Git/worktree operations still fail explicitly with `503`/`git_required`. Install from https://git-scm.com/downloads and restart the backend after changing `PATH`. A Windows per-user installation is sufficient; Git inside WSL alone is insufficient for a Windows backend.
-- **OpenCode V2**: Install a compatible `opencode2` CLI. CodeNomad uses the CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to OpenCode's externally owned global daemon, then validates its authenticated loopback `/api/status` response rather than enforcing an exact CLI version string.
+- **OpenCode V2**: For CodeNomad 0.20.0, install `opencode` **2.0.7 or later**, with **2.0.16 recommended and qualified**. The npm package is `@opencode/cli`; see the [V2 installation guide](https://opencode.ai/v2/docs/). CodeNomad prefers the CLI on `PATH` and also supports an explicitly selected executable. It uses the official service lifecycle and validates authenticated daemon metadata and API compatibility. V1 and former V2 beta runtimes are unsupported; custom/prerelease versions are unverified and still undergo contract validation. See [`runtime-support.ts`](src/opencode/runtime-support.ts) for the current requirements.
 - **OpenCode data**: The global daemon owns its platform-default storage, database, and service registration. Configured startup environment applies only when CodeNomad starts a missing daemon; an existing daemon is unchanged.
 - **Windows to WSL**: A configured WSL UNC binary uses Linux `service status`, `service start`, and `service get password`; Windows must have WSL localhost forwarding enabled to reach its loopback service.
-- Node.js 18+ and npm (for running or building from source).
+- **Node.js and npm**: Use Node.js 24 LTS for the standalone server; source and release builds use [`.node-version`](../../.node-version) (currently 24.20.0). Desktop distributions bundle Node/npm.
 - A workspace folder on disk you want to serve.
 - Optional: a Chromium-based browser if you want `--launch` to open the UI automatically.
 
@@ -225,7 +225,7 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 - **OpenCode V2 sessions, messages, and service registration**: OpenCode's platform-default global locations.
 - **Desktop restore state**: `~/.codenomad/client-state/v2/`
 
-CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Configured allowed `server.environmentVariables` and the current `NODE_EXTRA_CA_CERTS` apply only when CodeNomad starts a missing daemon. Existing daemons are unchanged; legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
+CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Allowed profile environment variables and the current `NODE_EXTRA_CA_CERTS` are passed when starting a missing daemon; connecting to an existing daemon does not change its process environment. Separately, CodeNomad applies the profile's complete execution-host environment to the native session before each prompt, custom command, or session shell request, including removal of previously configured values. Legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. See [Session Environment](../../dev-docs/SESSION_ENVIRONMENT.md). WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
 
 Explicit **Stop Workspace** evicts that location and its resources from the global service without stopping the daemon. Closing a UI tab or native window only detaches local state and never evicts. Backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service.
 
