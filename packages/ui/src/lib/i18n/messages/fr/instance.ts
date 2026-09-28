@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "Échec de l'enregistrement du fichier",
   "instanceShell.rightPanel.sections.yoloMode": "Mode yolo",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "Approuve automatiquement les demandes d'autorisation pour la session actuelle. A utiliser seulement si vous faites confiance aux outils executes.",
-  "instanceShell.rightPanel.sections.plan": "Plan",
-  "instanceShell.rightPanel.sections.plan.tooltip": "Feuille de route de l'agent pour cette session. Suit les tâches et leur statut d'achèvement.",
+  "instanceShell.rightPanel.sections.tokens": "Tokens",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "Utilisation des tokens et coût de la session et de ses sous-sessions.",
   "instanceShell.rightPanel.sections.backgroundProcesses": "Shells en arrière-plan",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "Shells d'arrière-plan OpenCode natifs pour l'espace de travail ou le worktree actif.",
   "instanceShell.backgroundProcesses.loading": "Chargement des shells en arrière-plan...",
@@ -220,8 +220,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.force": "Forcer la suppression (jeter les modifications locales)",
   "instanceShell.worktree.delete.success": "Worktree {slug} supprimé",
 
-  "instanceShell.plan.noSessionSelected": "Sélectionnez une session pour voir le plan.",
-  "instanceShell.plan.empty": "Aucun plan pour l'instant.",
 
   "instanceShell.yoloMode.noSessionSelected": "Selectionnez une session pour configurer le mode yolo.",
   "instanceShell.yoloMode.title": "Mode yolo",
@@ -265,7 +263,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "Ajouter",
   "opencodeBinarySelector.actions.browse": "Parcourir le binaire…",
   "opencodeBinarySelector.actions.removeTitle": "Supprimer le binaire",
-  "opencodeBinarySelector.badge.systemPath": "Utiliser le binaire depuis le PATH système",
+  "opencodeBinarySelector.badge.systemPath": "PATH prioritaire, puis installation npm de l’utilisateur",
   "opencodeBinarySelector.status.checkingVersions": "Vérification des versions…",
   "opencodeBinarySelector.status.checking": "Vérification…",
   "opencodeBinarySelector.dialog.title": "Sélectionner le binaire OpenCode",
@@ -273,6 +271,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "Binaire OpenCode invalide",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad nécessite OpenCode V2. Installez et sélectionnez le binaire opencode2.",
   "opencodeBinarySelector.validation.alreadyValidating": "Validation déjà en cours",
-  "opencodeBinarySelector.display.systemPath": "{name} (PATH système)",
+  "opencodeBinarySelector.display.systemPath": "{name} (automatique)",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

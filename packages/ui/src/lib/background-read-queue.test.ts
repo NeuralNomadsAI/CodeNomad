@@ -2,6 +2,24 @@ import assert from "node:assert/strict"
 import { it } from "node:test"
 import { BackgroundReadQueue } from "./background-read-queue"
 
+it("admits visible panels ahead of bulk scans without exceeding the shared budget", async () => {
+  const queue = new BackgroundReadQueue(1), signal = new AbortController().signal
+  let release!: () => void
+  const blocker = queue.run(signal, () => new Promise<void>(resolve => { release = resolve }))
+  const started: string[] = []
+  const bulk = queue.run(signal, async () => { started.push("bulk") })
+  const cancelled = new AbortController()
+  const obsolete = queue.run(cancelled.signal, async () => { started.push("obsolete") }, "visible")
+  const rejection = assert.rejects(obsolete, /Abort/)
+  cancelled.abort()
+  const visible = queue.run(signal, async () => { started.push("visible") }, "visible")
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(started, [])
+  release()
+  await Promise.all([blocker, bulk, visible, rejection])
+  assert.deepEqual(started, ["visible", "bulk"])
+})
+
 it("shares the background budget across scans and cancels queued work before dispatch", async () => {
   const queue = new BackgroundReadQueue(2)
   const releases: Array<() => void> = []

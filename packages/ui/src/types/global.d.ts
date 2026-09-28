@@ -52,7 +52,7 @@ declare global {
       path?: string
       editor?: "vscode" | "cursor" | "zed" | "vscodium"
     }) => Promise<{ ok: true }>
-    setWorkspaceMenuEnabled?: (enabled: boolean) => Promise<{ ok: true }>
+    setWorkspaceMenuEnabled?: (enabled: boolean, viewState?: import("../lib/native/view-menu").ViewMenuState) => Promise<{ ok: true }>
     newWindow?: () => Promise<{ ok: true }>
     nextPendingFolder?: () => Promise<string | null>
     acknowledgePendingFolder?: (folder: string, opened: boolean) => Promise<{ ok: true }>

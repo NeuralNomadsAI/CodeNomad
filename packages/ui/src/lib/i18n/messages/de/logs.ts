@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "Nach oben scrollen",
   "infoView.logs.scrollToBottom": "Nach unten scrollen",
 
-  "infoView.dispose.actions.dispose": "Instanz verwerfen",
-  "infoView.dispose.actions.disposing": "Wird verworfen...",
-  "infoView.dispose.confirm.title": "Instanz verwerfen?",
-  "infoView.dispose.confirm.message": "Dies löscht den zwischengespeicherten pro-Projekt-Status für dieses Verzeichnis und lädt die Instanz neu.",
-  "infoView.dispose.confirm.confirmLabel": "Verwerfen",
-  "infoView.dispose.confirm.cancelLabel": "Abbrechen",
-  "infoView.dispose.toast.success": "Instanz verworfen. Wird neu geladen...",
-  "infoView.dispose.toast.error": "Instanz konnte nicht verworfen werden.",
 } as const

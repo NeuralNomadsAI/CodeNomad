@@ -22,12 +22,4 @@ export const logMessages = {
   "infoView.logs.scrollToTop": "Desplazarse al inicio",
   "infoView.logs.scrollToBottom": "Desplazarse al final",
 
-  "infoView.dispose.actions.dispose": "Desechar instancia",
-  "infoView.dispose.actions.disposing": "Desechando...",
-  "infoView.dispose.confirm.title": "¿Desechar instancia?",
-  "infoView.dispose.confirm.message": "Esto borra el estado en caché por proyecto para este directorio y recarga la instancia.",
-  "infoView.dispose.confirm.confirmLabel": "Desechar",
-  "infoView.dispose.confirm.cancelLabel": "Cancelar",
-  "infoView.dispose.toast.success": "Instancia desechada. Recargando...",
-  "infoView.dispose.toast.error": "No se pudo desechar la instancia.",
 } as const

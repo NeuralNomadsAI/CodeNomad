@@ -1,6 +1,9 @@
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec"
 import type { RestorableAttachment } from "./client-state-attachments-codec"
+import { canonicalJson, sha256 } from "./client-state-partition-json"
+export { canonicalJson, sha256 } from "./client-state-partition-json"
+import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
@@ -22,6 +25,7 @@ export interface ClientSnapshotV2 {
   layout: Record<string, string>
   sessionPartition: string
   partitionKeys: string[]
+  extensions?: ["outline-index-v1"]
 }
 
 export interface EncodedClientSnapshotV2 {
@@ -37,6 +41,7 @@ interface SessionDocument {
   scrollSnapshot?: RestorableWorkspaceTabState["scrollSnapshots"][string]
   unseenIdleSince?: number
   generationRecovery?: RestorableWorkspaceTabState["generationRecovery"][string]
+  outline?: object
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -58,29 +63,12 @@ function hasExactKeys(value: Record<string, unknown>, required: readonly string[
   return required.every((key) => hasOwn(value, key)) && Object.keys(value).every((key) => allowed.has(key))
 }
 
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson)
-  if (!isRecord(value)) return value
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortJson(value[key])]))
-}
-
-export function canonicalJson(value: unknown): string {
-  const serialized = JSON.stringify(sortJson(value))
-  if (serialized === undefined) throw new TypeError("Client state partition must be JSON-serializable")
-  return serialized
-}
-
 function canonicalEquals(left: unknown, right: unknown): boolean {
   try {
     return canonicalJson(left) === canonicalJson(right)
   } catch {
     return false
   }
-}
-
-export async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value))
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -144,6 +132,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         ...Object.keys(tab.scrollSnapshots),
         ...Object.keys(tab.unseenIdleSince),
         ...Object.keys(tab.generationRecovery),
+        ...Object.keys(tab.outlineIndexes ?? {}),
       ])
       const sessions: Record<string, { documentPartition: string; partitionKeys: string[] }> = Object.create(null)
       for (const sessionId of [...sessionIds].sort()) {
@@ -155,6 +144,9 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         if (hasOwn(tab.scrollSnapshots, sessionId)) document.scrollSnapshot = tab.scrollSnapshots[sessionId]
         if (hasOwn(tab.unseenIdleSince, sessionId)) document.unseenIdleSince = tab.unseenIdleSince[sessionId]
         if (hasOwn(tab.generationRecovery, sessionId)) document.generationRecovery = tab.generationRecovery[sessionId]
+        const outline = tab.outlineIndexes?.[sessionId]
+        const index = outline ? await encodeOutlinePartitions(outline) : undefined
+        if (index) { document.outline = index.descriptor; Object.assign(generated, index.partitions) }
         const documentPartition = await addPartition(document)
         const attachmentPartitions = (document.attachments ?? []).flatMap((attachment) => {
           if (!isRecord(attachment) || !isRecord(attachment.source)) return []
@@ -163,7 +155,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         })
         sessions[sessionId] = {
           documentPartition,
-          partitionKeys: [...new Set([documentPartition, ...attachmentPartitions])].sort(),
+          partitionKeys: [...new Set([documentPartition, ...attachmentPartitions, ...Object.keys(index?.partitions ?? {})])].sort(),
         }
       }
 
@@ -203,6 +195,8 @@ export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promis
       layout: snapshot.layout,
       sessionPartition: graph.sessionPartition,
       partitionKeys: graph.partitionKeys,
+      ...(snapshot.session?.tabs.some(tab => tab.kind === "workspace" && Object.keys(tab.outlineIndexes ?? {}).length)
+        ? { extensions: ["outline-index-v1"] as ["outline-index-v1"] } : {}),
     },
     partitions: graph.partitions,
     partitionKeys: graph.partitionKeys,
@@ -231,7 +225,8 @@ function decodeRoot(value: unknown): { root: ClientSnapshotV1; partitionKey: str
     || !PARTITION_KEY.test(value.sessionPartition)
     || !isPartitionKeyArray(value.partitionKeys)
     || !value.partitionKeys.includes(value.sessionPartition)
-    || Object.keys(value).sort().join("\0") !== ROOT_KEYS.join("\0")) return null
+    || Object.keys(value).sort().join("\0") !== [...ROOT_KEYS, ...(value.extensions === undefined ? [] : ["extensions"])].sort().join("\0")
+    || (value.extensions !== undefined && !canonicalEquals(value.extensions, ["outline-index-v1"]))) return null
   let serialized: string
   try {
     serialized = JSON.stringify(value)
@@ -247,6 +242,7 @@ function decodeRoot(value: unknown): { root: ClientSnapshotV1; partitionKey: str
     layout: root.layout,
     sessionPartition: value.sessionPartition,
     partitionKeys: value.partitionKeys,
+    ...(value.extensions === undefined ? {} : { extensions: value.extensions }),
   })) return null
   return { root, partitionKey: value.sessionPartition, partitionKeys: value.partitionKeys }
 }
@@ -419,7 +415,7 @@ async function decodeGraph(
       const referenced = new Set([documentKey])
       const validDocument = document && (document.format === 1 || document.format === 2)
         && hasExactKeys(document, ["format"],
-          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery"])
+          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery", "outline"])
         && Object.keys(document).length > 1
       if (!validDocument) {
         degraded = true
@@ -429,6 +425,9 @@ async function decodeGraph(
       const decodedAttachments = !hasOwn(document, "attachments") ? undefined : document.format === 1
         ? document.attachments
         : await decodeAttachments(document.attachments, allowed, referenced)
+      const outline = document.outline === undefined ? undefined
+        : await decodeOutlinePartitions(document.outline, allowed, referenced, loadCanonical)
+      if (document.outline !== undefined && !outline) degraded = true
       if ((hasOwn(document, "attachments") && decodedAttachments === null)
         || !sameKeys(referenced, partitionKeys)) {
         degraded = true
@@ -450,6 +449,7 @@ async function decodeGraph(
         if (hasOwn(document, documentField)) (leaf[stateField] as Record<string, unknown>)[sessionId] = document[documentField]
       }
       if (decodedAttachments !== undefined) leaf.attachments[sessionId] = decodedAttachments as RestorableAttachment[]
+      if (outline) leaf.outlineIndexes = { [sessionId]: outline }
       const normalizedLeaf = normalizeRestorableSession({ tabs: [leaf], activeTabIndex: 0 })?.tabs[0]
       if (!normalizedLeaf || !canonicalEquals(leaf, normalizedLeaf)) {
         degraded = true
@@ -463,6 +463,10 @@ async function decodeGraph(
       }
       if (hasOwn(leaf.attachments, sessionId)) {
         (tab.attachments as Record<string, unknown>)[sessionId] = leaf.attachments[sessionId]
+      }
+      if (outline) {
+        tab.outlineIndexes ??= Object.create(null)
+        ;(tab.outlineIndexes as Record<string, unknown>)[sessionId] = outline
       }
     }
     if (dropped.has(String(tab.activeSessionId))) delete tab.activeSessionId

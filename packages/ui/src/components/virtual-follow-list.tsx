@@ -165,6 +165,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let windowShiftGeneration = 0
   let virtualContentResizeObserver: ResizeObserver | null = null
   let observedVirtualContent: HTMLElement | null = null
+  let nativeScrollbarDragging = false
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -222,6 +223,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   })
 
   function markUserScrollIntent(direction: "up" | "down" | null) {
+    programmaticScrollUntil = 0
     props.onScrollIntent?.(direction)
     cancelActiveScrollRestore()
     scrollController.setUserIntent(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS)
@@ -239,6 +241,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       element.dispatchEvent(new Event("scroll"))
       virtuaHandle()?.scrollBy(0)
     }
+    // At a clamped edge a wheel/key produces no scroll event. The gesture
+    // itself must be able to request the next historical window.
+    if (direction) updateScrollStateFromDom()
   }
 
   function markProgrammaticScroll() {
@@ -364,18 +369,25 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     setShowScrollTopButton(hasItems && !atTop)
 
     const now = performance.now()
+    if (nativeScrollbarDragging) {
+      const previous = scrollController.snapshot()
+      scrollController.setUserIntent(offset < previous.lastObservedOffset ? "up" : offset > previous.lastObservedOffset ? "down" : previous.userIntentDirection, now + USER_SCROLL_INTENT_WINDOW_MS)
+    }
     const programmatic = hasProgrammaticScrollIntent()
-    const result = scrollController.observeViewport(metrics, now, programmatic)
+    const observed = scrollController.observeViewport(metrics, now, programmatic)
+    const result = nativeScrollbarDragging ? scrollController.setFollow(false) : observed
     const restoring = result.state.restoring
     const intent = result.state.userIntentDirection
     const hasFreshIntent = now <= result.state.userIntentUntil
-    if (shouldNavigateAtBoundary({ atBoundary: atTop, restoring, programmatic, hasFreshIntent, intent, direction: "up" })) {
+    // A boundary callback may synchronously start a historical load and escape
+    // follow mode. Publish this observation before handing it that authority.
+    syncControllerResult(result)
+    if (!nativeScrollbarDragging && shouldNavigateAtBoundary({ atBoundary: atTop, restoring, programmatic, hasFreshIntent, intent, direction: "up" })) {
       props.onUserReachedTop?.()
     }
-    if (shouldNavigateAtBoundary({ atBoundary: atBottom, restoring, programmatic, hasFreshIntent, intent, direction: "down" })) {
+    if (!nativeScrollbarDragging && shouldNavigateAtBoundary({ atBoundary: atBottom, restoring, programmatic, hasFreshIntent, intent, direction: "down" })) {
       props.onUserReachedBottom?.()
     }
-    syncControllerResult(result)
   }
 
   function handleScroll() {
@@ -774,6 +786,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       if (event.button === 0) lastPrimaryPointerY = event.clientY
       if (event.target !== element) return
+      const rect = element.getBoundingClientRect()
+      const scale = rect.width / element.offsetWidth
+      const contentLeft = rect.left + element.clientLeft * scale
+      const contentRight = contentLeft + element.clientWidth * scale
+      const overlayEdge = element.offsetWidth === element.clientWidth && (
+        getComputedStyle(element).direction === "rtl" ? event.clientX < rect.left + 12 * scale : event.clientX >= rect.right - 12 * scale
+      )
+      if (event.button === 0 && element.scrollHeight > element.clientHeight
+        && (event.clientX < contentLeft || event.clientX >= contentRight || overlayEdge)) {
+        nativeScrollbarDragging = true
+        dispatchFollowEvent({ type: "set-follow", enabled: false })
+      }
       markUserScrollIntent(null)
     }
     const handlePointerMove = (event: PointerEvent) => {
@@ -785,7 +809,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if ((event.buttons & 1) === 0) lastPrimaryPointerY = null
     }
     const handlePointerEnd = () => {
+      const wasDragging = nativeScrollbarDragging
+      nativeScrollbarDragging = false
       lastPrimaryPointerY = null
+      if (wasDragging) {
+        programmaticScrollUntil = 0
+        updateScrollStateFromDom()
+      }
     }
     let lastTouchY: number | null = null
     const handleTouchStart = (event: TouchEvent) => {
@@ -838,6 +868,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     element.addEventListener("pointermove", handlePointerMove)
     element.addEventListener("pointerup", handlePointerEnd)
     element.addEventListener("pointercancel", handlePointerEnd)
+    window.addEventListener("pointerup", handlePointerEnd)
+    window.addEventListener("mouseup", handlePointerEnd)
+    window.addEventListener("blur", handlePointerEnd)
     element.addEventListener("touchstart", handleTouchStart, { passive: true })
     element.addEventListener("touchmove", handleTouchMove, { passive: true })
     element.addEventListener("touchend", handleTouchEnd, { passive: true })
@@ -850,6 +883,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       element.removeEventListener("pointermove", handlePointerMove)
       element.removeEventListener("pointerup", handlePointerEnd)
       element.removeEventListener("pointercancel", handlePointerEnd)
+      window.removeEventListener("pointerup", handlePointerEnd)
+      window.removeEventListener("mouseup", handlePointerEnd)
+      window.removeEventListener("blur", handlePointerEnd)
+      nativeScrollbarDragging = false
       element.removeEventListener("touchstart", handleTouchStart)
       element.removeEventListener("touchmove", handleTouchMove)
       element.removeEventListener("touchend", handleTouchEnd)

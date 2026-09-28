@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
-import { readLocationContext, readLocationRef } from "../opencode/compatibility/location"
+import { readLocationRef } from "../opencode/compatibility/location"
+import { readInternalLocationContext } from "./__tests__/location-context-fixture"
 import {
   listCompleteProjectSessions,
   moveProjectSessionFamily,
@@ -64,7 +65,7 @@ function clientHarness(initial: SessionInfo[], options: {
         moveCall += 1
         moveCalls.push(sessionID)
         if (options.failMove?.(sessionID, moveCall)) throw new Error(`move failed: ${sessionID}`)
-        const location = readLocationContext(requestOptions?.headers["x-codenomad-location"], "legacy") ?? { directory }
+        const location = readInternalLocationContext(requestOptions?.headers["x-codenomad-location"]) ?? { directory }
         if (options.visibilityDelayGets) pending.set(sessionID, { location, remaining: options.visibilityDelayGets })
         else sessions.get(sessionID)!.location = location
       },

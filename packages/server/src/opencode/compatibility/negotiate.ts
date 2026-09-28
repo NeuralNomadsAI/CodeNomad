@@ -1,5 +1,6 @@
 import { Service, type Endpoint } from "@opencode/client/service"
 import { runtimeIdentity, type ContractProfile } from "./runtime"
+import { UnsupportedOpenCodeError } from "../runtime-support"
 
 type ObjectValue = Record<string, any>
 function object(value: unknown): ObjectValue {
@@ -40,8 +41,8 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
       ? object(document.components?.schemas?.[ref.slice("#/components/schemas/".length)]) : schema
   }
   const has = (path: string, method: string) => Boolean(object(paths[path])[method])
-  const body = (path: string, field: string) => {
-    const operation = object(object(paths[path]).post)
+  const body = (path: string, field: string, method = "post") => {
+    const operation = object(object(paths[path])[method])
     return field in object(resolve(operation.requestBody?.content?.["application/json"]?.schema).properties)
   }
   const session = "/api/session/{sessionID}"
@@ -56,9 +57,15 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
     && body(`${session}/fork`, "boundary") && body(`${session}/command`, "command")
     && body(`${session}/permission/{requestID}/reply`, "reply")
     && "timeCreated" in inbox && !("time" in inbox)
-  if (modern === legacy) throw new Error(`Unsupported OpenCode contract: ${runtimeIdentity(endpoint)?.version ?? "unknown"}`)
+  if (modern === legacy) throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "canonical_api")
+  if (modern && !body(`${session}/environment`, "variables", "put")) {
+    throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "session_environment")
+  }
   const profile = modern ? "modern" : "legacy"
   const identity = runtimeIdentity(endpoint)
-  if (identity?.contract) identity.contract.profile = profile
+  if (identity?.contract) {
+    identity.contract.profile = profile
+    identity.contract.reload = has("/api/location/reload", "post")
+  }
   return profile
 }

@@ -30,6 +30,27 @@ describe("native provider auth answers", () => {
     assert.equal(isProviderAuthFieldComplete(fields[1], { ...answer, account: "123" }), true)
   })
 
+  it("hides protocol fields while retaining defaults, explicit answers and conditional scope", () => {
+    const fields = [
+      { key: "region", type: "string", default: "us" },
+      { key: "tenant", type: "string", required: true, hidden: true, default: "native-default" },
+      { key: "enabled", type: "boolean", hidden: true, default: true },
+      { key: "count", type: "integer", hidden: true, default: 7 },
+      { key: "scopes", type: "multiselect", hidden: true, default: ["read"], options: [] },
+      { key: "inactive", type: "string", hidden: true, default: "omit", when: [{ key: "region", op: "eq", value: "eu" }] },
+      { key: "unset", type: "boolean", hidden: true },
+      { key: "external", type: "external", url: "https://example.com" },
+    ] satisfies FormFields
+    const defaults = getProviderAuthInitialAnswer(fields)
+    assert.deepEqual(fields.filter(field => isFormFieldVisible(field, defaults)).map(field => field.key), ["region", "external"])
+    assert.deepEqual(getProviderAuthAnswer(fields, { region: "us" }), {
+      region: "us", tenant: "native-default", enabled: true, count: 7, scopes: ["read"],
+    })
+    assert.deepEqual(getProviderAuthAnswer(fields, { ...defaults, tenant: "supplied", enabled: false, count: 0, scopes: [], foreign: "omit" }), {
+      region: "us", tenant: "supplied", enabled: false, count: 0, scopes: [],
+    })
+  })
+
   it("accepts only explicit HTTP authorization URLs", () => {
     assert.equal(isHttpFormUrl("https://example.com/oauth"), true)
     assert.equal(isHttpFormUrl("http://localhost:3000/oauth"), true)

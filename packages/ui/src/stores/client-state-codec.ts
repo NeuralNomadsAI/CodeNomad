@@ -1,6 +1,7 @@
 import type { ScrollSnapshot } from "./message-v2/types"
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
+import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
 
 export interface RestorableWorkspaceTabState {
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
@@ -9,6 +10,7 @@ export interface RestorableWorkspaceTabState {
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
   generationRecovery: Record<string, PersistedGenerationRecovery>
   expandedSessionIds?: string[]
+  outlineIndexes?: Record<string, PersistedOutline>
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
@@ -25,10 +27,10 @@ const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256, MAX_NEWER_CURSORS = 32, MAX_WINDOW_CURSOR = 1024
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
-interface StringBudget { remaining: number; scrollSnapshotsRemaining: number }
+interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; outlines: OutlineBudget }
 
 function createBudget(): StringBudget {
-  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS }
+  return { remaining: MAX_STRINGS, scrollSnapshotsRemaining: MAX_SCROLLS, outlines: outlineBudget() }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -177,6 +179,8 @@ function normalizeWorkspaceTab(
     scrollSnapshots, unseenIdleSince, generationRecovery,
   }
   if (expandedSessionIds !== undefined) result.expandedSessionIds = expandedSessionIds
+  const outlineIndexes = normalizeOutlineIndexes(value.outlineIndexes, budget.outlines, identity.activeSessionId)
+  if (outlineIndexes) result.outlineIndexes = outlineIndexes
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
     result.occurrence = Number(value.occurrence)
   }

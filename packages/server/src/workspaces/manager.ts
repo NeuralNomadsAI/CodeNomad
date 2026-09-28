@@ -35,6 +35,7 @@ import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from 
 import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
+import { GitRequiredError, requireHostGit } from "./git-requirement"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -319,6 +320,26 @@ export class WorkspaceManager {
       ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
   }
 
+  getServicePathStyle(id: string): "win32" | "posix" | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const platform = this.options.platform ?? process.platform
+    return record.wslDistro || platform !== "win32" ? "posix" : "win32"
+  }
+
+  getServiceWslDistro(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.wslDistro : undefined
+  }
+
+  /** Translate a path reported by the authenticated daemon for local filesystem access. */
+  async getHostPathForServicePath(id: string, servicePath: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    if (!record.wslDistro) return servicePath
+    return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+  }
+
   private async nativeWorktreeContext(id: string) {
     const record = this.workspaces.get(id)
     const location = this.getServiceLocation(id)
@@ -351,11 +372,13 @@ export class WorkspaceManager {
   }
 
   async createWorktree(id: string, branch: string, fromSlug?: string) {
+    await requireHostGit()
     try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug) }
     finally { this.invalidateWorktrees("blocking") }
   }
 
   async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
+    await requireHostGit()
     try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
     finally { this.invalidateWorktrees("blocking") }
   }
@@ -388,8 +411,16 @@ export class WorkspaceManager {
     // The explicitly opened folder is already authority. Do not require native
     // discovery (or a second connection) to authorize that exact local directory.
     if (target && target === root) {
-      const { repoRoot } = await resolveRepoRoot(root)
-      return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+      try {
+        const { repoRoot } = await resolveRepoRoot(root)
+        return { slug: "root", directory: target, worktreeDirectory: await realpath(repoRoot) }
+      } catch (error) {
+        if (!(error instanceof GitRequiredError)) throw error
+        // Without Git only the explicitly opened physical folder is authority.
+        // The deletion fence compares ancestor/descendant identities as well,
+        // covering a checkout parent even if Git disappears or returns mid-send.
+        return { slug: "root", directory: target, worktreeDirectory: root }
+      }
     }
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
     return resolveOwnedWorktreePath({
@@ -431,15 +462,21 @@ export class WorkspaceManager {
     })?.id
   }
 
-  async listFiles(workspaceId: string, relativePath = "."): Promise<FileSystemEntry[]> {
+  private async fileBrowserRoot(workspaceId: string, directory?: string): Promise<string> {
     const workspace = this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    if (!directory) return workspace.path
+    const owned = await this.resolveOwnedWorktree(workspace, directory)
+    if (!owned) throw new Error("Directory is not owned by this workspace")
+    return owned.directory
+  }
+
+  async listFiles(workspaceId: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     return browser.list(relativePath)
   }
 
-  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions): Promise<FileSystemEntry[]> {
-    const workspace = this.requireWorkspace(workspaceId)
-    return searchWorkspaceFiles(workspace.path, query, options)
+  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions, directory?: string): Promise<FileSystemEntry[]> {
+    return searchWorkspaceFiles(await this.fileBrowserRoot(workspaceId, directory), query, options)
   }
 
   async readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
@@ -622,27 +659,7 @@ export class WorkspaceManager {
       const launch = buildServiceLaunchSpec(resolvedBinaryPath, {
         platform: this.options.platform,
       })
-      const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
-      const startupEnvironment = launch.kind === "wsl"
-        ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, launchDeadlineAt)
-        : this.serviceStartupEnvironment()
-      const serviceOptions: OpenCodeSharedServiceOptions = {
-        kind: "lifecycle",
-        identity: launch.kind === "host"
-          ? hostOpenCodeServiceIdentity({
-              binary: launch.binary,
-              platform: launch.platform,
-              startupEnvironment,
-            })
-          : `wsl:${launch.distro.trim().toLowerCase()}:${path.posix.normalize(launch.binary)}`
-            + `:env:${startupEnvironmentHash(startupEnvironment, "linux")}`,
-        lifecycle: launch.kind === "host"
-          ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
-          : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
-        prepareDesktopPlugins: this.options.prepareDesktopPlugins
-          ? (connection, deadlineAt) => this.options.prepareDesktopPlugins!(launch, connection, deadlineAt)
-          : undefined,
-      }
+      const serviceOptions = await this.setupServiceOptions(resolvedBinaryPath, launchDeadlineAt)
       state.serviceOptions = serviceOptions
       this.throwIfCancelled(record)
       record.wslDistro = launch.kind === "wsl" ? launch.distro : undefined
@@ -846,7 +863,7 @@ export class WorkspaceManager {
     }
   }
 
-  private requireWorkspace(id: string): WorkspaceDescriptor {
+  private requireWorkspace(id: string): WorkspaceRecord {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) throw new Error("Workspace not found")
     return record
@@ -969,6 +986,56 @@ export class WorkspaceManager {
       return Promise.resolve(this.options.wslHostDirectoryResolver(directory, distro, timeoutMs))
     }
     return resolveWslHostDirectory(directory, distro, undefined, timeoutMs)
+  }
+
+  async setupServiceOptions(binary: string, deadlineAt = Date.now() + DEFAULT_LAUNCH_TIMEOUT_MS): Promise<OpenCodeSharedServiceOptions> {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    const timeoutMs = Math.max(1, deadlineAt - this.now())
+    const startupEnvironment = launch.kind === "wsl"
+      ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, deadlineAt)
+      : this.serviceStartupEnvironment()
+    return {
+      kind: "lifecycle",
+      identity: launch.kind === "host"
+        ? hostOpenCodeServiceIdentity({ binary: launch.binary, platform: launch.platform, startupEnvironment })
+        : `wsl:${launch.distro.trim().toLowerCase()}:${path.posix.normalize(launch.binary)}:env:${startupEnvironmentHash(startupEnvironment, "linux")}`,
+      lifecycle: launch.kind === "host"
+        ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
+        : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
+      prepareDesktopPlugins: this.options.prepareDesktopPlugins
+        ? (connection, deadline) => this.options.prepareDesktopPlugins!(launch, connection, deadline) : undefined,
+    }
+  }
+
+  assertSetupExecutionHost(binary: string): void {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    for (const record of this.workspaces.values()) {
+      const distro = launch.kind === "wsl" ? launch.distro.toLowerCase() : undefined
+      if (record.wslDistro?.toLowerCase() !== distro) throw new Error("Close workspaces before changing the OpenCode execution host")
+    }
+  }
+
+  async reconnectAfterSetup(binary: string): Promise<void> {
+    this.assertSetupExecutionHost(binary)
+    const options = await this.setupServiceOptions(binary)
+    // This disposes client authority only; it never stops the shared daemon.
+    await this.sharedService.shutdown()
+    for (const record of this.workspaces.values()) {
+      record[WORKSPACE_STATE].serviceOptions = options
+      record.binaryId = binary
+    }
+    this.serviceAuthorization = (await this.sharedService.headers(options))?.authorization
+  }
+
+  async reloadConfigurationAfterSetup(binary: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent()
+    if (!this.sharedService.acquire) throw new Error("OpenCode connection acquisition unavailable")
+    await this.reconnectAfterSetup(binary)
+    const connection = await this.sharedService.acquire()
+    assertCurrent()
+    connection.assertCurrent()
+    await connection.client.location.reload({ signal: AbortSignal.timeout(30_000) })
+    connection.assertCurrent()
   }
 
   private createWslServiceLifecycle(

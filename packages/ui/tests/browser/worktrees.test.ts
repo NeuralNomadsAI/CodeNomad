@@ -155,3 +155,70 @@ test("creation uses the selected source and the returned stable worktree ID", as
     ])
   } finally { await page.close() }
 })
+
+for (const first of ["session", "session-b"]) {
+  for (const fail of [false, true]) {
+    test(`pending moves survive session switches and remounts: ${first} settles first, failure=${fail}`, async () => {
+      const page = await browser.newPage()
+      try {
+        await prepare(page)
+        await page.evaluate(() => (window as any).fixture.holdFamilyMoves())
+        const trigger = page.locator(".selector-trigger")
+        const select = (id: string) => page.evaluate(id => (window as any).fixture.selectSession(id), id)
+        const assertPending = async () => {
+          assert.match(await trigger.innerText(), /feature/)
+          assert.equal(await trigger.getAttribute("aria-busy"), "true")
+          assert.equal(await trigger.isDisabled(), true)
+        }
+        for (const id of ["session", "session-b"]) {
+          await select(id)
+          await trigger.click()
+          await page.getByRole("option", { name: /feature/ }).locator(".selector-option-label").click()
+          await page.getByRole("listbox").waitFor({ state: "hidden" })
+          await assertPending()
+        }
+        await select("session")
+        await assertPending()
+        await page.evaluate(() => (window as any).fixture.setMounted(false))
+        await trigger.waitFor({ state: "detached" })
+        await page.evaluate(() => (window as any).fixture.setMounted(true))
+        await assertPending()
+        await select(first)
+        await page.evaluate(({ first, fail }) => (window as any).fixture.releaseFamilyMove(first, fail), { first, fail })
+        await page.waitForFunction(() => document.querySelector(".selector-trigger")?.getAttribute("aria-busy") === "false")
+        assert.equal(await trigger.isDisabled(), false)
+        assert.match(await trigger.innerText(), fail ? /Workspace/ : /feature/)
+        const last = first === "session" ? "session-b" : "session"
+        await select(last)
+        await assertPending()
+        await page.evaluate(last => (window as any).fixture.releaseFamilyMove(last), last)
+        await page.waitForFunction(() => document.querySelector(".selector-trigger")?.getAttribute("aria-busy") === "false")
+        assert.match(await trigger.innerText(), /feature/)
+        assert.deepEqual(await page.evaluate(() => (window as any).fixture.moveRequests), ["session", "session-b"])
+      } finally { await page.close() }
+    })
+  }
+}
+
+for (const fail of [false, true]) {
+  test(`retains the requested worktree while moving and ${fail ? "restores the native location on failure" : "confirms it on success"}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await prepare(page)
+      await page.evaluate(fail => (window as any).fixture.holdMove(fail), fail)
+      const trigger = page.locator(".selector-trigger")
+      await trigger.click()
+      await page.getByRole("option", { name: /feature/ }).locator(".selector-option-label").click()
+      await page.getByRole("listbox").waitFor({ state: "hidden" })
+      assert.match(await trigger.innerText(), /feature/)
+      assert.equal(await trigger.isDisabled(), true)
+      assert.equal(await trigger.getAttribute("aria-busy"), "true")
+      assert.equal(await page.evaluate(() => (window as any).fixture.location()), "/repo", "pending UI does not mutate native placement")
+      await page.evaluate(() => (window as any).fixture.releaseMove())
+      await page.waitForFunction(() => document.querySelector(".selector-trigger")?.getAttribute("aria-busy") === "false")
+      assert.equal(await trigger.isDisabled(), false)
+      assert.match(await trigger.innerText(), fail ? /Workspace/ : /feature/)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls), fail ? [] : [{ move: "stable-feature-id" }])
+    } finally { await page.close() }
+  })
+}

@@ -1,0 +1,30 @@
+.directory-browser-destinations {
+  margin-top: var(--space-xs);
+  max-height: min(200px, 30vh);
+  overflow-y: auto;
+  background: var(--surface-control);
+  border: 1px solid var(--border-base);
+  padding: var(--space-xs);
+}
+
+.directory-browser-destination {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-primary);
+  text-align: start;
+}
+
+.directory-browser-destination svg {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.directory-browser-destination:hover,
+.directory-browser-destination:focus-visible,
+.directory-browser-destination[data-active] {
+  background: var(--selection-highlight-bg);
+}

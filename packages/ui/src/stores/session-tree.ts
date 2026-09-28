@@ -70,16 +70,18 @@ export function projectSessionSearchResults(
   return projectSessionFamilies([...rows.values()], options)
 }
 
-export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string): Session | null {
+export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null
+  const inScope = (session: Session) => !directoryOnly || normalizeSessionDirectory(session.location.directory) === normalizeSessionDirectory(directoryOnly)
+  if (!inScope(current)) return null
 
   const seen = new Set<string>()
   while (current.parentId) {
     if (seen.has(current.id)) return null
     seen.add(current.id)
     const parent = instanceSessions.get(current.parentId)
-    if (!parent) return null
+    if (!parent || !inScope(parent)) return directoryOnly ? current : null
     current = parent
   }
   return current
@@ -153,6 +155,7 @@ export function buildSessionThreadsFromMap(
   instanceSessions: Map<string, Session>,
   rootIds: string[],
   includedDescendantIds?: Set<string>,
+  directoryOnly?: string,
 ): SessionThread[] {
   let includedIds: Set<string> | null = null
   if (includedDescendantIds) {
@@ -165,6 +168,7 @@ export function buildSessionThreadsFromMap(
 
   const childrenByParent = new Map<string, Session[]>()
   for (const session of instanceSessions.values()) {
+    if (directoryOnly && normalizeSessionDirectory(session.location.directory) !== normalizeSessionDirectory(directoryOnly)) continue
     if (!session.parentId || (includedIds && !includedIds.has(session.id))) continue
     const children = childrenByParent.get(session.parentId)
     if (children) children.push(session)
@@ -177,7 +181,7 @@ export function buildSessionThreadsFromMap(
     if (seenRootIds.has(rootId)) continue
     seenRootIds.add(rootId)
     const root = instanceSessions.get(rootId)
-    if (!root || root.parentId !== null) continue
+    if (!root || getSessionRootFromMap(instanceSessions, root.id, directoryOnly)?.id !== root.id) continue
     const thread = buildThread(root, childrenByParent, 0, new Set())
     if (thread) threads.push(thread)
   }

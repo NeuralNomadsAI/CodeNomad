@@ -17,14 +17,21 @@ const rows = transcriptVisibilityRows((key) => key)
 const row = (key: string) => rows.find((item) => item.key === key)!
 
 describe("shared transcript visibility controls", () => {
+  it("hides system messages for older preferences and changes them independently", () => {
+    assert.equal(transcriptVisibility(current(), row("system")), "hidden")
+    for (const mode of ["hidden", "collapsed", "expanded"] as const) {
+      assert.deepEqual(transcriptVisibilityPatch(current(), row("system"), mode), { systemMessagesVisibility: mode })
+    }
+  })
   it("uses dev's order and label keys in both preferences and the popup", () => {
-    assert.deepEqual(rows.slice(0, 4), [
+    assert.deepEqual(rows.slice(0, 5), [
       { kind: "thinking", key: "thinking", label: "settings.behavior.expansionDefaults.thinking" },
       { kind: "diagnostics", key: "diagnostics", label: "settings.behavior.diagnosticsDefault.title" },
       { kind: "inputs", key: "inputs", label: "settings.behavior.toolInputsVisibility.title" },
       { kind: "usage", key: "usage", label: "settings.behavior.usageMetrics.title" },
+      { kind: "system", key: "system", label: "transcriptFilters.systemMessages" },
     ])
-    assert.ok(rows.slice(4).every((item) => item.kind === "tool"))
+    assert.ok(rows.slice(5).every((item) => item.kind === "tool"))
   })
   it("preserves every other effective tool setting when customizing one tool", () => {
     const before = current()
@@ -33,6 +40,29 @@ describe("shared transcript visibility controls", () => {
     assert.equal(transcriptVisibility(after, row("read")), "hidden")
     for (const item of rows.filter((item) => item.key !== "read")) {
       assert.equal(transcriptVisibility(after, item), transcriptVisibility(before, item), item.key)
+    }
+  })
+  it("routes retired tools through Other even with conflicting saved overrides", () => {
+    const before = current()
+    before.toolCallExpansionDefaults = {
+      preset: "custom",
+      thinking: "expanded",
+      tools: { apply_patch: "hidden", todowrite: "expanded", read: "collapsed", other: "collapsed" },
+    }
+    assert.ok(!rows.some((item) => item.key === "apply_patch" || item.key === "todowrite"))
+    const after = { ...before, ...transcriptVisibilityPatch(before, row("read"), "expanded") }
+    assert.equal(after.toolCallExpansionDefaults.tools.read, "expanded")
+    assert.equal(after.toolCallExpansionDefaults.tools.apply_patch, undefined)
+    assert.equal(after.toolCallExpansionDefaults.tools.todowrite, undefined)
+    for (const mode of ["hidden", "collapsed", "expanded"] as const) {
+      const customized = { ...before, ...transcriptVisibilityPatch(before, row("other"), mode) }
+      for (const key of ["apply_patch", "todowrite", "todoread"]) {
+        const historical = { kind: "tool" as const, key, label: "" }
+        assert.equal(transcriptVisibility(before, historical), "collapsed", key)
+        assert.equal(transcriptVisibility(after, historical), "collapsed", key)
+        assert.equal(transcriptVisibility(customized, historical), mode, key)
+      }
+      assert.equal(transcriptVisibility(customized, row("read")), "collapsed")
     }
   })
   it("supports all three tool modes", () => {

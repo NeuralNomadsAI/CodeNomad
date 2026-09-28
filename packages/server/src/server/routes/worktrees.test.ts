@@ -10,7 +10,7 @@ import type { WorkspaceDescriptor } from "../../api-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { registerWorktreeRoutes } from "./worktrees"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { readLocationContext } from "../../opencode/compatibility/location"
+import { readInternalLocationContext } from "../../workspaces/__tests__/location-context-fixture"
 import { fixtureCatalogue } from "../../workspaces/__tests__/native-worktree-fixture"
 
 describe("worktree routes", () => {
@@ -65,7 +65,7 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
         },
         active: async () => ({}),
         move: async ({ directory }: { directory: string }, options?: { headers: Record<string, string> }) => {
-          current.location = readLocationContext(options?.headers["x-codenomad-location"], "legacy") ?? { directory }
+          current.location = readInternalLocationContext(options?.headers["x-codenomad-location"]) ?? { directory }
         },
         get: async () => structuredClone(current),
       },
@@ -134,12 +134,12 @@ it("fails a direct delete call closed when session evacuation fails", async () =
         project: { list: async () => [{ id: "project" }] },
         debug: { location: { list: async () => [{ directory: path.join(temp, "unrelated"), workspaceID: "root-location" }] } },
         shell: { list: async (_input: unknown, options?: { headers: Record<string, string> }) => ({
-          data: blocker === "shell" && readLocationContext(options?.headers["x-codenomad-location"], "legacy")?.workspaceID === "root-location"
+          data: blocker === "shell" && readInternalLocationContext(options?.headers["x-codenomad-location"])?.workspaceID === "root-location"
             ? [{ id: "sh_blocker", status: "running", cwd: target }]
             : [],
         }) },
         pty: { list: async (_input: unknown, options?: { headers: Record<string, string> }) => ({
-          data: blocker === "pty" && readLocationContext(options?.headers["x-codenomad-location"], "legacy")?.workspaceID === "root-location"
+          data: blocker === "pty" && readInternalLocationContext(options?.headers["x-codenomad-location"])?.workspaceID === "root-location"
             ? [{ id: "pty_blocker", status: "running", cwd: target }]
             : [],
         }) },

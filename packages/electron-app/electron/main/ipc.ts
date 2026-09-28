@@ -173,8 +173,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
-  ipcMain.handle("workspace:setMenuEnabled", (event, enabled: unknown): { ok: true } => {
-    setWorkspaceMenuEnabled(local(event).window, enabled === true)
+  ipcMain.handle("workspace:setMenuEnabled", (event, enabled: unknown, viewState: unknown): { ok: true } => {
+    setWorkspaceMenuEnabled(local(event).window, enabled === true, viewState)
     return { ok: true }
   })
 

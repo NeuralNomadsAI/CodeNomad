@@ -114,6 +114,33 @@ describe("renderMarkdown bracket math delimiters", () => {
 })
 
 describe("renderMarkdown raw HTML", () => {
+  it("renders user HTML as source while preserving Markdown and the default HTML mode", async () => {
+    const source = '**Heading**\n\n<div><span className="bold">{unit.name}</span>\n<script>example()</script></div>'
+    const literal = await renderMarkdown(source, { suppressHighlight: true, escapeRawHtml: true, literalRawHtml: true })
+    assert.match(literal, /<strong>Heading<\/strong>/)
+    assert.match(literal, /&lt;div>&lt;span className=&quot;bold&quot;>/)
+    assert.match(literal, /&lt;script>example\(\)&lt;\/script>/)
+    assert.doesNotMatch(literal, /<div>|<span className|<script>/)
+    const raw = await renderMarkdown("<span>agent output</span>", { suppressHighlight: true })
+    assert.match(raw, /<span>agent output<\/span>/)
+  })
+
+  it("keeps encoded entities literal inside user code fences", async () => {
+    const html = await renderMarkdown('```html\n<span title="&lt;source&gt;">&amp;</span>\n```', { suppressHighlight: true, literalRawHtml: true })
+    assert.match(html, /&amp;lt;source&amp;gt;/)
+    assert.match(html, /&amp;amp;/)
+  })
+
+  it("escapes raw-region text tokens that contain malformed HTML", async () => {
+    for (const tag of ["code", "pre", "kbd", "script"]) {
+      const source = `Please explain <${tag}><img/src=x onerror=alert(1)> if (x<y) z()</${tag}> literally`
+      const html = await renderMarkdown(source, { suppressHighlight: true, escapeRawHtml: true, literalRawHtml: true })
+      assert.doesNotMatch(html, /<img|<y/)
+      assert.match(html, /&lt;img\/src=x onerror=alert\(1\)>/)
+      assert.match(html, /x&lt;y/)
+    }
+  })
+
   it("preserves text after style tags inside malformed inline code", async () => {
     const content = [
       "- evidence: [source] `return ",

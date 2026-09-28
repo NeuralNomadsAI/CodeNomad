@@ -1,0 +1,401 @@
+diff --git a/.changes/windows-input-deadlock.md b/.changes/windows-input-deadlock.md
+new file mode 100644
+index 000000000..0ed04e277
+--- /dev/null
++++ b/.changes/windows-input-deadlock.md
+@@ -0,0 +1,5 @@
++---
++"tao": patch
++---
++
++Avoid Windows keyboard and IME deadlocks caused by re-entrant message processing while input state locks are held.
+diff --git a/src/platform_impl/windows/event_loop.rs b/src/platform_impl/windows/event_loop.rs
+index d580d0d58..975afeca9 100644
+--- a/src/platform_impl/windows/event_loop.rs
++++ b/src/platform_impl/windows/event_loop.rs
+@@ -55,7 +55,7 @@ use crate::{
+     dark_mode::try_window_theme,
+     dpi::{become_dpi_aware, dpi_to_scale_factor, enable_non_client_dpi_scaling},
+     keyboard::is_msg_keyboard_related,
+-    keyboard_layout::LAYOUT_CACHE,
++    keyboard_layout::get_agnostic_mods,
+     minimal_ime::is_msg_ime_related,
+     monitor::{self, MonitorHandle},
+     raw_input, util,
+@@ -849,7 +849,7 @@ unsafe fn process_control_flow<T: 'static>(runner: &EventLoopRunner<T>) {
+ fn update_modifiers<T>(window: HWND, subclass_input: &SubclassInput<T>) -> ModifiersState {
+   use crate::event::WindowEvent::ModifiersChanged;
+ 
+-  let modifiers = LAYOUT_CACHE.lock().get_agnostic_mods();
++  let modifiers = get_agnostic_mods();
+   let mut window_state = subclass_input.window_state.lock();
+   if window_state.modifiers_state != modifiers {
+     window_state.modifiers_state = modifiers;
+@@ -867,6 +867,59 @@ fn update_modifiers<T>(window: HWND, subclass_input: &SubclassInput<T>) -> Modif
+   modifiers
+ }
+ 
++/// WARNING: Due to using PeekMessage, the event handler
++/// function may get called during this function.
++/// (Re-entrance to the event handler)
++///
++/// This can cause a deadlock if calling this function
++/// while having a mutex locked.
++///
++/// It can also cause code to get executed in a surprising order.
++fn peek_next_key_message(window: HWND) -> Option<MSG> {
++  unsafe {
++    let mut next_msg = mem::MaybeUninit::uninit();
++    if PeekMessageW(
++      next_msg.as_mut_ptr(),
++      Some(window),
++      WM_KEYFIRST,
++      WM_KEYLAST,
++      PM_NOREMOVE,
++    )
++    .as_bool()
++    {
++      Some(next_msg.assume_init())
++    } else {
++      None
++    }
++  }
++}
++
++fn next_key_message_for_keyboard(window: HWND, msg: u32, wparam: WPARAM) -> Option<MSG> {
++  let needs_next_key_message = match msg {
++    win32wm::WM_SYSKEYDOWN if wparam.0 == usize::from(VK_F4.0) => false,
++    win32wm::WM_KEYDOWN
++    | win32wm::WM_SYSKEYDOWN
++    | win32wm::WM_CHAR
++    | win32wm::WM_SYSCHAR
++    | win32wm::WM_KEYUP
++    | win32wm::WM_SYSKEYUP => true,
++    _ => false,
++  };
++  if needs_next_key_message {
++    peek_next_key_message(window)
++  } else {
++    None
++  }
++}
++
++fn more_ime_char_coming(window: HWND, msg: u32) -> bool {
++  matches!(msg, win32wm::WM_CHAR | win32wm::WM_SYSCHAR)
++    && matches!(
++      peek_next_key_message(window),
++      Some(next_msg) if next_msg.message == WM_CHAR || next_msg.message == WM_SYSCHAR
++    )
++}
++
+ unsafe fn gain_active_focus<T>(window: HWND, subclass_input: &SubclassInput<T>) {
+   use crate::event::WindowEvent::Focused;
+   update_modifiers(window, subclass_input);
+@@ -972,11 +1025,12 @@ unsafe fn public_window_callback_inner<T: 'static>(
+       // when not appropriate.
+       return;
+     }
++    let next_key_message = next_key_message_for_keyboard(window, msg, wparam);
+     let events = {
+       let mut key_event_builders =
+         crate::platform_impl::platform::keyboard::KEY_EVENT_BUILDERS.lock();
+       if let Some(key_event_builder) = key_event_builders.get_mut(&WindowId(window.0 as _)) {
+-        key_event_builder.process_message(window, msg, wparam, lparam, &mut result)
++        key_event_builder.process_message(msg, wparam, lparam, next_key_message, &mut result)
+       } else {
+         Vec::new()
+       }
+@@ -1003,11 +1057,12 @@ unsafe fn public_window_callback_inner<T: 'static>(
+     if !is_ime_related {
+       return;
+     }
++    let more_char_coming = more_ime_char_coming(window, msg);
+     let text = {
+       let mut window_state = subclass_input.window_state.lock();
+       window_state
+         .ime_handler
+-        .process_message(window, msg, wparam, lparam, &mut result)
++        .process_message(msg, wparam, more_char_coming, &mut result)
+     };
+     if let Some(str) = text {
+       subclass_input.send_event(Event::WindowEvent {
+diff --git a/src/platform_impl/windows/keyboard.rs b/src/platform_impl/windows/keyboard.rs
+index 3e85d6a2f..15d495161 100644
+--- a/src/platform_impl/windows/keyboard.rs
++++ b/src/platform_impl/windows/keyboard.rs
+@@ -8,7 +8,7 @@ use std::{
+ };
+ 
+ use windows::Win32::{
+-  Foundation::{HWND, LPARAM, LRESULT, WPARAM},
++  Foundation::{LPARAM, LRESULT, WPARAM},
+   UI::{
+     Input::KeyboardAndMouse::{self as win32km, *},
+     WindowsAndMessaging::{self as win32wm, *},
+@@ -77,10 +77,10 @@ impl KeyEventBuilder {
+   /// Returns None otherwise.
+   pub(crate) fn process_message(
+     &mut self,
+-    hwnd: HWND,
+     msg_kind: u32,
+     wparam: WPARAM,
+     lparam: LPARAM,
++    next_key_message: Option<MSG>,
+     result: &mut ProcResult,
+   ) -> Vec<MessageAsKeyEvent> {
+     match msg_kind {
+@@ -113,25 +113,21 @@ impl KeyEventBuilder {
+           *result = ProcResult::Value(LRESULT(0));
+         }
+ 
+-        let mut layouts = LAYOUT_CACHE.lock();
+-        let event_info =
+-          PartialKeyEventInfo::from_message(wparam, lparam, ElementState::Pressed, &mut layouts);
+-
+-        let mut next_msg = MaybeUninit::uninit();
+-        let peek_retval = unsafe {
+-          PeekMessageW(
+-            next_msg.as_mut_ptr(),
+-            Some(hwnd),
+-            WM_KEYFIRST,
+-            WM_KEYLAST,
+-            PM_NOREMOVE,
++        let kbd_state = get_kbd_state();
++        let event_info = {
++          let mut layouts = LAYOUT_CACHE.lock();
++          PartialKeyEventInfo::from_message(
++            wparam,
++            lparam,
++            ElementState::Pressed,
++            &kbd_state,
++            &mut layouts,
+           )
+         };
+-        let has_next_key_message = peek_retval.as_bool();
++
+         self.event_info = None;
+         let mut finished_event_info = Some(event_info);
+-        if has_next_key_message {
+-          let next_msg = unsafe { next_msg.assume_init() };
++        if let Some(next_msg) = next_key_message {
+           let next_msg_kind = next_msg.message;
+           let next_belongs_to_this = !matches!(
+             next_msg_kind,
+@@ -140,10 +136,12 @@ impl KeyEventBuilder {
+           if next_belongs_to_this {
+             self.event_info = finished_event_info.take();
+           } else {
+-            let (_, layout) = layouts.get_current_layout();
+-            let is_fake = {
+-              let curr_event = finished_event_info.as_ref().unwrap();
++            let is_fake = if let Some(curr_event) = finished_event_info.as_ref() {
++              let mut layouts = LAYOUT_CACHE.lock();
++              let (_, layout) = layouts.get_current_layout();
+               is_current_fake(curr_event, next_msg, layout)
++            } else {
++              false
+             };
+             if is_fake {
+               finished_event_info = None;
+@@ -151,7 +149,10 @@ impl KeyEventBuilder {
+           }
+         }
+         if let Some(event_info) = finished_event_info {
+-          let ev = event_info.finalize(&mut layouts.strings);
++          let ev = {
++            let mut layouts = LAYOUT_CACHE.lock();
++            event_info.finalize(&mut layouts.strings)
++          };
+           return vec![MessageAsKeyEvent {
+             event: ev,
+             is_synthetic: false,
+@@ -181,24 +182,10 @@ impl KeyEventBuilder {
+ 
+         let is_utf16 = is_high_surrogate || is_low_surrogate;
+ 
+-        let more_char_coming;
+-        unsafe {
+-          let mut next_msg = MaybeUninit::uninit();
+-          let has_message = PeekMessageW(
+-            next_msg.as_mut_ptr(),
+-            Some(hwnd),
+-            WM_KEYFIRST,
+-            WM_KEYLAST,
+-            PM_NOREMOVE,
+-          );
+-          let has_message = has_message.as_bool();
+-          if !has_message {
+-            more_char_coming = false;
+-          } else {
+-            let next_msg = next_msg.assume_init().message;
+-            more_char_coming = next_msg == WM_CHAR || next_msg == WM_SYSCHAR;
+-          }
+-        }
++        let more_char_coming = matches!(
++          next_key_message,
++          Some(next_msg) if next_msg.message == WM_CHAR || next_msg.message == WM_SYSCHAR
++        );
+ 
+         if is_utf16 {
+           if let Some(ev_info) = self.event_info.as_mut() {
+@@ -231,11 +218,11 @@ impl KeyEventBuilder {
+               return vec![];
+             }
+           };
+-          let mut layouts = LAYOUT_CACHE.lock();
+           // It's okay to call `ToUnicode` here, because at this point the dead key
+           // is already consumed by the character.
+           let kbd_state = get_kbd_state();
+           let mod_state = WindowsModifiers::active_modifiers(&kbd_state);
++          let mut layouts = LAYOUT_CACHE.lock();
+ 
+           let (_, layout) = layouts.get_current_layout();
+           let ctrl_on = if layout.has_alt_graph {
+@@ -273,34 +260,35 @@ impl KeyEventBuilder {
+           *result = ProcResult::Value(LRESULT(0));
+         }
+ 
+-        let mut layouts = LAYOUT_CACHE.lock();
+-        let event_info =
+-          PartialKeyEventInfo::from_message(wparam, lparam, ElementState::Released, &mut layouts);
+-        let mut next_msg = MaybeUninit::uninit();
+-        let peek_retval = unsafe {
+-          PeekMessageW(
+-            next_msg.as_mut_ptr(),
+-            Some(hwnd),
+-            WM_KEYFIRST,
+-            WM_KEYLAST,
+-            PM_NOREMOVE,
++        let kbd_state = get_kbd_state();
++        let event_info = {
++          let mut layouts = LAYOUT_CACHE.lock();
++          PartialKeyEventInfo::from_message(
++            wparam,
++            lparam,
++            ElementState::Released,
++            &kbd_state,
++            &mut layouts,
+           )
+         };
+-        let has_next_key_message = peek_retval.as_bool();
+         let mut valid_event_info = Some(event_info);
+-        if has_next_key_message {
+-          let next_msg = unsafe { next_msg.assume_init() };
+-          let (_, layout) = layouts.get_current_layout();
+-          let is_fake = {
+-            let event_info = valid_event_info.as_ref().unwrap();
++        if let Some(next_msg) = next_key_message {
++          let is_fake = if let Some(event_info) = valid_event_info.as_ref() {
++            let mut layouts = LAYOUT_CACHE.lock();
++            let (_, layout) = layouts.get_current_layout();
+             is_current_fake(event_info, next_msg, layout)
++          } else {
++            false
+           };
+           if is_fake {
+             valid_event_info = None;
+           }
+         }
+         if let Some(event_info) = valid_event_info {
+-          let event = event_info.finalize(&mut layouts.strings);
++          let event = {
++            let mut layouts = LAYOUT_CACHE.lock();
++            event_info.finalize(&mut layouts.strings)
++          };
+           return vec![MessageAsKeyEvent {
+             event,
+             is_synthetic: false,
+@@ -522,6 +510,7 @@ impl PartialKeyEventInfo {
+     wparam: WPARAM,
+     lparam: LPARAM,
+     state: ElementState,
++    kbd_state: &[u8; 256],
+     layouts: &mut MutexGuard<'_, LayoutCache>,
+   ) -> Self {
+     const NO_MODS: WindowsModifiers = WindowsModifiers::empty();
+@@ -545,8 +534,7 @@ impl PartialKeyEventInfo {
+     let code = KeyCode::from_scancode(scancode as u32);
+     let location = get_location(scancode, HKL(layout.hkl as _));
+ 
+-    let kbd_state = get_kbd_state();
+-    let mods = WindowsModifiers::active_modifiers(&kbd_state);
++    let mods = WindowsModifiers::active_modifiers(kbd_state);
+     let mods_without_ctrl = mods.remove_only_ctrl();
+     let num_lock_on = kbd_state[usize::from(VK_NUMLOCK.0)] & 1 != 0;
+ 
+diff --git a/src/platform_impl/windows/keyboard_layout.rs b/src/platform_impl/windows/keyboard_layout.rs
+index 9862c5532..a4f71db55 100644
+--- a/src/platform_impl/windows/keyboard_layout.rs
++++ b/src/platform_impl/windows/keyboard_layout.rs
+@@ -20,6 +20,10 @@ use crate::{
+ pub(crate) static LAYOUT_CACHE: Lazy<Mutex<LayoutCache>> =
+   Lazy::new(|| Mutex::new(LayoutCache::default()));
+ 
++pub(crate) fn get_agnostic_mods() -> ModifiersState {
++  LAYOUT_CACHE.lock().get_agnostic_mods()
++}
++
+ fn key_pressed(vkey: VIRTUAL_KEY) -> bool {
+   unsafe { (GetKeyState(u32::from(vkey.0) as i32) & (1 << 15)) == (1 << 15) }
+ }
+@@ -245,7 +249,7 @@ impl LayoutCache {
+     }
+   }
+ 
+-  pub fn get_agnostic_mods(&mut self) -> ModifiersState {
++  fn get_agnostic_mods(&mut self) -> ModifiersState {
+     let (_, layout) = self.get_current_layout();
+     let filter_out_altgr = layout.has_alt_graph && key_pressed(VK_RMENU);
+     let mut mods = ModifiersState::empty();
+diff --git a/src/platform_impl/windows/minimal_ime.rs b/src/platform_impl/windows/minimal_ime.rs
+index 0e0f1d218..b40fcd452 100644
+--- a/src/platform_impl/windows/minimal_ime.rs
++++ b/src/platform_impl/windows/minimal_ime.rs
+@@ -1,8 +1,6 @@
+-use std::mem::MaybeUninit;
+-
+ use windows::Win32::{
+-  Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+-  UI::WindowsAndMessaging::{self as win32wm, *},
++  Foundation::{LRESULT, WPARAM},
++  UI::WindowsAndMessaging as win32wm,
+ };
+ 
+ use crate::platform_impl::platform::event_loop::ProcResult;
+@@ -37,10 +35,9 @@ impl Default for MinimalIme {
+ impl MinimalIme {
+   pub(crate) fn process_message(
+     &mut self,
+-    hwnd: HWND,
+     msg_kind: u32,
+     wparam: WPARAM,
+-    _lparam: LPARAM,
++    more_char_coming: bool,
+     result: &mut ProcResult,
+   ) -> Option<String> {
+     match msg_kind {
+@@ -52,24 +49,6 @@ impl MinimalIme {
+         if self.getting_ime_text {
+           self.utf16parts.push(wparam.0 as u16);
+ 
+-          let more_char_coming;
+-          unsafe {
+-            let mut next_msg = MaybeUninit::uninit();
+-            let has_message = PeekMessageW(
+-              next_msg.as_mut_ptr(),
+-              Some(hwnd),
+-              WM_KEYFIRST,
+-              WM_KEYLAST,
+-              PM_NOREMOVE,
+-            );
+-            let has_message = has_message.as_bool();
+-            if !has_message {
+-              more_char_coming = false;
+-            } else {
+-              let next_msg = next_msg.assume_init().message;
+-              more_char_coming = next_msg == WM_CHAR || next_msg == WM_SYSCHAR;
+-            }
+-          }
+           if !more_char_coming {
+             let result = String::from_utf16(&self.utf16parts).ok();
+             self.utf16parts.clear();

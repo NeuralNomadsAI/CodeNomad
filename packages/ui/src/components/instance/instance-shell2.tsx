@@ -46,6 +46,7 @@ import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
+import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
 import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
@@ -158,7 +159,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     activeSessions,
     activeSessionIdForInstance,
     activeSessionForInstance,
-    latestTodoState,
     tokenStats,
     handleSessionSelect,
   } = useInstanceSessionContext({
@@ -233,6 +233,14 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleLeftAppBarButtonClick,
     handleRightAppBarButtonClick,
   } = drawerChrome
+
+  registerViewMenuPanels(props.instance.id, {
+    enabled: () => !mobileFullscreen(),
+    leftOpen,
+    rightOpen,
+    toggleLeft: () => leftOpen() ? closeLeftDrawer() : handleLeftAppBarButtonClick(),
+    toggleRight: () => rightOpen() ? closeRightDrawer() : handleRightAppBarButtonClick(),
+  })
 
   // When the user switches away from this instance (e.g., taps a different
   // instance/project tab while a floating drawer is open on phone), close any
@@ -673,6 +681,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
     instanceSessions: allInstanceSessions,
     activeSessionId: activeSessionIdForInstance,
+    isActiveInstance: () => Boolean(props.isActiveInstance),
   })
 
   const showEmbeddedSidebarToggle = createMemo(() => !leftPinned() && !leftOpen())
@@ -797,12 +806,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             aria-hidden="true"
           />
           <RightPanel
+            isActive={() => props.isActiveInstance !== false}
             t={t}
             instanceId={props.instance.id}
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            latestTodoState={latestTodoState}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
             rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -825,12 +834,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ModalProps={modalProps}
       >
         <RightPanel
+          isActive={() => props.isActiveInstance !== false && rightOpen()}
           t={t}
           instanceId={props.instance.id}
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          latestTodoState={latestTodoState}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
           rightDrawerWidthInitialized={rightDrawerWidthInitialized}
@@ -1094,19 +1103,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       />
                     </div>
                     <Show when={connectionStatus() === "connected"}>
-                      <span class="status-indicator connected">
+                      <span class="status-indicator connected" role="img" aria-label={t("instanceShell.connection.connected")} title={t("instanceShell.connection.connected")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.connected")}</span>
                       </span>
                     </Show>
                     <Show when={connectionStatus() === "connecting"}>
-                      <span class="status-indicator connecting">
+                      <span class="status-indicator connecting" role="img" aria-label={t("instanceShell.connection.connecting")} title={t("instanceShell.connection.connecting")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.connecting")}</span>
                       </span>
                     </Show>
                     <Show when={connectionStatus() === "error" || connectionStatus() === "disconnected"}>
-                      <span class="status-indicator disconnected">
+                      <span class="status-indicator disconnected" role="img" aria-label={t("instanceShell.connection.disconnected")} title={t("instanceShell.connection.disconnected")}>
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                       </span>
@@ -1255,7 +1264,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView instanceId={props.instance.id} onBackToConversation={handleBackToConversation} />
+              <InfoView
+                instanceId={props.instance.id}
+                active={Boolean(props.isActiveInstance) && showingInfoView()}
+                onBackToConversation={handleBackToConversation}
+              />
             </div>
           </Show>
         </Box>

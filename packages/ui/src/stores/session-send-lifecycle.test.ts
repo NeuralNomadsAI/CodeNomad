@@ -121,6 +121,29 @@ describe("optimistic send lifecycle", () => {
     }
   })
 
+  it("sends the message when voice instruction sync fails", async () => {
+    const instanceId = "send-voice-failure"
+    const sessionId = "session"
+    const calls: string[] = []
+    const cleanup = setup(
+      instanceId,
+      sessionId,
+      async () => { calls.push("prompt"); return { id: "accepted", sessionID: sessionId } },
+      {
+        put: async (input) => { calls.push(`put:${input.key}`) },
+        remove: async () => { throw new Error("Unexpected status 500") },
+      },
+    )
+
+    try {
+      setConversationModeEnabled(instanceId, false)
+      await sendMessage(instanceId, sessionId, "hello")
+      assert.deepEqual(calls, ["put:codenomad.session-placement", "prompt"])
+    } finally {
+      cleanup()
+    }
+  })
+
   it("marks the optimistic message sent when prompt accepts it", async () => {
     const instanceId = "send-accepted"
     const sessionId = "session"

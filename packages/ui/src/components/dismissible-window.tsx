@@ -11,6 +11,8 @@ export default function DismissibleWindow(props: {
   description?: string
   class: string
   inline?: boolean
+  initialFocus?: () => HTMLElement | undefined
+  returnFocus?: () => HTMLElement | undefined
   onKeyDown?: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent>
   children: JSX.Element
 }) {
@@ -27,12 +29,23 @@ export default function DismissibleWindow(props: {
         props.onClose()
       }}
       onInteractOutside={event => event.preventDefault()}
+      onOpenAutoFocus={event => {
+        const target = props.initialFocus?.()
+        if (!target) return
+        event.preventDefault()
+        target.focus({ preventScroll: true })
+      }}
       onCloseAutoFocus={(event) => {
         event.preventDefault()
         // Keep an outside click's chosen target; restore the toggle only when
         // focus is left on the body or in the window being dismissed.
         const active = document.activeElement
         if (active && active !== document.body && !document.getElementById(props.id)?.contains(active)) return
+        const returnTarget = props.returnFocus?.()
+        if (returnTarget?.getClientRects().length) {
+          returnTarget.focus({ preventScroll: true })
+          return
+        }
         const trigger = Array.from(document.querySelectorAll<HTMLElement>("[aria-controls]"))
           .find(element => element.getAttribute("aria-controls") === props.id && element.getClientRects().length > 0)
         trigger?.focus({ preventScroll: true })

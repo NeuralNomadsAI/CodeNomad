@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, type Component } from "solid-js"
 import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
-import { isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
+import { getFormAnswer, isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 
 interface FormRequestProps {
   form: FormInfo
@@ -11,6 +11,7 @@ interface FormRequestProps {
 
 export function getFormFieldDefaultValue(field: FormField): FormValue | undefined {
   if (field.type === "external") return undefined
+  if (field.hidden) return field.default
   if (field.type === "boolean") return field.default ?? false
   return field.default
 }
@@ -79,11 +80,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
     setSubmitting(true)
     setError(null)
     try {
-      const visibleKeys = new Set(visibleFields().map((field) => field.key))
-      const answer = Object.fromEntries(
-        Object.entries(values()).filter(([key, value]) => visibleKeys.has(key) && value !== undefined),
-      ) as FormAnswer
-      await props.onReply(answer)
+      await props.onReply(getFormAnswer(props.form.fields, values()))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("formRequest.errors.reply"))
     } finally {

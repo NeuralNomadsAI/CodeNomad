@@ -21,6 +21,22 @@ body:
     validations:
       required: true
   - type: input
+    id: codenomad-version
+    attributes:
+      label: CodeNomad Version
+      description: "Copy the full version from Settings > About, or run `codenomad --version` for the Server CLI. Include the dev build suffix; do not write only 'latest'. If the UI and server versions differ, include both."
+      placeholder: "0.20.0-dev-20260919-c2b349f8"
+    validations:
+      required: true
+  - type: input
+    id: opencode-version
+    attributes:
+      label: OpenCode Version
+      description: "Copy the installed OpenCode version from CodeNomad settings, or run the configured executable with `--version` (`opencode --version` or `opencode2 --version`). Include the full version, not 'latest'. If the running daemon uses a different version, include it too."
+      placeholder: "2.0.10"
+    validations:
+      required: true
+  - type: input
     id: os-version
     attributes:
       label: Operating System & Version

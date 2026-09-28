@@ -2,6 +2,12 @@ import type { RightPanelItem } from "../registry"
 
 export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean })[] = [
   {
+    id: "tokens",
+    labelKey: "instanceShell.rightPanel.sections.tokens",
+    tooltipKey: "instanceShell.rightPanel.sections.tokens.tooltip",
+    order: 0,
+  },
+  {
     id: "yolo-mode",
     labelKey: "instanceShell.rightPanel.sections.yoloMode",
     tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
@@ -12,12 +18,6 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     labelKey: "providerUsage.title",
     tooltipKey: "providerUsage.tooltip",
     order: 20,
-  },
-  {
-    id: "plan",
-    labelKey: "instanceShell.rightPanel.sections.plan",
-    tooltipKey: "instanceShell.rightPanel.sections.plan.tooltip",
-    order: 30,
   },
   {
     id: "background-processes",

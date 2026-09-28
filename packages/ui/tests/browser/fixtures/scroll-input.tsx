@@ -3,6 +3,7 @@ import { render } from "solid-js/web"
 import ToolCall from "../../../src/components/tool-call"
 import VirtualFollowList, { type VirtualFollowListApi } from "../../../src/components/virtual-follow-list"
 import { ConfigProvider } from "../../../src/stores/preferences"
+import { applyUiSettings } from "./ui-settings"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import type { ToolCallPart } from "../../../src/components/tool-call/types"
@@ -22,6 +23,9 @@ function Transcript() {
         sessionId="session-fixture" onContentRendered={() => api?.notifyContentRendered()} />
     </div>} />
 }
+// The tests expand each shell output by clicking its header, so the fixture
+// pins shell tools collapsed instead of depending on the preset defaults.
+await applyUiSettings({ toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { bash: "collapsed" } } })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Transcript />
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

@@ -119,6 +119,7 @@ export interface UiSettings {
   toolCallExpansionDefaults: ToolCallExpansionDefaults
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
+  systemMessagesVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
@@ -184,6 +185,7 @@ interface UiStateBucket {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
     thinkingSelections?: Record<string, string>
+    favoritesOnly?: boolean
   }
 }
 
@@ -195,6 +197,7 @@ interface NormalizedUiState {
     recents: ModelPreference[]
     favorites: ModelPreference[]
     thinkingSelections: Record<string, string>
+    favoritesOnly: boolean
   }
 }
 
@@ -222,6 +225,7 @@ const defaultUiSettings: UiSettings = {
   toolCallExpansionDefaults: defaultToolCallExpansionDefaults,
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
+  systemMessagesVisibility: "hidden",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: true,
   usageMetricsExpansion: "collapsed",
@@ -328,6 +332,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.diagnosticsExpansion,
       defaultUiSettings.diagnosticsExpansion,
     ),
+    systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
@@ -486,6 +491,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         return { providerId, modelId }
       }),
       thinkingSelections: normalizeRecord((source.models as any)?.thinkingSelections),
+      favoritesOnly: (source.models as any)?.favoritesOnly === true,
     },
   }
 }
@@ -1050,6 +1056,41 @@ function toggleFavoriteModelPreference(model: ModelPreference): void {
   void patchStateOwner("ui", { models: { favorites: updated } }).catch((error) => log.error("Failed to update model favorites", error))
 }
 
+// The mode is read back by the picker, so the wanted value is published
+// synchronously and the persisted writes are serialized in click order.
+const [pendingFavoritesOnly, setPendingFavoritesOnly] = createSignal<boolean | undefined>(undefined)
+let favoritesOnlyWriteQueue: Promise<void> = Promise.resolve()
+let latestFavoritesOnlyWrite: Promise<void> | null = null
+
+function getFavoritesOnlyPreference(): boolean {
+  return pendingFavoritesOnly() ?? uiState().models.favoritesOnly
+}
+
+function setFavoritesOnlyPreference(enabled: boolean): void {
+  if (getFavoritesOnlyPreference() === enabled) return
+  setPendingFavoritesOnly(enabled)
+
+  const write = favoritesOnlyWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await patchStateOwner("ui", { models: { favoritesOnly: enabled } })
+      } catch (error) {
+        log.error("Failed to update favorites-only model mode", error)
+      }
+    })
+
+  favoritesOnlyWriteQueue = write
+  latestFavoritesOnlyWrite = write
+  void write.then(() => {
+    // Only the newest write may retire the published intent, so a superseded
+    // write inside a click burst cannot fall back to an older stored value.
+    if (latestFavoritesOnlyWrite !== write) return
+    latestFavoritesOnlyWrite = null
+    setPendingFavoritesOnly((current) => (current === enabled ? undefined : current))
+  })
+}
+
 function getModelThinkingSelection(model: { providerId: string; modelId: string }): string | undefined {
   if (!model.providerId || !model.modelId) return undefined
   return uiState().models.thinkingSelections[getModelKey(model)]
@@ -1227,6 +1268,8 @@ interface ConfigContextValue {
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
   toggleFavoriteModelPreference: typeof toggleFavoriteModelPreference
+  getFavoritesOnlyPreference: typeof getFavoritesOnlyPreference
+  setFavoritesOnlyPreference: typeof setFavoritesOnlyPreference
   getModelThinkingSelection: typeof getModelThinkingSelection
   setModelThinkingSelection: typeof setModelThinkingSelection
 
@@ -1300,6 +1343,8 @@ const configContextValue: ConfigContextValue = {
   addRecentModelPreference,
   isFavoriteModelPreference,
   toggleFavoriteModelPreference,
+  getFavoritesOnlyPreference,
+  setFavoritesOnlyPreference,
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
@@ -1401,6 +1446,8 @@ export {
   addRecentModelPreference,
   isFavoriteModelPreference,
   toggleFavoriteModelPreference,
+  getFavoritesOnlyPreference,
+  setFavoritesOnlyPreference,
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
@@ -1417,3 +1464,4 @@ export {
   setAgentModelPreference,
   getAgentModelPreference,
 }
+

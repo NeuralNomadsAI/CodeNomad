@@ -134,7 +134,8 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
         const host = await page.locator(".session-center-column").boundingBox()
         assert.ok(host && bounds.x >= host.x && bounds.x + bounds.width <= host.x + host.width, "search is not clipped by the transcript")
       }
-      await page.waitForFunction(id => document.querySelector(`[id="${id}"] input`) === document.activeElement, await panel.getAttribute("id"))
+      await page.waitForFunction(({ id, selector }) => document.querySelector(`[id="${id}"] ${selector}`) === document.activeElement,
+        { id: await panel.getAttribute("id"), selector: kind === "session-search" ? 'input[type="search"]' : "input" })
       if (process.env.CODENOMAD_HEADER_CAPTURE_DIR) await page.screenshot({ path: `${process.env.CODENOMAD_HEADER_CAPTURE_DIR}/${kind}-rtl.png` })
       await page.keyboard.press("Escape")
       await panel.waitFor({ state: "hidden" })

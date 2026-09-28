@@ -29,6 +29,14 @@ export type {
  * These types are consumed by both the CLI implementation and any UI clients.
  */
 
+export const PROMPT_INLINE_FILE_LIMITS = {
+  maxFileBytes: 5 * 1024 * 1024,
+  maxFiles: 10,
+  maxTotalBytes: 20 * 1024 * 1024,
+  // Covers the aggregate raw-byte budget after base64 expansion plus JSON metadata.
+  maxRequestBodyBytes: 32 * 1024 * 1024,
+} as const
+
 export type WorkspaceStatus = "starting" | "ready" | "stopped" | "error"
 
 export interface WorkspaceDescriptor {
@@ -117,6 +125,8 @@ export interface WorktreeDescriptor {
   serviceRoot?: string
   /** Exact path registered in Git's worktree inventory. */
   registeredDirectory?: string
+  /** Degraded mode: only this exact physical directory authorizes sessions. */
+  directoryOnly?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -127,6 +137,8 @@ export interface WorktreeDescriptor {
 }
 
 export interface WorktreeListResponse {
+  /** False means directory-only degraded mode; repository membership is unknown. */
+  gitAvailable?: boolean
   worktrees: WorktreeDescriptor[]
   /** Default creation parent in the OpenCode service namespace. */
   defaultDirectory?: string
@@ -300,6 +312,90 @@ export interface ConfigFileContentRequest {
   contents: string
 }
 
+export type PluginControlScope = "global" | "project"
+export type PluginConfigScope = PluginControlScope | "other" | "virtual"
+
+export interface PluginControlLocation {
+  directory: string
+  workspaceID?: string
+}
+
+export type PluginRuntimeSource =
+  | { type: "builtin" }
+  | { type: "package"; target: string; version?: string; outdated?: true; updating?: true }
+  | { type: "local"; path: string }
+  | { type: "sdk" }
+
+export interface PluginRuntimeInventoryEntry {
+  key: string
+  id?: string
+  source: PluginRuntimeSource
+  features: { server?: true; tui?: true; rpc?: true }
+  state: { status: "active" } | { status: "failed"; error: string; ref?: string }
+}
+
+export interface PluginConfiguredRule {
+  selector: string
+  enabled: boolean
+  scope: PluginConfigScope
+  path?: string
+  order: number
+  entryIndex: number
+}
+
+export interface PluginConfiguredSource {
+  target: string
+  scope: PluginConfigScope
+  path?: string
+  entryIndex: number
+  hasOptions: boolean
+}
+
+export type PluginScopeRuleState = "default" | "enabled" | "disabled"
+
+export interface PluginActivationControl {
+  id: string
+  runtime?: PluginRuntimeInventoryEntry
+  /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
+  builtin: boolean
+  effective: PluginScopeRuleState
+  global: PluginScopeRuleState
+  project: PluginScopeRuleState
+  controllingRule?: PluginConfiguredRule
+}
+
+export interface PluginControlTarget {
+  scope: PluginControlScope
+  path: string
+  exists: boolean
+}
+
+export interface PluginControlsSnapshot {
+  location: PluginControlLocation
+  runtime: PluginRuntimeInventoryEntry[]
+  configured: {
+    rules: PluginConfiguredRule[]
+    sources: PluginConfiguredSource[]
+  }
+  controls: PluginActivationControl[]
+  targets: PluginControlTarget[]
+}
+
+export interface PluginActivationMutationRequest {
+  location: PluginControlLocation
+  pluginId: string
+  scope: PluginControlScope
+  enabled: boolean
+}
+
+export interface PluginActivationMutationResponse {
+  snapshot: PluginControlsSnapshot
+  rule: string
+  target: PluginControlTarget
+  changed: boolean
+  reloadPending: boolean
+}
+
 export const WINDOWS_DRIVES_ROOT = "__drives__"
 
 export interface WorkspaceFileResponse {
@@ -389,11 +485,25 @@ export interface BinaryValidationResult {
 }
 
 export interface OpenCodeUpdateStatus {
-  currentVersion: string
+  currentVersion: string | null
   latestVersion: string | null
   updateAvailable: boolean | null
   canUpgrade: boolean
   checkError?: "update_check_failed"
+  minimumVersion: string
+  recommendedVersion: string
+  versionAssessment: "tested" | "untested" | "incompatible"
+  incompatibilityReason?: "step_timestamp" | "canonical_api" | "session_environment"
+  state: "missing" | "update_required" | "ready" | "error"
+  binaryPath: string
+  installationSource?: "path" | "user"
+  needsSharedInstallation?: boolean
+  daemonVersion?: string
+  serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
+  canReload?: boolean
+  serviceError?: string
+  target: "host" | "wsl"
+  canRestart: boolean
 }
 
 export interface OpenCodeUpdateResponse {

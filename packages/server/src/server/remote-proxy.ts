@@ -5,6 +5,7 @@ import { pipeline } from "stream/promises"
 import { Agent, fetch } from "undici"
 import type { AuthManager } from "../auth/manager"
 import type { Logger } from "../logger"
+import { PROMPT_INLINE_FILE_LIMITS } from "../api-types"
 
 const LOOPBACK_HOST = "127.0.0.1"
 const BOOTSTRAP_PAGE_PATH = "/__codenomad/auth/token"
@@ -123,6 +124,22 @@ export class RemoteProxySessionManager {
       session.lastAccessAt = Date.now()
       await proxyRequest({ request, reply, session, logger: this.options.logger })
     }
+    const requireActivatedSession = async (_request: FastifyRequest, reply: FastifyReply) => {
+      if (!session) {
+        return reply.code(503).send({ error: "Remote proxy session is unavailable" })
+      }
+      if (!session.activated) {
+        return reply.code(403).send({ error: "Remote proxy session is not activated" })
+      }
+    }
+    app.post(
+      "/workspaces/:workspaceId/instance/api/session/:sessionId/prompt",
+      {
+        bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes,
+        onRequest: requireActivatedSession,
+      },
+      handleProxyRequest,
+    )
     app.all("/*", handleProxyRequest)
     app.setNotFoundHandler(handleProxyRequest)
 

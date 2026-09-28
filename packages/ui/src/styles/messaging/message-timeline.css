@@ -56,14 +56,9 @@
   padding: 0;
   overflow-y: auto;
   overflow-x: visible;
-  scrollbar-width: none;
   border-radius: 0;
   background-color: transparent;
   box-shadow: none;
-}
-
-.message-timeline::-webkit-scrollbar {
-  display: none;
 }
 
 .message-timeline-segment {
@@ -119,6 +114,7 @@
 .message-timeline-label {
   position: relative;
   z-index: 3;
+  flex: none;
 }
 
 .message-timeline-segment.message-timeline-segment-hidden {
@@ -185,15 +181,9 @@
 }
 
 .message-timeline-icon {
+  flex: none;
   width: 12px;
   height: 12px;
-}
-
-.message-timeline-tooltip {
-  position: fixed;
-  z-index: 1000;
-  /* Allow interacting with the preview (copy/delete/etc). */
-  pointer-events: auto;
 }
 
 .message-preview {

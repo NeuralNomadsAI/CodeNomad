@@ -2,6 +2,7 @@ import type {
   ModelRef,
   SessionMessageProviderState,
   SessionStructuredError,
+  SessionMessageInfo,
 } from "@opencode/client"
 
 import type { PermissionRequest } from "./permission"
@@ -16,6 +17,7 @@ interface PartBase {
 }
 
 interface TextMessagePart extends PartBase { type: "text"; text: string }
+interface SystemMessagePart extends PartBase { type: "system"; text: string; description?: string }
 interface ReasoningMessagePart extends PartBase { type: "reasoning"; text: string }
 interface FileMessagePart extends PartBase { type: "file"; filename?: string }
 interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?: ToolState }
@@ -29,6 +31,7 @@ interface StepFinishMessagePart extends PartBase { type: "step-finish" }
 
 export type NormalizedMessagePart =
   | TextMessagePart
+  | SystemMessagePart
   | ReasoningMessagePart
   | FileMessagePart
   | ToolMessagePart
@@ -78,6 +81,7 @@ export interface TextPart {
 }
 
 export interface MessageInfo {
+  nativeType?: SessionMessageInfo["type"]
   id: string
   sessionID: string
   role: "user" | "assistant"

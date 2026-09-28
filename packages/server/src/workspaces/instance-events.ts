@@ -10,7 +10,6 @@ const RECONNECT_DELAY_MS = 1000
 const LOCATION_OWNER_CACHE_MS = 2000
 const SESSION_LOCATION_CACHE_MS = 2000
 const GLOBAL_EVENT_TYPES = new Set([
-  "catalog.updated",
   "agent.updated",
   "command.updated",
   "config.updated",

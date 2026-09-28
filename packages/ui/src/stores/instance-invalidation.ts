@@ -7,7 +7,6 @@ export function getInstanceRefreshTargets(eventType: string): readonly InstanceR
     case "command.updated":
       return ["commands"]
     case "models-dev.refreshed":
-    case "catalog.updated":
       return ["agents", "providers", "commands"]
     case "model.updated":
     case "provider.updated":
@@ -19,7 +18,7 @@ export function getInstanceRefreshTargets(eventType: string): readonly InstanceR
     case "config.updated":
       return ["agents", "providers", "commands", "metadata"]
     case "plugin.updated":
-      return ["agents", "providers", "commands", "metadata"]
+      return ["agents", "providers", "commands"]
     case "mcp.status.changed":
     case "mcp.resources.changed":
       return ["metadata"]

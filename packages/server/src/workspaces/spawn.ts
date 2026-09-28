@@ -4,11 +4,11 @@ import path from "path"
 
 import { OPENCODE_V2_REQUIRED_ERROR_CODE, type BinaryValidationResult } from "../api-types"
 import { isOpenCodeServiceCommandUnavailable, isOpenCodeServiceHelp } from "./opencode-cli-compatibility"
+import { assertCurrentInstallation } from "../opencode-update/retired-installation"
 
 export const WINDOWS_CMD_EXTENSIONS = new Set([".cmd", ".bat"])
 export const WINDOWS_POWERSHELL_EXTENSIONS = new Set([".ps1"])
 
-const VERSION_REGEX = /([0-9]+\.[0-9]+\.[0-9A-Za-z.-]+)/
 const WSL_UNC_PATH_REGEX = /^\\\\wsl(?:\.localhost|\$)\\([^\\/]+)(?:[\\/](.*))?$/i
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD"
 
@@ -79,6 +79,7 @@ export function resolveWslWorkingDirectory(folder: string, distro: string): WslW
 }
 
 export function buildWindowsSpawnSpec(binaryPath: string, args: string[], options: BuildSpawnSpecOptions = {}): SpawnSpec {
+  assertCurrentInstallation(binaryPath)
   const wslPath = parseWslUncPath(binaryPath)
   if (wslPath) {
     return buildWslSpawnSpec(wslPath, args, options)
@@ -86,6 +87,7 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
 
   const resolvedCommand = resolveBareWindowsCommand(binaryPath, options) ?? binaryPath
   const resolvedBinaryPath = resolveWindowsNpmExecutable(resolvedCommand) ?? resolvedCommand
+  assertCurrentInstallation(resolvedBinaryPath)
   const extension = path.win32.extname(resolvedBinaryPath).toLowerCase()
 
   if (WINDOWS_CMD_EXTENSIONS.has(extension)) {
@@ -126,6 +128,7 @@ export function buildWindowsSpawnSpec(binaryPath: string, args: string[], option
 }
 
 export function buildSpawnSpec(binaryPath: string, args: string[], options: BuildSpawnSpecOptions = {}): SpawnSpec {
+  assertCurrentInstallation(binaryPath, options.env)
   if ((options.platform ?? process.platform) !== "win32") {
     return {
       command: binaryPath,
@@ -180,6 +183,7 @@ export function buildServiceLaunchSpec(
   binaryPath: string,
   options: BuildSpawnSpecOptions = {},
 ): ServiceLaunchSpec {
+  assertCurrentInstallation(binaryPath)
   const platform = options.platform ?? process.platform
   const wslPath = platform === "win32" ? parseWslUncPath(binaryPath) : null
   if (wslPath) return { kind: "wsl", distro: wslPath.distro, binary: wslPath.linuxPath }
@@ -194,6 +198,7 @@ export function probeBinaryVersion(
   version?: string
   reported?: string
   error?: string
+  missing?: boolean
 } {
   if (!binaryPath) {
     return { valid: false, error: "Missing binary path" }
@@ -204,13 +209,13 @@ export function probeBinaryVersion(
     const result = execute(spec)
     return parseBinaryVersion(result)
   } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) }
+    return { valid: false, error: error instanceof Error ? error.message : String(error), ...((error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) }
   }
 }
 
 function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
   if (result.error) {
-    return { valid: false, error: result.error.message }
+    return { valid: false, error: result.error.message, ...((result.error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) }
   }
 
   if (result.status !== 0) {
@@ -236,9 +241,15 @@ function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof pro
     return { valid: true }
   }
 
-  const versionMatch = reported.match(VERSION_REGEX)
-  const version = versionMatch?.[1]
+  // Strip only presentation prefixes. Preserve custom labels and +build metadata:
+  // truncating them into a stable version would enable unintended auto-upgrades.
+  const version = reported.replace(/^opencode(?:2)?\s+/i, "").replace(/^v(?=\d+\.)/i, "")
   return { valid: true, version, reported }
+}
+
+export async function probeBinaryVersionAsync(binaryPath: string): Promise<ReturnType<typeof probeBinaryVersion>> {
+  try { return parseBinaryVersion(await executeAsyncBinaryProbe(buildSpawnSpec(binaryPath, ["--version"]), 5_000)) }
+  catch (error) { return { valid: false, error: error instanceof Error ? error.message : String(error), ...((error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) } }
 }
 
 export async function probeOpenCodeBinary(

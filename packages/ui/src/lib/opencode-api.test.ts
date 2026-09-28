@@ -16,6 +16,25 @@ describe("getOpencodeErrorMessage", () => {
     )
   })
 
+  it("surfaces the HTTP status behind a bare UnexpectedStatus reason", () => {
+    assert.equal(
+      getOpencodeErrorMessage({ reason: "UnexpectedStatus", cause: { status: 500 }, message: "UnexpectedStatus" }, "Unable to send"),
+      "Unexpected status 500",
+    )
+    assert.equal(
+      getOpencodeErrorMessage({ reason: "UnexpectedStatus", cause: { status: "503" }, message: "UnexpectedStatus" }, "Unable to send"),
+      "Unexpected status 503",
+    )
+    assert.equal(
+      getOpencodeErrorMessage({ reason: "UnexpectedStatus", cause: { status: 500, message: "disk full" }, message: "UnexpectedStatus" }, "Unable to send"),
+      "disk full",
+    )
+    assert.equal(
+      getOpencodeErrorMessage({ reason: "Transport", cause: { code: "ECONNRESET" }, message: "Transport" }, "Unable to send"),
+      "Transport",
+    )
+  })
+
   it("uses the contextual fallback when no detail is available", () => {
     assert.equal(getOpencodeErrorMessage({}, "Unable to load sessions"), "Unable to load sessions")
   })

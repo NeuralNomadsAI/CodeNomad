@@ -1,3 +1,5 @@
+import type { ToolFileContent, ToolTextContent } from "@opencode/client"
+
 export type ToolPayload = Record<string, unknown>
 
 export interface ToolStatePending {
@@ -16,6 +18,7 @@ export interface ToolStateCompleted {
   input: ToolPayload
   metadata?: ToolPayload
   output: unknown
+  content?: Array<ToolTextContent | ToolFileContent>
   title?: string
 }
 

@@ -11,10 +11,13 @@ import {
 import { activeSessionId, ensureSessionAncestorsExpanded, loadMessages, sessions as sessionStateSessions, setActiveSessionFromList } from "../stores/sessions"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { PERMISSION_REJECT_REASON_MAX_LENGTH } from "./tool-call/permission-constants"
+import { getPermissionDiffPayload, isPermissionApprovalBlocked } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
 import { getFormQueue, type FormInfo } from "../stores/forms"
 import { sendFormCancel, sendFormReply } from "../stores/instances"
 import { shouldRenderFormInFallback } from "./form-request-tool-target"
+import { createPermissionDiffReviews } from "./permission-diff-review"
+import { PermissionFallbackDiff } from "./permission-fallback-diff"
 
 const LazyToolCall = lazy(() => import("./tool-call"))
 
@@ -141,6 +144,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
     if (!permissionId) return
 
     if (permissionSubmitting().has(permissionId)) return
+    if (response !== "reject" && isPermissionApprovalBlocked(getPermissionDiffPayload(permission), diffReview(permission)?.reviewed() ?? false)) return
 
     setPermissionBusy(permissionId, true)
     setPermissionItemError(permissionId, null)
@@ -161,6 +165,7 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
   }
 
   const permissionQueue = createMemo(() => getPermissionQueue(props.instanceId))
+  const diffReview = createPermissionDiffReviews(() => props.instanceId, permissionQueue)
   const formQueue = createMemo(() => getFormQueue(props.instanceId))
   const active = createMemo(() => activeInterruption().get(props.instanceId) ?? null)
 
@@ -353,6 +358,9 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                     <code>{primaryTitle()}</code>
                                   </div>
                                   <Show when={item.kind === "permission"}>
+                                    <Show when={diffReview(item.payload as PermissionRequest)} keyed>
+                                      {(review) => <PermissionFallbackDiff review={review} />}
+                                    </Show>
                                     <div class="tool-call-permission-reject-reason">
                                       <textarea
                                         id={`permission-center-reject-reason-${item.id}`}
@@ -368,10 +376,10 @@ const PermissionApprovalModal: Component<PermissionApprovalModalProps> = (props)
                                     </div>
                                     <div class="tool-call-permission-actions">
                                       <div class="tool-call-permission-buttons">
-                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}>
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id) || isPermissionApprovalBlocked(getPermissionDiffPayload(item.payload as PermissionRequest), diffReview(item.payload as PermissionRequest)?.reviewed() ?? false)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "once")}>
                                           {t("permissionApproval.actions.allowOnce")}
                                         </button>
-                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}>
+                                        <button type="button" class="tool-call-permission-button" disabled={permissionSubmitting().has(item.id) || isPermissionApprovalBlocked(getPermissionDiffPayload(item.payload as PermissionRequest), diffReview(item.payload as PermissionRequest)?.reviewed() ?? false)} onClick={() => void handlePermissionDecision(item.payload as PermissionRequest, "always")}>
                                           {t("permissionApproval.actions.alwaysAllow")}
                                         </button>
                                         <button

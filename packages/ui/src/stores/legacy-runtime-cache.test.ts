@@ -5,13 +5,12 @@ import { OpenCode, type OpenCodeEvent } from "@opencode/client"
 import { createData } from "@opencode/client/solid"
 import { createRuntimeFetch } from "../../../server/src/opencode/compatibility/transport"
 import { rememberRuntime } from "../../../server/src/opencode/compatibility/runtime"
-import { normalizeRuntimeEvent } from "../../../server/src/opencode/compatibility/events"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
 
-test("legacy pending HTTP data and enqueued SSE materialize through the actual stable reducer", async () => {
+test("native pending HTTP data and enqueued SSE retain their distinct shapes through the stable reducer", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.0.3", pid: 1, discovery: "health" })
-  const item = { id: "inbox", sessionID: "session", type: "user", payload: { text: "Pending" }, delivery: "queue", timeCreated: 123 }
+  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  const item = { id: "inbox", sessionID: "session", type: "user", payload: { text: "Pending" }, delivery: "queue", time: { created: 123 } }
   const api = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async () => Response.json({ data: [item] })) })
   let dispose!: () => void
   let emit!: (event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void
@@ -22,9 +21,9 @@ test("legacy pending HTTP data and enqueued SSE materialize through the actual s
   try {
     await data.session.pending.sync("session")
     assert.equal(data.session.message.list("session")[0].time.created, 123)
-    const event = normalizeRuntimeEvent({ id: "event", created: 456, type: "session.inbox.enqueued",
+    const event = { id: "event", created: 456, type: "session.inbox.enqueued",
       data: { sessionID: "session", inboxID: "second", item: { type: "user", payload: { text: "Second" }, delivery: "queue" } },
-    } as OpenCodeEvent)
+    } as OpenCodeEvent
     emit({ name: event.type, details: event })
     assert.equal(data.session.message.list("session").find(message => message.id === "second")?.time.created, 456)
   } finally { dispose() }

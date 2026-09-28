@@ -20,9 +20,10 @@ async function harness() {
     environmentStatus: 204,
     beforeEnvironment: async () => {},
     afterEnvironment: () => {},
+    beforeInstructions: async () => {},
     current: true,
   }
-  const upstream = Fastify()
+  const upstream = Fastify({ forceCloseConnections: true })
   apps.push(upstream)
   upstream.get("/api/session/:id", async request => {
     const { id } = request.params as { id: string }
@@ -42,6 +43,9 @@ async function harness() {
     calls.push(`${request.method}:${action}:${id}`)
     sends.push({ sessionID: id, variables: snapshots.get(id), body: request.body })
     return { data: [] }
+  })
+  upstream.route({ method: ["PUT", "DELETE"], url: "/api/experimental/session/:id/instructions/entries/:key",
+    handler: async (_request, reply) => { await control.beforeInstructions(); return reply.code(204).send() },
   })
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
@@ -112,6 +116,20 @@ test("waits for the environment acknowledgement before admitting a prompt", asyn
   release()
   assert.equal((await pending).statusCode, 200)
   assert.equal(sends.length, 1)
+})
+
+test("advisory Git context timeout permits the send after successful environment synchronization", async () => {
+  const { app, control, sends, logs } = await harness()
+  let release!: () => void
+  control.beforeInstructions = () => new Promise<void>(resolve => { release = resolve })
+  try {
+    const started = Date.now()
+    const response = await app.inject({ method: "POST", url: `${prefix}one/prompt`, payload: { text: "hello" } })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.ok(Date.now() - started < 10_000, "advisory deadline must not consume the environment timeout")
+    assert.equal(sends.length, 1)
+    assert.equal(logs.length, 0, "advisory timeout is not an environment failure")
+  } finally { release?.() }
 })
 
 test("unauthorized sessions and direct environment writes never set an environment", async () => {

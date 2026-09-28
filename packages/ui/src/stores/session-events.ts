@@ -13,6 +13,7 @@ import type {
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
+import { reconcileSessionModel } from "./session-model-reconciliation"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
 import {
@@ -54,6 +55,7 @@ import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
 import { messageStoreBus } from "./message-v2/bus"
+import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 
 const log = getLogger("sse")
@@ -103,16 +105,19 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       withSession(instanceId, event.data.sessionID, (session) => { session.agent = event.data.agent })
       return
     case "session.model.selected":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, (session) => {
-        session.model = { providerId: event.data.model.providerID, modelId: event.data.model.id }
-      })
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
+        void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
+          .then(() => reconcileSessionModel(instanceId, event.data.sessionID))
+      } else {
+        void reconcileSessionModel(instanceId, event.data.sessionID)
+      }
       return
     case "session.usage.updated":
       withSession(instanceId, event.data.sessionID, (session) => {
         session.cost = event.data.cost as unknown as number
         session.tokens = event.data.tokens as Session["tokens"]
       })
+      updateSessionInfo(instanceId, event.data.sessionID)
       return
     case "session.moved":
       handleSessionMoved(instanceId, event.data)
@@ -188,9 +193,23 @@ async function reconcileTerminalNativeSessionStatus(
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
-  if (options.refreshMessages) {
+  refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+}
+
+function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
+  // The native reducer can reconcile its own cache after a missing tool terminal
+  // event, but our bounded visible message store needs an authoritative load too.
+  const store = messageStoreBus.getInstance(instanceId)
+  const unsettledTools = store?.getSessionMessageIds(sessionId).some(id => {
+    const message = store.getMessage(id)
+    return message?.partIds.some(partId => {
+      const part = message.parts[partId]?.data
+      return part?.type === "tool" && (part.state?.status === "pending" || part.state?.status === "running")
+    })
+  })
+  if (force || unsettledTools) {
     void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
-      log.warn("Failed to refresh interrupted session messages", { instanceId, sessionId, error })
+      log.warn("Failed to refresh settled session messages", { instanceId, sessionId, error })
     })
   }
 }
@@ -539,6 +558,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   }
 
   ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
+  refreshSettledSessionMessages(instanceId, sessionId)
   speakCompletedAssistantText(instanceId, sessionId)
   log.info(`[SSE] Session idle: ${sessionId}`)
 }
@@ -552,6 +572,7 @@ function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): v
   const status = mapSdkSessionStatus(rawStatus)
   const retry = mapSdkSessionRetry(rawStatus)
   ensureSessionStatus(instanceId, sessionId, status, event.location?.directory, retry)
+  if (status === "idle") refreshSettledSessionMessages(instanceId, sessionId)
   if (retry) {
     const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
     const countdown =

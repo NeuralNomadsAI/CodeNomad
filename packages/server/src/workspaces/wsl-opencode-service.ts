@@ -4,6 +4,7 @@ import {
   type ServiceExecOptions,
 } from "./opencode-cli-service"
 import { daemonProcessEnvironment } from "./host-opencode-service"
+import { wslServiceMetadataPath } from "./native-service-registration"
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -24,6 +25,8 @@ export class WslOpenCodeService extends OpenCodeCliService {
     super({
       label: "WSL",
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      serviceMetadataPath: (nativePath, deadlineAt) => wslServiceMetadataPath(options.distro, nativePath, deadlineAt),
+      registrationRefusalIsAbsence: false,
       command: (args, start) => ({
         command: "wsl.exe",
         args: [

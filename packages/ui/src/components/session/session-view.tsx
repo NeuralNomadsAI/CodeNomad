@@ -13,7 +13,7 @@ import PromptContextControls from "../prompt-input/PromptContextControls"
 import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceReady } from "../../stores/instances"
-import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
+import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, loadMessageAnchor, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
@@ -29,6 +29,7 @@ import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
+import { messagesLoaded } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
 
 const log = getLogger("session")
@@ -355,6 +356,10 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     isActive: () => Boolean(props.isActive),
     instanceId: () => props.instanceId,
     session,
+    shouldLoad: () => {
+      const id = session()?.id
+      return Boolean(id && !messagesLoaded().get(props.instanceId)?.has(id))
+    },
     loadMessages,
     waitForHydration: waitForInstanceReady,
     onError: (error) => log.error("Failed to load messages", error),
@@ -623,6 +628,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onLoadNewerMessages={(signal) => loadNewerMessageWindow(props.instanceId, props.sessionId, signal)}
               onLoadLatestMessages={(signal) => loadLatestMessageWindow(props.instanceId, props.sessionId, signal)}
               onLoadOldestMessages={(signal) => loadOldestMessageWindow(props.instanceId, props.sessionId, signal)}
+              onLoadMessageAnchor={(messageId, signal) => loadMessageAnchor(props.instanceId, props.sessionId, messageId, signal)}
               sessionStreamingActive={sessionStreamingActive()}
               explicitBottomPinIntent={activeSubmitBottomPinIntent()}
               onExplicitBottomPinCancelled={() => setSubmitBottomPinIntent(null)}
@@ -672,7 +678,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         <PromptInput
           instanceId={props.instanceId}
-          instanceFolder={props.instanceFolder}
+          instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
           compactLayout={props.compactPromptLayout}

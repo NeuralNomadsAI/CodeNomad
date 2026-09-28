@@ -23,7 +23,7 @@ describe("BinaryResolver", () => {
         ? { opencodeBinaries: [{ path: "listed-but-not-global" }] }
         : {},
     } as unknown as SettingsService
-    assert.equal(new BinaryResolver(settings).resolveDefault().path, "opencode2")
+    assert.equal(new BinaryResolver(settings, () => ({ path: "opencode2", source: "path" })).resolveDefault().path, "opencode2")
   })
 
   it("upgrades the legacy bare opencode default to opencode2", () => {
@@ -34,6 +34,6 @@ describe("BinaryResolver", () => {
       },
     } as unknown as SettingsService
 
-    assert.equal(new BinaryResolver(settings).resolveDefault().path, "opencode2")
+    assert.equal(new BinaryResolver(settings, () => ({ path: "opencode2", source: "path" })).resolveDefault().path, "opencode2")
   })
 })

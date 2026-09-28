@@ -1,4 +1,5 @@
 import type { OpenCodeClient } from "@opencode/client"
+import { getLogger } from "../lib/logger"
 import { isConversationModeEnabled } from "./conversation-speech"
 import { getDefaultWorktreeDirectory } from "./worktrees"
 
@@ -58,9 +59,14 @@ async function syncVoiceModeInstruction(client: OpenCodeClient, instanceId: stri
 
 // Called inside session admission before prompt/command/shell. Reapply the named
 // entry for existing sessions and after reconnects, without a browser-only cache.
-// Await errors so an action cannot silently bypass its instruction setup.
+// Voice mode is a UI preference overlay: its sync never blocks the send itself.
+// Placement context remains awaited so an action cannot silently bypass setup.
 export async function syncSessionInstructions(client: OpenCodeClient, instanceId: string, sessionId: string): Promise<void> {
-  await syncVoiceModeInstruction(client, instanceId, sessionId)
+  try {
+    await syncVoiceModeInstruction(client, instanceId, sessionId)
+  } catch (error) {
+    getLogger("actions").warn("Voice instruction sync failed; continuing without it", error)
+  }
   await client.session.instructions.entry.put({
     sessionID: sessionId,
     key: PLACEMENT_INSTRUCTION_KEY,

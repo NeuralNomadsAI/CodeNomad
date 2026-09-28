@@ -1,5 +1,5 @@
-import type { FormAnswer, FormField, FormFields, FormValue, IntegrationKeyMethod } from "@opencode/client"
-import { isFormFieldVisible } from "./form-schema"
+import type { FormAnswer, FormField, FormFields, IntegrationKeyMethod } from "@opencode/client"
+import { getFormAnswer } from "./form-schema"
 
 export type ProviderAuthAuthorization = {
   url: string
@@ -45,11 +45,7 @@ export function getProviderAuthInitialAnswer(fields?: FormFields): FormAnswer {
 
 export function getProviderAuthAnswer(fields: FormFields | undefined, values: FormAnswer): FormAnswer | undefined {
   if (!fields) return undefined
-  return Object.fromEntries(
-    fields
-      .filter((field) => field.type !== "external" && isFormFieldVisible(field, values))
-      .flatMap((field) => values[field.key] === undefined ? [] : [[field.key, values[field.key] as FormValue]]),
-  )
+  return getFormAnswer(fields, values)
 }
 
 export function isProviderAuthFieldComplete(field: FormField, answer: FormAnswer): boolean {

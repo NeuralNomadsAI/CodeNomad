@@ -1,0 +1,23 @@
+.auth-recovery-overlay {
+  z-index: 1400;
+}
+
+.auth-recovery-window {
+  position: fixed;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1401;
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+}
+
+[dir="rtl"] .auth-recovery-window {
+  transform: translate(50%, -50%);
+}
+
+.auth-recovery-window label {
+  display: block;
+  margin-block: var(--space-sm) var(--space-xs);
+}

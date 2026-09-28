@@ -37,6 +37,7 @@ type TranscriptEntry = {
   freshEntry?: DataEntry
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
+  retireWhenDrained: boolean
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -85,6 +86,7 @@ function bumpMutationRevision(key: string): void {
 }
 
 export function getOpenCodeInstanceGeneration(instanceId: string): number {
+  instanceDataRevision(instanceId)[0]()
   let generation = instanceGenerations.get(instanceId)
   if (generation === undefined) {
     generation = ++nextInstanceGeneration
@@ -96,6 +98,9 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
+  const eventRevisions = new Map<string, number>()
+  const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
+  let disposed = false
   return createRoot((dispose) => {
     const event = {
       listen(handler: (event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void) {
@@ -117,9 +122,24 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
             get(messageTarget, messageProperty, messageReceiver) {
               if (messageProperty !== "list") return Reflect.get(messageTarget, messageProperty, messageReceiver)
               return async (input: { sessionID: string }, options?: unknown) => {
-                const snapshot = messageSnapshots.get(input.sessionID)
-                if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
-                return (client.message.list as any)(input, options)
+                // Native terminal-tool reconciliation replaces its cache after
+                // awaiting this response, without fencing intervening events.
+                // Keep the live projection until one trailing read is current;
+                // never merge an obsolete page into newer streaming messages.
+                for (;;) {
+                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                    throw new Error("Stale read from disposed OpenCode projection")
+                  }
+                  const snapshot = messageSnapshots.get(input.sessionID)
+                  if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
+                  const revision = eventRevisions.get(input.sessionID) ?? 0
+                  const response = await (client.message.list as any)(input, options)
+                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                    throw new Error("Stale read from disposed OpenCode projection")
+                  }
+                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
+                  return response
+                }
               }
             },
           })
@@ -136,6 +156,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })
     const emit = (details: OpenCodeEvent) => {
+      // Isolated fresh-entry resyncs already fence their entire transaction.
+      // Only events applied to this reducer invalidate its own pending reads.
+      const sessionId = eventSessionId(details)
+      if (sessionId) eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -173,7 +197,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         data.session.setStatus(sessionId, sessionId in active ? "running" : "idle")
         return true
       },
-      dispose,
+      dispose() {
+        disposed = true
+        dispose()
+      },
     }
   })
 }
@@ -201,6 +228,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncing: false,
     resyncGeneration: 0,
     retryCount: 0,
+    retireWhenDrained: false,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -418,6 +446,7 @@ async function resyncAuthoritativeTranscript(
 
     transcript.onResynced?.(fresh.data)
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
     if (!isResyncCurrent(instanceId, sessionId, transcript, generation, fresh)) return
     transcript.resyncing = false
@@ -508,6 +537,7 @@ async function rotateTranscript(
   } finally {
     if (transcript.rotationGeneration === generation) transcript.rotating = false
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== entry) entry.dispose()
+    retireDrainedTranscript(instanceId, sessionId, transcript)
   }
 }
 
@@ -570,6 +600,8 @@ export function applyOpenCodeDataEvent(
     : undefined
   const entry = transcript?.entry ?? primary
   if (transcript && typeof sessionId === "string") {
+    // A new execution must not inherit a preceding idle event's deferred cleanup.
+    if (event.type === "session.execution.started" || eventMayAppendMessage(event)) transcript.retireWhenDrained = false
     const key = messageRevisionKey(instanceId, sessionId)
     fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
     if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
@@ -666,7 +698,42 @@ export function projectOpenCodeMessages(
   }
 }
 
-export function destroyOpenCodeData(instanceId: string): void {
+function retireDrainedTranscript(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!transcript.retireWhenDrained || !isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
+    || transcript.retryTimer || transcript.queue.length) return
+  destroyOpenCodeData(instanceId, sessionId)
+}
+
+export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent): void {
+  const sessionId = eventSessionId(event)
+  if (sessionId === undefined) return
+  if (event.type === "session.deleted") destroyOpenCodeData(instanceId, sessionId)
+  if (event.type !== "session.idle") return
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (!transcript) return
+  // The caller has projected the synchronous page. Queued terminal updates and
+  // overflow recovery must publish their final page before releasing its reducer.
+  transcript.retireWhenDrained = true
+  retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    const key = messageRevisionKey(instanceId, sessionId)
+    const transcript = transcriptEntries.get(key)
+    if (transcript) {
+      invalidateTranscript(transcript)
+      transcript.entry.dispose()
+      transcriptEntries.delete(key)
+    }
+    // Payload lifetime is shorter than request authority: a pending native page
+    // must never see a pre-mutation revision again after idle/eviction. These
+    // scalar fences are released on deletion or a fenced instance-generation reset.
+    fullDataRevisions.delete(key)
+    instanceDataRevision(instanceId)[1]((current) => current + 1)
+    return
+  }
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)

@@ -23,12 +23,13 @@ export class WorktreeDeletionFence {
   constructor(private readonly mutationDrainTimeoutMs = MUTATION_DRAIN_TIMEOUT_MS) {}
 
   isBlocked(directory: string): boolean {
-    return this.blocked.has(normalizeDirectory(directory))
+    const target = normalizeDirectory(directory)
+    return [...this.blocked.keys()].some(blocked => directoriesOverlap(blocked, target))
   }
 
   enter(directories: string[]): (() => void) | undefined {
     const normalized = [...new Set(directories.map(normalizeDirectory))]
-    if (normalized.some((directory) => this.blocked.has(directory))) return undefined
+    if (normalized.some((directory) => this.isBlocked(directory))) return undefined
     for (const directory of normalized) this.active.set(directory, (this.active.get(directory) ?? 0) + 1)
 
     let released = false
@@ -55,7 +56,10 @@ export class WorktreeDeletionFence {
 
     const previous = this.queues.get(normalizedKey) ?? Promise.resolve()
     const current = previous.catch(() => {}).then(async () => {
-      await Promise.all(blocked.map((directory) => this.waitForIdle(directory)))
+      // Directory-only degraded identities may be below their Git checkout root.
+      // Block new overlapping admissions first, then drain all admitted aliases.
+      const active = [...this.active.keys()].filter(directory => blocked.some(root => directoriesOverlap(root, directory)))
+      await Promise.all(active.map((directory) => this.waitForIdle(directory)))
       return operation()
     })
     this.queues.set(normalizedKey, current)
@@ -86,6 +90,11 @@ export class WorktreeDeletionFence {
       }, this.mutationDrainTimeoutMs)
     })
   }
+}
+
+function directoriesOverlap(left: string, right: string): boolean {
+  const contains = (root: string, target: string) => target === root || target.startsWith(root.endsWith("/") ? root : `${root}/`)
+  return contains(left, right) || contains(right, left)
 }
 
 async function inventorySessions(client: OpenCodeClient, project: string): Promise<SessionInfo[]> {

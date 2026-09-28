@@ -13,14 +13,14 @@ import type { PermissionRequest } from "../types/permission"
 import { getPermissionSessionId } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
-import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { PermissionToolBlock } from "./tool-call/permission-block"
 import FormRequest from "./form-request"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
-import { extractDiagnostics, diagnosticFileName } from "./tool-call/diagnostics"
+import { extractDiagnosticsView, diagnosticFileName } from "./tool-call/diagnostics"
 import { renderDiagnosticsSection } from "./tool-call/diagnostics-section"
 import type {
   DiffPayload,
@@ -32,9 +32,15 @@ import type {
 import {
   buildToolSpeechText,
   ensureMarkdownContent,
+  formatToolInputForCopy,
+  formatToolInputForRender,
   getToolName,
+  getToolTitleDetail,
   isToolStateCompleted,
   isToolStateRunning,
+  limitToolOutputForRender,
+  limitToolTitleForRender,
+  TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
   getDefaultToolAction,
   readToolStatePayload,
 } from "./tool-call/utils"
@@ -44,6 +50,8 @@ import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { observeActionOverflow } from "./measured-action-overflow"
 import SpeechActionButton from "./speech-action-button"
+import { ToolOutputImages } from "./tool-call/output-images"
+import { isToolImageContent } from "../lib/tool-content"
 
 const log = getLogger("session")
 
@@ -71,6 +79,7 @@ interface ToolCallProps {
   partVersion?: number
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   onContentRendered?: () => void
   /**
    * When true, tool call starts collapsed regardless of user preferences.
@@ -115,6 +124,7 @@ function ToolCallDetails(props: {
   toolCallIdentifier: () => string
   instanceId: string
   sessionId: string
+  isActive?: Accessor<boolean>
   messageId?: string
   messageVersion?: number
   partVersion?: number
@@ -184,6 +194,7 @@ function ToolCallDetails(props: {
   })
 
   const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
+  const [permissionApprovalBlocked, setPermissionApprovalBlocked] = createSignal(true)
   const [permissionError, setPermissionError] = createSignal<string | null>(null)
 
   const followScroll = createFollowScroll({
@@ -246,6 +257,7 @@ function ToolCallDetails(props: {
       if (isTextInputFocused()) return
       const permission = permissionDetails()
       if (!permission || !props.isPermissionActive()) return
+      if (permissionApprovalBlocked()) return
       if (event.key === "Enter") {
         event.preventDefault()
         void handlePermissionResponse(permission, "once")
@@ -269,25 +281,15 @@ function ToolCallDetails(props: {
 
   const status = () => props.toolState()?.status || ""
 
-  const toolInputDisplay = createMemo((): { content: string; copyText: string; language: string } | null => {
+  const toolInputDisplay = createMemo((): { content: string; language: string } | null => {
     const input = props.toolInput()
-    if (!input || Object.keys(input).length === 0) return null
-
-    try {
-      const yamlText = stringifyYaml(input)
-      const content = ensureMarkdownContent(yamlText, "yaml", true)
-      return content ? { content, copyText: yamlText, language: "yaml" } : null
-    } catch (error) {
-      log.error("Failed to convert tool call input to YAML", error)
-      try {
-        const jsonText = JSON.stringify(input, null, 2)
-        const content = ensureMarkdownContent(jsonText, "json", true)
-        return content ? { content, copyText: jsonText, language: "json" } : null
-      } catch (nestedError) {
-        log.error("Failed to stringify tool call input", nestedError)
-        return null
-      }
-    }
+    if (!input) return null
+    if (!props.inputSectionExpanded()) return { content: "", language: "json" }
+    const formatted = formatToolInputForRender(input)
+    if (!formatted) return null
+    const language = formatted.language ?? "text"
+    const content = ensureMarkdownContent(formatted.text, language, true)
+    return content ? { content, language } : null
   })
 
   const renderer = createMemo(() => resolveToolRenderer(props.toolName()))
@@ -325,7 +327,7 @@ function ToolCallDetails(props: {
   })
 
   const renderOutputMarkdownContent: ToolRendererContext["renderMarkdown"] = (options) =>
-    renderMarkdownContent({ ...options, wrap: options.wrap ?? props.outputWrapEnabled() })
+    renderMarkdownContent({ ...options, content: limitToolOutputForRender(options.content), wrap: options.wrap ?? props.outputWrapEnabled() })
 
   const rendererContext: ToolRendererContext = {
     toolCall: props.toolCallMemo,
@@ -333,6 +335,7 @@ function ToolCallDetails(props: {
     toolName: props.toolName,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    isActive: () => props.isActive?.() ?? true,
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
@@ -350,6 +353,7 @@ function ToolCallDetails(props: {
           partVersion={options.partVersion}
           instanceId={props.instanceId}
           sessionId={options.sessionId}
+          isActive={rendererContext.isActive}
           onContentRendered={props.onContentRendered}
           forceCollapsed={options.forceCollapsed}
         />
@@ -380,17 +384,31 @@ function ToolCallDetails(props: {
   })
 
   const renderToolBody = () => {
-    return renderer().renderBody(rendererContext)
+    const body = renderer().renderBody(rendererContext)
+    const state = props.toolState()
+    if (state?.status !== "completed" || !state.content?.some(isToolImageContent)) return body
+    return <>{body}<ToolOutputImages state={props.toolState()} onContentRendered={() => {
+      scrollHelpers.restoreAfterRender()
+      props.onContentRendered?.()
+    }} /></>
   }
 
   const outputChrome = createMemo<ToolOutputChrome>(() => renderer().getOutputChrome?.(rendererContext) ?? {})
+  const resolveOutputCopyText = () => outputChrome().copyText || outputChrome().getCopyText?.() || ""
+  const canCopyOutput = () => outputChrome().hasCopyText ?? Boolean(outputChrome().copyText || outputChrome().getCopyText)
 
   const renderError = () => {
     const state = props.toolState()
     if (state?.status === "error" && state.error) {
+      const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-          <strong>{props.t("toolCall.error.label")}</strong> {state.error}
+          <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
+          <Show when={truncated}>
+            <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+              <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </Show>
         </div>
       )
     }
@@ -405,6 +423,7 @@ function ToolCallDetails(props: {
       error={permissionError}
       renderDiff={renderDiffContent}
       fallbackSessionId={() => props.sessionId}
+      onApprovalBlockedChange={setPermissionApprovalBlocked}
       onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
     />
   )
@@ -421,6 +440,10 @@ function ToolCallDetails(props: {
     await copyToClipboard(text)
   }
 
+  const copyToolInput = async (event: MouseEvent) => {
+    await copyIoText(event, formatToolInputForCopy(props.toolInput())?.text)
+  }
+
   const outputWrapTitle = () =>
     props.outputWrapEnabled()
       ? props.t("toolCall.diff.disableWordWrap")
@@ -434,6 +457,7 @@ function ToolCallDetails(props: {
     copyText?: () => string | null | undefined
     copyTitle?: () => string
     copyAriaLabel?: () => string
+    onCopy?: (event: MouseEvent) => void
     actions?: () => JSXElement
   }) => (
     <div class="tool-call-io-header">
@@ -449,18 +473,16 @@ function ToolCallDetails(props: {
         {(actions) => <span class="tool-call-io-actions">{actions()}</span>}
       </Show>
 
-      <Show when={options.copyText?.()}>
-        {(copyText) => (
-          <button
-            type="button"
-            class="tool-call-header-icon-button tool-call-header-copy tool-call-io-copy"
-            onClick={(event) => void copyIoText(event, copyText())}
-            aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
-            title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
-          >
-            <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        )}
+      <Show when={Boolean(options.copyText?.() || options.onCopy)}>
+        <button
+          type="button"
+          class="tool-call-header-icon-button tool-call-io-copy"
+          onClick={(event) => options.onCopy ? options.onCopy(event) : void copyIoText(event, options.copyText?.())}
+          aria-label={options.copyAriaLabel?.() ?? props.t("toolCall.io.copyOutputAriaLabel")}
+          title={options.copyTitle?.() ?? props.t("toolCall.io.copyOutputTitle")}
+        >
+          <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+        </button>
       </Show>
     </div>
   )
@@ -547,7 +569,7 @@ function ToolCallDetails(props: {
                   language: () => toolInputDisplay()?.language,
                   expanded: props.inputSectionExpanded,
                   onToggle: props.toggleInputSection,
-                  copyText: () => toolInputDisplay()?.copyText,
+                  onCopy: copyToolInput,
                   copyTitle: () => props.t("toolCall.io.copyInputTitle"),
                   copyAriaLabel: () => props.t("toolCall.io.copyInputAriaLabel"),
                 })
@@ -572,6 +594,7 @@ function ToolCallDetails(props: {
                     expanded: props.outputSectionExpanded,
                     onToggle: props.toggleOutputSection,
                     copyText: () => outputChrome().copyText,
+                    onCopy: canCopyOutput() ? (event) => void copyIoText(event, resolveOutputCopyText()) : undefined,
                     copyTitle: () => props.t("toolCall.io.copyOutputTitle"),
                     copyAriaLabel: () => props.t("toolCall.io.copyOutputAriaLabel"),
                     actions: () => outputChrome().actions,
@@ -706,7 +729,9 @@ export default function ToolCall(props: ToolCallProps) {
 
   const hasToolInput = createMemo(() => {
     const input = toolInput()
-    return input && Object.keys(input).length > 0
+    if (!input) return false
+    for (const key in input) if (Object.prototype.hasOwnProperty.call(input, key)) return true
+    return false
   })
 
   const [toolCallRootEl, setToolCallRootEl] = createSignal<HTMLDivElement | undefined>()
@@ -719,11 +744,7 @@ export default function ToolCall(props: ToolCallProps) {
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
   }
-  const diagnosticsEntries = createMemo(() => {
-    const state = toolState()
-    if (!state) return []
-    return extractDiagnostics(state)
-  })
+  const diagnosticsView = createMemo(() => extractDiagnosticsView(toolState()))
 
   const toggleInputSection = () => {
     setInputSectionOverride((prev) => {
@@ -801,7 +822,7 @@ export default function ToolCall(props: ToolCallProps) {
     const state = toolState()
     const currentTool = toolName()
 
-    if (currentTool !== "task") {
+    if (getCanonicalToolName(currentTool) !== "task") {
       if (!state || state.status === "pending") return getRendererAction()
 
       const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
@@ -833,20 +854,9 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   const toolTypeLabel = createMemo(() => toolName())
+  const renderedToolTypeLabel = createMemo(() => limitToolTitleForRender(toolTypeLabel()))
 
-  const headerTitleDetail = createMemo(() => {
-    const rawTitle = renderToolTitle().trim()
-    const typeLabel = toolTypeLabel().trim()
-    if (!rawTitle) return ""
-    const labels = [typeLabel, getToolName(toolName()).trim()].filter(Boolean)
-    for (const label of labels) {
-      if (rawTitle === label) return ""
-      if (rawTitle.startsWith(`${label} `)) return rawTitle.slice(label.length).trimStart()
-      if (rawTitle.startsWith(`${label}[`)) return rawTitle.slice(label.length).trimStart()
-      if (rawTitle.startsWith(`${label} · `)) return rawTitle.slice(label.length + 3).trimStart()
-    }
-    return rawTitle
-  })
+  const headerTitleDetail = createMemo(() => getToolTitleDetail(renderToolTitle(), toolName()))
 
   const headerText = createMemo(() => {
     // Keep this as a memo so copy always matches what's rendered.
@@ -854,9 +864,10 @@ export default function ToolCall(props: ToolCallProps) {
     const detail = headerTitleDetail()
     return [typeLabel, detail].filter(Boolean).join(" ")
   })
+  const renderedHeaderTitleDetail = createMemo(() => limitToolTitleForRender(headerTitleDetail()))
 
-  const headerCopyText = createMemo(() => headerOutputChrome().copyText || "")
-  const canCopyHeaderOutput = () => headerCopyText().length > 0
+  const headerCopyText = () => headerOutputChrome().copyText || headerOutputChrome().getCopyText?.() || ""
+  const canCopyHeaderOutput = () => headerOutputChrome().hasCopyText ?? Boolean(headerOutputChrome().copyText || headerOutputChrome().getCopyText)
   const speechText = createMemo(() =>
     buildToolSpeechText({
       title: headerText(),
@@ -952,8 +963,8 @@ export default function ToolCall(props: ToolCallProps) {
         >
           <ChevronRight class="tool-call-disclosure disclosure-chevron" aria-hidden="true" />
           <span class="tool-call-summary">
-            <span class="tool-call-summary-type">{toolTypeLabel()}</span>
-            <Show when={headerTitleDetail()}>
+            <span class="tool-call-summary-type">{renderedToolTypeLabel()}</span>
+            <Show when={renderedHeaderTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
             <ToolStatusIndicator status={status} t={t} />
@@ -968,7 +979,7 @@ export default function ToolCall(props: ToolCallProps) {
             aria-label={t("toolCall.header.copyOutputAriaLabel")}
             title={t("toolCall.header.copyOutputTitle")}
           >
-            <Copy class="w-3.5 h-3.5" />
+            <Copy class="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </Show>
 
@@ -1023,6 +1034,7 @@ export default function ToolCall(props: ToolCallProps) {
           toolCallIdentifier={toolCallIdentifier}
           instanceId={props.instanceId}
           sessionId={props.sessionId}
+          isActive={props.isActive}
           messageId={props.messageId}
           messageVersion={props.messageVersion}
           partVersion={props.partVersion}
@@ -1049,17 +1061,17 @@ export default function ToolCall(props: ToolCallProps) {
         />
       </Show>
  
-      <Show when={!hasPendingForm() && diagnosticsEntries().length && diagnosticsVisibility() !== "hidden"}>
+      <Show when={!hasPendingForm() && (diagnosticsView().entries.length > 0 || diagnosticsView().truncated) && diagnosticsVisibility() !== "hidden"}>
 
         {renderDiagnosticsSection(
           t,
-          diagnosticsEntries(),
+          diagnosticsView(),
           diagnosticsExpanded(),
           () => setDiagnosticsOverride((prev) => {
             const current = prev === undefined ? diagnosticsDefaultExpanded() : prev
             return !current
           }),
-          diagnosticFileName(diagnosticsEntries()),
+          diagnosticFileName(diagnosticsView().entries),
         )}
       </Show>
 

@@ -6,7 +6,8 @@ import { assertLoopbackServiceUrl } from "./service-state"
 import { isOpenCodeServiceCommandUnavailable } from "./opencode-cli-compatibility"
 import type { OpenCodeServiceLifecycle } from "./opencode-service"
 import type { SpawnSpec } from "./spawn"
-import { rememberRuntime } from "../opencode/compatibility/runtime"
+import { rememberRuntime, runtimeIdentity } from "../opencode/compatibility/runtime"
+import { readNativeServiceRegistration } from "./native-service-registration"
 
 export const MAX_SERVICE_OUTPUT_BYTES = 64 * 1024
 const MAX_ERROR_CHARS = 1_024
@@ -31,6 +32,7 @@ export interface OpenCodeCliServiceDependencies {
   execFile: (file: string, args: string[], options: ServiceExecOptions) => Promise<ServiceExecResult>
   startFile?: OpenCodeCliServiceDependencies["execFile"]
   fetch: typeof globalThis.fetch
+  readRegistration: typeof readNativeServiceRegistration
 }
 
 export interface OpenCodeCliServiceOptions {
@@ -39,6 +41,8 @@ export interface OpenCodeCliServiceOptions {
   command: (args: string[], start: boolean) => SpawnSpec
   beforeHealth?: (endpoint: Endpoint, deadlineAt: number) => Promise<void>
   unreachableMessage?: (url: string) => string
+  serviceMetadataPath?: (nativePath: string, deadlineAt: number) => string | Promise<string>
+  registrationRefusalIsAbsence?: boolean
 }
 
 export class OpenCodeCliService implements OpenCodeServiceLifecycle {
@@ -50,18 +54,27 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     dependencies: Partial<OpenCodeCliServiceDependencies> = {},
   ) {
     this.timeoutMs = Math.max(1, options.timeoutMs)
-    this.dependencies = { execFile: executeFile, fetch: globalThis.fetch, ...dependencies }
+    this.dependencies = { execFile: executeFile, fetch: globalThis.fetch, readRegistration: readNativeServiceRegistration, ...dependencies }
   }
 
   async discover(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint | undefined> {
     const status = this.singleLine(await this.run(["service", "status"], false, deadlineAt), "status")
-    if (status === "stopped") return undefined
+    if (status === "stopped") return this.discoverRegistration(deadlineAt)
     return this.endpoint(status, deadlineAt)
   }
 
   async ensure(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint> {
+    const existing = await this.discover(deadlineAt)
+    if (existing) return existing
     const url = this.singleLine(await this.run(["service", "start"], true, deadlineAt), "start")
     return this.endpoint(url, deadlineAt)
+  }
+
+  async restart(deadlineAt = Date.now() + this.timeoutMs): Promise<Endpoint> {
+    // Explicit user action only. Delegate the subsequent starter outside native
+    // backend containment exactly as normal first startup does.
+    await this.run(["service", "stop"], false, deadlineAt)
+    return this.ensure(deadlineAt)
   }
 
   private async endpoint(value: string, deadlineAt: number): Promise<Endpoint> {
@@ -74,6 +87,35 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     const endpoint: Endpoint = { url, auth: { type: "basic", username: "opencode", password } }
     await this.options.beforeHealth?.(endpoint, deadlineAt)
     await this.validateStatus(endpoint, deadlineAt)
+    return endpoint
+  }
+
+  private async discoverRegistration(deadlineAt: number): Promise<Endpoint | undefined> {
+    const password = this.singleLine(await this.run(["service", "get", "password"], false, deadlineAt), "password")
+    if (!password) throw new Error(`${this.options.label} OpenCode service returned an empty password`)
+    const stateDirectory = this.singleLine(await this.run(["debug", "paths", "state"], false, deadlineAt), "state directory")
+    const configDirectory = this.singleLine(await this.run(["debug", "paths", "config"], false, deadlineAt), "config directory")
+    const registration = await this.withDeadline(this.dependencies.readRegistration({ stateDirectory, configDirectory, password,
+      mapPath: this.options.serviceMetadataPath ? nativePath => this.options.serviceMetadataPath!(nativePath, deadlineAt) : undefined }), deadlineAt, "registration discovery")
+    if (!registration) return undefined
+    const endpoint: Endpoint = { url: this.assertServiceUrl(registration.url), auth: { type: "basic", username: "opencode", password } }
+    try {
+      await this.options.beforeHealth?.(endpoint, deadlineAt)
+      await this.validateStatus(endpoint, deadlineAt)
+    } catch (error) {
+      // Only an OS-level refused connection proves a stale registration. A
+      // timeout, HTTP error, foreign listener or malformed metadata must block start.
+      if (error instanceof RefusedServiceConnection) {
+        // A config-only candidate has already proved native registration absence
+        // on the selected execution host (ENOENT). Do not mistake its configured
+        // port for a running WSL daemon. Real registrations always carry a PID;
+        // their Windows refusal still cannot establish Linux daemon absence.
+        if (registration.pid === undefined || this.options.registrationRefusalIsAbsence !== false) return undefined
+        throw new Error(this.options.unreachableMessage?.(endpoint.url) ?? error.message)
+      }
+      throw error
+    }
+    if (registration.pid !== undefined && runtimeIdentity(endpoint)?.pid !== registration.pid) throw new Error("Native service registration identity changed")
     return endpoint
   }
 
@@ -171,8 +213,9 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
         redirect: "error",
         signal: AbortSignal.timeout(timeout),
       }), deadlineAt, `${kind} validation`)
-    } catch {
+    } catch (error) {
       const message = this.options.unreachableMessage?.(endpoint.url)
+      if (isConnectionRefused(error)) throw new RefusedServiceConnection(message)
       throw new Error(message ?? `Cannot reach the ${this.options.label} OpenCode service at ${endpoint.url}`)
     }
   }
@@ -230,6 +273,18 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       if (timer) clearTimeout(timer)
     }
   }
+}
+
+class RefusedServiceConnection extends Error {
+  constructor(message?: string) { super(message ?? "Cannot reach OpenCode service: connection refused") }
+}
+
+function isConnectionRefused(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const value = error as { code?: unknown; cause?: unknown; errors?: unknown }
+  if (value.code === "ECONNREFUSED") return true
+  if (Array.isArray(value.errors) && value.errors.length) return value.errors.every(isConnectionRefused)
+  return value.cause !== undefined && value.cause !== error && isConnectionRefused(value.cause)
 }
 
 function isServiceStatusResponse(value: unknown): boolean {

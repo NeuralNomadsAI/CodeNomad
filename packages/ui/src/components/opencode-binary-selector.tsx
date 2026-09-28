@@ -22,6 +22,7 @@ interface OpenCodeBinarySelectorProps {
   onBinaryChange: (binary: string) => void
   disabled?: boolean
   isVisible?: boolean
+  defaultVersion?: string
 }
 
 const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) => {
@@ -281,7 +282,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
           <For each={binaryOptions()}>
             {(binary) => {
               const isDefault = binary.isDefault
-              const versionLabel = () => versionInfo().get(binary.path) ?? binary.version
+              const versionLabel = () => (isDefault ? props.defaultVersion : undefined) ?? versionInfo().get(binary.path) ?? binary.version
 
               return (
                 <div

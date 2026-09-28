@@ -1,0 +1,17 @@
+/* Use the application's standard native scrollbar. Its single gutter only
+   consumes marker width; icon size and vertical rhythm are independent. */
+.message-timeline {
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
+}
+
+/* Follow the content edge so the rule meets any native scrollbar width. */
+.message-timeline .timeline-virtual-content[data-overflow="true"]::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-base) 50%, transparent);
+  pointer-events: none;
+}

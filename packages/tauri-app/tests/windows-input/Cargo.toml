@@ -1,0 +1,9 @@
+[package]
+name = "codenomad-windows-input-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[target.'cfg(windows)'.dependencies]
+tao = "=0.34.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

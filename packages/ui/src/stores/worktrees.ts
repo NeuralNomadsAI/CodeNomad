@@ -8,7 +8,8 @@ import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { normalizeSessionDirectory } from "./session-list-options"
-import { backgroundReads } from "../lib/background-read-queue"
+import { prioritizedRead } from "../lib/prioritized-read"
+import { activeInstanceId } from "./instances"
 
 const log = getLogger("api")
 
@@ -19,6 +20,7 @@ const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
+const [pendingFamilyMoveSlugs, setPendingFamilyMoveSlugs] = createSignal(new Map<string, string>())
 const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
@@ -31,7 +33,11 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
   }
   const load = async (initialRead: boolean) => {
     try {
-      const response = await backgroundReads.run(new AbortController().signal, () => serverApi.fetchWorktrees(instanceId))
+      const response = await prioritizedRead(
+        () => activeInstanceId() === instanceId,
+        new AbortController().signal,
+        () => serverApi.fetchWorktrees(instanceId),
+      )
       if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
       else defaultDirectories.delete(instanceId)
       setWorktreesByInstance((prev) => {
@@ -144,6 +150,10 @@ function getGitRepoStatus(instanceId: string): boolean | null {
   return gitRepoStatusByInstance().get(instanceId) ?? null
 }
 
+export function getDirectoryOnlyWorktree(instanceId: string): WorktreeDescriptor | undefined {
+  return getWorktrees(instanceId).find(worktree => worktree.slug === "root" && worktree.directoryOnly)
+}
+
 async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
   if (!instanceId) {
     throw new Error("Missing instanceId")
@@ -228,6 +238,10 @@ export function getDefaultWorktreeDirectory(instanceId: string): string | undefi
   return defaultDirectories.get(instanceId)
 }
 
+export function getPendingWorktreeSlug(instanceId: string, sessionId: string): string | undefined {
+  return pendingFamilyMoveSlugs().get(`${instanceId}:${getParentSessionId(instanceId, sessionId)}`)
+}
+
 async function setWorktreeSlugForParentSession(
   instanceId: string,
   parentSessionId: string,
@@ -281,8 +295,15 @@ async function setWorktreeSlugForParentSession(
   })
 
   familyMoveRequests.set(key, task)
+  setPendingFamilyMoveSlugs(previous => new Map(previous).set(key, normalizedSlug))
   await task.finally(() => {
-    if (familyMoveRequests.get(key) === task) familyMoveRequests.delete(key)
+    if (familyMoveRequests.get(key) !== task) return
+    familyMoveRequests.delete(key)
+    setPendingFamilyMoveSlugs(previous => {
+      const next = new Map(previous)
+      next.delete(key)
+      return next
+    })
   })
 }
 

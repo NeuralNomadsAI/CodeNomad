@@ -1,3 +1,9 @@
 [workspace]
-members = ["src-tauri"]
+members = ["src-tauri", "tests/windows-input"]
+default-members = ["src-tauri"]
 resolver = "2"
+
+# Tao 0.34.x lacks the upstream Windows input reentrancy fix (tao#1215).
+# Keep the current Tauri API/dependency line; see vendor/README.md for provenance.
+[patch.crates-io]
+tao = { path = "vendor/tao-0.34.6" }

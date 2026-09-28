@@ -23,6 +23,7 @@ const PreferencesSchema = z
   diffViewMode: z.enum(["split", "unified"]).default("split"),
   toolOutputExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   diagnosticsExpansion: z.enum(["hidden", "expanded", "collapsed"]).default("expanded"),
+  systemMessagesVisibility: z.enum(["hidden", "expanded", "collapsed"]).default("hidden"),
   showUsageMetrics: z.boolean().default(true),
   usageMetricsExpansion: z.enum(["expanded", "collapsed"]).default("collapsed"),
   autoCleanupBlankSessions: z.boolean().default(true),

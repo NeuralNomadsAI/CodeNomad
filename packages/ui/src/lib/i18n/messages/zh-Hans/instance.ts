@@ -127,8 +127,8 @@ export const instanceMessages = {
   "instanceShell.rightPanel.toast.saveError": "保存文件失败",
   "instanceShell.rightPanel.sections.yoloMode": "Yolo 模式",
   "instanceShell.rightPanel.sections.yoloMode.tooltip": "自动批准当前会话的权限请求。仅在你信任正在运行的工具时启用。",
-  "instanceShell.rightPanel.sections.plan": "计划",
-  "instanceShell.rightPanel.sections.plan.tooltip": "智能体在此会话中的路线图。跟踪任务、子任务及其完成状态。",
+  "instanceShell.rightPanel.sections.tokens": "Token",
+  "instanceShell.rightPanel.sections.tokens.tooltip": "此会话及其子会话的 Token 用量和费用。",
   "instanceShell.rightPanel.sections.backgroundProcesses": "后台 Shell",
   "instanceShell.rightPanel.sections.backgroundProcesses.tooltip": "当前工作区或 worktree 的 OpenCode 原生后台 Shell。",
   "instanceShell.backgroundProcesses.loading": "正在加载后台 Shell...",
@@ -220,8 +220,6 @@ export const instanceMessages = {
   "instanceShell.worktree.delete.force": "强制删除（丢弃本地更改）",
   "instanceShell.worktree.delete.success": "已删除 worktree {slug}",
 
-  "instanceShell.plan.noSessionSelected": "选择会话以查看计划。",
-  "instanceShell.plan.empty": "暂无计划。",
 
   "instanceShell.yoloMode.noSessionSelected": "请选择一个会话来配置 Yolo 模式。",
   "instanceShell.yoloMode.title": "Yolo 模式",
@@ -265,7 +263,7 @@ export const instanceMessages = {
   "opencodeBinarySelector.actions.add": "添加",
   "opencodeBinarySelector.actions.browse": "浏览可执行文件…",
   "opencodeBinarySelector.actions.removeTitle": "移除可执行文件",
-  "opencodeBinarySelector.badge.systemPath": "使用系统 PATH 中的可执行文件",
+  "opencodeBinarySelector.badge.systemPath": "优先使用 PATH，其次为用户 npm 安装",
   "opencodeBinarySelector.status.checkingVersions": "正在检查版本…",
   "opencodeBinarySelector.status.checking": "正在检查…",
   "opencodeBinarySelector.dialog.title": "选择 OpenCode 可执行文件",
@@ -273,6 +271,6 @@ export const instanceMessages = {
   "opencodeBinarySelector.validation.invalidBinary": "无效的 OpenCode 可执行文件",
   "opencodeBinarySelector.validation.v2Required": "CodeNomad 需要 OpenCode V2。请安装并选择 opencode2 可执行文件。",
   "opencodeBinarySelector.validation.alreadyValidating": "正在验证中",
-  "opencodeBinarySelector.display.systemPath": "{name}（系统 PATH）",
+  "opencodeBinarySelector.display.systemPath": "{name}（自动）",
   "opencodeBinarySelector.versionLabel": "v{version}",
 } as const

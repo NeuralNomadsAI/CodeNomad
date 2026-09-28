@@ -35,7 +35,7 @@ describe("WslOpenCodeService", () => {
   it("discovers stopped and running services with exact CLI arguments and no shell", async () => {
     const stopped = harness({ status: "stopped\n" })
     assert.equal(await stopped.service.discover(), undefined)
-    assert.equal(stopped.calls.length, 1)
+    assert.equal(stopped.calls.length, 4)
     assert.deepEqual(stopped.calls[0]?.args, [
       "--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "status",
     ])
@@ -74,6 +74,7 @@ describe("WslOpenCodeService", () => {
     const endpoint = await test.service.ensure()
 
     assert.deepEqual(test.calls.map((call) => call.args.slice(4)), [
+      ...stoppedDiscovery,
       ["service", "start"],
       ["service", "get", "password"],
     ])
@@ -99,7 +100,7 @@ describe("WslOpenCodeService", () => {
     assert.equal(await test.service.discover(), undefined)
     await test.service.ensure()
     assert.deepEqual(test.calls.map((call) => call.args), [
-      ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", "service", "status"],
+      ...[...stoppedDiscovery, ...stoppedDiscovery].map(args => ["--distribution", "Ubuntu", "--exec", "/home/dev/opencode2", ...args]),
       [
         "--distribution", "Ubuntu", "--exec", "env",
         "NODE_EXTRA_CA_CERTS=/ca.pem", "PROVIDER_TOKEN=value with spaces",
@@ -357,7 +358,7 @@ describe("WslOpenCodeService", () => {
     assert.deepEqual(test.calls.map((call) => call.args.slice(4)), [
       ["service", "status"],
       ["service", "get", "password"],
-      ["service", "start"],
+      ["service", "status"],
       ["service", "get", "password"],
     ])
   })
@@ -375,9 +376,10 @@ function harness(
       calls.push({ file, args, options })
       const operation = args[args.length - 1]
       const key = operation === "status" || operation === "start" ? operation : "password"
-      return { stdout: output[key] ?? "", stderr: "" }
+      return { stdout: output[key] ?? (key === "status" ? "stopped\n" : "secret\n"), stderr: "" }
     },
     fetch: async () => Response.json({ version: "2.0.4", pid: 123, urls: [url] }),
+    readRegistration: async () => undefined,
     ...overrides,
   }
   return {
@@ -390,3 +392,5 @@ function harness(
     }, dependencies),
   }
 }
+
+const stoppedDiscovery = [["service", "status"], ["service", "get", "password"], ["debug", "paths", "state"], ["debug", "paths", "config"]]

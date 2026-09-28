@@ -187,6 +187,16 @@ describe("workspace manager shared service lifecycle", () => {
     )
   })
 
+  it("uses the current host path style when no platform override is supplied", async () => {
+    const { manager } = createHarness()
+    try {
+      const { workspace } = await manager.create(process.cwd())
+      assert.equal(manager.getServicePathStyle(workspace.id), process.platform === "win32" ? "win32" : "posix")
+    } finally {
+      await manager.shutdown()
+    }
+  })
+
   it("keeps WSL worktree reservation paths case-sensitive", { skip: process.platform !== "win32" }, async () => {
     const { manager } = createHarness(new ControlledSharedService(), { platform: "win32" })
     const releaseUpper = await manager.reserveWorktreeDeletion("\\\\wsl.localhost\\Ubuntu\\repo\\Foo")
@@ -327,7 +337,7 @@ describe("workspace manager shared service lifecycle", () => {
       },
     })
 
-    await manager.create(process.cwd())
+    const { workspace } = await manager.create(process.cwd())
 
     assert.deepEqual(factoryCall?.[0], { kind: "wsl", distro: "Ubuntu", binary: "/home/dev/opencode" })
     assert.equal(typeof factoryCall?.[1], "number")
@@ -347,6 +357,7 @@ describe("workspace manager shared service lifecycle", () => {
     )
     const record = [...(manager as any).workspaces.values()][0]
     assert.equal(record.wslDistro, "Ubuntu")
+    assert.equal(manager.getServiceWslDistro(workspace.id), "Ubuntu")
   })
 
   it("translates a case-insensitive Windows CA path before WSL identity and lifecycle construction", async () => {

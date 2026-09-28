@@ -47,7 +47,7 @@ describe("client state codec", () => {
         tabs: [workspace({
           type: "instance", kind: undefined, folder: "C:/work/project", occurrence: 1, projectName: "Project",
           drafts: { session1: "unfinished prompt" },
-          scrollSnapshots: { session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 } },
+          scrollSnapshots: { session1: { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200, windowCursor: "older", newerCursors: [null, "newer"] } },
           unseenIdleSince: { session1: 1100, malformed: -1 },
           generationRecovery: { session1: "working", session2: "interrupted", malformed: "idle" },
           expandedSessionIds: ["session1", "session1", 42],
@@ -65,7 +65,7 @@ describe("client state codec", () => {
     assert.deepEqual({ ...tab.unseenIdleSince }, { session1: 1100 })
     assert.deepEqual({ ...tab.generationRecovery }, { session1: "working", session2: "interrupted" })
     assert.deepEqual(tab.expandedSessionIds, ["session1"])
-    assert.deepEqual(tab.scrollSnapshots.session1, { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200 })
+    assert.deepEqual(tab.scrollSnapshots.session1, { scrollTop: 120, scrollRatio: 0.5, atBottom: false, updatedAt: 1200, windowCursor: "older", newerCursors: [null, "newer"] })
     assert.deepEqual(decoded?.session?.tabs[1], { kind: "sidecar", sidecarId: "docs" })
   })
 

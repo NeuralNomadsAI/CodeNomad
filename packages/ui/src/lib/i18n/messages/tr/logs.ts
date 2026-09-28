@@ -20,12 +20,4 @@ export const logMessages = {
   "infoView.logs.empty.waiting": "Sunucu çıktısı bekleniyor...",
   "infoView.logs.scrollToTop": "Başa kaydır",
   "infoView.logs.scrollToBottom": "Sona kaydır",
-  "infoView.dispose.actions.dispose": "Instance'ı dispose et",
-  "infoView.dispose.actions.disposing": "Dispose ediliyor...",
-  "infoView.dispose.confirm.title": "Instance dispose edilsin?",
-  "infoView.dispose.confirm.message": "Bu işlem, bu dizin için önbelleğe alınan proje bazlı durumu temizler ve instance'ı yeniden yükler.",
-  "infoView.dispose.confirm.confirmLabel": "Dispose Et",
-  "infoView.dispose.confirm.cancelLabel": "İptal",
-  "infoView.dispose.toast.success": "Instance dispose edildi. Yeniden yükleniyor...",
-  "infoView.dispose.toast.error": "Instance dispose edilemedi.",
 } as const
