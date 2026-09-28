@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "OpenCode स्थापना हुँदैछ…",
+  "settings.opencode.setup.elapsed": "बितेको समय: {elapsed}",
+  "settings.opencode.setup.keepOpen": "डाउनलोड र स्थापना गर्न केही मिनेट लाग्न सक्छ। सेटअप पूरा नभएसम्म CodeNomad खुला राख्नुहोस्।",
   "settings.opencode.setup.installation_busy": "अर्को स्थापनाले OpenCode स्थापना लक लिएको छ। सकिएपछि फेरि प्रयास गर्नुहोस्। बीचमै रोकिएको भए लकको स्थान सर्भर लगमा हेर्नुहोस्।",
   "settings.opencode.setup.installation_in_use": "OpenCode कार्यान्वयनयोग्य फाइल प्रयोगमा छ वा लेख्न मिल्दैन। स्थापना परिवर्तन गर्नुअघि अद्यावधिक स्थगित गरियो। फाइल उपलब्ध भएपछि फेरि प्रयास गर्नुहोस्।",
   "settings.opencode.setup.source.path": "सर्भरको PATH मा कार्यान्वयनयोग्य फाइल भेटियो।",
