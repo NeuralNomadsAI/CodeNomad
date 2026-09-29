@@ -33,6 +33,7 @@ export const MissionAttention: Component<{
     props.mission.actors.find(actor => actor.sessionId === sessionId)?.title ?? sessionId
 
   return (
+    <Show when={items().length > 0}>
     <MissionDisclosure
       missionId={props.mission.id}
       name="attention"
@@ -90,6 +91,7 @@ export const MissionAttention: Component<{
         </ul>
       </Show>
     </MissionDisclosure>
+    </Show>
   )
 }
 

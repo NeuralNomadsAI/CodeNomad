@@ -35,8 +35,8 @@ function Fixture() {
     },
     event: (event: any) => (sseManager as any).handleEvent("fixture", { id: `ev_${Date.now()}`, created: Date.now(), location: { directory: "fixture" }, ...event }),
   }
-  return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) 370px", height: "100vh" }}>
-    <main class="mission-transcript-surface"><p>Chat fixture</p>
+  return <div style={{ display: "grid", "grid-template-columns": "minmax(0, 1fr) min(370px, 100vw)", height: "100vh" }}>
+    <main class="mission-transcript-surface" style={{ "min-width": 0, overflow: "hidden" }}><p>Chat fixture</p>
       <Show when={missionProjectView("fixture").reader}><MissionReader instanceId="fixture" scope="fixture" /></Show>
     </main>
     <aside style={{ overflow: "auto" }}><Show when={mounted()}><MissionControl instanceId="fixture" activeSessionId={() => "ses_fixture"} t={t} /></Show></aside>

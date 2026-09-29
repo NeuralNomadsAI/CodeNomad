@@ -59,6 +59,12 @@ An existing actor must already match the requested selection. Missions never use
 
 Durable actors remain root sessions. `session.create` does not expose child creation, and subagent-only profiles belong to the native `subagent` tool. Use native subagents for bounded child work, not as durable mission-map actors. Root actors use native agent/project permission rules; they do not inherit a coordinator's child-session permission state.
 
+## Mission Centre presentation
+
+The mission index is a bounded vertical list with inline edit/delete icons and a header create action. The work section keeps all tasks in stable dependency order, including completed and retired work. Its measured rail draws only declared `blockedBy` edges, with separate side lanes so an edge never passes through an unrelated task node. Expanding details or resizing updates the geometry.
+
+The panel is a navigation surface: one-line excerpts and a shared eye action open individual objectives, briefs, reports or plan changes in the reader above the transcript. Evidence, next steps, artifacts and full text remain in that reader. Task details retain dependency navigation, replacement lineage and native execution comparison. Counts are secondary; actor/history sections initially collapse and attention appears only when there is a live request or recorded blockage. Native layout identities still preserve explicit disclosure, selection and reader gestures across refresh/remount.
+
 ## Distribution and environment
 
 Desktop backends provision the content-addressed Missions bundle through `DesktopPluginLifecycle`, using the authenticated daemon's `config.get` discovery root. Backend leases live outside that watched root. Tools, context hooks and the sole typed snapshot RPC follow backend presence. No files are installed in the user's project. The old repository-local plugin entry is removed; `.opencode/checks/` still checks the published V2 plugin contract.

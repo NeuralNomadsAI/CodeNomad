@@ -57,7 +57,7 @@ test("disclosures, mission selection and reader survive native invalidations, re
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [mission("one"), { ...mission("two"), revision }], generatedAt: revision, discardedEvents: 0 } }))
     await page.goto(url)
     await page.getByRole("button", { name: "Objective two Active" }).click()
-    const report = page.locator(".mission-report > h3 > button")
+    const report = page.locator(".mission-report > h3 > .mission-disclosure-trigger")
     await report.click()
     await page.getByRole("button", { name: "Work", exact: true }).click()
     assert.equal(await report.getAttribute("aria-expanded"), "true")
@@ -80,7 +80,7 @@ test("disclosures, mission selection and reader survive native invalidations, re
     await page.reload()
     await page.locator(".mission-reader").waitFor()
     assert.equal(await report.getAttribute("aria-expanded"), "true")
-    assert.equal(await page.locator(".mission-control-index-item-active").innerText(), "Objective two\nActive")
+    assert.equal((await page.locator(".mission-control-index-item-active").innerText()).replace(/\s+/g, " "), "Objective two Active")
     await page.getByRole("button", { name: "Back to chat" }).click()
     assert.equal(await page.locator(".mission-reader").count(), 0)
     await page.screenshot({ path: path.join(os.tmpdir(), "opencode", "mission-control-browser.png"), fullPage: true })
@@ -130,7 +130,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await fixtureCall(page, "flush")
     const storedDisclosures = () => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("fixture-native")!).layout).filter(key => key.startsWith("mission-disclosures-")))
     const beforeDelete = await storedDisclosures()
-    await page.getByRole("button", { name: "Delete mission", exact: true }).click()
+    await page.locator(".mission-index-row-active").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.getByText("Delete this mission? Its conversations will be kept.").waitFor()
     await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
     await page.locator(".mission-control-overview h3", { hasText: "Objective one" }).waitFor()
@@ -175,13 +175,14 @@ test("dependency navigation reveals the linked task and revised plans retain rea
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await page.getByRole("button", { name: "Check the implementation", exact: true }).click()
-    await page.getByRole("button", { name: "Complete", exact: true }).click()
     await page.getByRole("button", { name: "Depends on Inspect evidence", exact: true }).click()
     const task = page.getByRole("button", { name: "Inspect evidence", exact: true })
     assert.equal(await task.getAttribute("aria-expanded"), "true")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Inspect evidence")
     assert.equal(await task.evaluate(el => el === document.activeElement), true)
     await page.getByRole("button", { name: "Blocks Check the implementation", exact: true }).waitFor()
     const history = page.locator(".mission-disclosure", { has: page.getByRole("button", { name: "Plan changes", exact: true }) }).last()
+    await history.getByRole("button", { name: "Plan changes", exact: true }).click()
     await history.getByText("Showing the latest 2 changes.").waitFor()
     await history.getByText("Coordinator", { exact: true }).waitFor()
     await history.getByText("You", { exact: true }).waitFor()
@@ -214,12 +215,12 @@ test("background native questions settle and requested execution remains distinc
     await fixtureCall(page, "event", { type: "form.created", data: { form: { id: "form-background", sessionID: "ses_background", title: "Choose the scope", fields: [{ type: "text", name: "scope", label: "Scope" }] } } })
     await page.getByText("Choose the scope", { exact: true }).waitFor()
     await page.locator(".mission-attention-list").getByRole("button", { name: "Open Background assistant", exact: true }).waitFor()
+    await page.getByRole("button", { name: /^Conversations/ }).click()
     await page.getByText("Waiting for your response", { exact: true }).waitFor()
     await fixtureCall(page, "event", { type: "form.replied", data: { id: "form-background", sessionID: "ses_background", answers: {} } })
     await page.getByText("Choose the scope", { exact: true }).waitFor({ state: "detached" })
     assert.equal(await page.getByText("Waiting for your response", { exact: true }).count(), 0)
-    await page.getByRole("button", { name: "Your response is needed", exact: true }).click()
-    await page.getByText("No response is currently requested.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Your response is needed", exact: true }).count(), 0)
     await page.getByRole("button", { name: "Open coordinator", exact: true }).click()
     await page.getByRole("alert").getByText("Unable to reload session").waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
@@ -253,5 +254,74 @@ test("the real session retains its transcript nodes and draft while a long missi
     assert.equal(await transcript.evaluate(el => el.firstElementChild === (window as any).savedTranscript), true)
     assert.equal(await composer.inputValue(), "Keep this draft while reading")
     await transcript.getByText("History 59", { exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
+test("compact mission rows retain a completed branching plan, direct readers and measured dependency edges", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  try {
+    await setup(page)
+    const value = mission("compact")
+    value.objective = "Ship the Mission Centre"
+    value.status = "completed"
+    value.notes = "Full mission context belongs in the reader."
+    const task = value.tasks[0]
+    value.tasks = [
+      { ...task, id: "publish", key: "publish", title: "Publish the changes", blockedBy: ["review", "verify"] },
+      { ...task, id: "review", key: "review", title: "Independent review", blockedBy: ["implement"] },
+      { ...task, id: "verify", key: "verify", title: "Browser verification", blockedBy: ["implement"] },
+      { ...task, id: "implement", key: "implement", title: "Implement the interface", blockedBy: ["research", "design"] },
+      { ...task, id: "research", key: "research", title: "Explore existing patterns", blockedBy: [] },
+      { ...task, id: "design", key: "design", title: "Design the mission view", blockedBy: [] },
+    ]
+    value.reports[0].taskKey = "review"
+    let missions = [value, { ...mission("other"), objective: "Validate desktop packaging", status: "completed" }]
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
+    await page.goto(url)
+    await page.locator('.mission-graph path[data-from="review"][data-to="publish"]').waitFor()
+    assert.equal(await page.locator(".mission-graph path[data-from]").count(), 6)
+    assert.deepEqual(await page.locator(".mission-route-task").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
+    const indexRows = await page.locator(".mission-index-row").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    assert.ok(indexRows[1].top >= indexRows[0].bottom)
+    assert.equal(await page.locator(".mission-control-metrics").count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Create mission", exact: true }).innerText(), "")
+    const lastTask = await page.locator(".mission-route-task").last().boundingBox()
+    assert.ok(lastTask && lastTask.y + lastTask.height < 650, "the complete plan fits at a normal panel height")
+    await page.screenshot({ path: path.join(os.tmpdir(), "opencode", "mission-compact-overview.png") })
+    const report = page.locator(".mission-report")
+    assert.equal(await report.locator(".mission-disclosure-trigger").getAttribute("aria-expanded"), "false")
+    await report.getByRole("button", { name: "Read in chat area" }).click()
+    await page.locator(".mission-reader").getByText("Source proof", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Back to chat" }).click()
+    const overview = page.locator(".mission-control-overview").locator("../..")
+    await overview.getByRole("button", { name: "Read in chat area" }).click()
+    await page.locator(".mission-reader").getByText(value.notes, { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Back to chat" }).click()
+    const edge = page.locator('.mission-graph path[data-from="review"][data-to="publish"]')
+    const collapsedPath = await edge.getAttribute("d")
+    await page.getByRole("button", { name: "Independent review", exact: true }).click()
+    await page.waitForFunction(previous => document.querySelector('.mission-graph path[data-from="review"][data-to="publish"]')?.getAttribute("d") !== previous, collapsedPath)
+    await page.getByRole("button", { name: "Independent review", exact: true }).click()
+    await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1.25" })
+    await page.waitForFunction(() => {
+      const svg = document.querySelector<SVGSVGElement>(".mission-graph")!
+      const node = svg.querySelectorAll("rect")[5]
+      const title = document.querySelector('[data-task-key="publish"] h3')!.getBoundingClientRect()
+      const point = svg.createSVGPoint()
+      point.x = Number(node.getAttribute("x")) + 3
+      point.y = Number(node.getAttribute("y")) + 3
+      const screen = point.matrixTransform(svg.getScreenCTM()!)
+      return Math.abs(screen.y - (title.top + title.height / 2)) < 1
+    })
+    await page.evaluate(() => { document.querySelector<HTMLElement>(".mission-control")!.style.zoom = "1" })
+    await page.setViewportSize({ width: 320, height: 850 })
+    await page.evaluate(() => { document.documentElement.dir = "rtl" })
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    assert.equal(await page.locator("aside").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    await page.screenshot({ path: path.join(os.tmpdir(), "opencode", "mission-compact-rtl.png") })
+    missions = [{ ...value, revision: 2, tasks: value.tasks.filter(task => task.key !== "publish") }]
+    await fixtureCall(page, "refresh")
+    await page.locator('[data-task-key="publish"]').waitFor({ state: "detached" })
+    assert.equal(await page.locator(".mission-graph path[data-to=publish]").count(), 0)
   } finally { await page.close() }
 })

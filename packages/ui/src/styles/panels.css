@@ -11,6 +11,7 @@
 @import "./panels/mission-control.css";
 @import "./panels/mission-overview.css";
 @import "./panels/mission-route.css";
+@import "./panels/mission-graph.css";
 @import "./panels/mission-mesh.css";
 @import "./panels/mission-disclosure.css";
 @import "./panels/mission-attention.css";

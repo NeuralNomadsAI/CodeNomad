@@ -1,9 +1,7 @@
 .mission-mesh-list,
 .mission-report-list {
   display: grid;
-  gap: 1px;
-  background: var(--border-base);
-  border: 1px solid var(--border-base);
+  gap: 0;
 }
 
 .mission-actor {
@@ -12,7 +10,8 @@
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm);
-  background: var(--surface-base);
+  background: transparent;
+  border-bottom: 1px solid var(--border-base);
 }
 
 .mission-actor-active {
@@ -67,7 +66,9 @@
   gap: var(--space-xs);
 }
 
-.mission-report { background: var(--surface-base); }
+.mission-report { border-bottom: 1px solid var(--border-base); }
+.mission-report-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-report > div > .mission-text-excerpt { margin: 0 var(--space-sm) var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-sm); }
 
 .mission-report-heading strong {
   font-size: var(--font-size-sm);
@@ -78,9 +79,7 @@
 
 .mission-report .mission-disclosure-trigger small {
   color: var(--text-muted);
-  font-family: var(--font-family-mono);
   font-size: 10px;
-  text-transform: uppercase;
 }
 
 .mission-report-mark {
