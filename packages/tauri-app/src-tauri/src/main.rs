@@ -59,6 +59,7 @@ use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 const ZOOM_STEP: f64 = 0.1;
 const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
+const HELP_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -1861,6 +1862,9 @@ fn main() {
                     #[cfg(not(windows))]
                     open_releases_page(app_handle);
                 }
+                "codenomad_help" => {
+                    open_help_page(app_handle);
+                }
                 // App menu (macOS)
                 "hide" => {
                     if let Some(webview) = local_windows::targeted_window(app_handle) {
@@ -2038,7 +2042,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         Some("About CodeNomad"),
         Some(build_about_metadata(
             &app.package_info().version.to_string(),
-            cfg!(target_os = "linux"),
+            // The About panel links the releases page where the updater cannot
+            // run it inline. macOS keeps the bare panel.
+            cfg!(any(target_os = "linux", target_os = "windows")),
         )),
     )?;
     let get_updates_item =
@@ -2256,6 +2262,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
             true,
             None::<&str>,
         )?;
+        let help_item =
+            MenuItem::with_id(app, "codenomad_help", "CodeNomad Help", true, None::<&str>)?;
         let help_about_item = PredefinedMenuItem::about(
             app,
             Some("About CodeNomad"),
@@ -2266,12 +2274,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         )?;
         SubmenuBuilder::with_id(app, "menu-help", "Help")
             .item(&help_updates_item)
+            .item(&help_item)
             .separator()
             .item(&help_about_item)
             .build()?
     } else {
+        let help_item =
+            MenuItem::with_id(app, "codenomad_help", "CodeNomad Help", true, None::<&str>)?;
         SubmenuBuilder::with_id(app, "menu-help", "Help")
             .item(&get_updates_item)
+            .item(&help_item)
             .separator()
             .item(&about_item)
             .build()?
@@ -2306,6 +2318,12 @@ fn open_releases_page(app_handle: &AppHandle) {
     }
 }
 
+fn open_help_page(app_handle: &AppHandle) {
+    if let Err(err) = app_handle.opener().open_url(HELP_URL, None::<&str>) {
+        eprintln!("[tauri] failed to open the CodeNomad help page: {err}");
+    }
+}
+
 fn build_about_metadata(version: &str, include_update_link: bool) -> AboutMetadata<'static> {
     AboutMetadata {
         name: Some("CodeNomad".to_string()),
@@ -2327,7 +2345,7 @@ mod menu_tests {
         rollback_remote_window_metadata, run_update_with_fallback, should_allow_registered_origin,
         should_open_external_url, should_recreate_remote_window, titlebar_menu_id,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
-        RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
     };
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2384,6 +2402,11 @@ mod menu_tests {
 
         assert_eq!(metadata.website, None);
         assert_eq!(metadata.website_label, None);
+    }
+
+    #[test]
+    fn help_link_points_at_the_project_repo() {
+        assert_eq!(HELP_URL, "https://github.com/NeuralNomadsAI/CodeNomad");
     }
 
     #[test]
