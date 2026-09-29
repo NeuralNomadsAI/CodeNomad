@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "Установка OpenCode…",
+  "settings.opencode.setup.elapsed": "Прошло времени: {elapsed}",
+  "settings.opencode.setup.keepOpen": "Загрузка и установка могут занять несколько минут. Не закрывайте CodeNomad до завершения настройки.",
   "settings.opencode.setup.installation_busy": "Другая установка удерживает блокировку OpenCode. Повторите после её завершения. Если она прервана, путь блокировки указан в журнале сервера.",
   "settings.opencode.setup.installation_in_use": "Исполняемый файл OpenCode используется или недоступен для записи. Обновление отложено до изменения установки. Повторите, когда файл станет доступен.",
   "settings.opencode.setup.source.path": "Исполняемый файл найден в PATH сервера.",

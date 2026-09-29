@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "OpenCode をインストールしています…",
+  "settings.opencode.setup.elapsed": "経過時間: {elapsed}",
+  "settings.opencode.setup.keepOpen": "ダウンロードとインストールには数分かかることがあります。セットアップが完了するまで CodeNomad を開いたままにしてください。",
   "settings.opencode.setup.installation_busy": "別のインストールが OpenCode のインストールロックを保持しています。完了後に再試行してください。中断された場合は、サーバーログでロックの場所を確認してください。",
   "settings.opencode.setup.installation_in_use": "OpenCode の実行ファイルは使用中、または書き込み不可です。インストールを変更する前に更新を延期しました。実行ファイルが利用可能になったら再試行してください。",
   "settings.opencode.setup.source.path": "サーバーの PATH で実行ファイルが見つかりました。",
