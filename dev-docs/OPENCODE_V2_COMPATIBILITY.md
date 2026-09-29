@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.18**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.19**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -157,7 +157,7 @@ independent gatekeeper reports zero actionable findings. Detailed native suite
 completion and cross-platform qualification belong in the PR/CI; do not treat
 unchanged wire types or a passing rerun as proof of untested behavior.
 
-### Current stable target: 2.0.18
+### Previous stable target: 2.0.18
 
 Server/UI client, bundled plugin and recommendation advance together to **2.0.18**;
 the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
@@ -189,6 +189,40 @@ proxy checks passed. The earlier 2.0.16 dependency baseline passes against runti
 2.0.18 too. The passing rerun does not explain or fix the intermittent exit
 previously recorded above. Both historical migrations (2.0.3 and beta-19271) to
 2.0.18 pass; the native npm installation leaves the 2.0.15 daemon and PID intact.
+
+### Current stable target: 2.0.19
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.19**; the timestamp-based minimum remains **2.0.7**. The authenticated native
+2.0.19 OpenAPI has the same 115 paths and component schemas as native 2.0.18.
+All published client, plugin, protocol and schema declarations are byte-identical
+(30, 60, 36 and 102 declaration files respectively). No new API adapter or proxy
+route follows from this release.
+
+Upstream refactors compaction and adjusts output limits to the context window
+(with a 256k output cap), including bounded shrinking after provider overflow
+rejections. It also improves provider prompt-cache reuse and session affinity,
+one-shot generation attribution, error classification and media handling. Native
+Shell tools add `AGENT=1`, `OPENCODE=1`, default `AI_AGENT=opencode` and the current
+`OPENCODE_SESSION_ID`; these native tool conventions are distinct from CodeNomad's
+per-send session environment snapshot. Qualification must exercise compaction,
+history persistence, side questions and environment propagation, not infer them
+from the unchanged HTTP schema alone. Detailed outcomes belong in the PR/CI.
+
+The seven native suites pass on both 2.0.7 and 2.0.19 with the new pins, including
+pruning/compaction, history navigation, proxy/relay ownership, automation, per-send
+environment, forks, side questions, blank-session cleanup and Git-degraded recovery.
+Both historical migrations to 2.0.19 and the isolated native npm upgrade pass;
+the latter preserves the running 2.0.15 daemon's version and PID.
+
+Ordinary native/UI runs stopped at Vite import with shell exit 116, reproduced
+with a 2.0.18 runtime control and the previous dependency pins. Per-import traces
+now isolate that phase more precisely. These observations do not establish the
+same cause as the earlier heap-corruption exit, or resolve the fixture failure.
+The full native/UI acceptance passes when a diagnostic launcher preloads Vite
+before the native fixture. That run changes import order, not the assertions or
+runtime; it provides acceptance coverage without proving the ordinary launcher
+is reliable. Keep both outcomes visible in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
