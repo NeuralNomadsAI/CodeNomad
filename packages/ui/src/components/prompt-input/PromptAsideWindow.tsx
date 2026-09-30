@@ -1,6 +1,7 @@
 import { createEffect, createSignal, Show } from "solid-js"
 import { Copy, Loader2 } from "lucide-solid"
 import DismissibleWindow from "../dismissible-window"
+import WindowCloseButton from "../window-close-button"
 import { Markdown } from "../markdown"
 import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
@@ -27,9 +28,12 @@ export default function PromptAsideWindow(props: {
   return (
     <DismissibleWindow id={props.id} open={aside.open()} onClose={aside.close}
       title={t("promptInput.btw.title")} description={t("promptInput.btw.description")}
-      closeLabel={t("promptInput.btw.close")} closeButtonRef={element => { closeButton = element }}
       class="session-aside-window" initialFocus={() => aside.pending() ? closeButton : input}
       returnFocus={props.returnFocus}>
+      <div class="window-header">
+        <h2 class="window-title">{t("promptInput.btw.title")}</h2>
+        <WindowCloseButton ref={element => { closeButton = element }} label={t("promptInput.btw.close")} onClose={aside.close} />
+      </div>
       <div class="window-body">
         <p class="session-aside-description">{t("promptInput.btw.description")}</p>
         <form onSubmit={event => { event.preventDefault(); void aside.ask() }}>
