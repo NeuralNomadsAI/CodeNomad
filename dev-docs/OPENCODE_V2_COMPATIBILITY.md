@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.20**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.21**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -47,7 +47,7 @@ Isolated HTTP/generated-client and rendered Solid fixtures cover these boundarie
 `node scripts/test-provider-usage-native.mjs <absolute-cli-path>` additionally
 exercises the production quota adapter against a fresh native daemon/database with
 synthetic OAuth/key credentials and mocked quota HTTP only. It passed on Windows
-with 2.0.20: active-account selection and `metadata.accountID`, warm-cache revocation
+with 2.0.20 and 2.0.21: active-account selection and `metadata.accountID`, warm-cache revocation
 after switching to a key, and recovery despite a stale legacy file. This is not a
 real WSL or live ChatGPT quota test; no real credentials or shared daemon are used.
 
@@ -247,7 +247,7 @@ before the native fixture. That run changes import order, not the assertions or
 runtime; it provides acceptance coverage without proving the ordinary launcher
 is reliable. Keep both outcomes visible in the PR.
 
-### Current stable target: 2.0.20
+### Previous stable target: 2.0.20
 
 The recommendation and synchronized server/UI client and plugin pins advance to
 **2.0.20**; the demonstrated timestamp-based minimum remains **2.0.7**. Authenticated
@@ -274,6 +274,34 @@ This passing run does not identify or fix the intermittent Windows import failur
 documented above. Historical migrations, standalone plugin acceptance and isolated
 npm upgrade pass; upgrade preserves the running 2.0.15 daemon's version and PID.
 Detailed test counts, environment and final review/CI outcomes belong in the PR.
+
+### Current stable target: 2.0.21
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.21**; the global minimum remains **2.0.7**, and Codex Usage's feature-local
+credential-list requirement remains **2.0.20**. Authenticated native OpenAPI keeps
+116 paths: only form cancellation changes, with an optional `message` query and
+optional `message` in cancelled `Form.State`. Existing cancellation without a
+message remains supported. A synthetic native fixture verifies session/global
+cancellation both ways, including exact preservation of URL-sensitive text.
+
+Published declarations change in two client files, one protocol file and one
+schema file; all 60 plugin declaration files are unchanged. No new consumed API
+or required field justifies an adapter or higher minimum. Plugin optional OpenTUI
+peer floors advance to 0.5.14; CodeNomad does not install these terminal peers.
+The release also fixes provider context-overflow classification, passthrough and
+prompt-cache behavior, avoids reinjecting ancestor instructions, adds namespaced
+session identity headers to provider requests, and makes native browser tools
+conditional on desktop attachment. CodeNomad's own automation acceptance passes.
+
+Seven native suites pass on both 2.0.7 and 2.0.21 with the new pins. The native
+Codex Usage fixture also passes on 2.0.21 with synthetic credentials and mocked
+quota HTTP. Ordinary-launcher native/UI acceptance, standalone plugin acceptance,
+historical migrations and isolated npm upgrade pass. Upgrade leaves the running
+2.0.15 daemon and PID unchanged. The full server run has one Windows Git-fixture
+cleanup `EPERM`; its unchanged focused rerun passes. Retain this failure and the
+historical intermittent Vite/import limitation rather than claiming either fixed.
+Detailed counts, review and CI outcomes belong in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
