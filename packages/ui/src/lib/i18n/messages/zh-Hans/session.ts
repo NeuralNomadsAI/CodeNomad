@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "browser.viewport.emulationHint": "使用移动设备标识、触控和像素密度重新加载。不模拟浏览器引擎、键盘或系统栏。",
+  "browser.viewport.emulationUnavailable": "设备模拟需要桌面应用中的原生网页预览。",
   "sessionList.filter.includeMainSessions": "显示主会话",
   "sessionList.filter.includeSubsessions": "显示子会话",
   "session.pruning.maintenance_required": "会话或其存储正忙。请等待当前操作完成后重试清理。",

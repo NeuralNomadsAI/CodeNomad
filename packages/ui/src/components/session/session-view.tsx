@@ -43,7 +43,6 @@ interface SessionViewProps {
   instanceFolder: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
-  compactPromptLayout?: boolean
   focusConversationOnActivate?: boolean
   onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
@@ -669,7 +668,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
-          compactLayout={props.compactPromptLayout}
           onSend={handleSendMessage}
           onRunShell={handleRunShell}
           escapeInDebounce={props.escapeInDebounce}

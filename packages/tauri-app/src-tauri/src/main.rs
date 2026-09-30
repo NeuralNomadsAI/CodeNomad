@@ -495,16 +495,17 @@ fn browser_target_update(
 }
 
 #[tauri::command]
-fn browser_target_action(
+async fn browser_target_action(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetAction,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    state
-        .browser_controller
-        .action(&app, webview.label(), payload)
+    let controller = state.browser_controller.clone();
+    let owner = webview.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || controller.action(&app, &owner, payload))
+        .await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -990,7 +991,7 @@ fn open_remote_window_locked(
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
     .title(title)
     .inner_size(1400.0, 900.0)
-    .min_inner_size(800.0, 600.0);
+    .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));
     let window = match builder.build() {

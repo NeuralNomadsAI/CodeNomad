@@ -9,18 +9,28 @@ import { useConfig, type VisibilityPreference } from "../stores/preferences"
 import { getMessageContentIcon } from "./message-content-icons"
 import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows } from "./transcript-visibility"
 
-export default function TranscriptFilters() {
+interface TranscriptFiltersProps {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  overflowAnchor?: () => HTMLElement | undefined
+}
+
+export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
   const { t } = useI18n()
   const { preferences, updatePreferences } = useConfig()
   const rows = createMemo(() => transcriptVisibilityRows(t))
   const [saving, setSaving] = createSignal(false)
   return (
-    <Popover placement="bottom-end" gutter={6}>
+    <Popover placement="bottom-end" gutter={6} open={props.open} onOpenChange={props.onOpenChange}
+      getAnchorRect={(anchor) => (props.overflowAnchor?.() ?? anchor)?.getBoundingClientRect()}>
       <Popover.Trigger as={IconButton} size="small" color="inherit" class="transcript-filters-trigger icon-toggle" aria-label={t("transcriptFilters.title")} title={t("transcriptFilters.title")}>
         <ListFilter class="w-4 h-4" aria-hidden="true" />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content class="window-shell transcript-filters" aria-busy={saving()}>
+        <Popover.Content class="window-shell transcript-filters" aria-busy={saving()} onCloseAutoFocus={(event) => {
+          const anchor = props.overflowAnchor?.()
+          if (anchor) { event.preventDefault(); anchor.focus() }
+        }}>
           <header class="window-header">
             <Popover.Title class="window-title">{t("transcriptFilters.title")}</Popover.Title>
           </header>

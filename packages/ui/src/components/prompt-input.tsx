@@ -1,4 +1,4 @@
-import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, onMount, Show } from "solid-js"
+import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
 import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
@@ -22,8 +22,11 @@ import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
 import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import { usePromptAside } from "./prompt-input/usePromptAside"
+import { usePromptViewport } from "./prompt-input/usePromptViewport"
 import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
 import {
+  MIN_PROMPT_FIELD_HEIGHT_RATIO,
+  MAX_PROMPT_FIELD_HEIGHT_RATIO,
   initializePromptInputHeight,
   persistPromptInputHeight,
   promptInputHeight,
@@ -39,14 +42,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 const log = getLogger("actions")
 const LazyUnifiedPicker = lazy(() => import("./unified-picker"))
 const DEFAULT_PROMPT_FIELD_HEIGHT = 104
-const MAX_PROMPT_FIELD_HEIGHT_RATIO = 0.6
-type SessionCenterWidthStep = "narrow" | "medium" | "wide"
-
-function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
-  if (width < 768) return "narrow"
-  if (width < 1280) return "medium"
-  return "wide"
-}
+const MIN_PROMPT_FIELD_HEIGHT = 44
 
 type ResizeDragState = {
   pointerId: number
@@ -101,13 +97,12 @@ export default function PromptInput(props: PromptInputProps) {
   const [mode, setMode] = createSignal<PromptMode>("normal")
   const inputHeight = promptInputHeight
   const setInputHeight = setPromptInputHeight
-  const [autoInputHeight, setAutoInputHeight] = createSignal<number | null>(null)
   const [isResizing, setIsResizing] = createSignal(false)
-  const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep | null>(null)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
   let wrapperRef: HTMLDivElement | undefined
   let fieldContainerRef: HTMLDivElement | undefined
+  const viewport = usePromptViewport(() => wrapperRef)
   let resizeDragState: ResizeDragState | undefined
   let submissionsInFlight = 0
   let restoredQueuedPayload: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1] | undefined
@@ -119,13 +114,30 @@ export default function PromptInput(props: PromptInputProps) {
     return t("promptInput.placeholder.default")
   }
 
-  const compactAutosizeEnabled = () => {
-    return compactLayoutEnabled() && inputHeight() === null
+  const defaultFieldHeight = () => viewport().height > 0
+    ? Math.max(MIN_PROMPT_FIELD_HEIGHT, Math.floor(viewport().height * MIN_PROMPT_FIELD_HEIGHT_RATIO))
+    : DEFAULT_PROMPT_FIELD_HEIGHT
+  const compactLayoutEnabled = () => defaultFieldHeight() < DEFAULT_PROMPT_FIELD_HEIGHT
+  const minimumFieldHeight = defaultFieldHeight
+  const heightPreference = (height: number) => ({
+    ratio: height <= minimumFieldHeight() ? MIN_PROMPT_FIELD_HEIGHT_RATIO
+      : height >= computeMaxFieldHeight() ? MAX_PROMPT_FIELD_HEIGHT_RATIO
+      : height / (viewport().height || window.innerHeight),
+  })
+  createEffect(() => {
+    const saved = inputHeight()
+    if (typeof saved === "number" && viewport().height > 0) {
+      persistPromptInputHeight(heightPreference(saved))
+    }
+  })
+  const effectiveInputHeight = () => {
+    const saved = inputHeight()
+    const desired = saved === null ? defaultFieldHeight()
+      : typeof saved === "number" ? saved
+      : saved.ratio === MIN_PROMPT_FIELD_HEIGHT_RATIO ? minimumFieldHeight()
+      : Math.round(viewport().height * saved.ratio)
+    return Math.min(computeMaxFieldHeight(), Math.max(minimumFieldHeight(), desired))
   }
-
-  const compactLayoutEnabled = () => props.compactLayout && sessionCenterWidthStep() === "narrow"
-
-  const effectiveInputHeight = () => inputHeight() ?? autoInputHeight()
 
   const fieldHeightStyle = () => {
     const height = effectiveInputHeight()
@@ -137,7 +149,7 @@ export default function PromptInput(props: PromptInputProps) {
   const textareaHeightStyle = () => {
     const height = effectiveInputHeight()
     if (height === null) return undefined
-    const overflowY: "auto" | "hidden" = inputHeight() !== null || height >= DEFAULT_PROMPT_FIELD_HEIGHT ? "auto" : "hidden"
+    const overflowY: "auto" | "hidden" = inputHeight() !== null || height >= defaultFieldHeight() ? "auto" : "hidden"
     if (inputHeight() !== null) {
       return {
         height: `${height}px`,
@@ -146,31 +158,6 @@ export default function PromptInput(props: PromptInputProps) {
       }
     }
     return { height: `${height}px`, "overflow-y": overflowY }
-  }
-
-  const measureCompactAutoHeight = () => {
-    const textarea = textareaRef
-    if (!textarea) return null
-
-    const previousHeight = textarea.style.height
-    textarea.style.height = "auto"
-    const measuredHeight = textarea.scrollHeight
-    textarea.style.height = previousHeight
-    return Math.min(DEFAULT_PROMPT_FIELD_HEIGHT, measuredHeight)
-  }
-
-  const syncCompactAutoHeight = () => {
-    if (!compactLayoutEnabled()) {
-      setAutoInputHeight(null)
-      return
-    }
-    const measuredHeight = measureCompactAutoHeight()
-    if (inputHeight() !== null) {
-      setAutoInputHeight(null)
-      if (measuredHeight !== null && inputHeight()! < measuredHeight) persistPromptInputHeight(measuredHeight)
-      return
-    }
-    setAutoInputHeight(measuredHeight)
   }
 
   const promptState = usePromptState({
@@ -195,35 +182,6 @@ export default function PromptInput(props: PromptInputProps) {
 
   createEffect(() => {
     if (!prompt()) restoredQueuedPayload = undefined
-  })
-
-  onMount(() => {
-    const sessionCenter = wrapperRef?.closest("[data-session-center-width]") as HTMLElement | null
-    if (!sessionCenter) return
-
-    const syncWidthStep = () => {
-      setSessionCenterWidthStep(getSessionCenterWidthStep(sessionCenter.getBoundingClientRect().width))
-    }
-
-    syncWidthStep()
-    const restoredHeight = inputHeight()
-    if (restoredHeight !== null) {
-      const clampedHeight = Math.min(restoredHeight, computeMaxFieldHeight())
-      if (clampedHeight !== restoredHeight) persistPromptInputHeight(clampedHeight)
-    }
-
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(syncWidthStep)
-    observer.observe(sessionCenter)
-    onCleanup(() => observer.disconnect())
-  })
-
-  createEffect(() => {
-    prompt()
-    inputHeight()
-    props.compactLayout
-    sessionCenterWidthStep()
-    queueMicrotask(syncCompactAutoHeight)
   })
 
   const {
@@ -441,11 +399,9 @@ export default function PromptInput(props: PromptInputProps) {
   function computeMaxFieldHeight(): number {
     if (typeof window === "undefined") return DEFAULT_PROMPT_FIELD_HEIGHT
 
-    const sessionCenter = wrapperRef?.closest("[data-session-center-width]")
-    const measuredHeight = sessionCenter?.getBoundingClientRect().height ?? 0
-    const availableHeight = measuredHeight > 0 ? measuredHeight : window.innerHeight
+    const availableHeight = viewport().height || window.innerHeight
     const maxHeight = Math.floor(availableHeight * MAX_PROMPT_FIELD_HEIGHT_RATIO)
-    return Math.max(DEFAULT_PROMPT_FIELD_HEIGHT, maxHeight)
+    return Math.max(defaultFieldHeight(), maxHeight)
   }
 
   function handleResizeStart(event: PointerEvent) {
@@ -475,10 +431,10 @@ export default function PromptInput(props: PromptInputProps) {
     event.preventDefault()
     const deltaY = resizeDragState.startY - event.clientY
     const nextHeight = Math.max(
-      DEFAULT_PROMPT_FIELD_HEIGHT,
+      minimumFieldHeight(),
       Math.min(resizeDragState.maxHeight, resizeDragState.startHeight + deltaY),
     )
-    setInputHeight(nextHeight)
+    setInputHeight(heightPreference(nextHeight))
   }
 
   function handleResizeEnd(event: PointerEvent) {
@@ -492,8 +448,8 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleResizeKeyDown(event: KeyboardEvent) {
-    const currentHeight = inputHeight() ?? fieldContainerRef?.getBoundingClientRect().height ?? DEFAULT_PROMPT_FIELD_HEIGHT
-    const minimum = compactLayoutEnabled() ? measureCompactAutoHeight() ?? currentHeight : DEFAULT_PROMPT_FIELD_HEIGHT
+    const currentHeight = effectiveInputHeight() ?? fieldContainerRef?.getBoundingClientRect().height ?? defaultFieldHeight()
+    const minimum = minimumFieldHeight()
     const current = Math.max(minimum, currentHeight)
     const max = computeMaxFieldHeight()
     const next = event.key === "ArrowUp"
@@ -507,7 +463,7 @@ export default function PromptInput(props: PromptInputProps) {
             : null
     if (next === null) return
     event.preventDefault()
-    persistPromptInputHeight(next)
+    persistPromptInputHeight(heightPreference(next))
   }
 
   onCleanup(() => {
@@ -667,7 +623,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeMaximize(event: MouseEvent) {
     event.preventDefault()
-    persistPromptInputHeight(computeMaxFieldHeight())
+    persistPromptInputHeight(heightPreference(computeMaxFieldHeight()))
     textareaRef?.focus()
   }
 
@@ -943,12 +899,9 @@ export default function PromptInput(props: PromptInputProps) {
           tabIndex={0}
           role="separator"
           aria-orientation="horizontal"
-          aria-valuemin={Math.round(compactLayoutEnabled() ? measureCompactAutoHeight() ?? 0 : DEFAULT_PROMPT_FIELD_HEIGHT)}
+          aria-valuemin={Math.round(minimumFieldHeight())}
           aria-valuemax={computeMaxFieldHeight()}
-          aria-valuenow={Math.round(Math.max(
-            compactLayoutEnabled() ? measureCompactAutoHeight() ?? 0 : DEFAULT_PROMPT_FIELD_HEIGHT,
-            inputHeight() ?? autoInputHeight() ?? DEFAULT_PROMPT_FIELD_HEIGHT,
-          ))}
+          aria-valuenow={Math.round(effectiveInputHeight() ?? defaultFieldHeight())}
           aria-label={t("promptInput.resizeHandle.title")}
           title={t("promptInput.resizeHandle.title")}
         />
@@ -995,7 +948,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={props.disabled}
-                rows={compactAutosizeEnabled() ? 1 : 5}
+                rows={compactLayoutEnabled() ? 1 : 5}
                 spellcheck={false}
                 autocorrect="off"
                 autoCapitalize="off"
