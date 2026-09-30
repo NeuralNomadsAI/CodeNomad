@@ -39,6 +39,13 @@ export const appMessages = {
   "emptyState.multipleInstances": "同一个文件夹可以同时打开多个实例",
 
   "releases.upgradeRequired.title": "需要升级",
+  "releases.desktop.checking": "正在检查 CodeNomad 更新…",
+  "releases.desktop.current": "CodeNomad 已是最新版本。",
+  "releases.desktop.available": "CodeNomad {version} 已可用。安装将重启应用。",
+  "releases.desktop.install": "安装并重启",
+  "releases.desktop.downloading": "正在下载并验证更新…",
+  "releases.desktop.restarting": "正在保存窗口并安装更新…",
+  "releases.desktop.failed": "无法完成更新。您可以重试或从版本发布页面下载。",
   "releases.upgradeRequired.message.withVersion": "更新到 CodeNomad {version} 以使用最新的 UI。",
   "releases.upgradeRequired.message.noVersion": "更新 CodeNomad 以使用最新的 UI。",
   "releases.upgradeRequired.action.getUpdate": "获取更新",

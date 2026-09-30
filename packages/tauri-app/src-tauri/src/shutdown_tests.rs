@@ -209,7 +209,7 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
         .unwrap();
 
     let PendingShutdownTimeoutAction::Cancel(mut cancellations) =
-        coordinator.expire_pending_shutdown()
+        coordinator.expire_pending_shutdown(&requests)
     else {
         panic!("ordinary shutdown timeout should cancel");
     };
@@ -224,11 +224,11 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
 #[test]
 fn windows_session_end_promotes_an_ordinary_shutdown_timeout_to_cleanup() {
     let coordinator = ShutdownCoordinator::default();
-    coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
+    let requests = coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
     coordinator.begin_windows_session_end(["local-a".to_string()]);
 
     assert!(matches!(
-        coordinator.expire_pending_shutdown(),
+        coordinator.expire_pending_shutdown(&requests),
         PendingShutdownTimeoutAction::Cleanup
     ));
     assert!(coordinator.begin_cleanup(true));

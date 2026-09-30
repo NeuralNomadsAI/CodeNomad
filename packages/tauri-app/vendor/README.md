@@ -31,3 +31,20 @@ published Tao release containing the fix; run the same regression first. Merely
 bumping within the unfixed 0.34.x/0.35.x release lines is insufficient.
 
 [tao#1215]: https://github.com/tauri-apps/tao/pull/1215
+
+## Updater Windows launch handoff
+
+`tauri-plugin-updater-2.12.0/` is the published MIT/Apache-2.0 crate (licenses
+included), selected through the workspace's `[patch.crates-io]`.
+
+- Crate: https://static.crates.io/crates/tauri-plugin-updater/tauri-plugin-updater-2.12.0.crate
+- SHA-256: `7a5cad8ed5948d988e1018ecd31e27cacedbf72ce3fb972940c3e4bf51639e4b`
+- Local change: `src/updater.rs` runs `on_before_exit` only after a successful
+  `ShellExecuteW`. Upstream calls it before launching, irreversibly releasing
+  client-state ownership even when Windows refuses to start the installer.
+- Regression: `cargo test -p tauri-plugin-updater windows_launch_tests` from
+  `packages/tauri-app` checks failed and successful native launch result codes.
+
+Extraction, signature checks, NSIS arguments, installer restart and Unix install
+paths remain upstream. Remove this override when a published plugin provides the
+same success-only handoff; rerun the regression and signed installer trial first.

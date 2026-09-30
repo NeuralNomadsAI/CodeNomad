@@ -31,6 +31,7 @@ import OpenCodeSetup from "./components/opencode-setup"
 import { openOpenCodeSetup } from "./stores/opencode-setup"
 import { formatLaunchErrorMessage, isMissingBinaryMessage } from "./lib/launch-errors"
 import { initReleaseNotifications } from "./stores/releases"
+import { observeDesktopUpdates, requestDesktopUpdate } from "./stores/desktop-updates"
 import { isTauriHost, isWebHost, runtimeEnv } from "./lib/runtime-env"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
@@ -702,8 +703,10 @@ const App: Component = () => {
   // Native visibility actions share the shell/preferences state; other actions use palette commands.
   const executeViewMenuAction = useViewMenu(() => activeInstance()?.id)
   onMount(() => {
+    onCleanup(observeDesktopUpdates())
     const executeMenuAction = (action: unknown) => {
       if (typeof action !== "string") return
+      if (action === "get-updates") { void requestDesktopUpdate(); return }
       if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
         const instance = activeInstance()

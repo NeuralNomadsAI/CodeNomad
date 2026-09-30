@@ -43,6 +43,7 @@ struct ShutdownState {
     cleanup_started: bool,
     exit_allowed: bool,
     restart_requested: bool,
+    update: Option<crate::desktop_updater::PreparedUpdate>,
     #[cfg(windows)]
     windows_session_end_generation: Option<u64>,
     #[cfg(windows)]
@@ -115,6 +116,13 @@ impl ShutdownCoordinator {
         labels: impl IntoIterator<Item = String>,
     ) -> Option<Vec<(String, u64)>> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        Self::begin_shutdown_locked(&mut state, labels)
+    }
+
+    fn begin_shutdown_locked(
+        state: &mut ShutdownState,
+        labels: impl IntoIterator<Item = String>,
+    ) -> Option<Vec<(String, u64)>> {
         if state.shutdown_started {
             return None;
         }
@@ -130,6 +138,19 @@ impl ShutdownCoordinator {
             state.global_requests.insert(label.clone(), generation);
             requests.push((label, generation));
         }
+        Some(requests)
+    }
+
+    fn begin_update(
+        &self,
+        labels: impl IntoIterator<Item = String>,
+        mut update: crate::desktop_updater::PreparedUpdate,
+    ) -> Option<Vec<(String, u64)>> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let requests = Self::begin_shutdown_locked(&mut state, labels)?;
+        update.arm();
+        state.update = Some(update);
+        state.restart_requested = true;
         Some(requests)
     }
 
@@ -161,6 +182,7 @@ impl ShutdownCoordinator {
 
     fn cleanup_failed(&self) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.update.take();
         let cancellations = state.global_requests.drain().collect();
         state.cleanup_started = false;
         state.shutdown_started = false;
@@ -178,15 +200,19 @@ impl ShutdownCoordinator {
         cancellations
     }
 
-    fn expire_pending_shutdown(&self) -> PendingShutdownTimeoutAction {
+    fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> PendingShutdownTimeoutAction {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if !state.shutdown_started || state.cleanup_started {
+        if !state.shutdown_started || state.cleanup_started
+            || requests.len() != state.global_requests.len()
+            || requests.iter().any(|(label, generation)| state.global_requests.get(label) != Some(generation))
+        {
             return PendingShutdownTimeoutAction::Cancel(Vec::new());
         }
         #[cfg(windows)]
         if state.windows_session_end_generation.is_some() {
             return PendingShutdownTimeoutAction::Cleanup;
         }
+        state.update.take();
         state.shutdown_started = false;
         state.restart_requested = false;
         state.global_pending.clear();
@@ -276,6 +302,9 @@ impl ShutdownCoordinator {
         let session_deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
         state.windows_session_end_generation = Some(session_generation);
         state.windows_session_end_deadline = Some(session_deadline);
+        if state.update.take().is_some() {
+            state.restart_requested = false;
+        }
         if state.shutdown_started {
             return WindowsSessionEndPreparation {
                 generation: session_generation,
@@ -509,6 +538,21 @@ pub(crate) fn request(app: AppHandle) {
         start_cleanup(app, false);
         return;
     };
+    flush_shutdown(app, requests);
+}
+
+pub(crate) fn request_update(
+    app: AppHandle,
+    update: crate::desktop_updater::PreparedUpdate,
+) -> Result<(), String> {
+    let requests = app.state::<ShutdownCoordinator>()
+        .begin_update(renderer_labels(&app), update)
+        .ok_or("Application shutdown is already in progress")?;
+    flush_shutdown(app, requests);
+    Ok(())
+}
+
+fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>) {
     for (label, generation) in &requests {
         if !emit_flush(&app, label, *generation) {
             app.state::<ShutdownCoordinator>()
@@ -529,7 +573,7 @@ pub(crate) fn request(app: AppHandle) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        match app.state::<ShutdownCoordinator>().expire_pending_shutdown() {
+        match app.state::<ShutdownCoordinator>().expire_pending_shutdown(&requests) {
             PendingShutdownTimeoutAction::Cancel(cancellations) => {
                 emit_flush_cancellations(&app, cancellations)
             }
@@ -576,6 +620,25 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             eprintln!("[tauri] shutdown cleanup remains unconfirmed: {error}");
             let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
             emit_flush_cancellations(&app, cancellations);
+            return;
+        }
+        let update = app.state::<ShutdownCoordinator>().state.lock()
+            .unwrap_or_else(|error| error.into_inner()).update.take();
+        if let Err(error) = update.map(|update| update.install()).unwrap_or(Ok(())) {
+            eprintln!("[tauri] update installation failed: {error}");
+            // The failed installer must not be replayed. Restore the owned
+            // backend after reopening navigation, so even immediate readiness
+            // can restore the windows. A newer quit still wins recovery admission.
+            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            emit_flush_cancellations(&app, cancellations);
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Some(Err(recovery)) = with_navigation_authority(&app, || {
+                    state.manager.start(app.clone(), crate::is_dev_mode())
+                }) {
+                    eprintln!("[tauri] backend recovery after failed update: {recovery}");
+                }
+            }
+            crate::desktop_updater::report_failure(&app);
             return;
         }
         client_state::release(&app);
@@ -849,3 +912,7 @@ pub(crate) fn schedule_windows_session_end_handler(window: &WebviewWindow) -> Re
 #[cfg(test)]
 #[path = "shutdown_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shutdown_updater_tests.rs"]
+mod updater_tests;
