@@ -89,7 +89,7 @@ test("viewport menu distinguishes size from device emulation and restores deskto
 for (const host of ["electron", "tauri"]) {
   test(`${host} mobile emulation remains retryable after retained-profile application fails`, async () => {
     const fixture = host === "electron" ? await openElectronFixture() : undefined
-    const page = fixture?.page ?? await browser.newPage()
+    const page = fixture?.page ?? await browser.newPage({ userAgent: "Windows fixture" })
     try {
       await page.goto(`${url}?host=${host}`)
       await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_register"))
