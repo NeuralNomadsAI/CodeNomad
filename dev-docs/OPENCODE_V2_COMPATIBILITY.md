@@ -28,6 +28,29 @@ The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse whi
 preserving session IDs and complete history. See the
 [transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
 
+### Native Codex subscription usage
+
+Codex/OpenAI quota reads require the **2.0.20** native `credential.list` API.
+This is a feature-local dependency, not a new global minimum: a missing endpoint,
+expired token or unsupported connection yields unavailable usage. The server
+resolves the owned session's native directory and provider integration, then uses
+only that integration's first connection and its matching active ChatGPT OAuth
+credential (`chatgpt-browser` or `chatgpt-headless`). It never reads host legacy
+`auth.json`, Codex CLI credentials or SQLite, refreshes OAuth independently, or
+substitutes another saved account. WSL uses the selected daemon's credentials.
+
+Quota snapshots are scoped to the acquired native connection, instance, session,
+directory, provider and selected credential identity. Warm and pending results
+revalidate native selection before publication. Credentials remain server-only;
+browser credential export and generic RPC are still blocked by the proxy.
+Isolated HTTP/generated-client and rendered Solid fixtures cover these boundaries.
+`node scripts/test-provider-usage-native.mjs <absolute-cli-path>` additionally
+exercises the production quota adapter against a fresh native daemon/database with
+synthetic OAuth/key credentials and mocked quota HTTP only. It passed on Windows
+with 2.0.20: active-account selection and `metadata.accountID`, warm-cache revocation
+after switching to a key, and recovery despite a stale legacy file. This is not a
+real WSL or live ChatGPT quota test; no real credentials or shared daemon are used.
+
 ### Side questions (`/btw`)
 
 The composer-owned command calls native `session.generate({ sessionID, prompt })`
