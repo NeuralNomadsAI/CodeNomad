@@ -212,7 +212,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     }
     return (
       <div class="border border-base bg-surface-secondary px-3 py-2">
-        <ProviderUsagePanel providerId={session.model.providerId} modelId={session.model.modelId} />
+        <ProviderUsagePanel instanceId={props.instanceId} sessionId={session.id} directory={session.location.directory}
+          providerId={session.model.providerId} modelId={session.model.modelId}
+          active={props.isActive() && props.expandedItems().includes("provider-usage")} />
       </div>
     )
   }
