@@ -173,6 +173,19 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("keeps native credential export and creation outside the workspace proxy", async () => {
+    const { app, requestCount } = await harness()
+    for (const method of ["GET", "POST"] as const) {
+      const response = await app.inject({
+        method,
+        url: "/workspaces/workspace/instance/api/credential",
+        ...(method === "POST" ? { payload: { integrationID: "fixture", value: { type: "key", key: "synthetic-key" } } } : {}),
+      })
+      assert.equal(response.statusCode, 403)
+    }
+    assert.equal(requestCount(), 0)
+  })
+
   it("forwards side generation for an owned busy session without mutating its environment", async () => {
     const { app, manager, sessionGets, requestCount } = await harness("/repo/worktree", { owned: { type: "running" } })
     manager.getSessionEnvironment = async () => { throw new Error("Side generation must not replace the session environment") }
