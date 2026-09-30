@@ -2,6 +2,7 @@ import { createRequire } from "node:module"
 import { randomUUID } from "node:crypto"
 import type { BrowserWindow, WebContents } from "electron"
 import { isBrowserUrlAllowed } from "./browser-webview-security"
+import { setBrowserEmulation } from "./browser-emulation"
 
 const electron = createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -104,6 +105,17 @@ export class BrowserController {
       throw new Error("Browser guest does not belong to this window")
     }
     this.registrations.set(input.registrationId, { ...input, owner, guest })
+  }
+
+  async emulate(owner: WebContents, registrationId: unknown, preset: unknown): Promise<void> {
+    const registration = typeof registrationId === "string" ? this.registrations.get(registrationId) : undefined
+    if (!registration || registration.owner !== owner) throw new Error("Browser target does not belong to this window")
+    await this.enqueue(registration.guest, async () => {
+      if (this.registrations.get(registration.registrationId) !== registration || owner.isDestroyed() || registration.guest.isDestroyed()) {
+        throw new Error("Browser target changed before emulation")
+      }
+      await setBrowserEmulation(registration.guest, preset)
+    })
   }
 
   unregister(owner: WebContents, registrationId: unknown): void {

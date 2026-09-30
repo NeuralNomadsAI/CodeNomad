@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, type Browser } from "playwright"
+import { chromium, devices, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
@@ -11,7 +11,7 @@ before(async () => {
     plugins: [solid(), { name: "header-windows-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
@@ -21,6 +21,310 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
 after(async () => { await browser?.close(); await server?.close() })
+
+for (const touch of [false, true]) for (const [width, height] of [[320, 740], [360, 740], [390, 844], [430, 932], [932, 430]]) {
+  test(`composer controls fit ${width}px ${touch ? "touch" : "mouse"} with a preserved draft`, async () => {
+    const page = await browser.newPage({ ...(touch ? devices["Pixel 5"] : {}), viewport: { width, height } })
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+      const input = page.locator("textarea.prompt-input")
+      await input.fill("Brouillon mobile conservé")
+      const geometry = await page.evaluate(() => {
+        const footer = document.querySelector(".prompt-input-footer")!.getBoundingClientRect()
+        const buttons = [...document.querySelectorAll<HTMLElement>(".prompt-context-controls .selector-trigger, .prompt-input-footer-actions button")]
+          .filter(el => el.getBoundingClientRect().width > 0).map(el => {
+            const r = el.getBoundingClientRect()
+            return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
+          })
+        return { footer: { x: footer.x, right: footer.right, bottom: footer.bottom, width: footer.width }, buttons,
+          selectors: [...document.querySelectorAll(".prompt-context-controls .selector-trigger")].map(el => el.getBoundingClientRect().y),
+          actionsY: document.querySelector(".prompt-input-footer-actions")!.getBoundingClientRect().y }
+      })
+      for (const b of geometry.buttons) {
+        assert.ok(b.x >= geometry.footer.x - 1 && b.right <= geometry.footer.right + 1 && b.bottom <= geometry.footer.bottom + 1, JSON.stringify(b))
+        if (touch) assert.ok(b.width >= 32 && b.height >= 32, "dense touch controls retain compact targets")
+      }
+      for (let i = 0; i < geometry.buttons.length; i++) for (const b of geometry.buttons.slice(i + 1)) {
+        const a = geometry.buttons[i]
+        assert.ok(a.right <= b.x + 1 || b.right <= a.x + 1 || a.bottom <= b.y + 1 || b.bottom <= a.y + 1, "controls must not overlap")
+      }
+      assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
+      assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
+      if (width === 390) {
+        const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+        assert.match(await worktree.innerText(), /Espace de travail/)
+        await worktree.focus()
+        await page.keyboard.press("ArrowDown")
+        await page.getByRole("listbox").waitFor({ state: "visible" })
+        await page.keyboard.press("Escape")
+        await page.getByRole("listbox").waitFor({ state: "hidden" })
+        assert.equal(await input.inputValue(), "Brouillon mobile conservé")
+      }
+      if (process.env.CODENOMAD_MOBILE_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_MOBILE_CAPTURE}/${touch ? "touch" : "mouse"}-${width}.png`, scale: "css" })
+      await page.setViewportSize({ width: 600, height: 851 })
+      assert.equal(await input.inputValue(), "Brouillon mobile conservé")
+    } finally { await page.close() }
+  })
+}
+
+for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`timeline visibility follows conversation width on ${device}, independently of header density and height`, async () => {
+  const page = await browser.newPage({ ...devices[device], viewport: { width: 1100, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    await page.getByText("Fixture message", { exact: true }).waitFor()
+    const timeline = page.locator(".message-timeline-sidebar")
+    await timeline.waitFor({ state: "attached" })
+    // Constrain the real conversation container independently of the viewport
+    // so docked sidebars and narrow desktop panes use the same breakpoint.
+    await page.addStyleTag({ content: ".session-center-column { flex: 0 0 var(--fixture-center-width, 390px) !important; min-width: 0 !important; }" })
+    for (const [width, height] of [[390, 844], [419, 844], [420, 844], [459, 844], [460, 844], [844, 390], [390, 400], [430, 932]]) {
+      await page.locator(".session-center-column").evaluate((el, width) => (el as HTMLElement).style.setProperty("--fixture-center-width", `${width}px`), width)
+      const expected = width >= 420
+      await page.setViewportSize({ width, height })
+      await page.evaluate(() => (window as any).fixture.setWorking())
+      for (const density of [0, 4]) {
+        const result = await page.locator(".session-center-column").evaluate((el, density) => {
+          el.setAttribute("data-session-header-density", String(density))
+          const rail = el.querySelector(".message-timeline-sidebar")!
+          const view = el.querySelector(".session-view")!
+          const worktree = el.querySelector('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector:first-child .selector-trigger')!
+          const label = worktree.querySelector("div")!
+          return { width: el.getBoundingClientRect().width, visible: rail.getBoundingClientRect().width > 0,
+            worktreeWidth: worktree.getBoundingClientRect().width, worktreeLabelHidden: getComputedStyle(label).position === "absolute",
+            padding: parseFloat(getComputedStyle(view).paddingInlineEnd),
+            footer: getComputedStyle(el.querySelector(".prompt-input-footer")!, "::after").display }
+        }, density)
+        assert.equal(Math.round(result.width), width)
+        assert.equal(result.visible, expected, JSON.stringify({ width, height, density, result }))
+        assert.equal(result.padding > 0, expected, "hidden timeline leaves no reserved rail")
+        assert.equal(result.worktreeLabelHidden, width < 460, "worktree label uses its own conversation-width breakpoint")
+        if (width < 460) assert.equal(result.worktreeWidth, 32, "arrow-only worktree frees room for other selectors")
+        if (!expected) assert.equal(result.footer, "none", "hidden rail leaves no footer extension")
+      }
+    }
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: false }))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    assert.equal(await timeline.isVisible(), true)
+  } finally { await page.close() }
+})
+
+test("short landscape composer shrinks, scrolls long drafts and shares pointer/keyboard resize limits", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    const original = await input.evaluate(el => el.getBoundingClientRect().height)
+    await page.setViewportSize({ width: 1800, height: 390 })
+    await page.waitForFunction(height => document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height < height, original)
+    const draft = Array.from({ length: 20 }, (_, i) => `Line ${i}`).join("\n")
+    await input.fill(draft)
+    await page.waitForFunction(() => {
+      const el = document.querySelector("textarea.prompt-input")!
+      return el.clientHeight < 104 && el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === "auto"
+    })
+    const resize = page.locator(".prompt-resize-handle")
+    await resize.focus()
+    await page.keyboard.press("Home")
+    const minimum = Number(await resize.getAttribute("aria-valuemin"))
+    assert.equal(Number(await resize.getAttribute("aria-valuenow")), minimum)
+    const bounds = await resize.boundingBox()
+    assert.ok(bounds)
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 80)
+    await page.mouse.up()
+    assert.equal(Number(await resize.getAttribute("aria-valuenow")), minimum)
+    assert.equal(await input.inputValue(), draft)
+  } finally { await page.close() }
+})
+
+test("manual prompt height follows the pointer without changing its minimum as the draft grows", async () => {
+  const page = await browser.newPage({ viewport: { width: 701, height: 1275 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    const resize = page.locator(".prompt-resize-handle")
+    const minimum = await page.locator(".session-center-column").evaluate(el => Math.max(44, Math.floor(el.getBoundingClientRect().height * 0.08)))
+    await resize.focus()
+    await page.keyboard.press("Home")
+    await page.keyboard.press("ArrowUp")
+    const chosen = Number(await resize.getAttribute("aria-valuenow"))
+    await input.fill(Array.from({ length: 20 }, (_, i) => `Draft line ${i}`).join("\n"))
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    assert.equal(await input.evaluate(el => el.getBoundingClientRect().height), chosen, "typing must not raise a manually chosen height")
+    const bounds = await resize.boundingBox()
+    assert.ok(bounds)
+    const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    for (const delta of [20, 80, 40, -80]) {
+      await page.mouse.move(x, y - delta)
+      const expected = Math.max(minimum, chosen + delta)
+      await page.waitForFunction(expected => document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height === expected, expected)
+    }
+    await page.mouse.up()
+    assert.equal(Number(await resize.getAttribute("aria-valuemin")), minimum, "a tall narrow window uses the same proportional rule")
+    assert.equal(await input.evaluate(el => getComputedStyle(el).overflowY), "auto")
+  } finally { await page.close() }
+})
+
+test("chosen prompt proportion follows window height and survives composer remounts", async () => {
+  const page = await browser.newPage({ viewport: { width: 701, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    const resize = page.locator(".prompt-resize-handle")
+    await input.fill("Keep my draft while resizing")
+    await resize.focus()
+    await page.keyboard.press("Home")
+    for (let i = 0; i < 9; i++) await page.keyboard.press("ArrowUp")
+    const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
+    assert.ok(saved.ratio > 0.2 && saved.ratio < 0.4, `choose a height away from both bounds: ${saved.ratio}`)
+    for (const height of [650, 1100, 390, 1275, 900]) {
+      await page.setViewportSize({ width: 701, height })
+      await page.waitForFunction(ratio => {
+        const available = document.querySelector(".session-center-column")!.getBoundingClientRect().height
+        const actual = document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height
+        return actual === Math.max(44, Math.round(available * ratio))
+      }, saved.ratio)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+    }
+    const before = await input.evaluate(el => el.getBoundingClientRect().height)
+    await page.evaluate(() => (window as any).fixture.showInfo())
+    await page.evaluate(() => (window as any).fixture.showSession())
+    await page.waitForFunction(height => document.querySelector("textarea.prompt-input")?.getBoundingClientRect().height === height, before)
+    assert.equal(await input.inputValue(), "Keep my draft while resizing")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+  } finally { await page.close() }
+})
+
+test("visual keyboard shrink clamps the displayed manual height without overwriting it", async () => {
+  const page = await browser.newPage({ viewport: { width: 932, height: 900 } })
+  await page.addInitScript(`(() => {
+    let height = window.innerHeight
+    Object.defineProperty(window.visualViewport, "height", { get: () => height })
+    window.setKeyboardViewport = (next) => {
+      height = next
+      window.visualViewport.dispatchEvent(new Event("resize"))
+    }
+  })()`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const input = page.locator("textarea.prompt-input")
+    await input.fill("Draft stays here")
+    await page.locator(".prompt-resize-handle").focus()
+    await page.keyboard.press("End")
+    const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
+    const original = await input.evaluate(el => el.getBoundingClientRect().height)
+    assert.ok(original > 104)
+    await page.evaluate(() => (window as any).setKeyboardViewport(320))
+    await page.waitForFunction(height => document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height < height, original)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+    assert.equal(await page.evaluate(() => innerHeight), 900, "keyboard changes only the visual viewport")
+    await page.evaluate(() => (window as any).setKeyboardViewport(900))
+    await page.waitForFunction(height => document.querySelector("textarea.prompt-input")!.getBoundingClientRect().height === height, original)
+    assert.equal(await input.inputValue(), "Draft stays here")
+  } finally { await page.close() }
+})
+
+test("context text never overlaps header actions after usage and session changes", async () => {
+  const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 390, height: 844 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+    for (const width of [390, 420, 460, 360]) {
+      await page.setViewportSize({ width, height: 844 })
+      for (const used of [0, 14000, 272000]) for (const working of [true, false]) {
+        await page.evaluate(used => {
+          const f = (window as any).fixture
+          f.showInfo()
+          f.setContext(used, 272000)
+          f.showSession()
+        }, used)
+        await page.evaluate(working => working ? (window as any).fixture.setWorking() : (window as any).fixture.setIdle(), working)
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))))
+        const geometry = await page.evaluate(() => {
+          const meter = document.querySelector(".context-meter")!
+          const actions = document.querySelector(".session-header-actions-slot")!.getBoundingClientRect()
+          const rects = [...meter.querySelectorAll("span, svg")].map(el => el.getBoundingClientRect()).filter(r => r.width > 0)
+          const indicators = document.querySelector(".session-header-indicators")!.getBoundingClientRect()
+          return { right: Math.max(...rects.map(r => r.right)), left: actions.left,
+            indicators: { left: indicators.left, right: indicators.right, width: indicators.width },
+            density: document.querySelector(".session-center-column")!.getAttribute("data-session-header-density") }
+        })
+        assert.ok(geometry.right + 4 <= geometry.left, JSON.stringify({ width, used, geometry }))
+        if (geometry.indicators.width) assert.ok(geometry.right + 4 <= geometry.indicators.left && geometry.indicators.right + 4 <= geometry.left, JSON.stringify({ width, used, working, geometry }))
+      }
+    }
+  } finally { await page.close() }
+})
+
+test("desktop timeline still follows its saved visibility preference", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    const timeline = page.locator(".message-timeline-sidebar")
+    await timeline.waitFor({ state: "visible" })
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: false }))
+    await timeline.waitFor({ state: "detached" })
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    await timeline.waitFor({ state: "visible" })
+  } finally { await page.close() }
+})
+
+test("content filters join the measured header overflow and restore keyboard focus", async () => {
+  const page = await browser.newPage({ viewport: { width: 280, height: 844 }, hasTouch: true })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setWorking())
+    const menu = page.locator(".session-header-actions-menu")
+    await menu.waitFor({ state: "visible" })
+    assert.equal(await page.locator(".transcript-filters-trigger").isVisible(), false)
+    await menu.click()
+    await page.getByRole("menuitem", { name: "Message content", exact: true }).click()
+    const filters = page.locator(".transcript-filters")
+    await filters.waitFor()
+    const bounds = await filters.boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 281, "filters stay inside the narrow viewport")
+    await page.keyboard.press("Escape")
+    await filters.waitFor({ state: "hidden" })
+    await page.waitForFunction(() => document.activeElement?.classList.contains("session-header-actions-menu"))
+    await page.setViewportSize({ width: 1800, height: 1000 })
+    const direct = page.locator(".transcript-filters-trigger")
+    await direct.waitFor({ state: "visible" })
+    await direct.click()
+    await filters.waitFor()
+    await page.locator("#outside").click()
+    await filters.waitFor({ state: "hidden" })
+    assert.deepEqual(errors, [])
+  } catch (error) {
+    console.error({ errors, body: await page.locator("body").innerText() })
+    throw error
+  } finally { await page.close() }
+})
 
 for (const kind of ["command-palette", "session-search"]) test(`${kind} stays open outside, marks its toggle, and closes explicitly`, async () => {
   const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })

@@ -58,6 +58,67 @@ const snapshot = (page: Page) => page.evaluate(() => {
   return { calls: fixture.calls, errors: fixture.errors, locations: fixture.locations, listeners: fixture.listenerCount() }
 })
 
+test("viewport menu distinguishes size from device emulation and restores desktop overrides", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture" })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_register"))
+    const menu = page.getByRole("button", { name: "Viewport", exact: true })
+    assert.equal(await page.getByRole("button", { name: /Landscape orientation|Orientation paysage/ }).count(), 0)
+    await menu.click()
+    assert.deepEqual(await page.getByRole("menuitemradio").allTextContents(), ["Responsive", "Desktop (1440 × 900)", "Tablet (768 × 1024)", "Tablet landscape (1024 × 768)", "Mobile (390 × 844)", "Mobile landscape (844 × 390)"])
+    await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.preset === "mobile"))
+    await menu.click()
+    assert.equal(await page.getByRole("menuitemradio", { name: /390 × 844/ }).getAttribute("aria-checked"), "true")
+    await page.getByRole("menuitemradio", { name: /844 × 390/ }).click()
+    await menu.click()
+    if (process.env.CODENOMAD_MOBILE_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_MOBILE_CAPTURE}/phone-templates-menu.png` })
+    await page.evaluate(() => { (window as any).nativeFixture.failEmulation = true })
+    await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+    await page.getByRole("alertdialog").waitFor()
+    await page.evaluate(() => { (window as any).nativeFixture.overlay(false); (window as any).nativeFixture.failEmulation = false })
+    await menu.click()
+    assert.equal(await page.getByRole("menuitemradio", { name: /844 × 390/ }).getAttribute("aria-checked"), "true", "failed emulation preserves the applied selection")
+    await page.getByRole("menuitemradio").first().click()
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.preset === "none"))
+    assert.deepEqual((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "emulate").map((c: any) => c.payload.preset), ["mobile", "mobileLandscape", "mobile", "none"])
+  } finally { await page.close() }
+})
+
+test("fixed viewport templates remain keyboard accessible in a narrow preview", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 320, height: 740 } })
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { document.getElementById("preview")!.style.width = "100%" })
+    const menu = page.getByRole("button", { name: "Viewport", exact: true })
+    await menu.click()
+    const bounds = await page.getByRole("menu").boundingBox()
+    assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 320)
+    await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+    await menu.click()
+    await page.getByRole("menuitemradio", { name: /844 × 390/ }).focus()
+    await page.keyboard.press("Space")
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.preset === "mobileLandscape"))
+    const close = page.locator(".window-close-button")
+    const closeBounds = await close.boundingBox()
+    assert.ok(closeBounds && closeBounds.x + closeBounds.width <= 320)
+    await close.click()
+    assert.equal(await menu.count(), 0)
+  } finally { await page.close() }
+})
+
+test("iframe preview keeps the original mobile templates as dimensions only", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?host=web`)
+    await page.getByRole("button", { name: "Viewport", exact: true }).click()
+    await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+    assert.equal(await page.locator("iframe").evaluate(el => Math.round(el.getBoundingClientRect().width)), 390)
+    assert.equal((await snapshot(page)).calls.some((c: any) => c.payload?.action === "emulate"), false)
+  } finally { await page.close() }
+})
+
 async function openElectronFixture() {
   const temp = process.env.CODENOMAD_TEST_TEMP || (process.platform === "win32"
     ? join(process.env.LOCALAPPDATA!, "Temp", "opencode") : tmpdir())

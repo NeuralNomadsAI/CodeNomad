@@ -13,6 +13,7 @@ export const nativeFixture = {
   errors: [] as string[],
   locations: [] as string[],
   failUpdates: false,
+  failEmulation: false,
   deferRegistration: false,
   settleRegistration(reject = false) {
     if (!pendingRegistration) throw new Error("No pending registration")
@@ -29,6 +30,7 @@ export const nativeFixture = {
 async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
   if (command === "plugin:event|listen") return args.handler
+  if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.failEmulation) throw new Error("Emulation failed")
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
     return new Promise<void>((resolve, reject) => { pendingRegistration = { resolve, reject } })
   }

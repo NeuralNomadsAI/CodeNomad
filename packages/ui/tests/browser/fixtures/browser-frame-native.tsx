@@ -2,7 +2,13 @@ import { nativeFixture } from "./browser-frame-native-bridge"
 import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import { BrowserFrame } from "../../../src/components/browser-frame"
+import { ConfigProvider } from "../../../src/stores/preferences"
+import { I18nProvider } from "../../../src/lib/i18n"
+import { serverApi } from "../../../src/lib/api-client"
 import "../../../src/index.css"
+
+serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
+serverApi.fetchStateOwner = async () => ({}) as any
 
 function Fixture() {
   const [mounted, setMounted] = createSignal(true)
@@ -15,10 +21,13 @@ function Fixture() {
   return <>
     <div id="preview" style={{ width: "800px", height: "500px" }}>
       <Show when={mounted()}>
-        <BrowserFrame sessionId="fixture-session" title="Preview"
+        <BrowserFrame sessionId="fixture-session" title="Preview" onClose={() => setMounted(false)}
           initialUrl={address()} initialAddress={address()}
           proxyBasePath="" addressMode="url"
-          labels={{ back: "Back", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport" }}
+          labels={{ back: "Back", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",
+            viewportResponsive: "Responsive", viewportDesktop: "Desktop (1440 × 900)",
+            viewportTablet: "Tablet (768 × 1024)", viewportTabletLandscape: "Tablet landscape (1024 × 768)",
+            viewportMobile: "Mobile (390 × 844)", viewportMobileLandscape: "Mobile landscape (844 × 390)" }}
           onNavigate={async url => url}
           onFrameLocation={url => { nativeFixture.locations.push(url); setAddress(url) }}
           onNavigationError={reason => {
@@ -32,4 +41,4 @@ function Fixture() {
   </>
 }
 
-render(() => <Fixture />, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

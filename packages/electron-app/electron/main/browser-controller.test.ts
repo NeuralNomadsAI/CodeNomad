@@ -57,6 +57,27 @@ function createHarness(requestOpen: (sessionID: string, url: string, requestID: 
 }
 
 describe("BrowserController", () => {
+  it("rejects emulation from another owner and fences queued target replacement", async () => {
+    const harness = createHarness()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const { guest } = createGuest({ id: 95, owner: harness.owner, sendCommand: async method => {
+      if (method === "Accessibility.getFullAXTree") { entered(); await gate; return { nodes: [] } }
+      return {}
+    } })
+    harness.add(guest, "emulation")
+    await assert.rejects(harness.controller.emulate({ id: 2 } as WebContents, "emulation", "mobile"), /does not belong/)
+    const snapshot = harness.controller.execute("session", { action: "snapshot" })
+    await started
+    const emulation = harness.controller.emulate(harness.owner, "emulation", "mobile")
+    harness.controller.unregister(harness.owner, "emulation")
+    release()
+    await snapshot
+    await assert.rejects(emulation, /target changed/)
+  })
+
   it("cleans registrations after native window destruction without reading its getters", () => {
     const harness = createHarness()
     let destroyed = false
