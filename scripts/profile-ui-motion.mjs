@@ -4,7 +4,7 @@
 // and the real StatusTab/SessionView fixture paths remain identical.
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -15,7 +15,9 @@ import solid from "vite-plugin-solid"
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const root = path.join(repo, "packages/ui")
 const baselineRef = process.argv[2]
-const evidence = await mkdtemp(path.join(os.tmpdir(), "opencode", "issue804-motion-"))
+const temporaryParent = path.join(os.tmpdir(), "opencode")
+await mkdir(temporaryParent, { recursive: true })
+const evidence = await mkdtemp(path.join(temporaryParent, "issue804-motion-"))
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 const results = []
