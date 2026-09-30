@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.19**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.20**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -190,7 +190,7 @@ proxy checks passed. The earlier 2.0.16 dependency baseline passes against runti
 previously recorded above. Both historical migrations (2.0.3 and beta-19271) to
 2.0.18 pass; the native npm installation leaves the 2.0.15 daemon and PID intact.
 
-### Current stable target: 2.0.19
+### Previous stable target: 2.0.19
 
 The recommendation and synchronized server/UI client and plugin pins advance to
 **2.0.19**; the timestamp-based minimum remains **2.0.7**. The authenticated native
@@ -223,6 +223,34 @@ The full native/UI acceptance passes when a diagnostic launcher preloads Vite
 before the native fixture. That run changes import order, not the assertions or
 runtime; it provides acceptance coverage without proving the ordinary launcher
 is reliable. Keep both outcomes visible in the PR.
+
+### Current stable target: 2.0.20
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.20**; the demonstrated timestamp-based minimum remains **2.0.7**. Authenticated
+native OpenAPI adds `GET`/`POST /api/credential` (116 paths, with the previous 115
+path definitions unchanged). Credential export/creation remains outside the
+workspace proxy; a regression verifies rejection before any upstream request.
+Existing components gain optional `Session.StructuredError.response.body` and
+connection `status` (`needs_auth`, message and optional URL); the other additions
+describe credentials. Published declarations propagate these additions and expose
+the plugin's `integration.connection.status` reporting method. No consumed API
+requires a production adapter or higher runtime minimum. The UI normalizer retains
+the optional response body while keeping the existing display message contract.
+
+Upstream also improves provider error messages, Bedrock/Mistral reasoning blocks,
+prompt caching, ChatGPT token-sharing authentication and database-file permissions.
+The new CLI `service disabled` setting controls implicit CLI connections; isolated
+validation with CodeNomad's real lifecycle confirms explicit `service start` and
+authenticated discovery still work with `disabled=true`, without clearing it.
+CodeNomad never writes native service configuration to accommodate the setting.
+
+Seven native suites pass on both 2.0.7 and 2.0.20 with the new pins. Native/UI
+acceptance also passes through the ordinary launcher, without Vite preloading.
+This passing run does not identify or fix the intermittent Windows import failure
+documented above. Historical migrations, standalone plugin acceptance and isolated
+npm upgrade pass; upgrade preserves the running 2.0.15 daemon's version and PID.
+Detailed test counts, environment and final review/CI outcomes belong in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
