@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "Zu einem Ordner wechseln",
   "directoryBrowser.goToParent": "Übergeordneter Ordner",
   "directoryBrowser.goToHome": "Home",
+  "directoryBrowser.goToRoot": "Arbeitsbereichsstamm",
   "directoryBrowser.goToInitial": "Zurück zu {name}",
   "directoryBrowser.selectCurrent": "Aktuellen auswählen",
   "directoryBrowser.newFolder": "Neuer Ordner",
