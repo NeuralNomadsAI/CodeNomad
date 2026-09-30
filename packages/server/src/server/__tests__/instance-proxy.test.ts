@@ -3,7 +3,7 @@ import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
-import type { OpenCodeClient, SessionInfo } from "@opencode/client"
+import { OpenCode, isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -772,6 +772,50 @@ describe("instance proxy location enforcement", () => {
 
     assert.equal(response.statusCode, 400)
     assert.deepEqual(sessionGets, ["foreign%25session"])
+    assert.equal(requestCount(), 0)
+  })
+
+  it("preserves the missing-session contract without exposing upstream error details or forwarding", async () => {
+    const missing = Object.assign(new Error("private upstream details"), {
+      _tag: "SessionNotFoundError", sessionID: "untrusted-upstream-id", internal: "private",
+    })
+    const { app, sessionGets, requestCount } = await harness("/repo/worktree", {}, { missing })
+    for (const [method, suffix] of [["GET", ""], ["GET", "/message"], ["DELETE", ""]] as const) {
+      const response = await app.inject({ method, url: `/workspaces/workspace/instance/api/session/missing${suffix}` })
+      assert.equal(response.statusCode, 404)
+      assert.deepEqual(response.json(), {
+        _tag: "SessionNotFoundError", sessionID: "missing", message: "Session not found",
+      })
+    }
+    assert.deepEqual(sessionGets, ["missing", "missing", "missing"])
+    assert.equal(requestCount(), 0)
+
+    // Exercise decoding with the real browser SDK, not just its tag guard.
+    const client = OpenCode.make({ baseUrl: "http://fixture/workspaces/workspace/instance", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      const response = await app.inject({ method: "GET", url: new URL(request.url).pathname })
+      return new Response(response.body, { status: response.statusCode, headers: { "content-type": "application/json" } })
+    } })
+    await assert.rejects(client.session.get({ sessionID: "missing" }), error => {
+      assert.ok(error instanceof Error)
+      assert.ok(isSessionNotFoundError(error))
+      assert.equal(error.sessionID, "missing")
+      assert.equal(error.message, "Session not found")
+      return true
+    })
+    assert.equal(requestCount(), 0)
+  })
+
+  it("does not classify foreign sessions or unrelated lookup failures as missing sessions", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {
+      foreign: "/other", unavailable: new Error("temporary lookup failure"),
+    })
+    const foreign = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/foreign" })
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(isSessionNotFoundError(foreign.json()), false)
+    const unavailable = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/unavailable" })
+    assert.equal(unavailable.statusCode, 500)
+    assert.equal(isSessionNotFoundError(unavailable.json()), false)
     assert.equal(requestCount(), 0)
   })
 
