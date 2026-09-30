@@ -64,7 +64,8 @@ async function openFixture(page: Page, scenario: Scenario, query: string): Promi
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(metadataFor(scenario, requested)) })
   })
   await page.goto(`${url}?${query}`)
-  await page.locator(".directory-browser-current-path").waitFor()
+  // Rendering the field does not mean the asynchronous French messages are ready.
+  await page.getByRole("combobox", { name: "Chemin du dossier", exact: true }).waitFor()
   return errors
 }
 
