@@ -1,5 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
@@ -1391,6 +1391,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 open={isSearchOpen()}
                 onClose={closeSearch}
                 title={t("messageSection.search.ariaLabel")}
+                closeLabel={t("messageSection.search.closeAriaLabel")}
                 class="message-search-popover"
               inline
               initialFocus={() => searchInputRef}
@@ -1468,15 +1469,6 @@ export default function MessageSection(props: MessageSectionProps) {
                         title={t("messageSection.search.nextAriaLabel")}
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="message-search-button"
-                        onClick={closeSearch}
-                        aria-label={t("messageSection.search.closeAriaLabel")}
-                        title={t("messageSection.search.closeAriaLabel")}
-                      >
-                        <X class="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>

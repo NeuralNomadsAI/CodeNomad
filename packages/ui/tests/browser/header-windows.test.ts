@@ -36,6 +36,17 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
     const panel = page.locator(`[id="${id}"]`)
     await trigger.click()
     await panel.waitFor()
+    const close = panel.locator(".window-header button")
+    assert.equal(await close.count(), 1)
+    const bounds = await panel.boundingBox()
+    const closeBounds = await close.boundingBox()
+    assert.ok(bounds && closeBounds && closeBounds.y < bounds.y + 50 && closeBounds.x > bounds.x + bounds.width / 2, "close is in the upper-right header")
+    await close.focus()
+    await page.keyboard.press("Enter")
+    await panel.waitFor({ state: "hidden" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.executions()), 0, "closing must not execute a palette command")
+    await trigger.click()
+    await panel.waitFor()
     assert.equal(await trigger.getAttribute("aria-expanded"), "true")
     assert.notEqual(await trigger.evaluate(el => getComputedStyle(el).backgroundColor), "rgba(0, 0, 0, 0)")
     assert.equal(await page.locator(".modal-overlay").count(), 0)
@@ -108,8 +119,7 @@ test("compact touch controls can reopen their menu and explicitly toggle a persi
       await panel.waitFor()
       await page.locator("#outside").tap()
       assert.equal(await panel.isVisible(), true)
-      await menu.tap()
-      await action.tap()
+      await panel.locator(".window-header button").tap()
       await panel.waitFor({ state: "hidden" })
     }
   } finally { await context.close() }
@@ -190,5 +200,32 @@ test("repeated palette shortcut refocuses its input without erasing the query or
     await page.keyboard.type(" command")
     assert.equal(await input.inputValue(), "Fixture command")
     assert.equal(await composer.inputValue(), "Draft to preserve")
+  } finally { await page.close() }
+})
+
+test("web preview close returns to the conversation with its draft and can reopen", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/previews", route => route.fulfill({ json: {
+    sessionId: "session", token: "fixture-preview", targetUrl: "http://localhost:3000", createdAt: 1,
+  } }))
+  await page.route("**/previews/fixture-preview**", route => route.fulfill({ contentType: "text/html", body: "<p>Preview fixture</p>" }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const composer = page.locator("textarea.prompt-input")
+    await composer.fill("Draft to preserve")
+    const toggle = page.locator('button[title="Open web preview"]')
+    await toggle.click()
+    const preview = page.locator(".window-shell").filter({ has: page.locator("iframe") })
+    const close = preview.locator(".window-header button")
+    await close.waitFor()
+    await close.click()
+    await preview.waitFor({ state: "hidden" })
+    assert.equal(await composer.inputValue(), "Draft to preserve")
+    await toggle.click()
+    await close.waitFor()
+    await close.click()
+    await preview.waitFor({ state: "hidden" })
   } finally { await page.close() }
 })

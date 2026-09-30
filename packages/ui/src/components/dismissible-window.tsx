@@ -1,5 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Show, type JSX } from "solid-js"
+import { X } from "lucide-solid"
+import { useI18n } from "../lib/i18n"
 
 /** Persistent non-modal utility window: outside interactions remain available
  * without dismissing it. Toggles identify it via aria-controls. */
@@ -8,6 +10,8 @@ export default function DismissibleWindow(props: {
   open: boolean
   onClose: () => void
   title: string
+  closeLabel?: string
+  closeButtonRef?: (element: HTMLButtonElement) => void
   description?: string
   class: string
   inline?: boolean
@@ -16,6 +20,7 @@ export default function DismissibleWindow(props: {
   onKeyDown?: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent>
   children: JSX.Element
 }) {
+  const { t } = useI18n()
   const content = () => (
     <Dialog.Content
       id={props.id}
@@ -51,7 +56,12 @@ export default function DismissibleWindow(props: {
         trigger?.focus({ preventScroll: true })
       }}
     >
-      <Dialog.Title class="sr-only">{props.title}</Dialog.Title>
+      <header class="window-header">
+        <Dialog.Title class="window-title">{props.title}</Dialog.Title>
+        <button ref={props.closeButtonRef} type="button" class="window-icon-button"
+          aria-label={props.closeLabel ?? t("toastHistory.close")} title={props.closeLabel ?? t("toastHistory.close")}
+          onClick={props.onClose}><X aria-hidden="true" /></button>
+      </header>
       <Dialog.Description class="sr-only">{props.description ?? props.title}</Dialog.Description>
       {props.children}
     </Dialog.Content>

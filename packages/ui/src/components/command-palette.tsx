@@ -167,6 +167,8 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   })
 
   function handleKeyDown(e: KeyboardEvent) {
+    // Header controls and focused result buttons retain native activation.
+    if (e.target !== inputRef) return
     const ordered = orderedCommands()
 
     if (ordered.length === 0) {
@@ -221,6 +223,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       open={props.open}
       onClose={props.onClose}
       title={t("commandPalette.title")}
+      initialFocus={() => inputRef}
       description={t("commandPalette.description")}
       class="fixed top-[20vh] left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl max-h-[60vh]"
       onKeyDown={handleKeyDown}

@@ -1,7 +1,8 @@
 import { createSignal, type Component } from "solid-js"
+import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { openSessionPreview, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
+import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -56,7 +57,12 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   }
 
   return (
-    <div class="flex h-full min-h-0 flex-col bg-surface">
+    <div class="window-shell flex h-full min-h-0 flex-col bg-surface">
+      <header class="window-header">
+        <h2 class="window-title">{t("sessionPreview.title")}</h2>
+        <button type="button" class="window-icon-button" aria-label={t("toastHistory.close")} title={t("toastHistory.close")}
+          onClick={() => showSessionChat(props.preview.storageKey)}><X aria-hidden="true" /></button>
+      </header>
       <BrowserFrame
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}
