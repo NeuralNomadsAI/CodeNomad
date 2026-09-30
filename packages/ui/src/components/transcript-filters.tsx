@@ -2,7 +2,7 @@ import { Popover } from "@kobalte/core/popover"
 import IconButton from "@suid/material/IconButton"
 import { Dynamic } from "solid-js/web"
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter, X } from "lucide-solid"
+import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { useConfig, type VisibilityPreference } from "../stores/preferences"
@@ -23,7 +23,6 @@ export default function TranscriptFilters() {
         <Popover.Content class="window-shell transcript-filters" aria-busy={saving()}>
           <header class="window-header">
             <Popover.Title class="window-title">{t("transcriptFilters.title")}</Popover.Title>
-            <Popover.CloseButton class="window-icon-button" aria-label={t("toastHistory.close")}><X class="w-4 h-4" aria-hidden="true" /></Popover.CloseButton>
           </header>
           <Popover.Description class="sr-only">{t("transcriptFilters.description")}</Popover.Description>
           <div class="window-body transcript-filters-list">

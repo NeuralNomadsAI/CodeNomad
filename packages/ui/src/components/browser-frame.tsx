@@ -11,6 +11,7 @@ import {
   updateTauriBrowserTarget,
 } from "../lib/native/browser"
 import { getBrowserFramePolicy, normalizeBrowserPreviewUrl } from "./browser-frame-security"
+import WindowCloseButton from "./window-close-button"
 
 export interface BrowserFrameElementTarget {
   pagePath: string
@@ -59,6 +60,7 @@ const VIEWPORT_OPTIONS = [
 ]
 
 interface BrowserFrameProps {
+  onClose?: () => void
   sessionId?: string
   title: string
   initialUrl: string
@@ -767,6 +769,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             <MessageSquarePlus class="h-4 w-4" />
           </button>
         </Show>
+        <Show when={props.onClose}>{close => <WindowCloseButton onClose={close()} />}</Show>
       </div>
       <div ref={frameWrapRef} class="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
