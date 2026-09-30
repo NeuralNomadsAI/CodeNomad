@@ -14,14 +14,15 @@ function Fixture() {
   const [mounted, setMounted] = createSignal(true)
   const [overlay, setOverlay] = createSignal(false)
   const [error, setError] = createSignal("")
+  const [sessionId, setSessionId] = createSignal("fixture-session")
   const query = new URLSearchParams(location.search)
   const guestQuery = query.has("redirect") ? "?redirect" : query.has("hold") ? "?hold" : ""
   const [address, setAddress] = createSignal(`${location.origin}/browser-native-guest${guestQuery}`)
-  Object.assign(nativeFixture, { mount: setMounted, overlay: setOverlay, address: setAddress })
+  Object.assign(nativeFixture, { mount: setMounted, overlay: setOverlay, address: setAddress, session: setSessionId })
   return <>
     <div id="preview" style={{ width: "800px", height: "500px" }}>
       <Show when={mounted()}>
-        <BrowserFrame sessionId="fixture-session" title="Preview" onClose={() => setMounted(false)}
+        <BrowserFrame sessionId={sessionId()} title="Preview" onClose={() => setMounted(false)}
           initialUrl={address()} initialAddress={address()}
           proxyBasePath="" addressMode="url"
           labels={{ back: "Back", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",

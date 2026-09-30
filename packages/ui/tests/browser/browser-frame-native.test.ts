@@ -86,6 +86,39 @@ test("viewport menu distinguishes size from device emulation and restores deskto
   } finally { await page.close() }
 })
 
+for (const host of ["electron", "tauri"]) {
+  test(`${host} mobile emulation remains retryable after retained-profile application fails`, async () => {
+    const fixture = host === "electron" ? await openElectronFixture() : undefined
+    const page = fixture?.page ?? await browser.newPage()
+    try {
+      await page.goto(`${url}?host=${host}`)
+      await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_register"))
+      const menu = page.getByRole("button", { name: "Viewport", exact: true })
+      await menu.click()
+      await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+      await page.evaluate(() => {
+        ;(window as any).nativeFixture.failEmulation = true
+        ;(window as any).nativeFixture.session("replacement-session")
+      })
+      await page.getByRole("alertdialog").waitFor()
+      await page.evaluate(() => {
+        ;(window as any).nativeFixture.failEmulation = false
+        ;(window as any).nativeFixture.overlay(false)
+      })
+      await menu.click()
+      assert.equal(await page.getByRole("menuitemradio", { name: /390 × 844/ }).isEnabled(), true)
+      assert.equal(await page.getByRole("menuitemradio", { name: /844 × 390/ }).isEnabled(), true)
+      await page.getByRole("menuitemradio", { name: /390 × 844/ }).click()
+      await page.waitForFunction(() => (window as any).nativeFixture.calls.filter((c: any) => c.payload?.preset === "mobile").length === 3)
+      await menu.click()
+      await page.getByRole("menuitemradio").first().click()
+      await menu.click()
+      assert.equal(await page.getByRole("menuitemradio", { name: /390 × 844/ }).isEnabled(), true)
+      assert.deepEqual((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "emulate").map((c: any) => c.payload.preset), ["mobile", "mobile", "mobile", "none"])
+    } finally { if (fixture) await fixture.close(); else await page.close() }
+  })
+}
+
 test("fixed viewport templates remain keyboard accessible in a narrow preview", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 320, height: 740 } })
   try {

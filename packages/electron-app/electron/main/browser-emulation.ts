@@ -11,7 +11,7 @@ export async function setBrowserEmulation(guest: WebContents, preset: unknown): 
   browserEmulationProfile(preset)
   const next = preset as string
   const previous = currentProfiles.get(guest) ?? "none"
-  if (previous === next) return
+  if (previous === next && (next === "none" || guest.debugger.isAttached())) return
   if (!guest.debugger.isAttached()) {
     guest.debugger.attach("1.3")
     ownedAttachments.add(guest)

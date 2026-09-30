@@ -356,12 +356,20 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 500) : ""
 }
 
-async function withDebugger<T>(guest: WebContents, deadline: number, operation: (debuggerSession: WebContents["debugger"]) => Promise<T>): Promise<T> {
+async function withDebugger<T>(guest: WebContents, deadline: number, operation: (debuggerSession: Pick<WebContents["debugger"], "sendCommand">) => Promise<T>): Promise<T> {
   const attached = guest.debugger.isAttached()
   if (!attached) guest.debugger.attach("1.3")
+  const debuggerSession = {
+    sendCommand: (...args: Parameters<WebContents["debugger"]["sendCommand"]>) => {
+      // A pending protocol reply can outlive the request deadline. Fence its
+      // continuation without detaching someone else's persistent overrides.
+      ensureDeadline(deadline)
+      return guest.debugger.sendCommand(...args)
+    },
+  }
   try {
-    return await withDeadline(() => operation(guest.debugger), deadline, () => {
-      if (guest.debugger.isAttached()) guest.debugger.detach()
+    return await withDeadline(() => operation(debuggerSession), deadline, () => {
+      if (!attached && guest.debugger.isAttached()) guest.debugger.detach()
     })
   } finally {
     if (!attached && guest.debugger.isAttached()) guest.debugger.detach()

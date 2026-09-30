@@ -140,6 +140,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   // Iframe previews also run on HTTP LAN origins without crypto.randomUUID.
   let browserRegistrationId = nativeBrowserAvailable ? crypto.randomUUID() : ""
   let disposed = false
+  let appliedEmulation: { registrationId: string; preset: BrowserEmulationPreset } | undefined
+  let emulationGeneration = 0
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv)
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
@@ -149,19 +151,39 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   const emulationProfile = (preset: BrowserViewportPreset): BrowserEmulationPreset =>
     preset === "mobile" || preset === "mobileLandscape" ? preset : "none"
+  const applyEmulation = async (registrationId: string, preset: BrowserEmulationPreset) => {
+    await emulateBrowserTarget(registrationId, preset)
+    if (!disposed && registrationId === browserRegistrationId) appliedEmulation = { registrationId, preset }
+  }
+  const restoreEmulation = async (registrationId: string) => {
+    // Readiness means we own a registered target, not that a profile succeeded.
+    // Keep failures retryable, including selecting the same retained template.
+    setEmulationReady(true)
+    const profile = untrack(() => emulationProfile(viewportPreset()))
+    if (profile === "none") return
+    const generation = ++emulationGeneration
+    setEmulationBusy(true)
+    try { await applyEmulation(registrationId, profile) }
+    catch (error) {
+      if (!disposed && registrationId === browserRegistrationId) reportNativeError(error)
+    } finally {
+      if (!disposed && generation === emulationGeneration) setEmulationBusy(false)
+    }
+  }
   const selectViewport = async (preset: BrowserViewportPreset) => {
     if (emulationBusy()) return
     setViewportMenuOpen(false)
-    const previous = emulationProfile(viewportPreset())
+    const previous = appliedEmulation?.registrationId === browserRegistrationId ? appliedEmulation.preset : undefined
     const next = emulationProfile(preset)
     if (previous === next || !nativeMode()) { setViewportPreset(preset); return }
     setEmulationBusy(true)
+    const generation = ++emulationGeneration
     const registrationId = browserRegistrationId
     try {
-      await emulateBrowserTarget(registrationId, next)
+      await applyEmulation(registrationId, next)
       if (!disposed && registrationId === browserRegistrationId) setViewportPreset(preset)
-    } catch (error) { reportNativeError(error) }
-    finally { if (!disposed) setEmulationBusy(false) }
+    } catch (error) { if (registrationId === browserRegistrationId) reportNativeError(error) }
+    finally { if (!disposed && generation === emulationGeneration) setEmulationBusy(false) }
   }
 
   const getEditablePathFromUrl = (url: string): string => {
@@ -420,9 +442,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           }
           registered = true
           registeredSessionId = sessionId
-          const profile = untrack(() => emulationProfile(viewportPreset()))
-          if (profile !== "none") await emulateBrowserTarget(registrationId, profile)
-          if (active) setEmulationReady(true)
+          await restoreEmulation(registrationId)
           registrationFailures = 0
           registrationErrorReported = false
           syncRegistration()
@@ -570,9 +590,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         registered = true
         nativeVisible = true
         tauriRegistered = true
-        const profile = untrack(() => emulationProfile(viewportPreset()))
-        if (profile !== "none") await emulateBrowserTarget(registrationId, profile)
-        if (active) setEmulationReady(true)
+        await restoreEmulation(registrationId)
         syncErrorReported = false
         if (nativeTarget() !== target) {
           await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())

@@ -61,5 +61,6 @@ if (host === "electron") {
   Object.assign(window, { electronAPI: {
     registerBrowserTarget: (payload: unknown) => invoke("browser_target_register", { payload }),
     unregisterBrowserTarget: (registrationId: string) => invoke("browser_target_unregister", { registrationId }),
+    emulateBrowserTarget: (registrationId: string, preset: string) => invoke("browser_target_action", { registrationId, payload: { action: "emulate", preset } }),
   } })
 }

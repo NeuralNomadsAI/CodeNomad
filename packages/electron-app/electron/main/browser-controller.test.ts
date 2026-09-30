@@ -25,6 +25,7 @@ function createGuest(options: GuestOptions) {
     isDestroyed: () => false,
     isLoading: () => options.loading ?? false,
     stop: () => undefined,
+    reload: () => undefined,
     getURL: () => url,
     loadURL: async (nextUrl: string) => {
       await options.loadURL?.(nextUrl)
@@ -57,6 +58,49 @@ function createHarness(requestOpen: (sessionID: string, url: string, requestID: 
 }
 
 describe("BrowserController", () => {
+  it("preserves mobile overrides when automation times out and fences late protocol work", async () => {
+    const harness = createHarness()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const methods: string[] = []
+    let stall = true
+    const { guest, counts } = createGuest({ id: 96, owner: harness.owner, sendCommand: async method => {
+      methods.push(method)
+      if (method === "Browser.getVersion") return { product: "Chrome/140.0.0.0" }
+      if (method === "Accessibility.enable" && stall) await gate
+      return { nodes: [] }
+    } })
+    harness.add(guest, "mobile-timeout")
+    await harness.controller.emulate(harness.owner, "mobile-timeout", "mobile")
+    await assert.rejects(harness.controller.execute("session", { action: "snapshot" }, Date.now() + 30), /timed out/)
+    assert.equal(guest.debugger.isAttached(), true, "a timeout must not clear persistent mobile overrides")
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
+    release()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(methods.includes("Accessibility.getFullAXTree"), false, "expired continuations must not send protocol commands")
+    stall = false
+    await harness.controller.execute("session", { action: "snapshot" })
+    assert.equal(guest.debugger.isAttached(), true)
+    await harness.controller.emulate(harness.owner, "mobile-timeout", "none")
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 1 })
+  })
+
+  it("reapplies the same mobile profile after an external debugger detach", async () => {
+    const harness = createHarness()
+    let applications = 0
+    const { guest } = createGuest({ id: 97, owner: harness.owner, sendCommand: async method => {
+      if (method === "Browser.getVersion") return { product: "Chrome/140.0.0.0" }
+      if (method === "Emulation.setDeviceMetricsOverride") applications++
+      return {}
+    } })
+    harness.add(guest, "mobile-detach")
+    await harness.controller.emulate(harness.owner, "mobile-detach", "mobile")
+    guest.debugger.detach()
+    await harness.controller.emulate(harness.owner, "mobile-detach", "mobile")
+    assert.equal(applications, 2)
+    assert.equal(guest.debugger.isAttached(), true)
+  })
+
   it("rejects emulation from another owner and fences queued target replacement", async () => {
     const harness = createHarness()
     let release!: () => void
