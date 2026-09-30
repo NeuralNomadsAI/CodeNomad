@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
-import { ArrowLeft } from "lucide-solid"
+import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
@@ -67,8 +67,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>
     <header class="window-header">
       <h2 class="window-title">{title()}</h2>
-      <button ref={closeButton} type="button" class="window-action" onClick={close}>
-        <ArrowLeft class="h-4 w-4" aria-hidden="true" />{t("missions.control.reader.close")}
+      <button ref={closeButton} type="button" class="window-icon-button" onClick={close}
+        aria-label={t("missions.control.reader.close")} title={t("missions.control.reader.close")}>
+        <X class="h-4 w-4" aria-hidden="true" />
       </button>
     </header>
     <div class="window-body" ref={body}>
