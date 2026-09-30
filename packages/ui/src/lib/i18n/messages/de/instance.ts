@@ -96,6 +96,8 @@ export const instanceMessages = {
   "filesPanel.viewer": "Dateivorschau",
   "filesPanel.readOnly": "Schreibgeschützt",
   "filesPanel.binary": "Keine Vorschau für diese Binärdatei verfügbar.",
+  "filesPanel.image.before": "Vorher",
+  "filesPanel.image.after": "Nachher",
   "gitPanel.changes": "Änderungen",
   "gitPanel.view": "Git-Ansicht",
   "gitPanel.worktree": "Worktree ansehen",

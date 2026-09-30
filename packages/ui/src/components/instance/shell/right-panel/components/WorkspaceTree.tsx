@@ -1,5 +1,5 @@
 import { For, Show, createMemo } from "solid-js"
-import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, FileCode, FileText, Image, File, RefreshCw, TerminalSquare } from "lucide-solid"
+import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, Folder, FolderOpen, FileCode, FileText, Image, File, RefreshCw, TerminalSquare } from "lucide-solid"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import FileRowActions from "../FileRowActions"
@@ -14,6 +14,7 @@ export function WorkspaceTree(props: {
   instanceId: string
   worktreeSlug: string
   canOpen: boolean
+  previewPath?: string
   onOpen: (path: string) => void
 }) {
   const icon = (name: string) => /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i.test(name) ? Image
@@ -26,7 +27,6 @@ export function WorkspaceTree(props: {
   const activateRow = (row: ReturnType<typeof props.tree.rows>[number]) => {
     props.tree.select(row.path)
     if (row.type === "directory") props.tree.toggle(row.path)
-    else if (props.canOpen) props.onOpen(row.path)
   }
   function keyDown(event: KeyboardEvent, row: ReturnType<typeof props.tree.rows>[number]) {
     // The row menu trigger is a separate tab stop; its keys must not toggle the row.
@@ -72,6 +72,11 @@ export function WorkspaceTree(props: {
 
   const rowActions = (row: ReturnType<typeof props.tree.rows>[number]): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
+    if (row.type === "file") items.push({
+      key: "preview", label: `${props.t("filesPanel.viewer")} · ${row.path}`,
+      icon: <Eye class="w-3.5 h-3.5" />, disabled: !props.canOpen,
+      checked: props.previewPath === row.path, onSelect: () => props.onOpen(row.path),
+    })
     if (canOpenWorkspacePaths()) {
       if (row.type === "directory") {
         const isMacApp = isMacDesktop && row.path.toLowerCase().endsWith(".app")

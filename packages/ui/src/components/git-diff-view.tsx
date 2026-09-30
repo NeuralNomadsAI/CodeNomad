@@ -4,6 +4,8 @@ import { useI18n } from "../lib/i18n"
 import { serverApi } from "../lib/api-client"
 import { previewReads } from "../lib/background-read-queue"
 import { loadMonaco } from "../lib/monaco/setup"
+import type { GitImageDiff } from "../../../server/src/git-history-types"
+import { GitImagePreview } from "./git-image-preview"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../lib/filesystem-events"
 import type { FilePreviewTarget } from "../stores/files-preview"
 import DiffToolbar from "./instance/shell/right-panel/components/DiffToolbar"
@@ -15,7 +17,7 @@ const MonacoDiffViewer = lazy(() => import("./file-viewer/monaco-diff-viewer").t
 
 export function GitDiffView(props: { instanceId: string; target: FilePreviewTarget; active: boolean; onClose: () => void; onInsertComment?: (text: string) => void }) {
   const { t } = useI18n()
-  const [content, setContent] = createSignal<{ before: string; after: string } | null>(null)
+  const [content, setContent] = createSignal<{ before: string; after: string; image?: GitImageDiff } | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(false)
   const [view, setView] = createSignal<DiffViewMode>(readStoredEnum(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, ["unified", "split"] as const) ?? "unified")
@@ -35,13 +37,13 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     setLoading(true)
     setError(null)
     try {
-      const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean }>(request.signal, () => target.commit
+      const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean; image?: GitImageDiff }>(request.signal, () => target.commit
         ? serverApi.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, request.signal)
         : serverApi.fetchWorktreeGitDiff(props.instanceId, target.slug, {
           path: target.path, originalPath: target.originalPath, scope: target.scope ?? "unstaged",
         }, request.signal), "visible")
       if (request.signal.aborted) return
-      if (result.isBinary) { setContent(null); setError(t("instanceShell.gitChanges.binaryViewer")) }
+      if (result.isBinary && !result.image) { setContent(null); setError(t("instanceShell.gitChanges.binaryViewer")) }
       else setContent(result)
     } catch (cause) {
       if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
@@ -77,17 +79,17 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
           : t(props.target.scope === "staged" ? "instanceShell.gitChanges.sections.staged" : "instanceShell.gitChanges.sections.unstaged")}</span>
       </div>
       <DiffToolbar viewMode={view()} contextMode={context()} onViewModeChange={setView} onContextModeChange={setContext} />
-      <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
+      <Show when={!content()?.image}><button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button></Show>
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={loading() && !content()}><div class="p-3 text-secondary">{t("instanceInfo.loading")}</div></Show>
-    <Show when={content()}>{value => <div class="git-diff-content">
+    <Show when={content()}>{value => <Show when={value().image} fallback={<div class="git-diff-content">
       <Suspense fallback={<div class="p-3">{t("instanceInfo.loading")}</div>}>
         <MonacoDiffViewer scopeKey={`${props.instanceId}:${props.target.slug}:${props.target.commit ?? props.target.scope}`} path={props.target.path}
           onRequestInsertContext={insertContext} insertContextLabel={t("instanceShell.gitChanges.actions.insertContext")}
           before={value().before} after={value().after} viewMode={view()} contextMode={context()} wordWrap={wrap() ? "on" : "off"} />
       </Suspense>
-    </div>}</Show>
+    </div>}>{image => <GitImagePreview image={image()} path={props.target.path} view={view()} />}</Show>}</Show>
   </section>
 }

@@ -5,6 +5,7 @@ import type { GitChangeKind, WorktreeGitDiffResponse, WorktreeGitDiffScope, Work
 import type { LogLike } from "./git-worktrees"
 import { normalizeGitWorktreeRelativePath } from "./git-mutations"
 import { runGitProcess } from "./git-process"
+import { gitImageMime, readGitImageBlob, readWorktreeImage } from "./git-image-preview"
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: Error; stdout?: string; stderr?: string }
 type GitSuccessResult = Extract<GitResult, { ok: true }>
@@ -347,6 +348,20 @@ export async function getWorktreeGitDiff(params: {
           normalizedPath,
         })
       : trackedMetadata
+
+  const mime = gitImageMime(normalizedPath)
+  if (mime) {
+    let before = await readGitImageBlob(params.workspaceFolder, params.scope === "staged"
+      ? `HEAD:${normalizedOriginalPath ?? normalizedPath}` : `:${normalizedPath}`)
+    if (before === null && params.scope === "unstaged" && normalizedOriginalPath) {
+      before = await readGitImageBlob(params.workspaceFolder, `:${normalizedOriginalPath}`)
+    }
+    const after = params.scope === "staged"
+      ? await readGitImageBlob(params.workspaceFolder, `:${normalizedPath}`)
+      : await readWorktreeImage(params.workspaceFolder, normalizedPath)
+    return { path: normalizedPath, originalPath: normalizedOriginalPath, scope: params.scope,
+      before: "", after: "", isBinary: true, image: { mime, before, after } }
+  }
 
   if (diffMetadata.isBinary) {
     return {

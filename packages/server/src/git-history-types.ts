@@ -32,4 +32,11 @@ export interface GitCommitDiff {
   before: string
   after: string
   isBinary: boolean
+  image?: GitImageDiff
+}
+
+export interface GitImageDiff {
+  mime: string
+  before: string | null
+  after: string | null
 }

@@ -9,7 +9,7 @@ function rowContentWidth(element: Element): number {
   if (element.matches(".action-overflow-trigger")) return 0
   const style = getComputedStyle(element)
   if (style.display === "none") return 0
-  if (element instanceof SVGElement || element.matches("button")) {
+  if (element instanceof SVGElement || element.matches("button:not(.git-panel-file-main), .workspace-tree-spacer")) {
     return element.getBoundingClientRect().width
   }
   const widths: number[] = []
@@ -32,17 +32,20 @@ function rowContentWidth(element: Element): number {
 // shared overflow menu only when they don't. An open menu stays mounted
 // across resizes; hidden actions stay measurable but inert.
 export function observeRowOverflow(element: HTMLElement) {
+  const row = element.parentElement
+  if (!row) return
   let frame = 0
   let disposed = false
   const measure = () => {
     frame = 0
-    if (disposed || !element.isConnected || !element.clientWidth) return
+    if (disposed || !element.isConnected || !row.getBoundingClientRect().width) return
     const menu = element.querySelector<HTMLButtonElement>(".action-overflow-trigger")
     const inline = element.querySelector<HTMLElement>(".file-row-inline-actions")
     if (!menu || !inline) return
-    const menuWidth = menu.getBoundingClientRect().width || 24
-    const required = rowContentWidth(element) + menuWidth
-    const available = element.getBoundingClientRect().width
+    // Budget against the entire row, not the shrink-wrapped action group.
+    // The menu replaces inline actions; it must not add to their width budget.
+    const required = rowContentWidth(row)
+    const available = row.getBoundingClientRect().width
     const next = menu.hasAttribute("data-expanded") || required > available + 0.5
     if (element.dataset.compact === String(next)) return
     const active = document.activeElement
@@ -58,9 +61,10 @@ export function observeRowOverflow(element: HTMLElement) {
   }
   const schedule = () => { if (!frame && !disposed) frame = requestAnimationFrame(measure) }
   const resize = new ResizeObserver(schedule)
+  resize.observe(row)
   resize.observe(element)
   const mutation = new MutationObserver(schedule)
-  mutation.observe(element, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-expanded"] })
+  mutation.observe(row, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-expanded"] })
   document.fonts?.addEventListener("loadingdone", schedule)
   schedule()
   onCleanup(() => {

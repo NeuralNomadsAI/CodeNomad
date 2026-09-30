@@ -17,10 +17,12 @@ import { invalidateFilesystemCaches } from "../../../src/lib/filesystem-events"
 import "../../../src/index.css"
 
 const id = "git-prototype", sessionId = "session"
+const imagesFixture = new URLSearchParams(location.search).has("images")
+const imageBytes = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6xUAAAAASUVORK5CYII="
 const SessionView = new URLSearchParams(location.search).has("session")
   ? (await import("../../../src/components/session/session-view")).default : undefined
 const [selectedSession, setSelectedSession] = createSignal(sessionId)
-const calls: Array<{ kind: string; slug?: string; path?: string }> = []
+const calls: Array<{ kind: string; slug?: string; path?: string; message?: string }> = []
 const entries = [
   { slug: "root", label: "CodeNomad", directory: "/CodeNomad", branch: "feat/git-history", kind: "root" as const },
   { slug: "review", label: "review", directory: "/CodeNomad/.codenomad/worktrees/review", branch: "dev", kind: "worktree" as const },
@@ -35,7 +37,7 @@ const commits = [
 const before = 'export function openGitPanel() {\n  return {\n    title: "Git Changes",\n    view: "changes",\n    diffPlacement: "sidebar",\n  }\n}\n'
 const after = 'export function openGitPanel() {\n  return {\n    title: "Git",\n    view: "history",\n    diffPlacement: "conversation",\n    preserveDraft: true,\n  }\n}\n'
 const directoryFiles: Record<string, string[]> = {
-  ".": [".github/", "dev-docs/", "src/", "README.md", "package.json"],
+  ".": [".github/", "dev-docs/", "src/", "README.md", "package.json", ...(imagesFixture ? ["image.png"] : [])],
   ".github": ["workflows/"],
   ".github/workflows": ["build-and-upload.yml", "pr-build.yml", "release.yml", "update-winget.yml"],
   "dev-docs": ["ui-harmonization-demo/", "architecture.md", "BROWSER_AUTOMATION.md"],
@@ -52,6 +54,7 @@ serverApi.listWorkspaceFiles = async (_id, path = ".", directory) => {
 }
 serverApi.previewWorkspaceFile = async (_id, path, directory) => {
   calls.push({ kind: "file", path, slug: directory })
+  if (path.endsWith(".png")) return { workspaceId: _id, relativePath: path, encoding: "base64", contents: imageBytes }
   const text = path.endsWith(".svg")
     ? '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420"><rect width="720" height="420" fill="#202731"/><text x="40" y="65" fill="#f2e8cf" font-size="28" font-family="sans-serif">CodeNomad / Palette study</text><rect x="40" y="110" width="150" height="240" fill="#a6b8a0"/><rect x="205" y="110" width="150" height="240" fill="#c6b3a0"/><rect x="370" y="110" width="150" height="240" fill="#a1b7c5"/><rect x="535" y="110" width="145" height="240" fill="#d5c8ab"/></svg>'
     : path.endsWith(".md") ? '# CodeNomad\n\nUn espace pour explorer les fichiers, les changements et les commits.\n\n## Trois points de vue\n\n- **Workspace** : les fichiers du projet\n- **Changes** : les modifications locales\n- **Commits** : les versions enregistrées\n\n```ts\nconst viewer = "conversation"\n```\n'
@@ -83,18 +86,29 @@ serverApi.fetchGitHistory = async (_id, slug) => {
 serverApi.fetchGitCommit = async (_id, slug, commit) => {
   calls.push({ kind: "commit", slug })
   return { id: commit, parent: commits[1].id, message: commits.find(entry => entry.id === commit)!.subject + "\n\nKeep history and local changes as two simple paths to the central diff.",
-    files: [{ path: "src/components/git-panel.tsx", originalPath: null, status: "M" }, { path: "src/styles/panels/git-history.css", originalPath: null, status: "A" }] }
+     files: [{ path: "src/components/git-panel.tsx", originalPath: null, status: "M" }, { path: "src/styles/panels/git-history.css", originalPath: null, status: "A" }, ...(imagesFixture ? [{ path: "image.png", originalPath: null, status: "M" }] : [])] }
 }
-serverApi.fetchGitCommitDiff = async (_id, slug, _commit, path) => { calls.push({ kind: "commit-diff", slug, path }); return { path, before, after, isBinary: false } }
+serverApi.fetchGitCommitDiff = async (_id, slug, _commit, path) => { calls.push({ kind: "commit-diff", slug, path }); return path.endsWith(".png")
+  ? { path, before: "", after: "", isBinary: true, image: { mime: "image/png", before: imageBytes, after: imageBytes } } : { path, before, after, isBinary: false } }
 serverApi.fetchWorktreeGitStatus = async (_id, slug) => {
   calls.push({ kind: "status", slug })
   return [{ path: "src/components/git-panel.tsx", originalPath: null, stagedStatus: "modified", stagedAdditions: 4, stagedDeletions: 2, unstagedStatus: null, unstagedAdditions: 0, unstagedDeletions: 0 },
-    { path: "src/styles/panels/git-history.css", originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0, unstagedStatus: "untracked", unstagedAdditions: 34, unstagedDeletions: 0 }]
+     { path: "src/styles/panels/git-history.css", originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0, unstagedStatus: "untracked", unstagedAdditions: 34, unstagedDeletions: 0 },
+     ...(imagesFixture ? [{ path: "image.png", originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0, unstagedStatus: "modified", unstagedAdditions: 0, unstagedDeletions: 0 }] : [])]
 }
-serverApi.fetchWorktreeGitDiff = async (_id, slug, input) => { calls.push({ kind: "local-diff", slug, path: input.path }); return { path: input.path, scope: input.scope, before, after, isBinary: false } }
-// The interactive fixture has no mutation transport.
-serverApi.stageWorktreeGitPaths = serverApi.unstageWorktreeGitPaths = async () => ({ ok: true })
-serverApi.commitWorktreeGitChanges = async () => ({ ok: true }) as any
+serverApi.fetchWorktreeGitDiff = async (_id, slug, input) => { calls.push({ kind: "local-diff", slug, path: input.path }); return input.path.endsWith(".png")
+  ? { path: input.path, scope: input.scope, before: "", after: "", isBinary: true, image: { mime: "image/png", before: imageBytes, after: imageBytes } }
+  : { path: input.path, scope: input.scope, before, after, isBinary: false } }
+// Record explicit mutations without touching a real repository.
+serverApi.stageWorktreeGitPaths = async (_id, slug, input) => {
+  calls.push({ kind: "stage", slug, path: input.paths.join(",") }); return { ok: true }
+}
+serverApi.unstageWorktreeGitPaths = async (_id, slug, input) => {
+  calls.push({ kind: "unstage", slug, path: input.paths.join(",") }); return { ok: true }
+}
+serverApi.commitWorktreeGitChanges = async (_id, slug, input) => {
+  calls.push({ kind: "submit", slug, message: input.message }); return { ok: true }
+}
 const instance = { id, folder: "/CodeNomad", projectName: "CodeNomad", port: 0, pid: 0, status: "ready" as const, client, proxyPath: `/workspaces/${id}/instance` }
 addInstance(instance)
 await ensureWorktreesLoaded(id)

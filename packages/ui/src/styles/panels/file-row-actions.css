@@ -2,11 +2,13 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 2px;
   flex-shrink: 0;
   margin-inline-start: auto;
 }
 
-.file-row-inline-actions {
+.file-row-inline-actions,
+.file-row-pinned-actions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -68,6 +70,11 @@
 .workspace-tree-row:focus-within .file-row-actions,
 .git-panel-file-row:hover .file-row-actions,
 .git-panel-file-row:focus-within .file-row-actions {
+  opacity: 1;
+}
+
+.file-row-actions:has([aria-pressed="true"]),
+.file-row-actions:has([data-expanded]) {
   opacity: 1;
 }
 

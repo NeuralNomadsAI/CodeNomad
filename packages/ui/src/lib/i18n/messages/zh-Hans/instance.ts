@@ -96,6 +96,8 @@ export const instanceMessages = {
   "filesPanel.viewer": "文件预览",
   "filesPanel.readOnly": "只读",
   "filesPanel.binary": "无法预览此二进制文件。",
+  "filesPanel.image.before": "之前",
+  "filesPanel.image.after": "之后",
   "gitPanel.changes": "更改",
   "gitPanel.view": "Git 视图",
   "gitPanel.worktree": "浏览工作树",

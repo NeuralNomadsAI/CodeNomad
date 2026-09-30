@@ -18,7 +18,21 @@ filesystem changed since it was loaded; collapsed folders are never re-read on
 expand. Workspace rows expose a hover/focus `…` menu (folder: open, terminal,
 copy path; file: open, reveal, copy path). Changes rows carry an explicit
 per-file stage/unstage button and accept drag-and-drop between the staged and
-unstaged sections; single click still opens the preview.
+unstaged sections. File row clicks select without opening the reader. Workspace,
+Changes and commit-file rows share `FileRowActions`: a pinned eye toggles the
+central preview with the shared `icon-toggle` active state. Secondary actions
+stay inline while the measured whole row fits, falling back to the shared menu
+only on overflow; an open menu survives resizing until dismissal. Hover uses
+`control-hover.css`'s shared surface overlay and selection covers the whole row.
+Change counts are muted; additions use success green and deletions error red.
+
+Changes retains two independently collapsible sections, initially expanded:
+Staged Changes and Changes. Git actions and the compact commit-message field
+live at the top of Staged Changes, before its file rows, without an additional
+Actions Git disclosure at the bottom. Collapsing either section preserves the
+commit draft and selection, causes no status read, and leaves its header as a
+drop target for staging/unstaging even when the file list is hidden. Mode switches
+and status refreshes preserve both sections' disclosure state.
 
 ## Central reader
 
@@ -29,6 +43,14 @@ project/session and cleared on session/worktree changes. Opening the browser
 preview replaces the file reader; opening a file returns the browser to chat mode.
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
+
+Git image previews retain base64 bytes for the actual compared revisions:
+HEAD/index for staged changes, index/worktree for unstaged changes, and the
+parent/commit blobs for history. `git-image-preview.ts` uses bounded worker reads
+and the existing bounded filesystem reader; no checkout occurs and historical
+images never fall back to the current worktree. `GitImagePreview` shows before
+and after images (including one-sided additions/deletions); other binary files
+retain their unavailable-preview fallback.
 
 Workspace source previews are intentionally read-only. The former sidebar file
 editor and sidebar split viewer are retired. Monaco's tokenizers are packaged

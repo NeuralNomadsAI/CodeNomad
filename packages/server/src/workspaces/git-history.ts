@@ -1,5 +1,6 @@
 import type { GitCommitDetails, GitCommitFile, GitHistoryPage, GitCommitDiff } from "../git-history-types"
 import { runGitProcess } from "./git-process"
+import { gitImageMime } from "./git-image-preview"
 
 const git = (directory: string, args: string[]) => runGitProcess(directory, args, { timeout: 15_000, maxBuffer: 2 * 1024 * 1024, priority: "foreground" })
 
@@ -58,6 +59,14 @@ export async function getGitCommitDiff(directory: string, revision: string, file
   // Authoritative file membership prevents arbitrary revision/path expressions.
   const file = commit.files.find(file => file.path === filePath)
   if (!file) throw new Error("File does not belong to this commit")
+  const mime = gitImageMime(file.path)
+  if (mime) {
+    const [before, after] = await Promise.all([
+      !commit.parent || file.status === "A" ? null : readCommitFile(directory, commit.parent, file.originalPath ?? file.path, "base64"),
+      file.status === "D" ? null : readCommitFile(directory, commit.id, file.path, "base64"),
+    ])
+    return { path: file.path, before: "", after: "", isBinary: true, image: { mime, before, after } }
+  }
   const [before, after] = await Promise.all([
     !commit.parent || file.status === "A" ? "" : readCommitFile(directory, commit.parent, file.originalPath ?? file.path),
     file.status === "D" ? "" : readCommitFile(directory, commit.id, file.path),
@@ -66,12 +75,12 @@ export async function getGitCommitDiff(directory: string, revision: string, file
   return { path: file.path, before: isBinary ? "" : before, after: isBinary ? "" : after, isBinary }
 }
 
-async function readCommitFile(directory: string, revision: string, filePath: string): Promise<string> {
+async function readCommitFile(directory: string, revision: string, filePath: string, encoding: "utf8" | "base64" = "utf8"): Promise<string> {
   const entry = await git(directory, ["ls-tree", "-z", revision, "--", `:(literal)${filePath}`])
   const match = /^(\d{6}) (blob|commit) ([a-f0-9]{40}|[a-f0-9]{64})\t/.exec(entry)
   if (!match) throw new Error("Commit file is unavailable")
   // Gitlinks point to another repository; never read a submodule's working tree
   // or mistake its commit object/message for the file's contents.
   if (match[1] === "160000") return `Subproject commit ${match[3]}\n`
-  return git(directory, ["cat-file", "blob", match[3]!])
+  return runGitProcess(directory, ["cat-file", "blob", match[3]!], { encoding, timeout: 15_000, maxBuffer: (encoding === "base64" ? 5 : 2) * 1024 * 1024, priority: "foreground" })
 }

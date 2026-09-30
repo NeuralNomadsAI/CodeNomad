@@ -189,6 +189,7 @@ export interface WorktreeGitDiffResponse {
   before: string
   after: string
   isBinary?: boolean
+  image?: import("./git-history-types").GitImageDiff
 }
 
 export interface WorktreeGitDiffRequest {

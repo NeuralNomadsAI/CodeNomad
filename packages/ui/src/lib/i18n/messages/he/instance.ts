@@ -96,6 +96,8 @@ export const instanceMessages = {
   "filesPanel.viewer": "תצוגה מקדימה של קובץ",
   "filesPanel.readOnly": "לקריאה בלבד",
   "filesPanel.binary": "אין תצוגה מקדימה לקובץ בינארי זה.",
+  "filesPanel.image.before": "לפני",
+  "filesPanel.image.after": "אחרי",
   "gitPanel.changes": "שינויים",
   "gitPanel.view": "תצוגת Git",
   "gitPanel.worktree": "עץ עבודה לעיון",

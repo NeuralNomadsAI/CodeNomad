@@ -19,7 +19,7 @@
 .git-panel-switch { display: flex; width: fit-content; border: 1px solid var(--border-base); }
 .git-panel-switch button { padding: var(--space-xs) var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-panel-switch button + button { border-inline-start: 1px solid var(--border-base); }
-.git-panel-count { display: block; margin-top: var(--space-sm); font-size: var(--font-size-xs); color: var(--text-muted); }
+.git-panel-count { display: block; margin-top: var(--space-sm); font-size: var(--font-size-xs); color: var(--text-muted); opacity: 0.65; }
 .git-panel-switch button[aria-pressed="true"] { background: var(--selection-neutral-strong-bg); color: var(--text-primary); }
 .git-panel-switch .badge-shape { padding: 0 var(--space-xs); font-size: var(--font-size-xs); }
 .git-panel-body { min-height: 0; overflow: auto; flex: 1; }
@@ -44,10 +44,13 @@
 .git-commit-summary p { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-sm) 0; }
 .git-panel-file { display: flex; width: 100%; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); text-align: start; }
 .git-panel-file > span:nth-child(2) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); }
-.git-panel-file small { flex-shrink: 0; font-size: var(--font-size-xs); }
+.git-panel-file small { flex-shrink: 0; font-size: var(--font-size-xs); opacity: 0.65; }
 .git-panel-file-selected { background: var(--selection-neutral-bg); }
 .git-panel-file-row { display: flex; align-items: center; }
-.git-panel-file-main { flex: 1; min-width: 0; width: auto; }
+.git-panel-file-main { flex: 1; min-width: 0; width: auto; background: transparent; }
+.git-panel .git-change-section-count { opacity: 0.65; }
+.git-panel-file-row .file-list-item-deletions { color: var(--status-error); }
+.git-panel-file-row .file-list-item-additions { color: var(--status-success); }
 .git-panel-file-stage { flex-shrink: 0; opacity: 0; margin-inline-end: var(--space-sm); background: transparent; }
 .git-panel-file-stage:hover:not(:disabled) { background: transparent; box-shadow: none; color: var(--text-primary); opacity: 1; }
 .git-panel-file-row:hover .git-panel-file-stage,
@@ -57,16 +60,16 @@
 .git-file-status { width: 14px; flex-shrink: 0; font-family: monospace; color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-file-status-A { color: var(--status-success); }
 .git-file-status-D { color: var(--status-error); }
-.git-panel-section { display: flex; justify-content: space-between; padding: var(--space-sm) var(--space-md); border-block: 1px solid var(--border-base); color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-panel-more { display: block; width: 100%; padding: var(--space-sm); color: var(--text-secondary); font-size: var(--font-size-xs); }
-.git-panel-actions { margin: var(--space-md); border-top: 1px solid var(--border-base); padding-top: var(--space-sm); font-size: var(--font-size-xs); }
-.git-panel-actions summary { cursor: pointer; color: var(--text-muted); }
-.git-panel-actions textarea { margin-top: var(--space-sm); padding: var(--space-sm); width: 100%; background: var(--surface-base); border: 1px solid var(--border-base); }
 .git-panel button:disabled { opacity: 0.5; }
-.git-panel button:hover:not(:disabled) { box-shadow: inset 0 0 0 100vmax var(--surface-hover-overlay); }
 .git-diff-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; background: var(--surface-base); color: var(--text-primary); }
 .git-diff-header { padding: var(--space-sm); flex-wrap: wrap; }
 .git-diff-heading { display: flex; flex-direction: column; flex: 1; min-width: 100px; font-size: var(--font-size-sm); gap: var(--space-xs); }
 .git-diff-heading > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-diff-heading > span { color: var(--text-muted); font-size: var(--font-size-xs); }
 .git-diff-content { flex: 1; min-height: 0; overflow: hidden; }
+.git-image-diff { flex: 1; min-height: 0; overflow: auto; display: grid; gap: var(--space-md); padding: var(--space-md); align-content: start; }
+.git-image-diff[data-view="split"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.git-image-version { min-width: 0; margin: 0; }
+.git-image-version figcaption { color: var(--text-muted); font-size: var(--font-size-xs); margin-bottom: var(--space-sm); }
+.git-image-version img { display: block; max-width: 100%; height: auto; }
