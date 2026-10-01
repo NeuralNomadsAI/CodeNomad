@@ -77,7 +77,7 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     assert.equal(await save().isDisabled(), true)
   } finally { await page.close() }
 })
-test("a pending save retains an undo to the original text after closing the real reader", async () => {
+test("a reader reopened before save completion retains its undo through filesystem invalidation", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   try {
     await page.goto(url)
@@ -105,10 +105,16 @@ test("a pending save retains an undo to the original text after closing the real
       editor.setValue((window as any).originalText)
     })
     await eye().click()
-    await page.evaluate(() => (window as any).releaseWrite())
-    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save"))
     await eye().click()
     await page.locator('.workspace-file-view .view-line').first().waitFor()
+    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isDisabled(), true)
+    await page.evaluate(() => (window as any).releaseWrite())
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save"))
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    // Also exercise the authoritative reader reload after completion rather
+    // than only checking its hook's dirty flag before invalidation has run.
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await page.waitForTimeout(200)
     assert.equal(await page.evaluate(() => {
       const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
       return editor.getValue() === (window as any).originalText
@@ -167,6 +173,42 @@ test("returning to an invalidated worktree lazily refreshes cached Workspace row
     await selector.selectOption("root")
     await page.getByRole("treeitem", { name: "new.json", exact: true }).waitFor()
     assert.equal(await page.getByRole("treeitem", { name: "package.json", exact: true }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("returning after a cancelled child refresh revalidates expanded Workspace descendants", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await page.goto(url)
+    const src = page.locator('[role="treeitem"][data-path="src"]')
+    await src.click()
+    await page.locator('[role="treeitem"][data-path="src/index.ts"]').waitFor()
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const list = serverApi.listWorkspaceFiles
+      let hold = true
+      serverApi.listWorkspaceFiles = async (...args: Parameters<typeof list>) => {
+        const entries = await list(...args)
+        if (args[2] === "/CodeNomad" && args[1] === "src") {
+          if (hold) {
+            ;(window as any).childPending = true
+            await new Promise<void>(resolve => { (window as any).releaseChild = () => { hold = false; resolve() } })
+          }
+          return entries.map(entry => entry.path === "src/index.ts" ? { ...entry, name: "new.ts", path: "src/new.ts" } : entry)
+        }
+        return entries
+      }
+      ;(window as any).fixture.invalidate()
+    })
+    await page.waitForFunction(() => (window as any).childPending)
+    const selector = page.getByRole("combobox", { name: "Worktree à consulter" })
+    await selector.selectOption("review")
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "files" && call.slug.endsWith("/review")))
+    await page.evaluate(() => (window as any).releaseChild())
+    await selector.selectOption("root")
+    await page.locator('[role="treeitem"][data-path="src/new.ts"]').waitFor()
+    assert.equal(await page.locator('[role="treeitem"][data-path="src/index.ts"]').count(), 0)
   } finally { await page.close() }
 })
 

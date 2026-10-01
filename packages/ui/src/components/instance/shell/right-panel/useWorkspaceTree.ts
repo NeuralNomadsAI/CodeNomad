@@ -92,6 +92,11 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     for (const row of rows()) if (row.type === "directory" && state().expanded.has(row.path)) void load(row.path, true)
   }
   const debounced = createDebouncedRefresh(refresh)
+  const hasStaleVisibleDirectories = () => {
+    const version = filesystemInvalidationVersion(instanceId)
+    return loadedVersions.get(".") !== version || rows().some(row =>
+      row.type === "directory" && state().expanded.has(row.path) && loadedVersions.get(row.path) !== version)
+  }
   createEffect(on(busy, value => { if (!value.size && dirty && active()) debounced.trigger() }))
   createEffect(on(directory, value => {
     cancel()
@@ -103,14 +108,14 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     loadedVersions = cached?.versions ?? new Map()
     setState(cached?.state ?? empty())
     setErrors(new Map())
-    dirty = loadedVersions.get(".") !== filesystemInvalidationVersion(instanceId)
+    dirty = hasStaleVisibleDirectories()
   }))
   createEffect(on(() => active() ? directory() : null, value => {
     if (value === null) { cancel(); return }
     // Cache-first: a visited directory keeps its rows. Pending invalidations
     // revalidate through the debounced refresh below.
     if (!state().directories.has(".")) void load(".", true)
-    else if (dirty) refresh()
+    else if (dirty || hasStaleVisibleDirectories()) refresh()
   }))
   createEffect(on(() => filesystemInvalidationVersion(instanceId), () => {
     dirty = true

@@ -3,7 +3,7 @@ import { registerHooks } from "node:module"
 import { after, test } from "node:test"
 import type { FileSystemEntry } from "../../../../../../server/src/api-types"
 
-const fixture = { listings: new Map<string, FileSystemEntry[]>(), reads: [] as string[] }
+const fixture = { listings: new Map<string, FileSystemEntry[]>(), reads: [] as string[], gates: new Map<string, Promise<void>>() }
 ;(globalThis as any).__workspaceTreeFixture = fixture
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -11,13 +11,15 @@ const hooks = registerHooks({
     if (context.parentURL?.endsWith("/useWorkspaceTree.ts") && specifier === "../../../../lib/api-client") {
       const source = `const f = globalThis.__workspaceTreeFixture;
         export const serverApi = { listWorkspaceFiles: async (_id, path, directory) => {
-          const key = directory + ':' + path; f.reads.push(key); return f.listings.get(key) ?? [];
+          const key = directory + ':' + path; f.reads.push(key);
+          const entries = f.listings.get(key) ?? []; await f.gates.get(key); return entries;
         } };`
       return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(source)}` }
     }
     return nextResolve(specifier, context)
   },
 })
+
 after(() => { hooks.deregister(); delete (globalThis as any).__workspaceTreeFixture })
 const { createRoot, createSignal } = await import("solid-js")
 const { useWorkspaceTree } = await import("./useWorkspaceTree")
@@ -28,6 +30,42 @@ async function until(predicate: () => boolean) {
   assert.ok(predicate(), "tree settled before timeout")
 }
 
+for (const transition of ["worktree", "inactive"] as const) {
+  test(`a fresh root cannot hide an expanded descendant cancelled by a ${transition} transition`, async () => {
+    fixture.reads = []; fixture.gates.clear()
+    fixture.listings = new Map([
+      ["/a:.", [file("src", "directory"), file("collapsed", "directory")]],
+      ["/a:src", [file("src/old.ts")]], ["/b:.", [file("b.txt")]],
+    ])
+    let release!: () => void, close!: () => void
+    const h = createRoot(dispose => {
+      close = dispose
+      const [directory, move] = createSignal("/a"), [active, activate] = createSignal(true)
+      return { tree: useWorkspaceTree(`partial-${transition}`, directory, active), move, activate }
+    })
+    try {
+      await until(() => h.tree.rows().some(row => row.path === "src"))
+      h.tree.toggle("src")
+      await until(() => h.tree.rows().some(row => row.path === "src/old.ts") && !h.tree.busy().size)
+      fixture.listings.set("/a:src", [file("src/new.ts")])
+      fixture.gates.set("/a:src", new Promise<void>(resolve => { release = resolve }))
+      invalidateFilesystemCaches(`partial-${transition}`)
+      await until(() => fixture.reads.filter(key => key === "/a:src").length === 2 && !h.tree.busy().has("."))
+      if (transition === "worktree") {
+        h.move("/b")
+        await until(() => h.tree.rows().some(row => row.path === "b.txt"))
+      } else h.activate(false)
+      fixture.gates.clear(); release()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      if (transition === "worktree") h.move("/a")
+      else h.activate(true)
+      await until(() => h.tree.rows().some(row => row.path === "src/new.ts") && !h.tree.busy().size)
+      assert.ok(!h.tree.rows().some(row => row.path === "src/old.ts"))
+      assert.equal(fixture.reads.filter(key => key === "/a:src").length, 3)
+      assert.ok(!fixture.reads.some(key => key.endsWith(":collapsed")), "collapsed subtrees stay outside read demand")
+    } finally { release?.(); fixture.gates.clear(); close() }
+  })
+}
 test("worktree revisits keep cache-first rows but revalidate snapshots invalidated while browsing elsewhere", async () => {
   fixture.reads = []
   fixture.listings = new Map([
