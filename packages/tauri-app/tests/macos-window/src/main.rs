@@ -1,7 +1,13 @@
 // Real AppKit/Tao regression, with no CodeNomad profile, backend or OpenCode.
 #[cfg(target_os = "macos")]
 fn main() {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    };
     use tao::{
         dpi::LogicalSize,
         event::{Event, WindowEvent},
@@ -9,9 +15,17 @@ fn main() {
         window::WindowBuilder,
     };
 
-    std::thread::spawn(|| {
+    let progress = Arc::new((AtomicUsize::new(0), AtomicUsize::new(0)));
+    let watchdog = progress.clone();
+    std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(20));
-        eprintln!("FAIL: native window event feedback watchdog");
+        let phase = watchdog.0.load(Ordering::SeqCst);
+        let captures = watchdog.1.load(Ordering::SeqCst);
+        if phase == 1 && captures >= 100 {
+            eprintln!("FAIL: getter event feedback watchdog: phase={phase} captures={captures}");
+        } else {
+            eprintln!("FAIL: unrelated native window timeout: phase={phase} captures={captures}");
+        }
         std::process::exit(2);
     });
     let event_loop = EventLoop::new();
@@ -37,6 +51,7 @@ fn main() {
             } => {
                 events += 1;
                 if query_during_events {
+                    progress.1.fetch_add(1, Ordering::SeqCst);
                     // Same feedback boundary as production geometry capture.
                     let _ = window.is_maximized();
                 }
@@ -44,6 +59,8 @@ fn main() {
             Event::MainEventsCleared if Instant::now() >= deadline => {
                 match phase {
                     0 => {
+                        println!("BEGIN: borderless getter feedback probe");
+                        progress.0.store(1, Ordering::SeqCst);
                         normal_size = window.inner_size();
                         normal_position = window.outer_position().unwrap();
                         assert!(!window.is_maximized());
@@ -54,6 +71,7 @@ fn main() {
                         }
                     }
                     1 => {
+                        progress.0.store(2, Ordering::SeqCst);
                         assert_eq!(events, before_reads, "normal reads generated geometry events");
                         assert_eq!(window.inner_size(), normal_size);
                         assert_eq!(window.outer_position().unwrap(), normal_position);

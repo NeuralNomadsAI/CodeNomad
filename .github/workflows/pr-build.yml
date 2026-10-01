@@ -532,7 +532,10 @@ jobs:
 
       - name: Reproduce and prevent macOS window event feedback
         timeout-minutes: 10
-        run: node scripts/test-tauri-macos-window.mjs --baseline
+        run: |
+          node --test scripts/test-tauri-macos-window-result.test.mjs
+          node scripts/test-tauri-macos-window.mjs --baseline
+          node scripts/test-tauri-macos-window.mjs --baseline
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs

@@ -41,6 +41,11 @@ requires no production change.
   macOS session. It builds the original published Tao as a negative control in
   a temporary workspace and the backport in the real workspace. Both use the
   same native fixture, with a bounded watchdog and no application/backend data.
+  The baseline has its own target directory; the patched artifact is warmed
+  before it and rechecked afterwards. CI runs the command twice consecutively.
+  Only a normal getter/read-event assertion or a watchdog in that exact phase
+  with at least 100 capture callbacks counts as feedback reproduction. Setup,
+  later-phase and low-evidence timeouts fail the negative control.
 - The fixture checks read-generated move/resize events, getters inside geometry
   capture, normal bounds, maximize/restore, fixed-size and decorated windows.
 - The PR macOS ARM64 job runs the regression in addition to the Tauri crate
