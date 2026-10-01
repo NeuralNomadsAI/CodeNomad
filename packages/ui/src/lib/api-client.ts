@@ -408,8 +408,9 @@ export const serverApi = {
       `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
     )
   },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string }): Promise<void> {
+  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string }): Promise<void> {
     const params = new URLSearchParams({ path: relativePath })
+    if (options?.directory) params.set("directory", options.directory)
     if (options?.worktree && options.worktree !== "root") {
       params.set("worktree", options.worktree)
     }

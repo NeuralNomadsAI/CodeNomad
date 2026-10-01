@@ -7,6 +7,49 @@ import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 
 let server: ViteDevServer, browser: Browser, url: string
+test("Workspace editing saves the exact directory, retains drafts and checks external changes", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const edit = async (text: string) => page.evaluate(text => {
+    const editor = (window as any).monaco.editor.getEditors().find((editor: any) => editor.getModel()?.uri.toString().includes("workspace-editor"))
+    editor.getModel().setValue(text)
+    editor.focus()
+  }, text)
+  try {
+    await page.goto(url)
+    const eye = () => page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true })
+    const save = () => page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true })
+    await eye().click()
+    await page.locator('.workspace-file-view .view-line').first().waitFor()
+    await edit('{"edited": "écriture"}')
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await eye().click()
+    await eye().click()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'écriture' }).waitFor()
+    await save().click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("écriture") && call.slug === "/CodeNomad"))
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    await edit('{"local": true}')
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      await serverApi.writeWorkspaceFile("git-prototype", "package.json", '{"agent": true}', { directory: "/CodeNomad" })
+    })
+    await save().click()
+    await page.getByRole("button", { name: "Annuler", exact: true }).click()
+    assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "save").length), 2)
+    await save().click()
+    await page.getByRole("button", { name: "Écraser", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.filter((call: any) => call.kind === "save").length === 3)
+    await edit('{"keyboard": true}')
+    await page.keyboard.press("Control+s")
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("keyboard")))
+    await edit('{"discard": true}')
+    await page.locator('.workspace-file-view').getByRole("button", { name: "Actualiser", exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: "Actualiser", exact: true }).click()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'keyboard' }).waitFor()
+    assert.equal(await save().isDisabled(), true)
+  } finally { await page.close() }
+})
 before(async () => {
   prepareGitPrototypeAssets()
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
@@ -329,7 +372,7 @@ test("Workspace retains its expanded tree across modes and previews source, Mark
     await page.getByRole("treeitem", { name: "workflows", exact: true }).click()
     await page.getByRole("button", { name: "Aperçu du fichier · .github/workflows/update-winget.yml", exact: true }).click()
     await page.locator(".workspace-file-view .view-lines").filter({ hasText: "Update Winget" }).waitFor()
-    assert.equal(await page.evaluate(() => (window as any).monaco.editor.getEditors().filter((editor: any) => editor.getModel()?.uri.toString().includes("workspace-readonly")).every((editor: any) => editor.getRawOptions().readOnly)), true)
+    assert.equal(await page.evaluate(() => (window as any).monaco.editor.getEditors().filter((editor: any) => editor.getModel()?.uri.toString().includes("workspace-editor")).every((editor: any) => !editor.getRawOptions().readOnly)), true)
     if (process.env.CODENOMAD_GIT_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/workspace-source.png` })
     await page.getByRole("button", { name: /Changements/ }).click()
     await page.getByRole("button", { name: "Workspace", exact: true }).click()

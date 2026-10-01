@@ -40,6 +40,7 @@ const WorkspaceFilesQuerySchema = z.object({
 
 const WorkspaceFileContentQuerySchema = z.object({
   path: z.string(),
+  directory: z.string().trim().min(1).optional(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
   worktree: z.string().trim().optional(),
 })
@@ -226,6 +227,15 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      if (query.directory) {
+        const directory = query.directory
+        const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
+          await deps.workspaceManager.writeFileInDirectory(request.params.id, directory, query.path, body.contents)
+        })
+        if (!mutation) return
+        reply.code(204)
+        return
+      }
       if (query.worktree && query.worktree !== "root") {
         const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
         if (!directory) return

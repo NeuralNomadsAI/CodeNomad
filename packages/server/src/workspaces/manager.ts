@@ -518,8 +518,7 @@ export class WorkspaceManager {
   }
 
   async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
-    this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: directory })
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     await browser.writeFile(relativePath, contents)
   }
 

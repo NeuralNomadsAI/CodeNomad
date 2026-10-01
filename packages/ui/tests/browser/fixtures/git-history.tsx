@@ -9,6 +9,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { createCoreRightPanelRuntime } from "../../../src/components/instance/shell/right-panel/core-runtime"
 import { FilesPreviewView } from "../../../src/components/files-preview-view"
+import AlertDialog from "../../../src/components/alert-dialog"
 import { closeFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import { parseRightPanelCustomization } from "../../../src/components/instance/shell/right-panel/registry"
 import { sessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
@@ -23,6 +24,11 @@ const SessionView = new URLSearchParams(location.search).has("session")
   ? (await import("../../../src/components/session/session-view")).default : undefined
 const [selectedSession, setSelectedSession] = createSignal(sessionId)
 const calls: Array<{ kind: string; slug?: string; path?: string; message?: string }> = []
+const savedFiles = new Map<string, string>()
+serverApi.writeWorkspaceFile = async (_id, path, contents, options) => {
+  calls.push({ kind: "save", path, slug: options?.directory, message: contents })
+  savedFiles.set(JSON.stringify([options?.directory, path]), contents)
+}
 const entries = [
   { slug: "root", label: "CodeNomad", directory: "/CodeNomad", branch: "feat/git-history", kind: "root" as const },
   { slug: "review", label: "review", directory: "/CodeNomad/.codenomad/worktrees/review", branch: "dev", kind: "worktree" as const },
@@ -55,11 +61,11 @@ serverApi.listWorkspaceFiles = async (_id, path = ".", directory) => {
 serverApi.previewWorkspaceFile = async (_id, path, directory) => {
   calls.push({ kind: "file", path, slug: directory })
   if (path.endsWith(".png")) return { workspaceId: _id, relativePath: path, encoding: "base64", contents: imageBytes }
-  const text = path.endsWith(".svg")
+  const text = savedFiles.get(JSON.stringify([directory, path])) ?? (path.endsWith(".svg")
     ? '<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420"><rect width="720" height="420" fill="#202731"/><text x="40" y="65" fill="#f2e8cf" font-size="28" font-family="sans-serif">CodeNomad / Palette study</text><rect x="40" y="110" width="150" height="240" fill="#a6b8a0"/><rect x="205" y="110" width="150" height="240" fill="#c6b3a0"/><rect x="370" y="110" width="150" height="240" fill="#a1b7c5"/><rect x="535" y="110" width="145" height="240" fill="#d5c8ab"/></svg>'
     : path.endsWith(".md") ? '# CodeNomad\n\nUn espace pour explorer les fichiers, les changements et les commits.\n\n## Trois points de vue\n\n- **Workspace** : les fichiers du projet\n- **Changes** : les modifications locales\n- **Commits** : les versions enregistrées\n\n```ts\nconst viewer = "conversation"\n```\n'
     : path.endsWith(".yml") ? 'name: Update Winget\n\non:\n  workflow_call:\n    inputs:\n      release_tag:\n        description: "Stable release tag to inspect"\n        required: true\n        type: string\n\njobs:\n  update-manifest:\n    runs-on: windows-latest\n    steps:\n      - uses: actions/checkout@v4\n'
-    : path.endsWith(".json") ? '{\n  "name": "codenomad",\n  "private": true\n}\n' : after
+    : path.endsWith(".json") ? '{\n  "name": "codenomad",\n  "private": true\n}\n' : after)
   return { workspaceId: _id, relativePath: path, encoding: "base64", contents: btoa(String.fromCharCode(...new TextEncoder().encode(text))) }
 }
 const model = { providerID: "fixture", id: "fixture" }
@@ -146,6 +152,7 @@ function Prototype() {
       ;(window as any).fixture.releaseCommit = release
     } }
   return <div style={{ height: "100vh", display: "flex", "flex-direction": "column", background: "var(--surface-base)", color: "var(--text-primary)" }}>
+    <AlertDialog />
     <header class="window-header" style={{ padding: "12px 18px" }}><strong>CodeNomad</strong><span class="text-xs text-muted">Prototype Files · données de démonstration</span></header>
     <div style={{ display: "flex", flex: 1, "min-height": "0" }}>
       <main style={{ display: "flex", "flex-direction": "column", flex: 1, "min-width": "0" }}>

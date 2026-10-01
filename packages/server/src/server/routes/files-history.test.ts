@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
@@ -34,6 +34,7 @@ test("real Git history routes and bounded file previews use the requested owned 
     // discovery is isolated to an explicit inventory, with no shared daemon.
     const manager = Object.assign(Object.create(WorkspaceManager.prototype), {
       get: (requested: string) => requested === id ? workspace : undefined,
+      getWorktreeIdentityForPath: async (_id: string, directory: string) => directory === root || directory === linked ? directory : undefined,
       requireWorkspace: (requested: string) => { if (requested !== id) throw new Error("Workspace not found"); return workspace },
       resolveOwnedWorktree: async (_workspace: unknown, directory: string) => {
         ownershipReads.push(directory)
@@ -43,13 +44,24 @@ test("real Git history routes and bounded file previews use the requested owned 
         { slug: "root", directory: root, kind: "root" }, { slug: "linked", directory: linked, kind: "worktree" },
       ] }),
     }) as WorkspaceManager
-    registerWorkspaceRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
+    const fence = new WorktreeDeletionFence()
+    registerWorkspaceRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence })
     const base = `/api/workspaces/${id}`
     const preview = (file: string, directory: string) => app.inject(`${base}/files/preview?${new URLSearchParams({ path: file, directory })}`)
     const rootFile = await preview("notes.txt", root), linkedFile = await preview("notes.txt", linked)
     assert.equal(rootFile.statusCode, 200); assert.equal(linkedFile.statusCode, 200)
     assert.equal(Buffer.from(rootFile.json().contents, "base64").toString(), "root content")
     assert.equal(Buffer.from(linkedFile.json().contents, "base64").toString(), "linked content")
+    const save = (directory: string, file = "notes.txt") => app.inject({ method: "PUT",
+      url: `${base}/files/content?${new URLSearchParams({ path: file, directory })}`,
+      payload: { contents: "edited workspace" } })
+    assert.equal((await save(linked)).statusCode, 204)
+    assert.equal(await readFile(path.join(linked, "notes.txt"), "utf8"), "edited workspace")
+    assert.equal(await readFile(path.join(root, "notes.txt"), "utf8"), "root content")
+    assert.equal((await save(outside)).statusCode, 403)
+    assert.equal((await save(linked, "../outside/secret.txt")).statusCode, 400)
+    const identity = await manager.getWorktreeIdentityForPath(id, linked) as string
+    await fence.run(identity, [identity], async () => { assert.equal((await save(linked)).statusCode, 409) })
     assert.equal((await preview("image.png", linked)).json().encoding, "base64")
     assert.equal((await preview("oversize.bin", linked)).statusCode, 400)
     assert.equal((await preview("secret.txt", outside)).statusCode, 400)
@@ -81,5 +93,8 @@ test("file preview remains available for an explicitly opened directory without 
     const file = await manager.previewFile("fixture", "readme.md", root)
     assert.equal(Buffer.from(file.contents, "base64").toString(), "# Directory only")
     await assert.rejects(manager.previewFile("fixture", "readme.md", path.dirname(root)), /not owned/)
+    await manager.writeFileInDirectory("fixture", root, "readme.md", "# Edited directory")
+    assert.equal(await readFile(path.join(root, "readme.md"), "utf8"), "# Edited directory")
+    await assert.rejects(manager.writeFileInDirectory("fixture", path.dirname(root), "readme.md", "invalid"), /not owned/)
   } finally { await rm(root, { recursive: true, force: true }) }
 })

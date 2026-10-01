@@ -36,7 +36,7 @@ and status refreshes preserve both sections' disclosure state.
 
 ## Central reader
 
-`files-preview-view.tsx` selects the shared diff reader or the read-only workspace
+`files-preview-view.tsx` selects the shared diff reader or the editable workspace
 reader (source, rendered Markdown, raster/vector image, or binary fallback).
 The composer stays mounted below it. Selections are bound to the originating
 project/session and cleared on session/worktree changes. Opening the browser
@@ -52,9 +52,14 @@ images never fall back to the current worktree. `GitImagePreview` shows before
 and after images (including one-sided additions/deletions); other binary files
 retain their unavailable-preview fallback.
 
-Workspace source previews are intentionally read-only. The former sidebar file
-editor and sidebar split viewer are retired. Monaco's tokenizers are packaged
-locally for offline source highlighting.
+Workspace source retains Monaco editing, Save and Ctrl/Cmd+S in the central view;
+Markdown's source mode is editable too. Images, binary content and historical
+diffs remain read-only. The former sidebar layout is retired, not file editing.
+Dirty drafts are retained in renderer memory per instance/directory/path when
+closing or changing readers, and filesystem invalidation never replaces them.
+Saving rereads the bounded authoritative file and asks before overwriting external
+changes; read/write errors preserve the draft. Explicit refresh asks before
+discarding edits. Monaco's tokenizers are packaged locally for offline highlighting.
 
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work
@@ -76,6 +81,10 @@ insertion into the composer remain available.
   for the explicitly opened directory in Git-degraded mode.
 - `/api/workspaces/:id/worktrees/:slug/git-history` returns up to 50 commits plus
   a continuation flag. Later pages retain their original HEAD hash.
+- `PUT /api/workspaces/:id/files/content` accepts the exact browsed `directory`
+  alongside the relative path, checks current ownership and the deletion fence,
+  and uses the existing filesystem writer. It never redirects a linked-worktree
+  edit to the root checkout.
 - `/git-history/:commit` returns the message and files; an optional `path` returns
   before/after text against the first parent (empty for a root commit).
 - Commit IDs are full SHA-1/SHA-256 hashes. Files must belong to the commit's
