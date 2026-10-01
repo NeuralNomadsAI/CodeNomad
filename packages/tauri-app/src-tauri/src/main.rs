@@ -17,6 +17,8 @@ mod native_service_start;
 mod preferences_window;
 mod shutdown;
 mod view_menu;
+mod window_constraints;
+mod window_zoom;
 mod windows_update;
 mod workspace_open;
 
@@ -992,6 +994,7 @@ fn open_remote_window_locked(
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
+    let builder = window_zoom::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));
     let window = match builder.build() {
@@ -1009,6 +1012,9 @@ fn open_remote_window_locked(
         }
     };
 
+    window_constraints::register(&window.as_ref().window(), 1.0);
+    #[cfg(windows)]
+    window_constraints::register_remote_zoom(&window, &app);
     #[cfg(windows)]
     if let Err(error) = shutdown::schedule_windows_session_end_handler(&window) {
         cleanup_failed_remote_window(
@@ -1418,6 +1424,7 @@ fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
     }
     let zoom = zoom.clamp(0.25, 5.0);
     if webview.set_zoom(zoom).is_ok() {
+        window_constraints::apply(&webview.window(), zoom);
         if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
             levels.insert(webview.label().to_string(), zoom);
         }
@@ -1636,6 +1643,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
             manager: CliProcessManager::new(),
@@ -1742,6 +1750,7 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             window_control,
+            window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
             client_state::client_state_claim_access,
@@ -2401,7 +2410,8 @@ mod menu_tests {
             capability["remote"]["urls"],
             json!(["http://*:*", "https://*:*"])
         );
-        assert_eq!(capability["windows"], json!(["remote-*"]));
+        assert_eq!(capability["webviews"], json!(["remote-*"]));
+        assert!(capability["windows"].is_null());
         assert_eq!(
             capability["permissions"],
             json!([

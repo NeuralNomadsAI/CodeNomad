@@ -88,7 +88,7 @@ import { runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
-const MIN_SESSION_CENTER_WIDTH = 480
+const MIN_SESSION_CENTER_WIDTH = 390
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
 
 function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
@@ -134,6 +134,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
   const [headerDensity, setHeaderDensity] = createSignal(0)
+  const [narrowHeaderActions, setNarrowHeaderActions] = createSignal(false)
+  const headerActionsCollapsed = () => narrowHeaderActions() || headerDensity() === 4
   const [filtersOpen, setFiltersOpen] = createSignal(false)
   let sessionToolbarEl: HTMLElement | undefined
   let headerLeftEl: HTMLElement | undefined
@@ -381,9 +383,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
 
+    let focusFrame = 0
     const updateWidthStep = (width: number) => {
       if (width <= 0) return
+      const moveFocus = width < 420 && sessionToolbarEl?.querySelector(".session-header-expanded-actions")?.contains(document.activeElement)
       setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+      setNarrowHeaderActions(width < 420)
+      if (moveFocus) {
+        cancelAnimationFrame(focusFrame)
+        focusFrame = requestAnimationFrame(() => {
+          if (headerActionsCollapsed()) sessionToolbarEl?.querySelector<HTMLButtonElement>(".session-header-actions-menu")?.focus()
+        })
+      }
     }
 
     measureDrawerHost()
@@ -395,7 +406,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     })
     observer.observe(element)
 
-    onCleanup(() => observer.disconnect())
+    onCleanup(() => {
+      observer.disconnect()
+      cancelAnimationFrame(focusFrame)
+    })
   })
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
@@ -1052,6 +1066,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ref={setSessionCenterEl}
         data-session-center-width={sessionCenterWidthStep()}
         data-session-header-density={String(headerDensity())}
+        data-session-header-actions-forced={narrowHeaderActions() ? "true" : "false"}
         sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
       >
         <Show when={!mobileFullscreen()}>
@@ -1111,7 +1126,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           </IconButton>
                           {renderHeaderThirdActionButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
-                            overflowAnchor={() => headerDensity() === 4
+                            overflowAnchor={() => headerActionsCollapsed()
                               ? sessionToolbarEl?.querySelector<HTMLElement>(".session-header-actions-menu") ?? undefined
                               : undefined} />
                         </Show>

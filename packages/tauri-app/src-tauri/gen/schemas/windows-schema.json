@@ -495,6 +495,12 @@
           "markdownDescription": "Enables the open_workspace_target command without any pre-configured scope."
         },
         {
+          "description": "Enables the owned_webview_zoom command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-owned-webview-zoom",
+          "markdownDescription": "Enables the owned_webview_zoom command without any pre-configured scope."
+        },
+        {
           "description": "Enables the popup_titlebar_menu command without any pre-configured scope.",
           "type": "string",
           "const": "allow-popup-titlebar-menu",
@@ -697,6 +703,12 @@
           "type": "string",
           "const": "deny-open-workspace-target",
           "markdownDescription": "Denies the open_workspace_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the owned_webview_zoom command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-owned-webview-zoom",
+          "markdownDescription": "Denies the owned_webview_zoom command without any pre-configured scope."
         },
         {
           "description": "Denies the popup_titlebar_menu command without any pre-configured scope.",

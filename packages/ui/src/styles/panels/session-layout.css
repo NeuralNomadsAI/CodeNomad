@@ -413,11 +413,13 @@
   color: inherit;
 }
 
-.session-center-column[data-session-header-density="4"] .session-header-expanded-actions {
+.session-center-column[data-session-header-density="4"] .session-header-expanded-actions,
+.session-center-column[data-session-header-actions-forced="true"] .session-header-expanded-actions {
   display: none;
 }
 
-.session-center-column[data-session-header-density="4"] .session-header-actions-menu.action-overflow-trigger {
+.session-center-column[data-session-header-density="4"] .session-header-actions-menu.action-overflow-trigger,
+.session-center-column[data-session-header-actions-forced="true"] .session-header-actions-menu.action-overflow-trigger {
   display: inline-flex;
 }
 
