@@ -6,10 +6,11 @@ import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance, instances } from "../../../src/stores/instances"
-import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId } from "../../../src/stores/session-state"
+import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 
@@ -71,8 +72,13 @@ await updatePreferences({ locale: "en" })
   setPreferences: updatePreferences,
   executions: () => executions,
   showInfo: () => setActiveSession(id, "info"),
+  showSession: () => setActiveSession(id, sessionId),
+  setContext: (used: number, available: number) => setSessionInfoByInstance(previous => new Map(previous).set(id,
+    new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),
   setWorking: () => setSessionStatus(id, sessionId, "working", { force: true }),
+  setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
+  promptHeight: promptInputHeight,
 }

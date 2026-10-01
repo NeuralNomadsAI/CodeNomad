@@ -1,40 +1,15 @@
-import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
-
 import type { UsageProvider } from "../types"
 import {
-  decodeJwtClaims,
   fetchJson,
-  getCredential,
   getOAuthEntry,
   getString,
   notConfigured,
-  oauthTokenNeedsRefresh,
   resolveWindowLabel,
   safeFetch,
   toNumber,
   toTimestamp,
   toUsageWindow,
 } from "../shared"
-import type { AuthEntry } from "../types"
-
-const CODEX_REAUTH_ERROR = "Codex session expired. Reconnect it in OpenCode or Codex CLI."
-
-function getCodexCliAuthEntry(): AuthEntry | null {
-  const file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "auth.json")
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { tokens?: Record<string, unknown> }
-    const tokens = parsed.tokens
-    if (!tokens || typeof tokens !== "object") return null
-    const access = getString(tokens.access_token)
-    const refresh = getString(tokens.refresh_token)
-    if (!access && !refresh) return null
-    return { type: "oauth", access, refresh, accountId: getString(tokens.account_id) }
-  } catch {
-    return null
-  }
-}
 
 export function parseCodexUsage(payload: any) {
   const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
@@ -76,43 +51,9 @@ const codex: UsageProvider = {
   name: "Codex",
   aliases: codexAliases,
   async fetchQuota() {
-    const entries: AuthEntry[] = []
-    const openCode = getOAuthEntry(codexAliases)
-    if (openCode) entries.push(openCode)
-    const codexCli = getCodexCliAuthEntry()
-    if (codexCli) entries.push(codexCli)
-    if (!entries.length) return notConfigured(this.id, this.name)
-    entries.sort((left, right) =>
-      Number(oauthTokenNeedsRefresh(left)) - Number(oauthTokenNeedsRefresh(right)))
-    return safeFetch(this.id, this.name, async () => {
-      let lastError: unknown
-      for (const [index, entry] of entries.entries()) {
-        if (oauthTokenNeedsRefresh(entry)) {
-          lastError = new Error(CODEX_REAUTH_ERROR)
-          continue
-        }
-        const token = getString(entry.access) ?? getString(entry.token)
-        if (!token) {
-          lastError = new Error("OpenAI OAuth entry has no access token")
-          continue
-        }
-        try {
-          const accountId = getString(entry.accountId) ?? getString(decodeJwtClaims(token)?.["https://api.openai.com/auth"]?.chatgpt_account_id)
-          const payload = await fetchJson("https://chatgpt.com/backend-api/wham/usage", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-              ...(accountId ? { "ChatGPT-Account-Id": accountId } : {}),
-            },
-          })
-          return parseCodexUsage(payload)
-        } catch (error) {
-          lastError = error
-          if (index === entries.length - 1 || !(error instanceof Error) || !/HTTP (401|403)\b/.test(error.message)) throw error
-        }
-      }
-      throw lastError instanceof Error ? lastError : new Error("OpenAI OAuth credentials failed")
-    })
+    // Subscription usage requires an owned session and selected native connection.
+    // The route uses native-codex.ts; unscoped callers must never read host auth.
+    return notConfigured(this.id, this.name)
   },
 }
 

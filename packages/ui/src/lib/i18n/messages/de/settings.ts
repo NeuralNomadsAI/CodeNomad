@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "OpenCode wird installiert…",
+  "settings.opencode.setup.elapsed": "Vergangene Zeit: {elapsed}",
+  "settings.opencode.setup.keepOpen": "Download und Installation können einige Minuten dauern. Lassen Sie CodeNomad geöffnet, bis die Einrichtung abgeschlossen ist.",
   "settings.opencode.setup.installation_busy": "Eine andere Installation hält die OpenCode-Installationssperre. Nach deren Abschluss erneut versuchen. Bei einem Abbruch steht der Sperrpfad im Serverprotokoll.",
   "settings.opencode.setup.installation_in_use": "Die OpenCode-Datei wird verwendet oder ist nicht beschreibbar. Das Update wurde vor Änderungen zurückgestellt. Erneut versuchen, sobald die Datei verfügbar ist.",
   "settings.opencode.setup.source.path": "Programm im PATH des Servers gefunden.",
@@ -637,9 +640,11 @@ export const settingsMessages = {
   "settings.info.version.server": "Server-Version",
   "settings.info.version.ui": "UI-Version",
   "settings.info.version.uiSource": "UI-Quelle",
-  "settings.info.runtime.type": "Laufzeit",
-  "settings.info.runtime.platform": "Plattform",
-  "settings.info.runtime.os": "Betriebssystem",
+  "settings.info.runtime.type": "Client-Laufzeit",
+  "settings.info.runtime.platform": "Client-Plattform",
+  "settings.info.runtime.os": "Client-Betriebssystem",
+  "settings.info.server.os": "Server-Betriebssystem",
+  "settings.info.server.arch": "Server-Architektur",
   "settings.info.server.url": "Server-URL",
   "settings.info.server.root": "Arbeitsbereich-Root",
   "settings.info.runtime.windowContext": "Fensterkontext",
@@ -667,4 +672,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "In Zwischenablage kopieren",
   "settings.info.diagnostics.download": ".txt herunterladen",
   "settings.info.diagnostics.copied": "Diagnoseinfo in Zwischenablage kopiert.",
+  "providerUsage.nativeCredentialApiUnavailable": "Die Nutzung erfordert OpenCode {version} oder neuer. Aktualisiere OpenCode und starte anschließend den Dienst in den Einstellungen neu.",
 } as const

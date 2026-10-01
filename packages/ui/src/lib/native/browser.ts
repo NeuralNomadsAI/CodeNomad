@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { RuntimeEnvironment } from "../runtime-env"
+import type { BrowserEmulationPreset } from "./browser-emulation"
 
 export interface BrowserTargetBounds {
   x: number
@@ -60,6 +61,11 @@ export async function controlTauriBrowserTarget(registrationId: string, action: 
 
 export async function unregisterTauriBrowserTarget(registrationId: string): Promise<void> {
   await invoke("browser_target_unregister", { registrationId })
+}
+
+export async function emulateBrowserTarget(registrationId: string, preset: BrowserEmulationPreset): Promise<void> {
+  if (window.electronAPI?.emulateBrowserTarget) return window.electronAPI.emulateBrowserTarget(registrationId, preset)
+  await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset } })
 }
 
 export async function onNativeBrowserOpen(

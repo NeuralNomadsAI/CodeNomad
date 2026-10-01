@@ -15,9 +15,8 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. Server/UI
-client and bundled-plugin dependencies pin **2.0.18**, which is also the
-recommended release-tested target, not the minimum. Unlisted versions,
+gain the `data.started` field consumed by the current Solid reducer. **2.0.21**
+is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
 APIs or session environment support produce a concrete incompatibility reason.
@@ -28,6 +27,32 @@ current import/cursor authorization, cancellation and connection checks remain.
 The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse while
 preserving session IDs and complete history. See the
 [transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
+
+### Native Codex subscription usage
+
+Codex/OpenAI quota reads require the **2.0.20** native `credential.list` API.
+This is a feature-local dependency, not a new global minimum: a missing endpoint,
+expired token or unsupported connection yields unavailable usage. The server
+identifies a credential-endpoint HTTP 404 with a sanitized, feature-local upgrade
+reason; the panel explains the required service version without blocking the app.
+The server
+resolves the owned session's native directory and provider integration, then uses
+only that integration's first connection and its matching active ChatGPT OAuth
+credential (`chatgpt-browser` or `chatgpt-headless`). It never reads host legacy
+`auth.json`, Codex CLI credentials or SQLite, refreshes OAuth independently, or
+substitutes another saved account. WSL uses the selected daemon's credentials.
+
+Quota snapshots are scoped to the acquired native connection, instance, session,
+directory, provider and selected credential identity. Warm and pending results
+revalidate native selection before publication. Credentials remain server-only;
+browser credential export and generic RPC are still blocked by the proxy.
+Isolated HTTP/generated-client and rendered Solid fixtures cover these boundaries.
+`node scripts/test-provider-usage-native.mjs <absolute-cli-path>` additionally
+exercises the production quota adapter against a fresh native daemon/database with
+synthetic OAuth/key credentials and mocked quota HTTP only. It passed on Windows
+with 2.0.20 and 2.0.21: active-account selection and `metadata.accountID`, warm-cache revocation
+after switching to a key, and recovery despite a stale legacy file. This is not a
+real WSL or live ChatGPT quota test; no real credentials or shared daemon are used.
 
 ### Side questions (`/btw`)
 
@@ -158,7 +183,7 @@ independent gatekeeper reports zero actionable findings. Detailed native suite
 completion and cross-platform qualification belong in the PR/CI; do not treat
 unchanged wire types or a passing rerun as proof of untested behavior.
 
-### Current stable target: 2.0.18
+### Previous stable target: 2.0.18
 
 Server/UI client, bundled plugins and recommendation advance together to **2.0.18**;
 the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
@@ -190,6 +215,96 @@ proxy checks passed. The earlier 2.0.16 dependency baseline passes against runti
 2.0.18 too. The passing rerun does not explain or fix the intermittent exit
 previously recorded above. Both historical migrations (2.0.3 and beta-19271) to
 2.0.18 pass; the native npm installation leaves the 2.0.15 daemon and PID intact.
+
+### Previous stable target: 2.0.19
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.19**; the timestamp-based minimum remains **2.0.7**. The authenticated native
+2.0.19 OpenAPI has the same 115 paths and component schemas as native 2.0.18.
+All published client, plugin, protocol and schema declarations are byte-identical
+(30, 60, 36 and 102 declaration files respectively). No new API adapter or proxy
+route follows from this release.
+
+Upstream refactors compaction and adjusts output limits to the context window
+(with a 256k output cap), including bounded shrinking after provider overflow
+rejections. It also improves provider prompt-cache reuse and session affinity,
+one-shot generation attribution, error classification and media handling. Native
+Shell tools add `AGENT=1`, `OPENCODE=1`, default `AI_AGENT=opencode` and the current
+`OPENCODE_SESSION_ID`; these native tool conventions are distinct from CodeNomad's
+per-send session environment snapshot. Qualification must exercise compaction,
+history persistence, side questions and environment propagation, not infer them
+from the unchanged HTTP schema alone. Detailed outcomes belong in the PR/CI.
+
+The seven native suites pass on both 2.0.7 and 2.0.19 with the new pins, including
+pruning/compaction, history navigation, proxy/relay ownership, automation, per-send
+environment, forks, side questions, blank-session cleanup and Git-degraded recovery.
+Both historical migrations to 2.0.19 and the isolated native npm upgrade pass;
+the latter preserves the running 2.0.15 daemon's version and PID.
+
+Ordinary native/UI runs stopped at Vite import with shell exit 116, reproduced
+with a 2.0.18 runtime control and the previous dependency pins. Per-import traces
+now isolate that phase more precisely. These observations do not establish the
+same cause as the earlier heap-corruption exit, or resolve the fixture failure.
+The full native/UI acceptance passes when a diagnostic launcher preloads Vite
+before the native fixture. That run changes import order, not the assertions or
+runtime; it provides acceptance coverage without proving the ordinary launcher
+is reliable. Keep both outcomes visible in the PR.
+
+### Previous stable target: 2.0.20
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.20**; the demonstrated timestamp-based minimum remains **2.0.7**. Authenticated
+native OpenAPI adds `GET`/`POST /api/credential` (116 paths, with the previous 115
+path definitions unchanged). Credential export/creation remains outside the
+workspace proxy; a regression verifies rejection before any upstream request.
+Existing components gain optional `Session.StructuredError.response.body` and
+connection `status` (`needs_auth`, message and optional URL); the other additions
+describe credentials. Published declarations propagate these additions and expose
+the plugin's `integration.connection.status` reporting method. No consumed API
+requires a production adapter or higher runtime minimum. The UI normalizer retains
+the optional response body while keeping the existing display message contract.
+
+Upstream also improves provider error messages, Bedrock/Mistral reasoning blocks,
+prompt caching, ChatGPT token-sharing authentication and database-file permissions.
+The new CLI `service disabled` setting controls implicit CLI connections; isolated
+validation with CodeNomad's real lifecycle confirms explicit `service start` and
+authenticated discovery still work with `disabled=true`, without clearing it.
+CodeNomad never writes native service configuration to accommodate the setting.
+
+Seven native suites pass on both 2.0.7 and 2.0.20 with the new pins. Native/UI
+acceptance also passes through the ordinary launcher, without Vite preloading.
+This passing run does not identify or fix the intermittent Windows import failure
+documented above. Historical migrations, standalone plugin acceptance and isolated
+npm upgrade pass; upgrade preserves the running 2.0.15 daemon's version and PID.
+Detailed test counts, environment and final review/CI outcomes belong in the PR.
+
+### Current stable target: 2.0.21
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.21**; the global minimum remains **2.0.7**, and Codex Usage's feature-local
+credential-list requirement remains **2.0.20**. Authenticated native OpenAPI keeps
+116 paths: only form cancellation changes, with an optional `message` query and
+optional `message` in cancelled `Form.State`. Existing cancellation without a
+message remains supported. A synthetic native fixture verifies session/global
+cancellation both ways, including exact preservation of URL-sensitive text.
+
+Published declarations change in two client files, one protocol file and one
+schema file; all 60 plugin declaration files are unchanged. No new consumed API
+or required field justifies an adapter or higher minimum. Plugin optional OpenTUI
+peer floors advance to 0.5.14; CodeNomad does not install these terminal peers.
+The release also fixes provider context-overflow classification, passthrough and
+prompt-cache behavior, avoids reinjecting ancestor instructions, adds namespaced
+session identity headers to provider requests, and makes native browser tools
+conditional on desktop attachment. CodeNomad's own automation acceptance passes.
+
+Seven native suites pass on both 2.0.7 and 2.0.21 with the new pins. The native
+Codex Usage fixture also passes on 2.0.21 with synthetic credentials and mocked
+quota HTTP. Ordinary-launcher native/UI acceptance, standalone plugin acceptance,
+historical migrations and isolated npm upgrade pass. Upgrade leaves the running
+2.0.15 daemon and PID unchanged. The full server run has one Windows Git-fixture
+cleanup `EPERM`; its unchanged focused rerun passes. Retain this failure and the
+historical intermittent Vite/import limitation rather than claiming either fixed.
+Detailed counts, review and CI outcomes belong in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.

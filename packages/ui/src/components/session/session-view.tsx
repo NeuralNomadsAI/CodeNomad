@@ -5,7 +5,7 @@ import { createAgentAttachment, createFileAttachment, type Attachment } from "..
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
-import { missionProjectView } from "../../stores/mission-view-state"
+import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -25,6 +25,8 @@ import { clearConversationPlaybackForSession } from "../../stores/conversation-s
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
+import { FilesPreviewView } from "../files-preview-view"
+import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
@@ -45,7 +47,6 @@ interface SessionViewProps {
   instanceFolder: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
-  compactPromptLayout?: boolean
   focusConversationOnActivate?: boolean
   onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
@@ -104,6 +105,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
   const readingMission = () => props.isActive && Boolean(missionProjectView(props.instanceFolder).reader)
+  const filePreview = createMemo(() => {
+    const target = getFilePreview(props.instanceId)
+    return target?.sessionId === props.sessionId ? target : null
+  })
+  createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
+  // The latest explicit reader selection owns the central surface. Opening one
+  // must not leave the other mounted invisibly above it; editor drafts live in
+  // their own store and the composer stays outside both readers.
+  createEffect(on(filePreview, target => {
+    if (target && props.isActive) updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  }, { defer: true }))
+  createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -612,6 +625,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         <div class="mission-transcript-surface">
         <div class="mission-transcript-content" inert={readingMission()}
           style={{ visibility: readingMission() ? "hidden" : undefined }}>
+        <Show when={filePreview()} fallback={
         <Show
           when={preview()?.mode === "preview" && !readingMission()}
           fallback={
@@ -655,6 +669,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
 
         </div>
         <Show when={readingMission()}>
@@ -681,7 +696,6 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
-          compactLayout={props.compactPromptLayout}
           onSend={handleSendMessage}
           onRunShell={handleRunShell}
           escapeInDebounce={props.escapeInDebounce}

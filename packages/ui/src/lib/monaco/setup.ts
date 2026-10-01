@@ -1,39 +1,9 @@
 type RequireFn = (deps: string[], callback: (...args: any[]) => void, errback?: (err: any) => void) => void
 type MonacoApi = any
 
-const MONACO_VERSION = "0.52.2"
-const CDN_VS_ROOT = `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs`
 const LOCAL_VS_ROOT = "/monaco/vs"
 
 let monacoPromise: Promise<MonacoApi> | null = null
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const id = setTimeout(() => reject(new Error("timeout")), ms)
-    promise
-      .then((value) => {
-        clearTimeout(id)
-        resolve(value)
-      })
-      .catch((err) => {
-        clearTimeout(id)
-        reject(err)
-      })
-  })
-}
-
-async function canReachCdn(): Promise<boolean> {
-  if (typeof fetch === "undefined") return false
-  try {
-    const controller = new AbortController()
-    const task = fetch(`${CDN_VS_ROOT}/loader.js`, { method: "HEAD", signal: controller.signal })
-    const response = await withTimeout(task, 1200)
-    controller.abort()
-    return response.ok
-  } catch {
-    return false
-  }
-}
 
 function ensureLoaderScript(): Promise<void> {
   if (typeof document === "undefined") return Promise.resolve()
@@ -46,7 +16,7 @@ function ensureLoaderScript(): Promise<void> {
     script.src = `${LOCAL_VS_ROOT}/loader.js`
     script.async = true
     script.onload = () => resolve()
-    script.onerror = () => reject(new Error("Failed to load Monaco AMD loader"))
+    script.onerror = () => { script.remove(); reject(new Error("Failed to load Monaco AMD loader")) }
     document.head.appendChild(script)
   })
 }
@@ -160,27 +130,10 @@ export async function loadMonaco(): Promise<MonacoApi> {
     configureWorkers()
     ensureEditorCss()
 
-    const online = await canReachCdn()
     const requireConfig = getRequireConfig()
 
     const paths: Record<string, string> = {
       vs: LOCAL_VS_ROOT,
-    }
-
-    if (online) {
-      paths["vs/basic-languages"] = `${CDN_VS_ROOT}/basic-languages`
-      paths["vs/language"] = `${CDN_VS_ROOT}/language`
-
-      // Baseline languages should remain available offline too.
-      paths["vs/basic-languages/python"] = `${LOCAL_VS_ROOT}/basic-languages/python`
-      paths["vs/basic-languages/markdown"] = `${LOCAL_VS_ROOT}/basic-languages/markdown`
-      paths["vs/basic-languages/cpp"] = `${LOCAL_VS_ROOT}/basic-languages/cpp`
-      paths["vs/basic-languages/kotlin"] = `${LOCAL_VS_ROOT}/basic-languages/kotlin`
-
-      paths["vs/language/typescript"] = `${LOCAL_VS_ROOT}/language/typescript`
-      paths["vs/language/html"] = `${LOCAL_VS_ROOT}/language/html`
-      paths["vs/language/json"] = `${LOCAL_VS_ROOT}/language/json`
-      paths["vs/language/css"] = `${LOCAL_VS_ROOT}/language/css`
     }
 
     requireConfig({
@@ -191,17 +144,11 @@ export async function loadMonaco(): Promise<MonacoApi> {
     // Load editor core.
     const [monaco] = await requireAsync(["vs/editor/editor.main"])
 
-    // Load language metadata so we can infer language IDs from paths.
-    // (This is small and should remain local for offline support.)
-    // Note: In Monaco 0.52.x, `vs/basic-languages/monaco.contribution` is bundled
-    // into `vs/editor/editor.main` already. Older builds had additional
-    // `vs/basic-languages/_.contribution` metadata, but that module isn't present
-    // in the current AMD bundle; attempting to load it can trigger a hard
-    // `Unexpected token '<'` if the server falls back to `index.html`.
-    await requireAsync(["vs/basic-languages/monaco.contribution"]).catch(() => [])
-
+    // Language metadata is already part of editor.main in our pinned Monaco.
+    // No extra module round trip is needed before displaying plain text.
     return (globalThis as any).monaco ?? monaco
   })()
 
-  return monacoPromise
+  try { return await monacoPromise }
+  catch (error) { monacoPromise = null; throw error }
 }

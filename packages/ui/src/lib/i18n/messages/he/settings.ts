@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "מתקין את OpenCode…",
+  "settings.opencode.setup.elapsed": "זמן שחלף: {elapsed}",
+  "settings.opencode.setup.keepOpen": "ההורדה וההתקנה עשויות להימשך מספר דקות. יש להשאיר את CodeNomad פתוח עד לסיום ההגדרה.",
   "settings.opencode.setup.installation_busy": "התקנה אחרת מחזיקה בנעילת ההתקנה של OpenCode. יש לנסות שוב לאחר סיומה. אם היא נקטעה, מיקום הנעילה מופיע ביומן השרת.",
   "settings.opencode.setup.installation_in_use": "קובץ ההפעלה של OpenCode נמצא בשימוש או אינו ניתן לכתיבה. העדכון נדחה לפני שינוי ההתקנה. יש לנסות שוב כשהקובץ זמין.",
   "settings.opencode.setup.source.path": "קובץ ההפעלה נמצא ב-PATH של השרת.",
@@ -638,9 +641,11 @@ export const settingsMessages = {
   "settings.info.version.server": "גרסת שרת",
   "settings.info.version.ui": "גרסת ממשק",
   "settings.info.version.uiSource": "מקור הממשק",
-  "settings.info.runtime.type": "סביבת ריצה",
-  "settings.info.runtime.platform": "פלטפורמה",
-  "settings.info.runtime.os": "מערכת הפעלה",
+  "settings.info.runtime.type": "סביבת הריצה של הלקוח",
+  "settings.info.runtime.platform": "פלטפורמת הלקוח",
+  "settings.info.runtime.os": "מערכת ההפעלה של הלקוח",
+  "settings.info.server.os": "מערכת ההפעלה של השרת",
+  "settings.info.server.arch": "ארכיטקטורת השרת",
   "settings.info.server.url": "כתובת השרת",
   "settings.info.server.root": "שורש סביבת העבודה",
   "settings.info.runtime.windowContext": "הקשר החלון",
@@ -668,4 +673,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "העתק ללוח",
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.copied": "מידע האבחון הועתק ללוח.",
+  "providerUsage.nativeCredentialApiUnavailable": "נתוני השימוש דורשים OpenCode {version} או חדש יותר. יש לעדכן את OpenCode ואז להפעיל מחדש את השירות דרך ההגדרות.",
 } as const

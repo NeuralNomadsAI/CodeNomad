@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "Ir a una carpeta",
   "directoryBrowser.goToParent": "Carpeta superior",
   "directoryBrowser.goToHome": "Inicio",
+  "directoryBrowser.goToRoot": "Raíz del espacio de trabajo",
   "directoryBrowser.goToInitial": "Volver a {name}",
   "directoryBrowser.selectCurrent": "Seleccionar actual",
   "directoryBrowser.newFolder": "Nueva carpeta",
