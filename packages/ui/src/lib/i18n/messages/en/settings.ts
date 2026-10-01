@@ -187,6 +187,7 @@ export const settingsMessages = {
   "providerUsage.unsupported": "Usage is not available for this provider.",
   "providerUsage.notConfigured": "No compatible subscription credential was found.",
   "providerUsage.unavailable": "Usage is temporarily unavailable.",
+  "providerUsage.nativeCredentialApiUnavailable": "Usage requires OpenCode {version} or newer. Update OpenCode, then restart its service from Settings.",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent}% used",
   "providerUsage.resets": "Resets {time}",

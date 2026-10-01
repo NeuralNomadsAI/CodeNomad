@@ -671,4 +671,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Скопировать в буфер обмена",
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.copied": "Диагностическая информация скопирована в буфер обмена.",
+  "providerUsage.nativeCredentialApiUnavailable": "Для отображения использования нужен OpenCode {version} или новее. Обновите OpenCode, затем перезапустите его службу в настройках.",
 } as const

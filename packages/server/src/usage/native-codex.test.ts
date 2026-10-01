@@ -142,6 +142,22 @@ test("warm snapshots and pending quotas cannot cross selected accounts or native
   } finally { release?.(); globalThis.fetch = previousFetch; await f.close() }
 })
 
+test("a missing native credential API exposes only the feature-local upgrade reason", async () => {
+  const f = await fixture()
+  try {
+    const usage = createNativeCodexUsage()
+    for (const status of [404, 401, 403, 500]) {
+      f.state.status = status
+      const response = await usage(f.connection, scope, AbortSignal.timeout(2000))
+      assert.equal(response?.ok, false)
+      assert.deepEqual(response?.windows, {})
+      assert.equal(response?.unavailableReason, status === 404 ? "native-credential-api-unavailable" : undefined)
+      assert.equal(JSON.stringify(response).includes("secret"), false)
+      assert.equal(JSON.stringify(response).includes("Private"), false)
+    }
+  } finally { await f.close() }
+})
+
 test("quota failures are bounded and sanitized without credential refresh or fallback", async () => {
   const f = await fixture()
   const previousFetch = globalThis.fetch

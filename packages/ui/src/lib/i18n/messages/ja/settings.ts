@@ -671,4 +671,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "クリップボードにコピー",
   "settings.info.diagnostics.download": ".txt をダウンロード",
   "settings.info.diagnostics.copied": "診断情報をクリップボードにコピーしました。",
+  "providerUsage.nativeCredentialApiUnavailable": "使用状況の表示には OpenCode {version} 以降が必要です。OpenCode を更新し、設定からサービスを再起動してください。",
 } as const

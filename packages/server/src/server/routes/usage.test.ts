@@ -89,6 +89,7 @@ test("older native credential endpoint is feature-local unavailability, not a ho
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().supported, true)
     assert.equal(response.json().ok, false)
+    assert.equal(response.json().unavailableReason, "native-credential-api-unavailable")
     assert.deepEqual(response.json().windows, {})
   } finally { globalThis.fetch = previousFetch; await app.close() }
 })

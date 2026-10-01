@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { ClientError } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { ProviderUsageResponse } from "../api-types"
 import type { ProviderUsage } from "./types"
@@ -23,10 +24,12 @@ export function createNativeCodexUsage() {
   const pending = new WeakMap<ServiceConnection, Map<string, Promise<ProviderUsage>>>()
 
   return async (connection: ServiceConnection, scope: UsageScope, signal: AbortSignal): Promise<ProviderUsageResponse | null> => {
+    let unavailableReason: ProviderUsageResponse["unavailableReason"]
     const response = (snapshot?: Snapshot): ProviderUsageResponse => ({
       requestedProviderId: scope.providerId, providerId: "codex", providerName: "Codex", modelId: scope.modelId,
       supported: true, configured: true, ok: Boolean(snapshot), windows: snapshot?.usage.windows ?? {},
       fetchedAt: snapshot?.fetchedAt ?? Date.now(),
+      ...(unavailableReason ? { unavailableReason } : {}),
     })
     const location = { directory: scope.directory }
     const key = JSON.stringify([scope.instanceId, scope.sessionId, scope.directory, scope.providerId])
@@ -49,7 +52,14 @@ export function createNativeCodexUsage() {
       }
       // Available in 2.0.20+. A missing endpoint is feature-local unavailability,
       // not a reason to raise the global minimum, read SQLite or try auth.json.
-      const entries = await connection.client.credential.list({ signal })
+      const entries = await connection.client.credential.list({ signal }).catch(error => {
+        if (error instanceof ClientError && error.reason === "UnexpectedStatus"
+          && "cause" in error && typeof error.cause === "object" && error.cause !== null
+          && "status" in error.cause && error.cause.status === 404) {
+          unavailableReason = "native-credential-api-unavailable"
+        }
+        throw error
+      })
       const entry = entries.find(entry => entry.id === selected.id && entry.integrationID === integrationID && entry.active)
       const value = entry?.value
       if (value?.type !== "oauth" || !["chatgpt-browser", "chatgpt-headless"].includes(value.methodID)

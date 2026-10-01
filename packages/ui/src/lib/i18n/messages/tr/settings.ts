@@ -658,4 +658,5 @@ export const settingsMessages = {
   "settings.providers.command.waitingTitle": "Komut kimlik doğrulaması bekleniyor",
   "settings.providers.command.description": "OpenCode bu sağlayıcının yerel kimlik doğrulama komutunu çalıştıracak.",
   "settings.providers.prompt.customValuesPlaceholder": "Ek değerler, virgülle ayırarak",
+  "providerUsage.nativeCredentialApiUnavailable": "Kullanım bilgisi için OpenCode {version} veya daha yeni bir sürüm gerekir. OpenCode'u güncelleyin, ardından Ayarlar'dan hizmetini yeniden başlatın.",
 } as const

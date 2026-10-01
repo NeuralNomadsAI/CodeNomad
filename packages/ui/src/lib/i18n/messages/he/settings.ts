@@ -671,4 +671,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "העתק ללוח",
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.copied": "מידע האבחון הועתק ללוח.",
+  "providerUsage.nativeCredentialApiUnavailable": "נתוני השימוש דורשים OpenCode {version} או חדש יותר. יש לעדכן את OpenCode ואז להפעיל מחדש את השירות דרך ההגדרות.",
 } as const
