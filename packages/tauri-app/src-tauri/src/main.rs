@@ -17,6 +17,7 @@ mod native_service_start;
 mod preferences_window;
 mod shutdown;
 mod view_menu;
+mod window_constraints;
 mod windows_update;
 mod workspace_open;
 
@@ -989,6 +990,7 @@ fn open_remote_window_locked(
     .data_directory(data_directory)
     .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
+    .zoom_hotkeys_enabled(true)
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
@@ -1009,6 +1011,9 @@ fn open_remote_window_locked(
         }
     };
 
+    window_constraints::apply(&window.as_ref().window(), 1.0);
+    #[cfg(windows)]
+    window_constraints::register_remote_zoom(&window, &app);
     #[cfg(windows)]
     if let Err(error) = shutdown::schedule_windows_session_end_handler(&window) {
         cleanup_failed_remote_window(
@@ -1418,6 +1423,7 @@ fn set_target_zoom(app: &AppHandle, webview: &tauri::Webview, zoom: f64) {
     }
     let zoom = zoom.clamp(0.25, 5.0);
     if webview.set_zoom(zoom).is_ok() {
+        window_constraints::apply(&webview.window(), zoom);
         if let Ok(mut levels) = app.state::<AppState>().remote_zoom_levels.lock() {
             levels.insert(webview.label().to_string(), zoom);
         }

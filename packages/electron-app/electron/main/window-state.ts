@@ -23,6 +23,8 @@ const MIN_WINDOW_HEIGHT = 600
 const MIN_ZOOM_FACTOR = 0.25
 const MAX_ZOOM_FACTOR = 5
 const SAVE_DEBOUNCE_MS = 250
+type WindowSize = { width: number; height: number }
+const windowMinimums = new WeakMap<BrowserWindow, { workArea?: () => WindowSize }>()
 
 export interface DisplayWorkArea {
   x: number
@@ -72,6 +74,44 @@ export function normalizeZoomFactor(value: unknown): number {
     return 1
   }
   return clamp(value, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR)
+}
+
+export function zoomedWindowMinimum(zoomFactor: number) {
+  const zoom = normalizeZoomFactor(zoomFactor)
+  return { width: Math.ceil(MIN_WINDOW_WIDTH * zoom), height: Math.ceil(MIN_WINDOW_HEIGHT * zoom) }
+}
+
+function updateWindowMinimum(window: BrowserWindow): void {
+  const constraints = windowMinimums.get(window)
+  if (!constraints || window.isDestroyed() || window.webContents.isDestroyed()) return
+  const minimum = zoomedWindowMinimum(window.webContents.getZoomFactor())
+  const [width, height] = window.getContentSize()
+  const outer = window.getBounds()
+  const chromeWidth = Math.max(0, outer.width - width)
+  const chromeHeight = Math.max(0, outer.height - height)
+  const area = constraints.workArea?.()
+  if (area) {
+    minimum.width = Math.min(minimum.width, Math.max(1, area.width - chromeWidth))
+    minimum.height = Math.min(minimum.height, Math.max(1, area.height - chromeHeight))
+  }
+  // Electron constrains outer bounds, while our baseline describes CSS content.
+  window.setMinimumSize(minimum.width + chromeWidth, minimum.height + chromeHeight)
+  if (!window.isMaximized() && !window.isFullScreen() && (width < minimum.width || height < minimum.height)) {
+    window.setContentSize(Math.max(width, minimum.width), Math.max(height, minimum.height))
+  }
+}
+
+export function installWindowSizeConstraints(window: BrowserWindow, workArea?: () => WindowSize): void {
+  windowMinimums.set(window, { workArea })
+  updateWindowMinimum(window)
+  window.webContents.on("did-finish-load", () => updateWindowMinimum(window))
+  window.on("move", () => updateWindowMinimum(window))
+}
+
+export function setWindowZoomLevel(window: BrowserWindow, level: number): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.setZoomFactor(normalizeZoomFactor(1.2 ** level))
+  updateWindowMinimum(window)
 }
 
 export function normalizeNativeWindowState(value: unknown): NativeWindowState | undefined {
@@ -155,6 +195,7 @@ export function restoreWindowState(window: BrowserWindow, state: NativeWindowSta
     window.setContentSize(bounds.width, bounds.height)
   }
   window.webContents.setZoomFactor(normalizeZoomFactor(state.zoomFactor))
+  updateWindowMinimum(window)
   if (state.maximized) {
     window.maximize()
   }
@@ -220,6 +261,7 @@ export class WindowStateTracker {
     window.webContents.on("did-finish-load", () => {
       if (!window.webContents.isDestroyed()) {
         window.webContents.setZoomFactor(this.desiredZoomFactor)
+        updateWindowMinimum(window)
       }
     })
     window.on("close", () => { void this.saveNow() })
@@ -236,7 +278,7 @@ export class WindowStateTracker {
 
   setZoomLevel(level: number): void {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return
-    this.window.webContents.setZoomLevel(level)
+    setWindowZoomLevel(this.window, level)
     this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
     this.scheduleSave()
   }

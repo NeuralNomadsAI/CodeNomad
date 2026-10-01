@@ -1,11 +1,54 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import test from "node:test"
-import { clampWindowBounds, installWindowZoomInput, normalizeNativeWindowState, normalizeZoomFactor, restoreWindowState, WindowStateTracker } from "./window-state"
+import { clampWindowBounds, installWindowSizeConstraints, installWindowZoomInput, normalizeNativeWindowState, normalizeZoomFactor, restoreWindowState, setWindowZoomLevel, zoomedWindowMinimum, WindowStateTracker } from "./window-state"
 import type { BrowserWindow } from "electron"
 import type { ClientStateManager } from "./client-state"
 
 const primaryDisplay = { x: 0, y: 0, width: 1920, height: 1080 }
+
+test("content minimum scales with zoom and restore does not impose the 1:1 baseline", () => {
+  for (const [zoom, width, height] of [[0.5, 195, 300], [1, 390, 600], [1.25, 488, 750], [1.5, 585, 900]]) {
+    const minimum = zoomedWindowMinimum(zoom)
+    assert.deepEqual(minimum, { width, height })
+    assert.deepEqual(clampWindowBounds({ x: 20, y: 30, width: 100, height: 100 },
+      [{ ...primaryDisplay, scaleFactor: 2 }], minimum), { x: 20, y: 30, width, height })
+  }
+})
+
+test("zoom constraints include native chrome, grow undersized content and stay per-window", () => {
+  let factor = 1, width = 390, height = 600
+  let minimum: number[] = [], destroyed = false
+  const contents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed,
+    getZoomFactor: () => factor,
+    setZoomFactor: (next: number) => { factor = next },
+  })
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed,
+    isMaximized: () => false, isFullScreen: () => false,
+    getContentSize: () => [width, height],
+    getBounds: () => ({ width: width + 16, height: height + 38 }),
+    setMinimumSize: (...size: number[]) => { minimum = size },
+    setContentSize: (w: number, h: number) => { width = w; height = h },
+    webContents: contents,
+  }) as unknown as BrowserWindow
+  installWindowSizeConstraints(window, () => ({ width: 1920, height: 1080 }))
+  assert.deepEqual(minimum, [406, 638])
+  setWindowZoomLevel(window, Math.log(1.25) / Math.log(1.2))
+  assert.deepEqual(minimum, [504, 788])
+  assert.deepEqual([width, height], [488, 750])
+  setWindowZoomLevel(window, Math.log(0.5) / Math.log(1.2))
+  assert.deepEqual(minimum, [211, 338])
+  assert.deepEqual([width, height], [488, 750], "zooming out must not shrink the user's window")
+  factor = 1.5
+  contents.emit("did-finish-load")
+  assert.deepEqual(minimum, [601, 938])
+  setWindowZoomLevel(window, 100)
+  assert.deepEqual(minimum, [1920, 1080], "an extreme zoom must not force bounds beyond the monitor")
+  destroyed = true
+  contents.emit("did-finish-load")
+})
 
 test("move/resize bursts debounce and final flush preserves pre-maximize bounds", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] })

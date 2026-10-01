@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, devices, type Browser } from "playwright"
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { createRequire } from "node:module"
+import { build } from "esbuild"
+import { chromium, devices, _electron, type ElectronApplication, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
@@ -21,6 +26,62 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
 after(async () => { await browser?.close(); await server?.close() })
+
+test("native Electron zoom preserves a 390 CSS px conversation in local and framed remote windows", { timeout: 60000 }, async () => {
+  const sandbox = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "codenomad-window-zoom-"))
+  let app: ElectronApplication | undefined
+  try {
+    const module = join(sandbox, "zoom.cjs")
+    const root = fileURLToPath(new URL("../../../electron-app/electron/main/", import.meta.url)).replaceAll("\\", "/")
+    await build({ stdin: { contents: `export * from "${root}window-state.ts"; export * from "${root}menu.ts";`, resolveDir: root },
+      outfile: module, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
+    const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(sandbox, "profile"), CODENOMAD_TEST_ZOOM_MODULE: module, CODENOMAD_TEST_ZOOM_URL: url }
+    delete env.ELECTRON_RUN_AS_NODE
+    app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron"),
+      args: [fileURLToPath(new URL("fixtures/window-zoom-electron.cjs", import.meta.url))], env })
+    const page = await app.firstWindow()
+    page.on("pageerror", error => console.error("[zoom fixture]", error))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    for (const zoom of [0.8, 1, 1.25, 1.5]) {
+      for (const index of [0, 1]) {
+        await app.evaluate((_electron, { index, zoom }) => { const f = (globalThis as any).zoomFixture; f.zoom(index, zoom); f.fit(index) }, { index, zoom })
+        const size = await app.evaluate((_electron, index) => (globalThis as any).zoomFixture.snapshot(index), index)
+        assert.equal(size.minimum[0] - (size.outer[0] - size.content[0]), Math.ceil(390 * zoom), `content width at ${zoom} zoom, frame=${index}`)
+        assert.ok(size.content[0] / size.zoom >= 390 && size.content[0] / size.zoom < 392)
+      }
+      await page.waitForFunction(() => window.innerWidth >= 390 && window.innerWidth < 392)
+      await page.locator(".session-header-actions-menu").waitFor({ state: "visible" })
+      assert.equal(await page.locator(".session-header-expanded-actions").isVisible(), false)
+      assert.equal(await page.locator(".message-timeline-sidebar").isVisible(), false)
+      if (process.env.CODENOMAD_HEADER_CAPTURE_DIR) {
+        await mkdir(process.env.CODENOMAD_HEADER_CAPTURE_DIR, { recursive: true })
+        const capture = await app.evaluate(() => (globalThis as any).zoomFixture.capture())
+        await writeFile(join(process.env.CODENOMAD_HEADER_CAPTURE_DIR, `native-zoom-${zoom}.png`), Buffer.from(capture, "base64"))
+      }
+    }
+    await app.evaluate(() => (globalThis as any).zoomFixture.menu(0, "Actual Size"))
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom, 1)
+    await app.evaluate(() => (globalThis as any).zoomFixture.menu(0, "Zoom In"))
+    const menuZoom = (await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom
+    assert.ok(menuZoom > 1)
+    await page.bringToFront()
+    await app.evaluate(() => (globalThis as any).zoomFixture.input(0, "-"))
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom, 1)
+    await app.evaluate(() => (globalThis as any).zoomFixture.zoom(0, 0.8))
+    await app.evaluate(() => (globalThis as any).zoomFixture.fit(0))
+    const saved = await app.evaluate(() => (globalThis as any).zoomFixture.save())
+    assert.equal(saved.bounds.width, 312)
+    await app.evaluate(() => (globalThis as any).zoomFixture.reload())
+    await page.waitForFunction(() => Boolean((window as any).fixture) && window.innerWidth >= 390 && window.innerWidth < 392)
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).minimum[0], 312)
+  } finally {
+    await app?.close()
+    await rm(sandbox, { recursive: true, force: true })
+  }
+})
 
 for (const touch of [false, true]) for (const [width, height] of [[320, 740], [360, 740], [390, 844], [430, 932], [932, 430]]) {
   test(`composer controls fit ${width}px ${touch ? "touch" : "mouse"} with a preserved draft`, async () => {
@@ -143,6 +204,56 @@ test("short landscape composer shrinks, scrolls long drafts and shares pointer/k
     await page.mouse.up()
     assert.equal(Number(await resize.getAttribute("aria-valuenow")), minimum)
     assert.equal(await input.inputValue(), draft)
+  } finally { await page.close() }
+})
+
+test("header actions collapse below the timeline breakpoint even when the full header fits", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.addStyleTag({ content: ".session-center-column { flex: 0 0 var(--fixture-width, 1000px) !important; min-width: 0 !important; }" })
+    const center = page.locator(".session-center-column")
+    await page.locator(".session-header-expanded-actions").waitFor({ state: "visible" })
+    const search = page.locator('button[aria-controls^="session-search-"]')
+    await search.focus()
+    await center.evaluate(el => (el as HTMLElement).style.setProperty("--fixture-width", "419px"))
+    await page.waitForFunction(() => document.activeElement?.classList.contains("session-header-actions-menu"))
+    for (const width of [390, 419, 390]) {
+      await center.evaluate((el, width) => (el as HTMLElement).style.setProperty("--fixture-width", `${width}px`), width)
+      await page.waitForFunction(() => document.querySelector(".session-center-column")?.getAttribute("data-session-header-actions-forced") === "true")
+      // Simulate the least dense header: width alone still forces the menu.
+      await center.evaluate(el => el.setAttribute("data-session-header-density", "0"))
+      assert.equal(await page.locator(".session-header-expanded-actions").isVisible(), false)
+      const menu = page.locator(".session-header-actions-menu")
+      await menu.click()
+      await page.getByRole("menuitem", { name: "Message content", exact: true }).click()
+      await page.locator(".transcript-filters").waitFor()
+      await page.keyboard.press("Escape")
+      await page.waitForFunction(() => document.activeElement?.classList.contains("session-header-actions-menu"))
+    }
+    await center.evaluate(el => (el as HTMLElement).style.setProperty("--fixture-width", "420px"))
+    await page.waitForFunction(() => document.querySelector(".session-center-column")?.getAttribute("data-session-header-actions-forced") === "false")
+    await center.evaluate(el => (el as HTMLElement).style.setProperty("--fixture-width", "1000px"))
+    await page.locator(".session-header-expanded-actions").waitFor({ state: "visible" })
+    assert.equal(await page.locator(".session-header-actions-menu").isVisible(), false)
+  } finally { await page.close() }
+})
+
+test("docked drawers can reduce the conversation to 390 CSS pixels before becoming overlays", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      if (!document.querySelector(".session-sidebar-container")) f.viewAction("view-left-panel")
+      if (!document.querySelector(".session-right-panel")) f.viewAction("view-right-panel")
+    })
+    await page.setViewportSize({ width: 810, height: 1000 })
+    await page.waitForFunction(() => Math.abs(document.querySelector(".session-center-column")!.getBoundingClientRect().width - 390) <= 1)
   } finally { await page.close() }
 })
 

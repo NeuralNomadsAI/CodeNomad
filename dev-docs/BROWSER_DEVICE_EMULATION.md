@@ -29,9 +29,19 @@ markers use 24 px height. Below 460 CSS px of conversation width, the worktree
 selector becomes a 32 px arrow-only cell while retaining its accessible label.
 The timeline is hidden below 420 CSS px of conversation
 width on every platform, independently of header density, status controls or
-viewport height. The saved visibility preference is preserved. Header filters join the other actions in the overflow
-menu when space runs out. Main local and remote desktop windows can shrink to
-390 logical pixels and restore at that width. Tests cover 360, 390 and 430 px widths
+viewport height. The saved visibility preference is preserved. Conversation-header
+actions, including filters, are forced into the overflow menu at the same 420 px
+breakpoint, or earlier if their measured layout needs it. Docked side panels reserve
+390 CSS px for the conversation before becoming overlays.
+
+Main local and remote desktop windows use a 390 × 600 CSS px content minimum.
+Native logical minimums scale with application zoom (312 px wide at 80%, 390 at
+100%, 488 at 125%, 585 at 150%), without multiplying monitor DPI twice. Restoring
+a local window uses its saved zoom, including widths below 390 native logical px.
+Zooming in grows an undersized normal window; zooming out relaxes constraints but
+does not shrink a larger window. Extreme zoom minimums are capped to the monitor's
+work area. Preferences and browser preview guests keep their separate dimensions.
+Tests cover 360, 390 and 430 px widths
 plus 320 px, landscape, mouse/touch media, draft preservation, native profile/reset
 behavior and the real viewport menu's native/fallback boundaries.
 

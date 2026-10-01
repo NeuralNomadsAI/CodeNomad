@@ -272,6 +272,11 @@ fn register_native_zoom_handler(
             zoom_levels.insert(window_id.clone(), normalized);
             drop(zoom_levels);
 
+            if let Some(window) = callback_app.get_window(&window_label) {
+                let target = window.clone();
+                let _ = window.run_on_main_thread(move || crate::window_constraints::apply(&target, normalized));
+            }
+
             if capture_window_in_memory(&callback_app, &window_label, &window_id, persisted) {
                 schedule_flush(&callback_app);
             }
@@ -303,6 +308,7 @@ pub fn setup_local_window(
         .and_then(|zoom| zoom.get(window_id).copied())
         .unwrap_or(DEFAULT_ZOOM_LEVEL);
     let _ = window.set_zoom(initial_zoom);
+    crate::window_constraints::apply(&window.as_ref().window(), initial_zoom);
     #[cfg(windows)]
     register_native_zoom_handler(window, app, window_id.to_string(), persisted);
     if !client_state.is_primary() || !persisted {
@@ -320,6 +326,7 @@ pub fn setup_local_window(
         }
     };
     if let Some(mut saved_window) = saved_window {
+        crate::window_constraints::apply(&window.as_ref().window(), saved_window.zoom_factor);
         let displays = window
             .available_monitors()
             .unwrap_or_default()
@@ -338,7 +345,7 @@ pub fn setup_local_window(
         let minimum = if window_id == crate::preferences_window::LABEL {
             (760, 560)
         } else {
-            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+            crate::window_constraints::zoomed_minimum(saved_window.zoom_factor)
         };
         if let Some(bounds) = clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum) {
             let _ = window.set_size(PhysicalSize::new(
@@ -416,6 +423,7 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
     if webview.set_zoom(normalized).is_err() {
         return;
     }
+    crate::window_constraints::apply(&webview.window(), normalized);
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
     };
