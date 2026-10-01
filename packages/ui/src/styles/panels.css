@@ -10,3 +10,6 @@
 @import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
 @import "./panels/control-hover.css";
+@import "./panels/git-history.css";
+@import "./panels/workspace-tree.css";
+@import "./panels/file-row-actions.css";

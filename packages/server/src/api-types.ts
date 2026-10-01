@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { OpenCodeEvent } from "@opencode/client"
+export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -188,6 +189,7 @@ export interface WorktreeGitDiffResponse {
   before: string
   after: string
   isBinary?: boolean
+  image?: import("./git-history-types").GitImageDiff
 }
 
 export interface WorktreeGitDiffRequest {
