@@ -72,7 +72,7 @@ class ServerEvents {
           }
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
-          this.openHandlers.forEach((handler) => handler())
+          this.notify(this.openHandlers, undefined, "open")
         },
         onPing: (payload) => {
           if (generation !== this.connectGeneration) {
@@ -149,8 +149,20 @@ class ServerEvents {
   }
 
   private dispatch(event: WorkspaceEventPayload) {
-    this.handlers.get("*")?.forEach((handler) => handler(event))
-    this.handlers.get(event.type)?.forEach((handler) => handler(event))
+    this.notify(this.handlers.get("*"), event, event.type)
+    this.notify(this.handlers.get(event.type), event, event.type)
+  }
+
+  private notify<T>(handlers: Set<(value: T) => void> | undefined, value: T, kind: string): void {
+    handlers?.forEach((handler) => {
+      try {
+        handler(value)
+      } catch (error) {
+        // A feature failure must not discard another feature's native event or
+        // interrupt the connection lifecycle. Do not replay failed handlers.
+        log.error("Backend event subscriber failed", { kind, error })
+      }
+    })
   }
 
   private dispatchBatch(events: WorkspaceEventPayload[]) {
@@ -167,7 +179,7 @@ class ServerEvents {
   }
 
   private emitTransportStatus(status: WorkspaceEventTransportStatus) {
-    this.statusHandlers.forEach((handler) => handler(status))
+    this.notify(this.statusHandlers, status, "transport-status")
   }
 
   on(type: WorkspaceEventType | "*", handler: (event: WorkspaceEventPayload) => void): () => void {
