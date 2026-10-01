@@ -662,6 +662,8 @@ export interface ServerMeta {
   /** Reachable addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
+  /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host. */
+  system?: { platform: string; arch: string }
   ui?: UiMeta
   support?: SupportMeta
   /** Optional update info (dev channel only). */

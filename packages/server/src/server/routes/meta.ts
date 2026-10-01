@@ -17,6 +17,7 @@ function buildMetaResponse(meta: ServerMeta): ServerMeta {
 
   return {
     ...meta,
+    system: { platform: process.platform, arch: process.arch },
     localPort,
     remotePort: remote?.port,
     listeningMode: isWildcardHost(meta.host) || !isLoopbackHost(meta.host) ? "all" : "local",
