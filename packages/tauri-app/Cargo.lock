@@ -496,6 +496,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-macos-window-fixture"
+version = "0.1.0"
+dependencies = [
+ "tao",
+]
+
+[[package]]
 name = "codenomad-tauri"
 version = "0.20.0"
 dependencies = [
