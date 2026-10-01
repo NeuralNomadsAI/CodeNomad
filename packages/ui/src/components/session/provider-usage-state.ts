@@ -23,7 +23,34 @@ export function createProviderUsageState(
 ) {
   let current: ProviderUsageSource | null = null
   let generation = 0
-  const invalidate = () => { generation++; publish(undefined) }
+  let running: { generation: number; again: boolean; promise: Promise<void> } | null = null
+  const invalidate = () => { generation++; running = null; publish(undefined) }
+  const refresh = (): Promise<void> => {
+    const source = current
+    if (!source) return Promise.resolve()
+    if (running) {
+      running.again = true
+      return running.promise
+    }
+    const request = { generation, again: false, promise: Promise.resolve() }
+    running = request
+    request.promise = (async () => {
+      try {
+        do {
+          request.again = false
+          try {
+            const value = await fetchUsage(source)
+            if (generation === request.generation) publish(value)
+          } catch {
+            if (generation === request.generation) publish(null)
+          }
+        } while (request.again && generation === request.generation)
+      } finally {
+        if (running === request) running = null
+      }
+    })()
+    return request.promise
+  }
   return {
     select(source: ProviderUsageSource | null) {
       if (source && current && providerUsageKey(source) === providerUsageKey(current)) return
@@ -31,17 +58,7 @@ export function createProviderUsageState(
       invalidate()
     },
     invalidate,
-    async refresh() {
-      const source = current
-      if (!source) return
-      const request = ++generation
-      try {
-        const value = await fetchUsage(source)
-        if (generation === request) publish(value)
-      } catch {
-        if (generation === request) publish(null)
-      }
-    },
-    dispose() { current = null; generation++ },
+    refresh,
+    dispose() { current = null; generation++; running = null },
   }
 }
