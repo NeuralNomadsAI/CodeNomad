@@ -273,8 +273,7 @@ fn register_native_zoom_handler(
             drop(zoom_levels);
 
             if let Some(window) = callback_app.get_window(&window_label) {
-                let target = window.clone();
-                let _ = window.run_on_main_thread(move || crate::window_constraints::apply(&target, normalized));
+                crate::window_constraints::apply(&window, normalized);
             }
 
             if capture_window_in_memory(&callback_app, &window_label, &window_id, persisted) {
@@ -308,10 +307,10 @@ pub fn setup_local_window(
         .and_then(|zoom| zoom.get(window_id).copied())
         .unwrap_or(DEFAULT_ZOOM_LEVEL);
     let _ = window.set_zoom(initial_zoom);
-    crate::window_constraints::apply(&window.as_ref().window(), initial_zoom);
     #[cfg(windows)]
     register_native_zoom_handler(window, app, window_id.to_string(), persisted);
     if !client_state.is_primary() || !persisted {
+        crate::window_constraints::register(&window.as_ref().window(), initial_zoom);
         let _ = window.show();
         return Ok(());
     }
@@ -322,11 +321,13 @@ pub fn setup_local_window(
             state.preferences_window.clone()
         } else {
             let record = state.record(window_id)?;
-            record.restore_enabled.then(|| record.window.clone()).flatten()
+            record
+                .restore_enabled
+                .then(|| record.window.clone())
+                .flatten()
         }
     };
     if let Some(mut saved_window) = saved_window {
-        crate::window_constraints::apply(&window.as_ref().window(), saved_window.zoom_factor);
         let displays = window
             .available_monitors()
             .unwrap_or_default()
@@ -347,13 +348,24 @@ pub fn setup_local_window(
         } else {
             crate::window_constraints::zoomed_minimum(saved_window.zoom_factor)
         };
-        if let Some(bounds) = clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum) {
+        if let Some(bounds) =
+            clamp_window_bounds_for_restore(&saved_window.bounds, &displays, minimum)
+        {
+            // The builder's unzoomed minimum must not block a smaller saved
+            // zoom. Place on the restored monitor before sizing/recomputing its
+            // work-area cap; the deferred constraint worker runs after setup.
+            if window_id != crate::preferences_window::LABEL
+                && matches!(window.is_maximized(), Ok(false))
+                && matches!(window.is_fullscreen(), Ok(false))
+            {
+                let _ = window.set_min_size(None::<tauri::LogicalSize<f64>>);
+            }
+            let _ =
+                window.set_position(PhysicalPosition::new(bounds.physical.x, bounds.physical.y));
             let _ = window.set_size(PhysicalSize::new(
                 bounds.physical.width as u32,
                 bounds.physical.height as u32,
             ));
-            let _ =
-                window.set_position(PhysicalPosition::new(bounds.physical.x, bounds.physical.y));
             saved_window.bounds = bounds.logical;
         } else if let Ok(position) = window.outer_position() {
             if let Ok(size) = window.inner_size() {
@@ -392,6 +404,13 @@ pub fn setup_local_window(
         }
     }
 
+    // Start constraint tracking only after restore placement, zoom and window
+    // state have settled. Early COM callbacks update the zoom map but cannot
+    // resize the default monitor or replace the seeded normal geometry.
+    crate::window_constraints::register(
+        &window.as_ref().window(),
+        local_window_zoom(app, window.label()),
+    );
     if capture_window_in_memory(app, window.label(), window_id, persisted) {
         schedule_flush(app);
     }

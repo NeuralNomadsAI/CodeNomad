@@ -27,7 +27,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-test("native Electron zoom preserves a 390 CSS px conversation in local and framed remote windows", { timeout: 60000 }, async () => {
+test("native Electron zoom preserves CSS minimums across close/recreate, shared local siblings and isolated framed remote windows", { timeout: 90000 }, async () => {
   const sandbox = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "codenomad-window-zoom-"))
   let app: ElectronApplication | undefined
   try {
@@ -77,6 +77,50 @@ test("native Electron zoom preserves a 390 CSS px conversation in local and fram
     await app.evaluate(() => (globalThis as any).zoomFixture.reload())
     await page.waitForFunction(() => Boolean((window as any).fixture) && window.innerWidth >= 390 && window.innerWidth < 392)
     assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).minimum[0], 312)
+    const recreated = await app.evaluate(() => (globalThis as any).zoomFixture.recreate())
+    assert.equal(recreated.beforeLoad.content[0], 312, "startup constraints must use saved 80% zoom before navigation")
+    assert.equal(recreated.beforeLoad.minimum[0], 312)
+    assert.equal(recreated.afterLoad.content[0], 312, "close/recreate must not expand saved content to the 100% baseline")
+    assert.equal(recreated.afterLoad.zoom, 0.8)
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.save())).zoomFactor, 0.8)
+
+    assert.deepEqual(await app.evaluate(() => (globalThis as any).zoomFixture.sibling()), { sharedSession: true, sameOrigin: true })
+    assert.equal(await app.evaluate(() => (globalThis as any).zoomFixture.sharedAuth()), "shared-auth")
+    // Confirm Chromium's real host-zoom propagation, not a mock of it.
+    await app.evaluate(() => (globalThis as any).zoomFixture.rawZoom(0, 1.5))
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(2))).zoom, 1.5)
+    for (const action of ["explicit", "menu", "keyboard", "wheel-request"] as const) {
+      await app.evaluate(() => {
+        const f = (globalThis as any).zoomFixture
+        f.zoom(0, 0.8); f.fit(0); f.fit(2)
+      })
+      await app.evaluate(async (_electron, action) => {
+        const f = (globalThis as any).zoomFixture
+        if (action === "explicit") f.zoom(0, 1.25)
+        else if (action === "menu") f.menu(0, "Zoom In")
+        else if (action === "keyboard") await f.input(0, "=")
+        else f.wheelRequest(0, "in")
+      }, action)
+      const sizes = await app.evaluate(() => [0, 2].map(index => (globalThis as any).zoomFixture.snapshot(index)))
+      assert.equal(sizes[0].zoom, sizes[1].zoom, `${action} shares host zoom`)
+      for (const size of sizes) {
+        assert.equal(size.minimum[0] - (size.outer[0] - size.content[0]), Math.ceil(390 * size.zoom), `${action} reconciles both constraints`)
+        assert.ok(size.content[0] / size.zoom >= 390 && size.content[1] / size.zoom >= 600, `${action} grows undersized siblings`)
+      }
+      const peerSaved = await app.evaluate(() => (globalThis as any).zoomFixture.save(2))
+      assert.equal(peerSaved.zoomFactor, sizes[0].zoom, `${action} persists sibling zoom`)
+      await app.evaluate(() => (globalThis as any).zoomFixture.reload(2))
+      assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom, sizes[0].zoom, "sibling reload must not revert the initiator")
+      assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.save(2))).zoomFactor, sizes[0].zoom)
+      await app.evaluate(() => (globalThis as any).zoomFixture.reload(0))
+      assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(2))).zoom, sizes[0].zoom, "initiator reload keeps shared desired zoom")
+    }
+    const localZoom = (await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom
+    await app.evaluate(() => (globalThis as any).zoomFixture.reload(1))
+    await app.evaluate(() => (globalThis as any).zoomFixture.zoom(1, 1.5))
+    assert.equal((await app.evaluate(() => (globalThis as any).zoomFixture.snapshot(0))).zoom, localZoom, "same-origin remote partition remains independent")
+    const peerRecreated = await app.evaluate(() => (globalThis as any).zoomFixture.recreate(2))
+    assert.equal(peerRecreated.afterLoad.zoom, localZoom, "shared zoom survives closing/recreating a sibling")
   } finally {
     await app?.close()
     await rm(sandbox, { recursive: true, force: true })

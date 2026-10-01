@@ -50,6 +50,62 @@ test("zoom constraints include native chrome, grow undersized content and stay p
   contents.emit("did-finish-load")
 })
 
+test("initial saved zoom seeds constraints before Chromium exposes its renderer zoom", () => {
+  let factor = 1, width = 312, height = 480
+  let minimum: number[] = []
+  const contents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false, getURL: () => "", getZoomFactor: () => factor,
+    setZoomFactor: (next: number) => { factor = next },
+  })
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false, isMaximized: () => false, isFullScreen: () => false,
+    getPosition: () => [0, 0], setPosition: () => undefined,
+    getContentSize: () => [width, height], getBounds: () => ({ width, height }),
+    setMinimumSize: (...size: number[]) => { minimum = size },
+    setContentSize: (w: number, h: number) => { width = Math.max(w, minimum[0]); height = Math.max(h, minimum[1]) },
+    webContents: contents,
+  }) as unknown as BrowserWindow
+  const state = { bounds: { x: 0, y: 0, width, height }, zoomFactor: 0.8, maximized: false, fullscreen: false }
+  installWindowSizeConstraints(window, () => primaryDisplay, state.zoomFactor)
+  assert.deepEqual(minimum, [312, 480])
+  assert.deepEqual([width, height], [312, 480], "must not grow saved 80% bounds using transient 100% zoom")
+  restoreWindowState(window, state, state.bounds)
+  assert.equal(factor, 0.8)
+  assert.deepEqual([width, height], [312, 480])
+  window.emit("closed")
+})
+
+test("tracker preserves seeded and explicitly changed zoom through transient navigation resets", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let factor = 1
+  const contents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false, getURL: () => "", getZoomFactor: () => factor,
+    setZoomFactor: (next: number) => { factor = next },
+  })
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false, isMaximized: () => false, isFullScreen: () => false,
+    getPosition: () => [0, 0], getContentSize: () => [312, 480], webContents: contents,
+  }) as unknown as BrowserWindow
+  const saved: number[] = []
+  const manager = { activeWindowId: "saved", saveWindowState: async (state: { zoomFactor: number }) => { saved.push(state.zoomFactor); return true }, flush: async () => {} }
+  const tracker = new WindowStateTracker(window, manager, {
+    bounds: { x: 0, y: 0, width: 312, height: 480 }, zoomFactor: 0.8, maximized: false, fullscreen: false,
+  })
+  contents.emit("did-start-navigation", {}, "http://fixture.test", false, true)
+  await tracker.flush()
+  assert.equal(saved.at(-1), 0.8, "flush during initial navigation must not persist transient native 100%")
+  contents.emit("did-finish-load")
+  assert.equal(factor, 0.8)
+  tracker.setZoomLevel(Math.log(1.25) / Math.log(1.2))
+  contents.emit("did-start-navigation", {}, "http://fixture.test", false, true)
+  factor = 1
+  await tracker.flush()
+  assert.equal(saved.at(-1), 1.25, "navigation reset must not overwrite the authoritative desired zoom")
+  contents.emit("did-finish-load")
+  assert.equal(factor, 1.25)
+  window.emit("closed")
+})
+
 test("move/resize bursts debounce and final flush preserves pre-maximize bounds", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] })
   const events = new EventEmitter()
@@ -128,11 +184,12 @@ test("normalizes unsafe zoom factors", () => {
 test("restores shared outer position and content size", () => {
   const calls: unknown[] = []
   const window = {
+    isDestroyed: () => false,
     setPosition: (x: number, y: number) => calls.push(["position", x, y]),
     setContentSize: (width: number, height: number) => calls.push(["content", width, height]),
     maximize: () => undefined,
     setFullScreen: () => undefined,
-    webContents: { setZoomFactor: () => undefined },
+    webContents: { isDestroyed: () => false, setZoomFactor: () => undefined },
   } as unknown as BrowserWindow
   const bounds = { x: 10, y: 20, width: 1200, height: 800 }
   restoreWindowState(window, { bounds, maximized: false, fullscreen: false, zoomFactor: 1 }, bounds)

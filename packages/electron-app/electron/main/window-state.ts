@@ -24,7 +24,8 @@ const MIN_ZOOM_FACTOR = 0.25
 const MAX_ZOOM_FACTOR = 5
 const SAVE_DEBOUNCE_MS = 250
 type WindowSize = { width: number; height: number }
-const windowMinimums = new WeakMap<BrowserWindow, { workArea?: () => WindowSize }>()
+const windowMinimums = new Map<BrowserWindow, { workArea?: () => WindowSize; zoomFactor: number; loaded: boolean }>()
+const zoomObservers = new WeakMap<BrowserWindow, (factor: number) => void>()
 
 export interface DisplayWorkArea {
   x: number
@@ -84,7 +85,7 @@ export function zoomedWindowMinimum(zoomFactor: number) {
 function updateWindowMinimum(window: BrowserWindow): void {
   const constraints = windowMinimums.get(window)
   if (!constraints || window.isDestroyed() || window.webContents.isDestroyed()) return
-  const minimum = zoomedWindowMinimum(window.webContents.getZoomFactor())
+  const minimum = zoomedWindowMinimum(constraints.zoomFactor)
   const [width, height] = window.getContentSize()
   const outer = window.getBounds()
   const chromeWidth = Math.max(0, outer.width - width)
@@ -101,17 +102,54 @@ function updateWindowMinimum(window: BrowserWindow): void {
   }
 }
 
-export function installWindowSizeConstraints(window: BrowserWindow, workArea?: () => WindowSize): void {
-  windowMinimums.set(window, { workArea })
+export function installWindowSizeConstraints(window: BrowserWindow, workArea?: () => WindowSize, initialZoomFactor = 1): void {
+  // getZoomFactor() is still 1 before navigation, even with webPreferences.zoomFactor.
+  const constraints = { workArea, zoomFactor: normalizeZoomFactor(initialZoomFactor), loaded: false }
+  windowMinimums.set(window, constraints)
   updateWindowMinimum(window)
-  window.webContents.on("did-finish-load", () => updateWindowMinimum(window))
+  window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) constraints.loaded = false
+  })
+  window.webContents.on("did-finish-load", () => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return
+    constraints.loaded = true
+    observeWindowZoom(window, window.webContents.getZoomFactor())
+  })
   window.on("move", () => updateWindowMinimum(window))
+  window.on("closed", () => windowMinimums.delete(window))
+}
+
+function observeWindowZoom(window: BrowserWindow, factor: number): void {
+  factor = normalizeZoomFactor(factor)
+  const constraints = windowMinimums.get(window)
+  if (constraints) constraints.zoomFactor = factor
+  zoomObservers.get(window)?.(factor)
+  updateWindowMinimum(window)
+}
+
+function setWindowZoomFactor(window: BrowserWindow, factor: number): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return
+  factor = normalizeZoomFactor(factor)
+  const before = new Map<BrowserWindow, number>()
+  for (const candidate of windowMinimums.keys()) {
+    if (!candidate.isDestroyed() && !candidate.webContents.isDestroyed()) {
+      before.set(candidate, candidate.webContents.getZoomFactor())
+    }
+  }
+  window.webContents.setZoomFactor(factor)
+  observeWindowZoom(window, factor)
+  // Chromium shares host zoom within a Session without emitting zoom-changed
+  // on siblings. Read the actual affected factors instead of guessing host keys
+  // or separating Sessions (which would also separate authentication).
+  for (const [candidate, previous] of before) {
+    if (candidate === window || candidate.isDestroyed() || candidate.webContents.isDestroyed()) continue
+    const next = candidate.webContents.getZoomFactor()
+    if (windowMinimums.get(candidate)?.loaded || next !== previous) observeWindowZoom(candidate, next)
+  }
 }
 
 export function setWindowZoomLevel(window: BrowserWindow, level: number): void {
-  if (window.isDestroyed() || window.webContents.isDestroyed()) return
-  window.webContents.setZoomFactor(normalizeZoomFactor(1.2 ** level))
-  updateWindowMinimum(window)
+  setWindowZoomFactor(window, 1.2 ** level)
 }
 
 export function normalizeNativeWindowState(value: unknown): NativeWindowState | undefined {
@@ -190,12 +228,12 @@ export function restoreWindowState(window: BrowserWindow, state: NativeWindowSta
     return
   }
 
+  // Lower the native minimum before restoring zoomed-out saved content bounds.
+  setWindowZoomFactor(window, state.zoomFactor)
   if (bounds) {
     window.setPosition(bounds.x, bounds.y)
     window.setContentSize(bounds.width, bounds.height)
   }
-  window.webContents.setZoomFactor(normalizeZoomFactor(state.zoomFactor))
-  updateWindowMinimum(window)
   if (state.maximized) {
     window.maximize()
   }
@@ -228,6 +266,7 @@ export function installWindowZoomInput(window: BrowserWindow, setZoomLevel: (lev
 export class WindowStateTracker {
   private saveTimer: ReturnType<typeof setTimeout> | undefined
   private desiredZoomFactor: number
+  private navigating: boolean
   private normalBounds: WindowBounds
 
   constructor(
@@ -237,6 +276,12 @@ export class WindowStateTracker {
     private readonly windowId = clientState.activeWindowId,
   ) {
     this.desiredZoomFactor = normalizeZoomFactor(initialState?.zoomFactor)
+    this.navigating = typeof window.webContents.getURL === "function" && !window.webContents.getURL()
+    zoomObservers.set(window, (factor) => {
+      if (this.desiredZoomFactor === factor) return
+      this.desiredZoomFactor = factor
+      this.scheduleSave()
+    })
     const [x, y] = typeof window.getPosition === "function" ? window.getPosition() : [0, 0]
     const [width, height] = typeof window.getContentSize === "function"
       ? window.getContentSize()
@@ -253,19 +298,20 @@ export class WindowStateTracker {
       window.on(event as "maximize", () => this.scheduleSave())
     }
     window.webContents.on("zoom-changed", () => this.scheduleSave())
-    window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-      if (isMainFrame && !window.webContents.isDestroyed()) {
-        this.desiredZoomFactor = normalizeZoomFactor(window.webContents.getZoomFactor())
+    window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace && !window.webContents.isDestroyed()) {
+        if (!this.navigating) this.desiredZoomFactor = normalizeZoomFactor(window.webContents.getZoomFactor())
+        this.navigating = true
       }
     })
     window.webContents.on("did-finish-load", () => {
       if (!window.webContents.isDestroyed()) {
-        window.webContents.setZoomFactor(this.desiredZoomFactor)
-        updateWindowMinimum(window)
+        this.navigating = false
+        setWindowZoomFactor(window, this.desiredZoomFactor)
       }
     })
     window.on("close", () => { void this.saveNow() })
-    window.on("closed", () => this.clearTimer())
+    window.on("closed", () => { this.clearTimer(); zoomObservers.delete(window) })
   }
 
   async flush(): Promise<void> {
@@ -279,7 +325,7 @@ export class WindowStateTracker {
   setZoomLevel(level: number): void {
     if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) return
     setWindowZoomLevel(this.window, level)
-    this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
+    if (!this.navigating) this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
     this.scheduleSave()
   }
 
@@ -311,7 +357,9 @@ export class WindowStateTracker {
       return Promise.resolve(false)
     }
 
-    this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
+    // A pending navigation can expose a temporary 100% renderer factor. Keep
+    // the seeded/explicitly reconciled factor authoritative until load finishes.
+    if (!this.navigating) this.desiredZoomFactor = normalizeZoomFactor(this.window.webContents.getZoomFactor())
     if (!this.window.isMaximized() && !this.window.isFullScreen()) this.captureNormalBounds()
     return this.clientState.saveWindowState({
       bounds: this.normalBounds,

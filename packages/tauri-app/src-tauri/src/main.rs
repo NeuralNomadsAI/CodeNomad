@@ -1011,7 +1011,7 @@ fn open_remote_window_locked(
         }
     };
 
-    window_constraints::apply(&window.as_ref().window(), 1.0);
+    window_constraints::register(&window.as_ref().window(), 1.0);
     #[cfg(windows)]
     window_constraints::register_remote_zoom(&window, &app);
     #[cfg(windows)]
@@ -1642,6 +1642,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(AppState {
             manager: CliProcessManager::new(),

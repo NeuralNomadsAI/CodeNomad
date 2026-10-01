@@ -3,6 +3,18 @@ fn main() {
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR is set by Cargo");
     let manifest_path = std::path::Path::new(&manifest_dir);
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Cargo examples do not inherit the application executable's resource
+        // manifest. The isolated native fixture also needs common-controls v6
+        // (named subclass exports) and the production per-monitor DPI context.
+        let fixture_manifest = manifest_path.join("examples/window_constraints_windows.manifest");
+        println!("cargo:rerun-if-changed={}", fixture_manifest.display());
+        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg-examples=/MANIFESTINPUT:{}",
+            fixture_manifest.display()
+        );
+    }
     let bundled_resources = std::path::Path::new(&out_dir)
         .ancestors()
         .nth(3)

@@ -244,7 +244,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       lifecycle: navigationLifecycle,
     })
     const tracker = persisted && clientState.isPrimary ? new WindowStateTracker(window, clientState, saved, windowId) : null
-    installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea)
+    installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea, saved?.zoomFactor ?? 1)
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
     const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [] }
     registry.add(record)
