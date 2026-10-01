@@ -41,6 +41,7 @@ const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspa
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 let requests = []
+const blockSessions = new Set(), heldSessions = new Map()
 const provider = createServer(async (request, response) => {
   try {
     let raw = ""
@@ -51,6 +52,9 @@ const provider = createServer(async (request, response) => {
         tools: (body.tools ?? []).map(tool => tool.function?.name),
         messages: JSON.stringify(body.messages ?? []) })
       if (hold) { hold = false; await new Promise(resolve => { held = resolve }) }
+      const sessionID = request.headers["x-fixture-session"]
+      if (blockSessions.delete(sessionID)) await new Promise(resolve => { heldSessions.set(sessionID, resolve); response.once("close", resolve) })
+      if (response.destroyed) return
     }
     if (!body.stream) {
       response.setHeader("content-type", "application/json")
@@ -301,6 +305,87 @@ try {
   const messagesAfter = await client.message.list({ sessionID: crudCoordinator, limit: { order: "asc", limit: 50 } })
   assert.deepEqual(messagesAfter, messagesBefore, "Tombstone preserves the native conversation transcript")
 
+  stage = "optional managed specialist cleanup"
+  const cleanup = await client.rpc(CODENOMAD_MISSIONS_RPC).create({
+    requestID: "native-cleanup-create", objective: "Clean only owned specialists", template: "custom",
+  }, { location })
+  const cleanupCoordinator = cleanup.mission.coordinatorSessionId
+  const managedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "managed-cleanup" }, cleanupCoordinator, "cleanup-managed")
+  const managedSession = managedTask.mission.tasks.find(task => task.key === "managed-cleanup").actorSessionId
+  await client.session.wait({ sessionID: managedSession }, { signal: AbortSignal.timeout(20_000) })
+  const reusedSession = await client.session.create({ location, title: "Pre-existing specialist", agent: "reviewer", model: task.execution.model })
+  const reusedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "reused-cleanup", targetSessionID: reusedSession.id }, cleanupCoordinator, "cleanup-reused")
+  await client.session.wait({ sessionID: reusedSession.id }, { signal: AbortSignal.timeout(20_000) })
+  const cleanupRequest = { requestId: "native-cleanup-delete", expectedRevision: reusedTask.mission.revision, deleteManagedSessions: true }
+  for (let replay = 0; replay < 2; replay++) {
+    const response = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json(), { deleted: true })
+  }
+  await assert.rejects(client.session.get({ sessionID: managedSession }), "Opt-in cleanup removes the managed specialist")
+  assert.equal((await client.session.get({ sessionID: reusedSession.id })).id, reusedSession.id, "Cleanup preserves reused conversations")
+  assert.equal((await client.session.get({ sessionID: cleanupCoordinator })).id, cleanupCoordinator, "Cleanup preserves the coordinator")
+  await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
+
+  stage = "Play Pause Resume and terminal Stop"
+  const preparedResponse = await bridge.inject({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
+  assert.equal(preparedResponse.statusCode, 200, preparedResponse.body)
+  let controlled = preparedResponse.json().mission
+  assert.equal(controlled.runState, "prepared")
+  const runCoordinator = controlled.coordinatorSessionId
+  const runAction = async action => {
+    const request = { requestId: `native-${action}-${controlled.revision}`, expectedRevision: controlled.revision, action }
+    const response = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: request })
+    assert.equal(response.statusCode, 200, response.body)
+    controlled = response.json().mission
+    return request
+  }
+  const startRequest = await runAction("start")
+  await until(() => requests.some(request => request.session === runCoordinator && request.messages.includes(`Start or resume existing mission ${controlled.id}`)))
+  await client.session.wait({ sessionID: runCoordinator }, { signal: AbortSignal.timeout(20_000) })
+  controlled = (await invoke("delegate", { ...task, missionID: controlled.id, taskKey: "running-worker" }, runCoordinator, "running-worker")).mission
+  const runWorker = controlled.tasks.find(task => task.key === "running-worker").actorSessionId
+  await client.session.wait({ sessionID: runWorker }, { signal: AbortSignal.timeout(20_000) })
+  controlled = (await invoke("delegate", { ...task, missionID: controlled.id, taskKey: "reporting-worker" }, runCoordinator, "reporting-worker")).mission
+  const reportWorker = controlled.tasks.find(task => task.key === "reporting-worker").actorSessionId
+  await client.session.wait({ sessionID: reportWorker }, { signal: AbortSignal.timeout(20_000) })
+  for (const sessionID of [runCoordinator, runWorker]) {
+    blockSessions.add(sessionID)
+    await client.session.prompt({ sessionID, text: "Hold execution until the mission control is applied" })
+  }
+  await until(() => heldSessions.has(runCoordinator) && heldSessions.has(runWorker))
+  await runAction("pause")
+  assert.equal(controlled.runState, "paused")
+  await Promise.all([runCoordinator, runWorker].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
+  for (const sessionID of [runCoordinator, runWorker]) assert.equal((await client.session.get({ sessionID })).outcome, "interrupted")
+  for (const release of heldSessions.values()) release()
+  heldSessions.clear()
+  const pausedRequests = requests.length
+  controlled = (await invoke("report", { missionID: controlled.id, taskKey: "reporting-worker", outcome: "completed", summary: "Saved while paused", evidence: [], next: [] }, reportWorker, "paused-report")).mission
+  assert.equal(controlled.reports.at(-1).notificationStatus, "pending")
+  await delay(300)
+  assert.equal(requests.length, pausedRequests, "Paused reports must not wake the coordinator")
+  await runAction("start")
+  await until(() => requests.slice(pausedRequests).some(request => request.session === runWorker && request.messages.includes("Resume your interrupted assignments")))
+  await until(() => requests.slice(pausedRequests).some(request => request.session === runCoordinator && request.messages.includes("Start or resume existing mission")))
+  await Promise.all([runCoordinator, runWorker].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
+  await until(async () => {
+    controlled = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.find(mission => mission.id === controlled.id)
+    return controlled.reports.every(report => report.notificationStatus === "admitted")
+  })
+  const parked = await client.session.synthetic({ sessionID: runWorker, text: "Pending mission input", resume: false,
+    metadata: { "codenomad.mission": { missionID: controlled.id, kind: "assignment" } } })
+  await runAction("stop")
+  assert.equal(controlled.status, "stopped")
+  assert.equal(controlled.control.pending.length, 0)
+  assert.ok(!(await client.session.inbox.list({ sessionID: runWorker })).some(item => item.id === parked.id))
+  const restarted = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: { requestId: "restart-stopped", expectedRevision: controlled.revision, action: "start" } })
+  assert.equal(restarted.statusCode, 409, restarted.body)
+  assert.equal(restarted.json().code, "mission-finished")
+  const staleStart = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: startRequest })
+  assert.equal(staleStart.json().mission.status, "stopped", "Replaying an old Play cannot restart a stopped mission")
+  assert.equal((await client.session.get({ sessionID: runWorker })).id, runWorker)
+
   stage = "presence restart and durable replay"
   const beforeRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   await plugin.stop()
@@ -312,7 +397,7 @@ try {
   const afterRestart = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.deepEqual(afterRestart.missions, beforeRestart.missions)
   assert.equal((await client.server.info()).pid, info.pid)
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, revise/late report, lifecycle create/update/delete idempotence, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   console.error(`Fixture failed during ${stage} at ${root}: ${output.slice(-8000)}`)
   throw error

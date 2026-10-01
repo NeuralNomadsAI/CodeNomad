@@ -1,4 +1,5 @@
 import type { MissionExecution } from "./execution"
+import { projectLifecycle, type MissionControlRequestedEvent, type MissionControlAppliedEvent, type MissionRunState, type MissionLifecycleOperation } from "./lifecycle-model"
 
 export const MISSION_SCHEMA_VERSION = 1 as const
 export const MISSION_MAX_ACTORS = 8
@@ -12,7 +13,7 @@ export type MissionJsonValue = null | boolean | number | string | readonly Missi
 }
 
 export type MissionTemplateId = "custom" | "pocock-fix-bug" | "wayfinder"
-export type MissionStatus = "active" | "completed" | "failed"
+export type MissionStatus = "active" | "completed" | "failed" | "stopped"
 export type MissionTaskStatus =
   | "blocked"
   | "ready"
@@ -114,6 +115,8 @@ export interface MissionMap {
   notes?: string
   template: MissionTemplateId
   status: MissionStatus
+  runState?: MissionRunState
+  control?: MissionLifecycleOperation
   summary?: string
   coordinatorSessionId: string
   actors: MissionActor[]
@@ -168,6 +171,7 @@ export interface MissionCreatedEvent extends MissionEventBase {
     location: MissionLocation
   }
   requestID?: string
+  prepared?: boolean
 }
 
 export interface MissionUpdatedEvent extends MissionEventBase {
@@ -183,6 +187,15 @@ export interface MissionDeletedEvent extends MissionEventBase {
   type: "mission.deleted"
   requestID: string
   expectedRevision: number
+  deleteManagedSessions?: boolean
+  cleanupTargets?: Array<{ sessionID: string; location: MissionLocation }>
+}
+
+export interface MissionSessionCleanedEvent extends MissionEventBase {
+  type: "mission.session-cleaned"
+  deletionID: string
+  sessionID: string
+  outcome: "removed" | "retained"
 }
 
 export interface MissionRevisedEvent extends MissionEventBase {
@@ -257,9 +270,12 @@ export interface MissionFinishedEvent extends MissionEventBase {
 }
 
 export type MissionEvent =
+  | MissionControlRequestedEvent
+  | MissionControlAppliedEvent
   | MissionCreatedEvent
   | MissionUpdatedEvent
   | MissionDeletedEvent
+  | MissionSessionCleanedEvent
   | MissionRevisedEvent
   | MissionTaskCreatedEvent
   | MissionTaskDispatchingEvent
@@ -484,6 +500,15 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     }
   }
 
+  const lifecycle = projectLifecycle(events)
+  if (lifecycle.runState === "stopped") {
+    status = "stopped"
+    for (const task of tasks.values()) {
+      if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"
+      task.outstandingExecution = Boolean(task.actorSessionId && lifecycle.control?.pending.includes(task.actorSessionId)
+        && task.admissionId && !task.report && !task.lateReports?.length)
+    }
+  }
   const taskList = [...tasks.values()].sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
   const notificationStatus = (report: MissionReport): MissionReport => ({
     ...report,
@@ -502,6 +527,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     notes,
     template: created.template,
     status,
+    ...lifecycle,
     summary: [...events].reverse().find((event): event is MissionFinishedEvent => event.type === "mission.finished")?.summary,
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),

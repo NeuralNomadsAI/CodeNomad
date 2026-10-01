@@ -567,8 +567,11 @@ export const serverApi = {
   editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "PATCH", body: JSON.stringify(input) })
   },
-  deleteMission(instanceId: string, missionId: string, input: { expectedRevision: number; requestId: string }): Promise<{ deleted: true }> {
+  deleteMission(instanceId: string, missionId: string, input: { expectedRevision: number; requestId: string; deleteManagedSessions?: boolean }): Promise<{ deleted: true }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "DELETE", body: JSON.stringify(input) })
+  },
+  controlMission(instanceId: string, missionId: string, input: { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`, { method: "POST", body: JSON.stringify(input) })
   },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
@@ -621,6 +624,7 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
+
   return `${url.pathname}${url.search}`
 }
 

@@ -8,11 +8,14 @@ export interface NativeMissionSession extends MissionExecution {
   parentID?: string
   projectID: string
   title?: string
+  metadata?: SessionMetadata
   location: { directory: string; workspaceID?: string }
 }
 
 export interface MissionSessionAdapter {
   get(input: { sessionID: string }): Promise<NativeMissionSession>
+  remove?(input: { sessionID: string }): Promise<void>
+  list?(input: { parentID: string; limit: number }): Promise<{ data: readonly { id: string }[] }>
   create(input: {
     id: string
     title: string
@@ -92,6 +95,7 @@ export interface MissionInspection {
 }
 
 export interface MissionCreateInput extends MissionStartInput {
+  prepared?: boolean
   requestID: string
   coordinatorSessionID?: string
 }
@@ -108,6 +112,7 @@ export interface MissionDeleteInput {
   missionID: string
   expectedRevision: number
   requestID: string
+  deleteManagedSessions?: boolean
 }
 
 export interface MissionReviseInput {
@@ -131,6 +136,8 @@ export interface MissionReviseInput {
 }
 
 export interface MissionInputTransport {
+  lifecycle?(coordinatorID: string, input: { missionID: string; operationID: string; sessionID: string }): Promise<unknown>
+  cleanup?(coordinatorID: string, input: { missionID: string; deletionID: string; sessionID: string }): Promise<{ outcome: "removed" | "retained" }>
   prompt(coordinatorID: string, input: Parameters<MissionSessionAdapter["prompt"]>[0]): Promise<unknown>
   synthetic(coordinatorID: string, input: Parameters<MissionSessionAdapter["synthetic"]>[0]): Promise<unknown>
 }

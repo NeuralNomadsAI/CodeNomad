@@ -43,6 +43,7 @@ test("registers four tools, typed snapshot RPC, and role context", async () => {
   let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
   let snapshotHandler: (() => Promise<unknown>) | undefined
   let createHandler: ((input: unknown) => Promise<unknown>) | undefined
+  let deleteHandler: ((input: unknown, context: any) => Promise<unknown>) | undefined
   const emitted: unknown[] = []
   const registration = () => ({ dispose: async () => {} })
   const cleanup = await setupMissionsPlugin({
@@ -74,9 +75,10 @@ test("registers four tools, typed snapshot RPC, and role context", async () => {
       },
     },
     rpc: {
-      register: async (_definition: unknown, handlers: { snapshot(): Promise<unknown>; create(input: unknown): Promise<unknown>; update(input: unknown): Promise<unknown>; delete(input: unknown): Promise<unknown> }) => {
+      register: async (_definition: unknown, handlers: { snapshot(): Promise<unknown>; create(input: unknown): Promise<unknown>; update(input: unknown): Promise<unknown>; delete(input: unknown, context: any): Promise<unknown> }) => {
         snapshotHandler = handlers.snapshot
         createHandler = handlers.create
+        deleteHandler = handlers.delete
         return { ...registration(), events: { emit: async (...event: unknown[]) => { emitted.push(event) } } }
       },
     },
@@ -105,6 +107,16 @@ test("registers four tools, typed snapshot RPC, and role context", async () => {
   assert.equal(revised.missions[0]?.objective, "Revised objective")
   assert.equal(revised.missions[0]?.history[0]?.reason, "User clarified")
   assert.equal(emitted.length, 2)
+  const mutationContext = { error: (type: string, message: string, data: unknown) => ({ type, message, data }) }
+  const deleteInput = { missionID: snapshot.missions[0].id, expectedRevision: 2, requestID: "delete-from-rpc" }
+  const invalid = await deleteHandler!({ ...deleteInput, deleteManagedSessions: "true" }, mutationContext) as { data: { code: string } }
+  assert.equal(invalid.data.code, "invalid-delete-option")
+  assert.deepEqual(await deleteHandler!({ ...deleteInput, deleteManagedSessions: true }, mutationContext), { deleted: true })
+  const deleted = [...values.values()].find((value: any) => value.type === "mission.deleted") as { deleteManagedSessions: boolean; cleanupTargets: unknown[] }
+  assert.equal(deleted.deleteManagedSessions, true)
+  assert.deepEqual(deleted.cleanupTargets, [])
+  const conflicting = await deleteHandler!(deleteInput, mutationContext) as { data: { code: string } }
+  assert.equal(conflicting.data.code, "request-conflict")
   await cleanup()
   await assert.rejects(createHandler!({ requestID: "post-dispose", objective: "No", template: "custom" }), /no longer available/)
   await assert.rejects(revise.execute({}, { sessionID: "ses_coordinator", id: "stale-revise" }), /no longer available/)

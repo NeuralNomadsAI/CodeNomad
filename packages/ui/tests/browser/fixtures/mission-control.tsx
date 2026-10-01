@@ -10,7 +10,7 @@ import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { addInstance } from "../../../src/stores/instances"
-import { setSessions } from "../../../src/stores/session-state"
+import { activeSessionId, setSessions } from "../../../src/stores/session-state"
 import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-scheme"
 import "../../../src/index.css"
 
@@ -23,6 +23,11 @@ function Fixture() {
     flush: flushClientState,
     refresh: () => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "rpc.codenomad.missions.changed" } }]),
     mount: setMounted,
+    selectedSession: () => activeSessionId().get("fixture"),
+    seedCoordinators: (ids: string[]) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
+      id, instanceId: "fixture", parentId: null, title: id, status: "idle", runtimeStatusKnown: true,
+      location: { directory: "fixture" }, time: { created: 1, updated: 1 },
+    } as any])))),
     seedActor: () => {
       const client: any = { session: { list: async () => { throw new Error("fixture unavailable") } }, form: { list: async () => [] } }
       ;(sdkManager as any).clients.set("fixture:/workspaces/fixture/instance", client)

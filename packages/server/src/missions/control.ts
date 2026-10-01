@@ -19,6 +19,11 @@ import { assignmentInput, reportInput } from "./inputs"
 import { resolvePocockImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact } from "./contracts"
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
+import { MissionControlError } from "./control-error"
+import { deleteMission, missionCleanupTarget } from "./session-cleanup"
+import { controlMission } from "./lifecycle"
+import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
+export { MissionControlError } from "./control-error"
 import type {
   MissionDelegateInput,
   MissionCreateInput,
@@ -42,13 +47,6 @@ export interface MissionNotificationRetryResult {
   cursor?: string
 }
 
-export class MissionControlError extends Error {
-  constructor(message: string, readonly code: string) {
-    super(message)
-    this.name = "MissionControlError"
-  }
-}
-
 export class MissionControl {
   private readonly journal: MissionJournal
   private lastTimestamp = 0
@@ -61,6 +59,7 @@ export class MissionControl {
     changed?: (missionID: string, revision: number) => Promise<void>
     validateExecution?: (input: MissionDelegateInput, coordinatorID: string) => Promise<void>
     transport?: MissionInputTransport
+    isActive?: () => boolean
   }) {
     this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now)
   }
@@ -81,7 +80,7 @@ export class MissionControl {
     const existing = snapshot.missions.find((mission) => mission.id === missionID)
     if (existingEvent) {
       if (existingEvent.type !== "mission.created" || existingEvent.objective !== input.objective
-        || existingEvent.notes !== input.notes || existingEvent.template !== input.template
+        || existingEvent.notes !== input.notes || existingEvent.template !== input.template || Boolean(existingEvent.prepared) !== Boolean(input.prepared)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
       }
@@ -94,7 +93,7 @@ export class MissionControl {
     let coordinator: NativeMissionSession
     if (input.coordinatorSessionID) {
       coordinator = await this.ownedRootSession(input.coordinatorSessionID)
-      if (snapshot.missions.some((mission) => mission.status === "active"
+      if (snapshot.missions.some((mission) => (mission.status === "active" || mission.control?.pending.includes(coordinator.id))
         && mission.actors.some((actor) => actor.sessionId === coordinator.id))) {
         throw new MissionControlError("Coordinator session already belongs to an active mission", "already-member")
       }
@@ -125,6 +124,7 @@ export class MissionControl {
       notes: input.notes,
       template: input.template,
       requestID: input.requestID,
+      ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
       coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
       createdAt,
     })
@@ -135,6 +135,14 @@ export class MissionControl {
 
   update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
     return this.mutate(() => this.updateCurrent(input))
+  }
+
+  lifecycle(input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
+    return this.mutate(() => controlMission(input, {
+      journal: this.journal, transport: this.options.transport, isActive: this.options.isActive,
+      timestamp: snapshot => this.timestamp(snapshot),
+      changed: async (missionID, revision) => this.emitChanged(missionID, await this.snapshot(), revision),
+    }))
   }
 
   private async updateCurrent(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
@@ -165,7 +173,15 @@ export class MissionControl {
   }
 
   delete(input: MissionDeleteInput): Promise<{ deleted: true }> {
-    return this.mutate(() => this.deleteCurrent(input))
+    return this.mutate(() => deleteMission(input, {
+      journal: this.journal, sessions: this.options.sessions, transport: this.options.transport, isActive: this.options.isActive,
+      timestamp: (snapshot) => this.timestamp(snapshot),
+      changed: async (missionID, revision) => this.emitChanged(missionID, await this.snapshot(), revision),
+    }))
+  }
+
+  cleanupTarget(input: { missionID: string; deletionID: string; sessionID: string }) {
+    return missionCleanupTarget(this.journal, input)
   }
 
   revise(sessionID: string, input: MissionReviseInput): Promise<{ mission: MissionMap }> {
@@ -188,7 +204,8 @@ export class MissionControl {
       }
       return { mission }
     }
-    if (mission.status !== "active") throw new MissionControlError("The mission is already finished", "mission-finished")
+    if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
+    if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before revising", "revision-conflict")
     const addedTasks = await this.validateRevision(mission, input, sessionID)
     await this.journal.append({
@@ -321,28 +338,6 @@ export class MissionControl {
     return addedTasks
   }
 
-  private async deleteCurrent(input: MissionDeleteInput): Promise<{ deleted: true }> {
-    const eventID = this.eventID(input.missionID, `deleted-${input.requestID}`)
-    const previous = await this.journal.event(input.missionID, eventID)
-    const snapshot = await this.snapshot()
-    const mission = snapshot.missions.find((candidate) => candidate.id === input.missionID)
-    if (previous) {
-      if (previous.type !== "mission.deleted" || previous.expectedRevision !== input.expectedRevision) {
-        throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
-      }
-      return { deleted: true }
-    }
-    if (!mission) throw new MissionControlError("Mission not found", "mission-not-found")
-    if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before deleting", "revision-conflict")
-    await this.journal.append({
-      version: MISSION_SCHEMA_VERSION, id: eventID, type: "mission.deleted", missionID: mission.id,
-      projectID: mission.projectID, requestID: input.requestID, expectedRevision: input.expectedRevision,
-      createdAt: this.timestamp(snapshot),
-    })
-    await this.emitChanged(mission.id, await this.snapshot(), input.expectedRevision + 1)
-    return { deleted: true }
-  }
-
   inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
     if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
     return this.mutate(() => this.inspectCurrent(sessionID, input, operationID))
@@ -356,7 +351,7 @@ export class MissionControl {
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
       if (replay) return this.inspection(replay, sessionID)
       const active = this.membership(snapshot, sessionID)
-      if (active?.status === "active") throw new MissionControlError("This session already belongs to an active mission", "already-member")
+      if (active?.status === "active" || active?.control?.pending.includes(sessionID)) throw new MissionControlError("This session already belongs to an active mission", "already-member")
       if (snapshot.missions.length >= MISSION_MAX_MISSIONS) {
         throw new MissionControlError("Project mission limit reached", "mission-limit")
       }
@@ -401,7 +396,8 @@ export class MissionControl {
     let mission = this.selectMission(snapshot, sessionID, input.missionID)
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
     this.assertCoordinator(mission, sessionID)
-    if (mission.status !== "active") throw new MissionControlError("The mission is already finished", "mission-finished")
+    if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
+    if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
     const blockedBy = normalizeBlockedBy(input.blockedBy)
     try {
       validateMissionDelegationPolicy({
@@ -496,7 +492,7 @@ export class MissionControl {
       if (!isActive()) return { attempted: 0, failed: 0 }
       const snapshot = await this.snapshot()
       const pending = snapshot.missions
-        .filter((mission) => mission.status === "active")
+        .filter(mission => missionIsRunning(mission) && !mission.control?.pending.length)
         .flatMap((mission) => mission.reports
           .filter((report) => report.notificationStatus !== "admitted")
           .map((report) => ({ missionID: mission.id, report, cursor: `${mission.id}\0${report.id}` })))
@@ -533,6 +529,8 @@ export class MissionControl {
     if (input.final) {
       this.assertCoordinator(mission, sessionID)
       if (mission.status !== "active") return { disposition: "existing", mission }
+      if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
+      if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
       if (input.outcome === "blocked") throw new MissionControlError("A final mission outcome must be completed or failed", "invalid-final-outcome")
       if (mission.tasks.some((task) => task.outstandingExecution)) {
         throw new MissionControlError("Withdrawn native work needs a terminal report before the mission can finish", "outstanding-execution")
@@ -561,6 +559,7 @@ export class MissionControl {
       return { disposition: "finished", mission }
     }
 
+    if (mission.status === "stopped") throw new MissionControlError("Stopped missions cannot accept new work", "mission-finished")
     const task = this.reportTask(mission, sessionID, input.taskKey)
     const lateReport = task.lateReports?.at(-1)
     if (lateReport) {
@@ -619,6 +618,7 @@ export class MissionControl {
     const snapshot = await this.snapshot()
     const mission = this.membership(snapshot, sessionID)
     if (!mission || mission.status !== "active") return undefined
+    if (!missionIsRunning(mission)) return `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.`
     return buildActorContext(mission, sessionID) || undefined
   }
 
@@ -665,7 +665,7 @@ export class MissionControl {
       if (mission.actors.length >= MISSION_MAX_ACTORS && !mission.actors.some((actor) => actor.sessionId === targetSessionID)) {
         throw new MissionControlError("Mission actor limit reached", "actor-limit")
       }
-      const foreignMission = snapshot.missions.find((candidate) => candidate.status === "active"
+      const foreignMission = snapshot.missions.find((candidate) => (candidate.status === "active" || candidate.control?.pending.includes(targetSessionID))
         && candidate.id !== mission.id && candidate.actors.some((actor) => actor.sessionId === targetSessionID))
       if (foreignMission) throw new MissionControlError("Target session already belongs to another active mission", "target-claimed")
       return {
@@ -712,7 +712,7 @@ export class MissionControl {
     const fresh = await this.snapshot()
     const currentMission = fresh.missions.find((candidate) => candidate.id === mission.id)
     const currentReport = currentMission?.reports.find((candidate) => candidate.id === report.id)
-    if (!currentMission || currentMission.status !== "active" || !currentReport
+    if (!currentMission || !missionIsRunning(currentMission) || currentMission.control?.pending.length || !currentReport
       || currentReport.notificationStatus === "admitted" || !isActive()) return
     const notification = reportInput(currentMission, currentReport)
     const admissionID = notification.id

@@ -1,5 +1,6 @@
 import { executionSchema } from "./execution"
 import { missionMutationErrors } from "./rpc-errors"
+import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -48,7 +49,9 @@ const mission = {
     objective: { type: "string" },
     notes: { type: "string" },
     template: { type: "string", enum: ["custom", "pocock-fix-bug", "wayfinder"] },
-    status: { type: "string", enum: ["active", "completed", "failed"] },
+    status: { type: "string", enum: ["active", "completed", "failed", "stopped"] },
+    runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
+    control: lifecycleOperationSchema,
     summary: { type: "string" },
     coordinatorSessionId: { type: "string" },
     actors: {
@@ -139,6 +142,23 @@ const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    lifecycle: { input: lifecycleInputSchema, output: mutationMissionResult, errors: missionMutationErrors },
+    cleanupTarget: {
+      input: {
+        type: "object", properties: {
+          missionID: { type: "string", minLength: 1, maxLength: 100 },
+          deletionID: { type: "string", minLength: 1, maxLength: 100 },
+          sessionID: { type: "string", minLength: 1, maxLength: 240 },
+        }, required: ["missionID", "deletionID", "sessionID"], additionalProperties: false,
+      },
+      output: {
+        type: "object", properties: { target: {
+          type: "object", properties: {
+            projectID: { type: "string" }, missionID: { type: "string" }, coordinatorSessionID: { type: "string" }, sessionID: { type: "string" }, location,
+          }, required: ["projectID", "missionID", "coordinatorSessionID", "sessionID", "location"], additionalProperties: false,
+        } }, additionalProperties: false,
+      },
+    },
     snapshot: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: {
@@ -162,6 +182,7 @@ export const CODENOMAD_MISSIONS_RPC = {
           notes: { type: "string", maxLength: 20_000 },
           template: { type: "string", enum: ["custom", "wayfinder", "pocock-fix-bug"] },
           coordinatorSessionID: { type: "string", minLength: 1, maxLength: 240 },
+          prepared: { type: "boolean" },
         }, required: ["requestID", "objective", "template"], additionalProperties: false,
       },
       output: mutationMissionResult,
@@ -183,6 +204,7 @@ export const CODENOMAD_MISSIONS_RPC = {
         type: "object", properties: {
           missionID: { type: "string", minLength: 1, maxLength: 100 }, requestID,
           expectedRevision: { type: "integer", minimum: 1 },
+          deleteManagedSessions: { type: "boolean" },
         }, required: ["missionID", "requestID", "expectedRevision"], additionalProperties: false,
       },
       output: {

@@ -17,6 +17,8 @@ export function MissionEditor(props: {
   const [objective, setObjective] = createSignal(original?.objective ?? "")
   const [notes, setNotes] = createSignal(original?.notes ?? "")
   const [template, setTemplate] = createSignal<MissionMap["template"]>("custom")
+  const [deleteManagedSessions, setDeleteManagedSessions] = createSignal(false)
+  const [deleteAttempted, setDeleteAttempted] = createSignal(false)
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal("")
   let requestId = crypto.randomUUID(), lastPayload = ""
@@ -25,14 +27,17 @@ export function MissionEditor(props: {
     event.preventDefault()
     if (pending()) return
     const fields = { objective: objective().trim(), notes: notes(), template: template() }
-    const payload = JSON.stringify(fields)
+    const payload = JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
     if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
     lastPayload = payload
     setPending(true)
     setError("")
     try {
       if (kind === "delete" && original) {
-        await serverApi.deleteMission(props.instanceId, original.id, { expectedRevision: original.revision, requestId })
+        // A failed acknowledgement may follow a committed tombstone. Keep its
+        // immutable request available for retry even after the list refreshes.
+        setDeleteAttempted(true)
+        await serverApi.deleteMission(props.instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
         props.onSaved()
       } else {
         const result = kind === "edit" && original
@@ -42,14 +47,18 @@ export function MissionEditor(props: {
       }
     } catch (error) {
       setError(t(error instanceof HttpResponseError && error.status === 409
-        ? "missions.control.mutation.conflict" : "missions.control.mutation.error"))
+        ? "missions.control.mutation.conflict" : kind === "delete" ? "missions.control.delete.error" : "missions.control.mutation.error"))
     } finally { setPending(false) }
   }
 
   return <form class="mission-editor window-shell" onSubmit={save} aria-label={t(`missions.control.${kind}`)}>
     <header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header>
     <div class="window-body">
-      <Show when={kind !== "delete"} fallback={<p>{t("missions.control.delete.detail")}</p>}>
+      <Show when={kind !== "delete"} fallback={<>
+        <p>{t("missions.control.delete.detail")}</p>
+        <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}
+          onChange={event => setDeleteManagedSessions(event.currentTarget.checked)} />{t("missions.control.delete.sessions")}</label>
+      </>}>
         <label>{t("missions.control.objective")}
           <textarea required maxLength={20_000} value={objective()} disabled={pending()} onInput={e => setObjective(e.currentTarget.value)} />
         </label>

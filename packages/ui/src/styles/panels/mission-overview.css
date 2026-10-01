@@ -1,8 +1,1 @@
-.mission-control-overview { padding: 0 var(--space-sm); }
-.mission-control-overview > h3 {
-  margin: var(--space-xs) 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-regular);
-}
 .mission-control-empty-line { margin: 0; color: var(--text-muted); font-size: var(--font-size-sm); }

@@ -80,12 +80,21 @@ function mutationManager(options: { owns?: boolean; error?: unknown } = {}) {
         calls.push({ method: "rpc", value: definition.id })
         return {
           create: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "create", value: { input, rpcOptions } }); return { mission: { id: "msn_1" } } },
+          lifecycle: async (input: unknown, rpcOptions: unknown) => {
+            calls.push({ method: "lifecycle", value: { input, rpcOptions } })
+            if (options.error) throw options.error
+            return { mission: { id: "msn_1" } }
+          },
           update: async (input: unknown, rpcOptions: unknown) => {
             calls.push({ method: "update", value: { input, rpcOptions } })
             if (options.error) throw options.error
             return { mission: { id: "msn_1" } }
           },
-          delete: async (input: unknown, rpcOptions: unknown) => { calls.push({ method: "delete", value: { input, rpcOptions } }); return { deleted: true } },
+          delete: async (input: unknown, rpcOptions: unknown) => {
+            calls.push({ method: "delete", value: { input, rpcOptions } })
+            if (options.error) throw options.error
+            return { deleted: true }
+          },
           snapshot: async () => snapshot,
         }
       },
@@ -159,7 +168,7 @@ test("brokers typed mission create, update and delete only at authorized project
   assert.equal(create.statusCode, 200)
   assert.deepEqual(create.json(), { mission: { id: "msn_1" } })
   assert.deepEqual(fake.calls.find((call) => call.method === "create")?.value, {
-    input: { requestID: "create-1", objective: "Ship it", template: "wayfinder", coordinatorSessionID: "ses_existing" },
+    input: { prepared: true, requestID: "create-1", objective: "Ship it", template: "wayfinder", coordinatorSessionID: "ses_existing" },
     rpcOptions: { location: { directory: "/owned/repo" } },
   })
   const update = await app.inject({ method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", payload: {
@@ -171,6 +180,10 @@ test("brokers typed mission create, update and delete only at authorized project
   } })
   assert.equal(deletion.statusCode, 200)
   assert.deepEqual(deletion.json(), { deleted: true })
+  assert.deepEqual(fake.calls.find((call) => call.method === "delete")?.value, {
+    input: { missionID: "msn_1", requestID: "delete-1", expectedRevision: 2 },
+    rpcOptions: { location: { directory: "/owned/repo" } },
+  })
   const callsBeforeForeign = fake.calls.length
   const foreign = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions", payload: {
     objective: "No", template: "custom", directory: "/foreign", requestId: "foreign-1",
@@ -204,4 +217,61 @@ test("maps only declared native mutation codes and keeps opaque plugin failures 
       else assert.equal(response.json().error, error.message)
     } finally { await app.close() }
   }
+})
+
+test("forwards only an explicit boolean session-cleanup option through the typed delete RPC", async () => {
+  const fake = mutationManager()
+  const app = Fastify()
+  registerMissionRoutes(app, { workspaceManager: fake.value })
+  try {
+    for (const option of [true, false]) {
+      const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1",
+        payload: { requestId: "delete-1", expectedRevision: 2, deleteManagedSessions: option } })
+      assert.equal(response.statusCode, 200)
+      assert.deepEqual(fake.calls.filter((call) => call.method === "delete").at(-1)?.value, {
+        input: { missionID: "msn_1", requestID: "delete-1", expectedRevision: 2, deleteManagedSessions: option },
+        rpcOptions: { location: { directory: "/owned/repo" } },
+      })
+    }
+    const before = fake.calls.length
+    for (const option of ["true", 1, null, {}]) {
+      const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1",
+        payload: { requestId: "delete-1", expectedRevision: 2, deleteManagedSessions: option } })
+      assert.equal(response.statusCode, 400)
+    }
+    assert.equal(fake.calls.length, before)
+  } finally { await app.close() }
+})
+
+test("explicit lifecycle routes validate controls and preserve retry identity at the owned location", async () => {
+  const app = Fastify()
+  const fixture = mutationManager()
+  registerMissionRoutes(app, { workspaceManager: fixture.value as never })
+  try {
+    const url = "/api/workspaces/workspace-1/missions/msn_1/control"
+    const payload = { action: "pause", requestId: "pause-request", expectedRevision: 7 }
+    assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 200)
+    assert.deepEqual(fixture.calls.find(call => call.method === "lifecycle")?.value, {
+      input: { action: "pause", requestID: "pause-request", expectedRevision: 7, missionID: "msn_1" },
+      rpcOptions: { location: { directory: "/owned/repo" } },
+    })
+    for (const invalid of [{ ...payload, action: "resume" }, { ...payload, expectedRevision: 0 }, { ...payload, sessionID: "ses_foreign" }, { ...payload, directory: "/foreign" }]) {
+      assert.equal((await app.inject({ method: "POST", url, payload: invalid })).statusCode, 400)
+    }
+    assert.equal((await app.inject({ method: "POST", url: url.replace("workspace-1", "unknown"), payload })).statusCode, 404)
+    assert.equal(fixture.calls.filter(call => call.method === "lifecycle").length, 1)
+  } finally { await app.close() }
+})
+
+test("cleanup-pending crosses the route as a retryable declared failure", async () => {
+  const app = Fastify()
+  registerMissionRoutes(app, { workspaceManager: mutationManager({
+    error: { type: "mission.rejected", message: "Mission deleted; retry cleanup", data: { code: "cleanup-pending" } },
+  }).value })
+  try {
+    const response = await app.inject({ method: "DELETE", url: "/api/workspaces/workspace-1/missions/msn_1",
+      payload: { requestId: "delete-1", expectedRevision: 2, deleteManagedSessions: true } })
+    assert.equal(response.statusCode, 503)
+    assert.deepEqual(response.json(), { error: "Mission deleted; retry cleanup", code: "cleanup-pending" })
+  } finally { await app.close() }
 })

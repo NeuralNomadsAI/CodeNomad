@@ -14,6 +14,7 @@ import { MissionWork } from "../../../../mission-work"
 import { MissionHistory } from "../../../../mission-history"
 import { MissionAttention } from "../../../../mission-attention"
 import { MissionReadButton } from "../../../../mission-read-button"
+import { MissionLifecycleControls } from "../../../../mission-lifecycle-controls"
 
 interface MissionControlProps {
   instanceId: string
@@ -82,7 +83,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   return (
     <section class="mission-control" aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
-        <h2>{props.t("missions.control.title")}</h2>
         <div class="mission-control-actions">
         <button type="button" class="mission-control-icon-button" disabled={state().status === "unavailable" || Boolean(editor())}
           aria-label={props.t("missions.control.create")} title={props.t("missions.control.create")}
@@ -148,21 +148,24 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                   {props.t("missions.control.error.stale")}
                 </div>
               </Show>
-                <MissionDisclosure missionId={scope()} name="index" title={props.t("missions.control.mapLabel")}><MissionIndex
+                <MissionIndex
                   missions={missions()}
                   selectedId={selected().id}
                   onSelect={setSelectedMissionId}
                   disabled={Boolean(editor())}
                   onEdit={value => setEditor({ kind: "edit", mission: value })}
                   onDelete={value => setEditor({ kind: "delete", mission: value })}
+                  onRead={value => {
+                    setSelectedMissionId(value.id)
+                    void read({ missionId: value.id, kind: "overview" })
+                  }}
+                  onOpenCoordinator={value => {
+                    setSelectedMissionId(value.id)
+                    void openActor(value.coordinatorSessionId)
+                  }}
                   t={props.t}
-                /></MissionDisclosure>
-              <MissionOverview mission={selected()} t={props.t} onRead={() => void read({ missionId: selected().id, kind: "overview" })}
-                onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)} />
-              <Show when={selected().status === "active" && selected().reports.some(report => report.notificationStatus === "pending")}>
-                <p class="mission-control-stale" role="status">{props.t("missions.control.report.notificationPending")}</p>
-              </Show>
-              <MissionAttention mission={selected()} instanceId={props.instanceId} onOpenActor={openActor} />
+                />
+              <Show when={selected().id} keyed>{id => <MissionLifecycleControls instanceId={props.instanceId} mission={missions().find(mission => mission.id === id)!} disabled={Boolean(editor())} />}</Show>
               <MissionWork
                 mission={selected()}
                 instanceId={props.instanceId}
@@ -171,6 +174,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onRead={task => void read({ missionId: selected().id, kind: "task", itemId: task.id })}
                 onReport={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })}
               />
+              <MissionAttention mission={selected()} instanceId={props.instanceId} onOpenActor={openActor} />
+              <Show when={selected().status === "active" && selected().reports.some(report => report.notificationStatus === "pending")}>
+                <p class="mission-control-stale" role="status">{props.t("missions.control.report.notificationPending")}</p>
+              </Show>
+              <MissionReports missionId={selected().id} tasks={selected().tasks} reports={selected().reports} t={props.t}
+                onRead={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })} />
               <MissionMesh
                 mission={selected()}
                 instanceId={props.instanceId}
@@ -178,8 +187,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onOpenActor={openActor}
                 t={props.t}
               />
-              <MissionReports missionId={selected().id} tasks={selected().tasks} reports={selected().reports} t={props.t}
-                onRead={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })} />
               <MissionHistory mission={selected()} onRead={revision => void read({ missionId: selected().id, kind: "change", itemId: String(revision) })} />
             </>
           )}
@@ -213,6 +220,8 @@ const MissionIndex: Component<{
   disabled: boolean
   onEdit: (mission: MissionMap) => void
   onDelete: (mission: MissionMap) => void
+  onRead: (mission: MissionMap) => void
+  onOpenCoordinator: (mission: MissionMap) => void
   t: MissionControlProps["t"]
 }> = (props) => (
   <nav class="mission-control-index" aria-label={props.t("missions.control.mapLabel")}>
@@ -229,8 +238,13 @@ const MissionIndex: Component<{
           onClick={() => props.onSelect(id)}
         >
           <span>{mission().objective}</span>
-          <small data-status={mission().status}>{props.t(statusKey(mission().status))}</small>
+          <small data-status={mission().status === "active" ? mission().runState ?? "active" : mission().status}>{props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
+            ? `missions.control.run.${mission().runState}` : statusKey(mission().status))}</small>
         </button>
+        <MissionReadButton onClick={() => props.onRead(mission())} />
+        <button type="button" class="mission-control-icon-button mission-open-coordinator"
+          aria-label={props.t("missions.control.openCoordinator")} title={props.t("missions.control.openCoordinator")}
+          onClick={() => props.onOpenCoordinator(mission())}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" /></button>
         <button type="button" class="mission-control-icon-button" disabled={props.disabled || mission().status !== "active"}
           aria-label={props.t("missions.control.edit")} title={props.t("missions.control.edit")}
           onClick={() => props.onEdit(mission())}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
@@ -241,17 +255,6 @@ const MissionIndex: Component<{
       }}
     </For>
   </nav>
-)
-
-const MissionOverview: Component<{ mission: MissionMap; t: MissionControlProps["t"]; onRead: () => void; onOpenCoordinator: () => void }> = (props) => (
-  <MissionDisclosure missionId={props.mission.id} name="overview" title={props.t("missions.control.overview")}
-    actions={<><MissionReadButton onClick={props.onRead} />
-      <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.control.openCoordinator")}
-        title={props.t("missions.control.openCoordinator")} onClick={props.onOpenCoordinator}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" /></button></>}>
-  <div class="mission-control-overview">
-    <h3 class="mission-text-excerpt">{props.mission.objective}</h3>
-  </div>
-  </MissionDisclosure>
 )
 
 const MissionMesh: Component<{
@@ -294,7 +297,7 @@ const MissionMesh: Component<{
 )
 
 const MissionReports: Component<{ missionId: string; tasks: MissionMap["tasks"]; reports: MissionReport[]; t: MissionControlProps["t"]; onRead: (report: MissionReport) => void }> = (props) => (
-  <MissionDisclosure missionId={props.missionId} name="reports" title={<><Check class="h-4 w-4" /><span>{props.t("missions.control.reports.title")}</span></>}>
+  <MissionDisclosure missionId={props.missionId} name="reports" defaultOpen={false} title={<><Check class="h-4 w-4" /><span>{props.t("missions.control.reports.title")}</span></>}>
     <Show when={props.reports.length > 0} fallback={<p class="mission-control-empty-line">{props.t("missions.control.reports.empty")}</p>}>
       <div class="mission-report-list">
         <For each={props.reports.map(report => report.id).reverse()}>

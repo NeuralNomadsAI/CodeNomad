@@ -87,6 +87,8 @@ interface MissionsPluginContext extends MissionCatalogClient {
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
         snapshot(input: unknown): Promise<unknown>
+        lifecycle(input: unknown, context: MutationContext): Promise<unknown>
+        cleanupTarget(input: unknown): Promise<unknown>
         create(input: unknown, context: MutationContext): Promise<unknown>
         update(input: unknown, context: MutationContext): Promise<unknown>
         delete(input: unknown, context: MutationContext): Promise<unknown>
@@ -115,6 +117,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     },
     storage: context.storage,
     sessions: context.session,
+    isActive: () => active,
     transport,
     validateExecution: async (input, coordinatorID) => {
       const session = await context.session.get({ sessionID: input.targetSessionID ?? coordinatorID })
@@ -126,6 +129,23 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   try {
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
+      lifecycle: async (input, context) => {
+        assertActive()
+        const value = object(input)
+        if (!["start", "pause", "stop"].includes(String(value.action)) || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 1) throw new Error("Invalid mission control")
+        return mutationResult(context, () => control.lifecycle({
+          missionID: requiredText(value.missionID, "missionID", 100), requestID: requiredText(value.requestID, "requestID", 128),
+          action: value.action as "start" | "pause" | "stop", expectedRevision: Number(value.expectedRevision),
+        }))
+      },
+      cleanupTarget: async input => {
+        assertActive()
+        const value = object(input)
+        return JSON.parse(JSON.stringify(await control.cleanupTarget({
+          missionID: requiredText(value.missionID, "missionID", 100), deletionID: requiredText(value.deletionID, "deletionID", 100),
+          sessionID: requiredText(value.sessionID, "sessionID", 240),
+        })))
+      },
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
@@ -332,7 +352,9 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
   const value = object(input)
   const template = requiredText(value.template, "template", 40)
   if (!isTemplate(template)) throw new Error("template is unsupported")
+  if (value.prepared !== undefined && typeof value.prepared !== "boolean") throw new Error("prepared must be boolean")
   return {
+    ...(value.prepared === undefined ? {} : { prepared: value.prepared as boolean }),
     requestID: requiredText(value.requestID, "requestID", 128),
     objective: requiredText(value.objective, "objective", 20_000),
     notes: optionalBodyText(value.notes, "notes", 20_000),
@@ -356,12 +378,14 @@ function parseUpdateMissionInput(input: unknown): MissionUpdateInput {
 
 function parseDeleteMissionInput(input: unknown): MissionDeleteInput {
   const value = object(input)
+  if (value.deleteManagedSessions !== undefined && typeof value.deleteManagedSessions !== "boolean") throw new MissionControlError("deleteManagedSessions must be a boolean", "invalid-delete-option")
   const expectedRevision = value.expectedRevision
   if (!Number.isSafeInteger(expectedRevision) || Number(expectedRevision) < 1) throw new Error("expectedRevision must be a positive integer")
   return {
     missionID: requiredText(value.missionID, "missionID", 100),
     requestID: requiredText(value.requestID, "requestID", 128),
     expectedRevision: Number(expectedRevision),
+    deleteManagedSessions: value.deleteManagedSessions as boolean | undefined,
   }
 }
 

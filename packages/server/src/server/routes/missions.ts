@@ -22,7 +22,7 @@ const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
   expectedRevision: z.number().int().positive(), requestId: RequestID,
 }).strict()
-const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID }).strict()
+const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply): Promise<MissionListResponse> => {
@@ -77,6 +77,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
         }
       }
       const result = await rpc.create({
+        prepared: true,
         requestID: parsed.data.requestId,
         objective: parsed.data.objective,
         ...(parsed.data.notes === undefined ? {} : { notes: parsed.data.notes }),
@@ -102,6 +103,19 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     } catch (error) { return mutationError(reply, error) }
   })
 
+  app.post<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/control", async (request, reply) => {
+    const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID }).strict().safeParse(request.body)
+    const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
+    if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission control request" })
+    const setup = await mutationLocation(params.data.id, undefined, deps, reply)
+    if (!setup) return
+    try {
+      return await setup.client.rpc(CODENOMAD_MISSIONS_RPC).lifecycle({
+        missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
+      }, setup.options) as { mission: MissionMap }
+    } catch (error) { return mutationError(reply, error) }
+  })
+
   app.delete<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const parsed = DeleteSchema.safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
@@ -111,6 +125,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     try {
       return await setup.client.rpc(CODENOMAD_MISSIONS_RPC).delete({
         missionID: params.data.missionID, requestID: parsed.data.requestId, expectedRevision: parsed.data.expectedRevision,
+        ...(parsed.data.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: parsed.data.deleteManagedSessions }),
       }, setup.options) as { deleted: true }
     } catch (error) { return mutationError(reply, error) }
   })

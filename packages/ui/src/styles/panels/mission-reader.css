@@ -10,3 +10,5 @@
 .mission-editor textarea, .mission-editor select { width: 100%; background: var(--surface-base); color: var(--text-primary); border: 1px solid var(--border-base); padding: var(--space-sm); }
 .mission-editor textarea { min-height: 6em; resize: vertical; }
 .mission-editor p { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.mission-editor .mission-delete-sessions { display: flex; align-items: flex-start; font-size: var(--font-size-sm); }
+.mission-delete-sessions input { flex-shrink: 0; margin-top: 3px; }

@@ -8,6 +8,9 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
+import { cleanupMissionSession } from "./mission-cleanup"
+import { applyMissionLifecycle } from "./mission-lifecycle"
+import { missionIsRunning } from "../../missions/lifecycle-model"
 
 const inputSchema = z.object({
   kind: z.enum(["prompt", "synthetic"]),
@@ -33,6 +36,12 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 // Called only behind the loopback token-authenticated desktop bridge. No environment
 // values leave this backend; both native writes share ownership, connection and fence.
 export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal) {
+  if (command && typeof command === "object" && "kind" in command && command.kind === "lifecycle") {
+    return applyMissionLifecycle(manager, fence, coordinatorID, command, signal)
+  }
+  if (command && typeof command === "object" && "kind" in command && command.kind === "cleanup") {
+    return cleanupMissionSession(manager, fence, coordinatorID, command, signal)
+  }
   const { kind, input } = inputSchema.parse(command)
   const owner = await Promise.any(manager.list().map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
@@ -58,6 +67,7 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
   if (snapshot.projectID !== coordinator.projectID || !mission || mission.coordinatorSessionId !== coordinatorID) {
     throw new Error("Foreign mission contract")
   }
+  if (!missionIsRunning(mission)) throw new Error("Mission is not running")
   const task = mission.tasks.find(task => task.key === metadata.taskKey)
   if (!task) throw new Error("Missing mission task")
   const report = task.report?.id === metadata.reportID

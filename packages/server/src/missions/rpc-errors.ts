@@ -3,6 +3,11 @@
 export const MISSION_RPC_REJECTION = "mission.rejected"
 
 const statuses = {
+  "control-pending": 503,
+  "control-conflict": 409,
+  "mission-not-running": 409,
+  "invalid-delete-option": 400,
+  "cleanup-pending": 503,
   "revision-conflict": 409,
   "request-conflict": 409,
   "already-member": 409,

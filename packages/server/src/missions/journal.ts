@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 
 import {
   MISSION_MAX_EVENTS,
+  MISSION_MAX_ACTORS,
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   reduceMissionEvents,
@@ -42,7 +43,7 @@ export class MissionJournal {
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
   }
 
-  async snapshot(): Promise<MissionSnapshot> {
+  async events(): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
     const events: MissionEvent[] = []
     let discardedEvents = 0
     let after: string | undefined
@@ -59,6 +60,11 @@ export class MissionJournal {
       after = page.next
     } while (after)
 
+    return { events, discardedEvents }
+  }
+
+  async snapshot(): Promise<MissionSnapshot> {
+    const { events, discardedEvents } = await this.events()
     const snapshot = reduceMissionEvents(events, this.now())
     snapshot.projectID = this.projectID
     snapshot.discardedEvents += discardedEvents
@@ -75,8 +81,9 @@ export class MissionJournal {
     return parsed?.projectID === this.projectID ? parsed : undefined
   }
 
-  async assertCanAppend(): Promise<void> {
-    if (await this.storedEventCount() >= MISSION_MAX_EVENTS) {
+  async assertCanAppend(count = 1): Promise<void> {
+    const capacity = await this.storedCapacity()
+    if (capacity.count + capacity.cleanupSlots.size + count > MISSION_MAX_EVENTS) {
       throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
     }
   }
@@ -93,22 +100,47 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    if (await this.storedEventCount() >= MISSION_MAX_EVENTS) {
+    const capacity = await this.storedCapacity()
+    const consumesCleanupSlot = event.type === "mission.session-cleaned"
+      && capacity.cleanupSlots.has(`${event.deletionID}\0${event.sessionID}`)
+    const consumesControlSlot = event.type === "mission.control-applied"
+      && capacity.cleanupSlots.has(`${event.operationID}\0${event.sessionID}`)
+    const required = consumesCleanupSlot || consumesControlSlot ? 0 : 1
+      + (event.type === "mission.deleted" ? event.cleanupTargets?.length ?? 0 : 0)
+      + (event.type === "mission.control-requested" ? event.targets.length : 0)
+    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
       throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
     }
     await this.storage.set(key, stored)
   }
 
-  private async storedEventCount(): Promise<number> {
+  private async storedCapacity(): Promise<{ count: number; cleanupSlots: Set<string> }> {
     let count = 0
+    const cleanupSlots = new Set<string>()
+    const receipts = new Set<string>()
+    const latestControls = new Map<string, Extract<MissionEvent, { type: "mission.control-requested" }>>()
     let after: string | undefined
     do {
       const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
       count += page.entries.length
-      if (count >= MISSION_MAX_EVENTS) return count
+      if (count > MISSION_MAX_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit`)
+      for (const entry of page.entries) {
+        const event = parseMissionEvent(entry.value)
+        if (event?.type === "mission.deleted") {
+          for (const target of event.cleanupTargets ?? []) cleanupSlots.add(`${event.id}\0${target.sessionID}`)
+        } else if (event?.type === "mission.session-cleaned") receipts.add(`${event.deletionID}\0${event.sessionID}`)
+        else if (event?.type === "mission.control-requested") {
+          const previous = latestControls.get(event.missionID)
+          if (!previous || event.createdAt > previous.createdAt || (event.createdAt === previous.createdAt && event.id > previous.id)) latestControls.set(event.missionID, event)
+        } else if (event?.type === "mission.control-applied") receipts.add(`${event.operationID}\0${event.sessionID}`)
+      }
       after = page.next
     } while (after)
-    return count
+    for (const operation of latestControls.values()) {
+      for (const target of operation.targets) cleanupSlots.add(`${operation.id}\0${target.sessionID}`)
+    }
+    for (const receipt of receipts) cleanupSlots.delete(receipt)
+    return { count, cleanupSlots }
   }
 
   private prefix(): string {
@@ -135,6 +167,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (!location || !text(input.coordinator.sessionID, MAX_SHORT_TEXT)
         || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
       if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
+      if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
       return {
         ...eventBase(input),
         type: "mission.created",
@@ -148,16 +181,53 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
           location,
         },
         ...(input.requestID === undefined ? {} : { requestID: input.requestID as string }),
+        ...(input.prepared === undefined ? {} : { prepared: input.prepared as boolean }),
       }
     }
+    case "mission.control-requested": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_ACTORS || !input.targets.length) return undefined
+      const targets: Array<{ sessionID: string; location: MissionLocation }> = []
+      for (const target of input.targets) {
+        if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
+        const location = parseLocation(target.location)
+        if (!location || targets.some(item => item.sessionID === target.sessionID)) return undefined
+        targets.push({ sessionID: target.sessionID, location })
+      }
+      return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets }
+    }
+    case "mission.control-applied":
+      if (!text(input.operationID, MAX_SHORT_TEXT) || !text(input.sessionID, MAX_SHORT_TEXT)) return undefined
+      return { ...eventBase(input), type: "mission.control-applied", operationID: input.operationID, sessionID: input.sessionID }
     case "mission.updated":
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
         || typeof input.notesSpecified !== "boolean" || !text(input.objective, MAX_TEXT)
         || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))) return undefined
       return { ...eventBase(input), type: "mission.updated", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), notesSpecified: input.notesSpecified, objective: input.objective, notes: input.notes as string | undefined }
-    case "mission.deleted":
+    case "mission.deleted": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
-      return { ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision) }
+      if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
+      const cleanupTargets: Array<{ sessionID: string; location: MissionLocation }> = []
+      if (input.cleanupTargets !== undefined) {
+        if (input.deleteManagedSessions !== true || !Array.isArray(input.cleanupTargets) || input.cleanupTargets.length > MISSION_MAX_ACTORS) return undefined
+        for (const target of input.cleanupTargets) {
+          if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
+          const location = parseLocation(target.location)
+          if (!location || cleanupTargets.some((entry) => entry.sessionID === target.sessionID)) return undefined
+          cleanupTargets.push({ sessionID: target.sessionID, location })
+        }
+      }
+      if (input.deleteManagedSessions === true && input.cleanupTargets === undefined) return undefined
+      return {
+        ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision),
+        ...(input.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: input.deleteManagedSessions }),
+        ...(input.cleanupTargets === undefined ? {} : { cleanupTargets }),
+      }
+    }
+    case "mission.session-cleaned":
+      if (!text(input.deletionID, MAX_SHORT_TEXT) || !text(input.sessionID, MAX_SHORT_TEXT)
+        || (input.outcome !== "removed" && input.outcome !== "retained")) return undefined
+      return { ...eventBase(input), type: "mission.session-cleaned", deletionID: input.deletionID, sessionID: input.sessionID, outcome: input.outcome }
     case "mission.revised": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
         || !text(input.actorSessionID, MAX_SHORT_TEXT) || !text(input.reason, 2_000)
