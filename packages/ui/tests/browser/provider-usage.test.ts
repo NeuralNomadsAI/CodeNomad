@@ -124,3 +124,80 @@ test("missing credential API explains the running service requirement without ge
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("provider catalogue bursts refresh in place, coalesce reads and ignore other native locations", async () => {
+  const page = await browser.newPage({ viewport: { width: 360, height: 400 }, locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    const bar = page.getByRole("progressbar")
+    await bar.waitFor()
+    const original = await bar.elementHandle()
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated", "first", "/another-location"))
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 1, "another location's catalogue is not this quota's authority")
+    await page.evaluate(() => {
+      for (let i = 0; i < 20; i++) (window as any).usageFixture.event("provider.updated")
+    })
+    await waitRequests(requests, 2)
+    assert.equal(await original!.evaluate(el => el.isConnected), true, "passive events must not replace quota with Loading")
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE })
+    await fulfill(requests[1], 20)
+    await waitRequests(requests, 3)
+    assert.equal(await bar.getAttribute("aria-valuenow"), "20")
+    assert.equal(await original!.evaluate(el => el.isConnected), true, "quota updates keep the same bar DOM")
+    await fulfill(requests[2], 30)
+    await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "30")
+    assert.equal(await original!.evaluate(el => el.isConnected), true)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("an account boundary during passive refresh clears quota and fences old and trailing results", async () => {
+  const page = await browser.newPage()
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => {
+      for (let i = 0; i < 5; i++) (window as any).usageFixture.event("provider.updated")
+    })
+    await waitRequests(requests, 2)
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 3)
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    await fulfill(requests[1], 90)
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 3, "obsolete passive demand must not restart an old account read")
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    await fulfill(requests[2], 40)
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "40")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("stable window labels handle removed quotas and passive read failure without retaining old data", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ contentType: "application/json", body: JSON.stringify({
+      requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true, configured: true,
+      ok: true, fetchedAt: Date.now(), windows: { weekly: { usedPercent: 30, remainingPercent: 70, resetAt: null, windowSeconds: 604800 } },
+    }) })
+    await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "30", undefined, { timeout: 5000 })
+      .catch(async error => { console.error("Window replacement failure", errors, await page.locator("body").innerText()); throw error })
+    assert.equal(await page.getByRole("progressbar").count(), 1)
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 3)
+    await requests[2].fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) })
+    await page.getByText("Usage is temporarily unavailable.", { exact: true }).waitFor({ timeout: 5000 })
+      .catch(async error => { console.error("Failure display", errors, await page.locator("body").innerText(), requests.length); throw error })
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

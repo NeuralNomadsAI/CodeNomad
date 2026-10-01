@@ -27,9 +27,33 @@ test("late quota responses cannot publish into another session or overwrite a ne
   assert.equal(requests[1].source.sessionId, "second")
   const old = state.refresh()
   const fresh = state.refresh()
+  assert.equal(old, fresh, "concurrent reads share the complete refresh cycle")
+  assert.equal(requests.length, 3)
+  requests[2].resolve(response(30)); await Promise.resolve()
+  assert.equal(requests.length, 4, "one trailing read reconciles demand during the first read")
   requests[3].resolve(response(40)); await fresh
-  requests[2].resolve(response(30)); await old
   assert.equal(displayed?.windows["5h"].usedPercent, 40)
+})
+
+test("passive bursts preserve the snapshot and obsolete follow-up demand cannot cross an account boundary", async () => {
+  const requests: Array<(value: ProviderUsageResponse) => void> = []
+  let displayed: ProviderUsageResponse | null | undefined
+  const snapshot = () => displayed
+  const state = createProviderUsageState(() => new Promise(resolve => requests.push(resolve)), value => { displayed = value })
+  state.select(source)
+  const initial = state.refresh()
+  requests[0](response(10)); await initial
+  const pending = state.refresh()
+  for (let i = 0; i < 20; i++) assert.equal(state.refresh(), pending)
+  assert.equal(requests.length, 2)
+  assert.equal(displayed?.windows["5h"].usedPercent, 10)
+  state.invalidate()
+  const account = state.refresh()
+  requests[1](response(90)); await pending
+  assert.equal(requests.length, 3, "old account's trailing demand is discarded")
+  assert.equal(displayed, undefined)
+  requests[2](response(40)); await account
+  assert.equal(snapshot()?.windows["5h"].usedPercent, 40)
 })
 
 test("account/reconnect invalidation and inactive transitions fence pending work and clear old snapshots", async () => {

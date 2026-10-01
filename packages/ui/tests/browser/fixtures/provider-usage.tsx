@@ -12,8 +12,8 @@ const [mounted, setMounted] = createSignal(true)
 ;(window as any).usageFixture = {
   select: (next: Partial<ReturnType<typeof scope>>) => setScope(current => ({ ...current, ...next })),
   active: setActive, mounted: setMounted,
-  event: (type: string, instanceId = scope().instanceId) => (serverEvents as any).dispatchBatch([{
-    type: "instance.event", instanceId, event: { type, id: "event", created: Date.now(), data: {}, location: { directory: scope().directory } },
+  event: (type: string, instanceId = scope().instanceId, directory = scope().directory) => (serverEvents as any).dispatchBatch([{
+    type: "instance.event", instanceId, event: { type, id: "event", created: Date.now(), data: {}, location: { directory } },
   }]),
   connection: (status: string) => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: scope().instanceId, status }]),
 }
