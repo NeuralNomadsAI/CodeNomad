@@ -56,6 +56,14 @@ window_constraints_windows` from `packages/tauri-app/src-tauri`; `-- --baseline`
 demonstrates the original unmaximize bug. It uses temporary WebView2 profiles and
 no backend or shared daemon. Multi-monitor/DPI calculations also have Rust tests;
 the native run only covers monitors actually attached to the test host.
+On macOS/Linux, `window_zoom.js` routes keyboard and Ctrl-wheel input through the
+relative-only `owned_webview_zoom` command rather than Tauri's generic zoom command.
+The host validates the registered primary webview and its origin, then updates
+native zoom, bookkeeping and constraints together. Windows keeps native input.
+Preview children receive neither this input script nor application capability
+authority. The shipped and pinned-runtime scripts are exercised by
+`node --test packages/tauri-app/tests/window-zoom-script.test.mjs` after Cargo has
+downloaded the locked Tauri source; CI runs this on all three desktop platforms.
 Tests cover 360, 390 and 430 px widths
 plus 320 px, landscape, mouse/touch media, draft preservation, native profile/reset
 behavior and the real viewport menu's native/fallback boundaries.

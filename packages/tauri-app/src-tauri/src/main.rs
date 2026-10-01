@@ -18,6 +18,7 @@ mod preferences_window;
 mod shutdown;
 mod view_menu;
 mod window_constraints;
+mod window_zoom;
 mod windows_update;
 mod workspace_open;
 
@@ -990,10 +991,10 @@ fn open_remote_window_locked(
     .data_directory(data_directory)
     .incognito(requested_profile.proxy_session_id().is_some())
     .initialization_script(REMOTE_WINDOW_CONTEXT_SCRIPT)
-    .zoom_hotkeys_enabled(true)
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
+    let builder = window_zoom::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));
     let window = match builder.build() {
@@ -1749,6 +1750,7 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             window_control,
+            window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
             client_state::client_state_claim_access,
@@ -2408,7 +2410,8 @@ mod menu_tests {
             capability["remote"]["urls"],
             json!(["http://*:*", "https://*:*"])
         );
-        assert_eq!(capability["windows"], json!(["remote-*"]));
+        assert_eq!(capability["webviews"], json!(["remote-*"]));
+        assert!(capability["windows"].is_null());
         assert_eq!(
             capability["permissions"],
             json!([
