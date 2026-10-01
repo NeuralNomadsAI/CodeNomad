@@ -13,6 +13,7 @@ import type { useGitChanges } from "../useGitChanges"
 import type { useGitHistory } from "../useGitHistory"
 import { closeFilePreview, getFilePreview, type FilePreviewTarget } from "../../../../../stores/files-preview"
 import FileRowActions from "../FileRowActions"
+import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import { buildGitChangeListItems } from "../git-changes-model"
 import type { GitChangeListItem, GitChangeSection } from "../types"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
@@ -221,16 +222,19 @@ const GitChangeRow: Component<{
   }
   const stageLabel = () => rowProps.t(staged() ? "instanceShell.gitChanges.actions.unstage" : "instanceShell.gitChanges.actions.stage")
   const target = () => ({ path: rowProps.item.path, originalPath: rowProps.item.originalPath, scope: rowProps.item.section })
+  // Keep action identities stable when another reader opens. Recreating every
+  // icon/menu for a preview-state change stalls large inventories, even hidden.
+  const actions: ActionOverflowMenuItem[] = [
+    { key: "preview", get label() { return `${rowProps.t("filesPanel.viewer")} · ${rowProps.item.path}` }, icon: <Eye size={14} />,
+      get checked() { return rowProps.previewActive(target()) }, get disabled() { return !rowProps.canOpenFile }, onSelect: () => rowProps.onOpenFile(target()) },
+    { key: "stage", get label() { return `${stageLabel()} · ${rowProps.item.path}` },
+      icon: <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show>, onSelect: toggleStage },
+  ]
   return <div ref={draggable} class="git-panel-file-row" classList={{ "git-panel-file-selected": rowProps.git.gitActionItems().some(selected => selected.id === rowProps.item.id) }} style={transformStyle(draggable.transform)}>
     <button class="git-panel-file git-panel-file-main" aria-pressed={rowProps.git.gitActionItems().some(selected => selected.id === rowProps.item.id)} aria-current={rowProps.git.gitSelectedItemId() === rowProps.item.id ? "true" : undefined} title={rowProps.item.path} disabled={!rowProps.canOpenFile} onClick={event => {
        rowProps.git.handleGitRowClick(rowProps.item, event)
     }}><span class="git-file-status">{rowProps.item.status.slice(0, 1).toUpperCase()}</span><span>{rowProps.item.path}</span><small><b class="file-list-item-additions">+{rowProps.item.additions}</b> <b class="file-list-item-deletions">−{rowProps.item.deletions}</b></small></button>
-    <FileRowActions label={rowProps.t("instanceShell.filesShell.actions.more", { name: rowProps.item.path })} items={[
-      { key: "preview", label: `${rowProps.t("filesPanel.viewer")} · ${rowProps.item.path}`, icon: <Eye size={14} />,
-        checked: rowProps.previewActive(target()), disabled: !rowProps.canOpenFile, onSelect: () => rowProps.onOpenFile(target()) },
-      { key: "stage", label: `${stageLabel()} · ${rowProps.item.path}`,
-        icon: staged() ? <Minus size={14} /> : <Plus size={14} />, onSelect: toggleStage },
-    ]} />
+    <FileRowActions label={rowProps.t("instanceShell.filesShell.actions.more", { name: rowProps.item.path })} items={actions} />
   </div>
 }
 export default FilesPanel

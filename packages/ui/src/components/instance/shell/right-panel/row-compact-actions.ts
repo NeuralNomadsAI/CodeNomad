@@ -2,6 +2,23 @@ import { onCleanup } from "solid-js"
 
 const px = (value: string) => Number.parseFloat(value) || 0
 
+type Measurement = () => (() => void) | undefined
+const pendingMeasurements = new Set<Measurement>()
+let scheduledFrame = 0
+function scheduleMeasurement(measure: Measurement) {
+  pendingMeasurements.add(measure)
+  if (scheduledFrame) return
+  scheduledFrame = requestAnimationFrame(() => {
+    scheduledFrame = 0
+    const pending = [...pendingMeasurements]
+    pendingMeasurements.clear()
+    // Read every row before changing any DOM. Per-row read/write callbacks
+    // repeatedly laid out the entire inventory when thousands of files mounted.
+    const updates = pending.map(read => read())
+    for (const update of updates) update?.()
+  })
+}
+
 // Width of the row content ignoring the overflow trigger, so hidden inline
 // actions stay measurable. Text nodes are measured with a Range because the
 // label truncates with ellipsis.
@@ -34,10 +51,8 @@ function rowContentWidth(element: Element): number {
 export function observeRowOverflow(element: HTMLElement) {
   const row = element.parentElement
   if (!row) return
-  let frame = 0
   let disposed = false
   const measure = () => {
-    frame = 0
     if (disposed || !element.isConnected || !row.getBoundingClientRect().width) return
     const menu = element.querySelector<HTMLButtonElement>(".action-overflow-trigger")
     const inline = element.querySelector<HTMLElement>(".file-row-inline-actions")
@@ -51,15 +66,18 @@ export function observeRowOverflow(element: HTMLElement) {
     const active = document.activeElement
     const hadActionFocus = active instanceof Element && element.contains(active)
       && active.matches(".file-row-inline-actions button, .action-overflow-trigger")
-    element.dataset.compact = String(next)
-    inline.inert = next
-    if (hadActionFocus) queueMicrotask(() => {
+    return () => {
       if (disposed || !element.isConnected) return
-      const target = next ? menu : element.querySelector<HTMLButtonElement>(".file-row-inline-actions button:not(:disabled)")
-      target?.focus({ preventScroll: true })
-    })
+      element.dataset.compact = String(next)
+      inline.inert = next
+      if (hadActionFocus) queueMicrotask(() => {
+        if (disposed || !element.isConnected) return
+        const target = next ? menu : element.querySelector<HTMLButtonElement>(".file-row-inline-actions button:not(:disabled)")
+        target?.focus({ preventScroll: true })
+      })
+    }
   }
-  const schedule = () => { if (!frame && !disposed) frame = requestAnimationFrame(measure) }
+  const schedule = () => { if (!disposed) scheduleMeasurement(measure) }
   const resize = new ResizeObserver(schedule)
   resize.observe(row)
   resize.observe(element)
@@ -69,7 +87,8 @@ export function observeRowOverflow(element: HTMLElement) {
   schedule()
   onCleanup(() => {
     disposed = true
-    cancelAnimationFrame(frame)
+    pendingMeasurements.delete(measure)
+    if (!pendingMeasurements.size) { cancelAnimationFrame(scheduledFrame); scheduledFrame = 0 }
     resize.disconnect()
     mutation.disconnect()
     document.fonts?.removeEventListener("loadingdone", schedule)

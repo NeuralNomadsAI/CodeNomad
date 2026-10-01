@@ -7,6 +7,33 @@ import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 
 let server: ViteDevServer, browser: Browser, url: string
+test("large Changes inventories keep the reader controls responsive", async () => {
+  const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
+  try {
+    await page.goto(url)
+    await page.getByRole("treeitem", { name: "package.json", exact: true }).waitFor()
+    // Prepare the local Monaco chunk before timing inventory interactions;
+    // Vite's first compilation is not the packaged renderer's input latency.
+    await page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true }).click()
+    await page.locator('.workspace-file-view .view-line').first().waitFor()
+    await page.getByRole("button", { name: "Retour à la conversation", exact: true }).click()
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      serverApi.fetchWorktreeGitStatus = async () => Array.from({ length: 1600 }, (_, index) => ({
+        path: `packages/electron-app/electron/main/file-${index}.test.ts`, originalPath: null,
+        stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0,
+        unstagedStatus: "deleted", unstagedAdditions: 0, unstagedDeletions: 350,
+      }))
+      ;(window as any).fixture.invalidate()
+    })
+    await page.getByRole("button", { name: "Changements", exact: true }).click()
+    await page.locator('.git-panel-file-row').nth(1599).waitFor({ state: "attached", timeout: 15000 })
+    await page.getByRole("button", { name: "Workspace", exact: true }).click({ timeout: 5000 })
+    await page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true }).click({ timeout: 5000 })
+    await page.locator('.workspace-file-view .view-line').first().waitFor({ timeout: 5000 })
+  } finally { await page.close() }
+})
 test("Workspace editing saves the exact directory, retains drafts and checks external changes", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   const edit = async (text: string) => page.evaluate(text => {
