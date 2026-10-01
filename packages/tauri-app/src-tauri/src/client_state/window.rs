@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
-const MIN_WINDOW_WIDTH: i32 = 800;
+pub const MIN_WINDOW_WIDTH: i32 = 390;
 const MIN_WINDOW_HEIGHT: i32 = 600;
 const MIN_ZOOM_LEVEL: f64 = 0.25;
 pub(super) const MAX_ZOOM_LEVEL: f64 = 5.0;

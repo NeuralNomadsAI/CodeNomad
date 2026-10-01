@@ -365,7 +365,7 @@ pub(crate) fn create_local_window(
     let result = builder
         .title("CodeNomad")
         .inner_size(1400.0, 900.0)
-        .min_inner_size(800.0, 600.0)
+        .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0)
         .resizable(true)
         .fullscreen(false)
         .decorations(false)

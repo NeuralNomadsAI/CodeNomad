@@ -49,14 +49,19 @@
   }
 }
 
-.session-center-column[data-session-header-density="4"] .session-view {
-  padding-inline-end: 0;
-}
+/* Use conversation width, never the changing header controls or viewport height. */
+@container session-center (width < 420px) {
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
+    padding-inline-end: 0;
+  }
 
-.session-center-column[data-session-header-density="4"] .session-timeline-slot {
-  display: none;
-}
+  .session-timeline-slot,
+  .message-timeline-sidebar,
+  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+    display: none;
+  }
 
-.session-center-column[data-session-header-density="4"] .session-view .prompt-input-footer::after {
-  display: none;
+  .message-layout--with-timeline {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

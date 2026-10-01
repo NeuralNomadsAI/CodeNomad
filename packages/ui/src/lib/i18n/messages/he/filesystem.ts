@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "מעבר לתיקייה",
   "directoryBrowser.goToParent": "תיקיית אב",
   "directoryBrowser.goToHome": "בית",
+  "directoryBrowser.goToRoot": "שורש סביבת העבודה",
   "directoryBrowser.goToInitial": "חזרה אל {name}",
   "directoryBrowser.selectCurrent": "בחר נוכחית",
   "directoryBrowser.newFolder": "תיקייה חדשה",

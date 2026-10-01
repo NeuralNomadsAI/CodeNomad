@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "browser.viewport.emulationHint": "טוען מחדש עם זיהוי נייד, מגע וצפיפות פיקסלים. מנוע הדפדפן, המקלדת וסרגלי המערכת אינם מדומים.",
+  "browser.viewport.emulationUnavailable": "הדמיית מכשיר דורשת תצוגה מקדימה מקורית של האינטרנט ביישום למחשב.",
   "sessionList.filter.includeMainSessions": "הצגת סשנים ראשיים",
   "sessionList.filter.includeSubsessions": "הצגת תת־סשנים",
   "session.pruning.maintenance_required": "הסשן או האחסון שלו עסוקים. יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",

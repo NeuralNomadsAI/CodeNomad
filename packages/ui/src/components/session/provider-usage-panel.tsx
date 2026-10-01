@@ -4,69 +4,61 @@ import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../ser
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
+import { serverEvents } from "../../lib/server-events"
+import { createProviderUsageState, shouldShowProviderUsageWindow } from "./provider-usage-state"
 
 interface ProviderUsagePanelProps {
+  instanceId: string
+  sessionId: string
+  directory: string
+  active: boolean
   providerId: string
   modelId: string
 }
 
 const REFRESH_INTERVAL_MS = 60_000
-const usageCache = new Map<string, { value: ProviderUsageResponse | null; updatedAt: number }>()
-
-export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) =>
-  label !== "credits_balance" || showCreditBalance
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
   const source = createMemo(() => {
+    if (!props.active) return null
     const providerId = props.providerId.trim()
     if (!providerId) return null
     const modelId = props.modelId.trim()
-    return { providerId, modelId, key: `${providerId}\0${modelId}` }
+    return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
   })
-  const initialSource = source()
-  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>(
-    initialSource ? usageCache.get(initialSource.key)?.value : undefined,
-  )
-  let requestId = 0
-
-  const refreshUsage = async (providerId: string, modelId: string, key: string, clear: boolean) => {
-    const currentRequestId = ++requestId
-    if (clear) setUsage(undefined)
-    try {
-      const response = await serverApi.fetchProviderUsage(providerId, modelId)
-      usageCache.set(key, { value: response, updatedAt: Date.now() })
-      if (currentRequestId === requestId) setUsage(response)
-    } catch {
-      if (currentRequestId === requestId && usage() === undefined) {
-        usageCache.set(key, { value: null, updatedAt: Date.now() })
-        setUsage(null)
-      }
-    }
-  }
+  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
+  const state = createProviderUsageState(current => serverApi.fetchProviderUsage(
+    current.instanceId, current.sessionId, current.providerId, current.modelId,
+  ), value => setUsage(value))
 
   createEffect(() => {
-    const current = source()
-    if (!current) {
-      requestId += 1
-      setUsage(undefined)
-      return
-    }
-    const cached = usageCache.get(current.key)
-    setUsage(cached?.value)
-    if (!cached || Date.now() - cached.updatedAt >= REFRESH_INTERVAL_MS) {
-      void refreshUsage(current.providerId, current.modelId, current.key, cached === undefined)
-    }
+    state.select(source())
+    void state.refresh()
   })
 
-  const refreshTimer = setInterval(() => {
-    const current = source()
-    if (current) void refreshUsage(current.providerId, current.modelId, current.key, false)
-  }, REFRESH_INTERVAL_MS)
+  const revalidate = () => { state.invalidate(); if (source()) void state.refresh() }
+  const unsubscribeEvents = serverEvents.on("instance.event", event => {
+    if (event.type !== "instance.event" || event.instanceId !== props.instanceId) return
+    if (["credential.updated", "credential.switched", "integration.updated", "provider.updated", "config.updated", "server.connected"].includes(event.event.type)) revalidate()
+  })
+  const unsubscribeStatus = serverEvents.on("instance.eventStatus", event => {
+    if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    state.invalidate()
+    if (event.status === "connected" && source()) void state.refresh()
+  })
+  const unsubscribeTransport = serverEvents.onTransportStatus(status => {
+    state.invalidate()
+    if (status === "connected" && source()) void state.refresh()
+  })
+  const refreshTimer = setInterval(() => { if (source()) void state.refresh() }, REFRESH_INTERVAL_MS)
   onCleanup(() => {
-    requestId += 1
+    state.dispose()
     clearInterval(refreshTimer)
+    unsubscribeEvents()
+    unsubscribeStatus()
+    unsubscribeTransport()
   })
 
   const entries = createMemo(() => Object.entries(usage()?.windows ?? {}))

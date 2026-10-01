@@ -54,6 +54,10 @@ test("move/resize bursts debounce and final flush preserves pre-maximize bounds"
 })
 
 test("normalizes persisted window state", () => {
+  for (const width of [320, 390, 430]) {
+    assert.deepEqual(clampWindowBounds({ x: 20, y: 30, width, height: 844 }, [primaryDisplay]),
+      { x: 20, y: 30, width: Math.max(390, width), height: 844 })
+  }
   assert.equal(normalizeNativeWindowState({ bounds: { x: 0, y: 0, width: Number.NaN, height: 900 }, maximized: false, fullscreen: false, zoomFactor: 1 }), undefined)
   assert.deepEqual(clampWindowBounds({ x: 4000, y: 2000, width: 1400, height: 900 }, [primaryDisplay]), { x: 520, y: 180, width: 1400, height: 900 })
   assert.deepEqual(
@@ -69,7 +73,7 @@ test("mixed-DPI monitor selection compares intersections in physical coordinates
       { x: 0, y: 0, width: 1920, height: 1080, scaleFactor: 1 },
       { x: 960, y: 0, width: 1280, height: 720, scaleFactor: 2 },
     ],
-  ), { x: 1000, y: 120, width: 800, height: 600 })
+  ), { x: 1000, y: 120, width: 700, height: 600 })
 })
 
 test("normalizes unsafe zoom factors", () => {

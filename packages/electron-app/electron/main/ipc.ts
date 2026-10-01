@@ -114,6 +114,10 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     })
     return { ok: true }
   })
+  ipcMain.handle("browser-target:emulate", async (event, registrationId: unknown, preset: unknown) => {
+    const { window } = local(event)
+    await dependencies.browserController.emulate(window.webContents, registrationId, preset)
+  })
   ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown) => {
     const window = local(event).window
     const claimed = dependencies.browserController.claimOpen(window.webContents, requestID)

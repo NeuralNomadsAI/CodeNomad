@@ -26,7 +26,7 @@ import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-regi
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
-import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
+import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowZoomInput, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
@@ -225,7 +225,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map((display) => ({ ...display.workArea, scaleFactor: display.scaleFactor }))) : undefined
     const window = new BrowserWindow({
       width: bounds?.width ?? DEFAULT_WINDOW_WIDTH, height: bounds?.height ?? DEFAULT_WINDOW_HEIGHT,
-      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: 800, minHeight: 600,
+      ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: MIN_WINDOW_WIDTH, minHeight: 600,
       frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
@@ -438,7 +438,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       }
       const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
       const window = new BrowserWindow({
-        width: 1400, height: 900, minWidth: 800, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
+        width: 1400, height: 900, minWidth: MIN_WINDOW_WIDTH, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
         webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
       })
       const nativeWindowId = window.id

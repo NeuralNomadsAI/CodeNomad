@@ -339,7 +339,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
-  registerUsageRoutes(app)
+  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
@@ -927,7 +927,9 @@ async function proxyWorkspaceRequest(args: {
         return
       }
       if (isSessionNotFoundError(error)) {
-        reply.code(404).send({ error: "Session not found" })
+        // Parent-chain hydration must distinguish a missing session from a
+        // transport/authorization failure. Retain only the native public shape.
+        reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
         return
       }
       throw error

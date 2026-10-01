@@ -18,7 +18,7 @@ export interface NativeWindowState {
 export const DEFAULT_WINDOW_WIDTH = 1400
 export const DEFAULT_WINDOW_HEIGHT = 900
 
-const MIN_WINDOW_WIDTH = 800
+export const MIN_WINDOW_WIDTH = 390
 const MIN_WINDOW_HEIGHT = 600
 const MIN_ZOOM_FACTOR = 0.25
 const MAX_ZOOM_FACTOR = 5

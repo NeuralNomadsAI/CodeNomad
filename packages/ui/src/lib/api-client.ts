@@ -216,8 +216,8 @@ export const serverApi = {
     return request<WorkspaceDescriptor[]>("/api/workspaces")
   },
 
-  fetchProviderUsage(providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
-    const params = new URLSearchParams()
+  fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+    const params = new URLSearchParams({ instanceId, sessionId })
     if (modelId) params.set("modelId", modelId)
     const query = params.toString()
     return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
