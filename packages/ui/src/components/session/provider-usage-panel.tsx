@@ -5,7 +5,7 @@ import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
 import { serverEvents } from "../../lib/server-events"
-import { createProviderUsageState, shouldShowProviderUsageWindow } from "./provider-usage-state"
+import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
 interface ProviderUsagePanelProps {
   instanceId: string
@@ -21,13 +21,13 @@ const REFRESH_INTERVAL_MS = 60_000
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
-  const source = createMemo(() => {
+  const source = createMemo<ProviderUsageSource | null>(() => {
     if (!props.active) return null
     const providerId = props.providerId.trim()
     if (!providerId) return null
     const modelId = props.modelId.trim()
     return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
-  })
+  }, null, { equals: (a, b) => a === b || Boolean(a && b && providerUsageKey(a) === providerUsageKey(b)) })
   const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
   const state = createProviderUsageState(current => serverApi.fetchProviderUsage(
     current.instanceId, current.sessionId, current.providerId, current.modelId,
@@ -120,7 +120,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                       ? "providerUsage.unsupported"
                       : !data().configured
                         ? "providerUsage.notConfigured"
-                        : "providerUsage.unavailable",
+                        : data().unavailableReason === "native-credential-api-unavailable"
+                          ? "providerUsage.nativeCredentialApiUnavailable"
+                          : "providerUsage.unavailable",
+                    { version: "2.0.20" },
                   )}
                 </div>
               }

@@ -33,6 +33,9 @@ preserving session IDs and complete history. See the
 Codex/OpenAI quota reads require the **2.0.20** native `credential.list` API.
 This is a feature-local dependency, not a new global minimum: a missing endpoint,
 expired token or unsupported connection yields unavailable usage. The server
+identifies a credential-endpoint HTTP 404 with a sanitized, feature-local upgrade
+reason; the panel explains the required service version without blocking the app.
+The server
 resolves the owned session's native directory and provider integration, then uses
 only that integration's first connection and its matching active ChatGPT OAuth
 credential (`chatgpt-browser` or `chatgpt-headless`). It never reads host legacy

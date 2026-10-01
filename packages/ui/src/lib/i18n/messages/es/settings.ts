@@ -671,4 +671,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copiar al portapapeles",
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.copied": "Información de diagnóstico copiada al portapapeles.",
+  "providerUsage.nativeCredentialApiUnavailable": "El uso requiere OpenCode {version} o posterior. Actualiza OpenCode y reinicia su servicio desde Configuración.",
 } as const

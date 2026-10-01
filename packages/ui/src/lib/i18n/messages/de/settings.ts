@@ -670,4 +670,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "In Zwischenablage kopieren",
   "settings.info.diagnostics.download": ".txt herunterladen",
   "settings.info.diagnostics.copied": "Diagnoseinfo in Zwischenablage kopiert.",
+  "providerUsage.nativeCredentialApiUnavailable": "Die Nutzung erfordert OpenCode {version} oder neuer. Aktualisiere OpenCode und starte anschließend den Dienst in den Einstellungen neu.",
 } as const
