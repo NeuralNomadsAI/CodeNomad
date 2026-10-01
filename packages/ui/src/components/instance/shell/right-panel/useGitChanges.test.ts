@@ -99,7 +99,13 @@ async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")]) {
         path: selected.path, scope: selected.section, originalPath: selected.originalPath })
     }
   }
-  return { git, item, click, close() { dispose(); closeFilePreview("test") } }
+  const select = (id: string) => git.handleGitRowClick(item(id), { preventDefault() {} } as MouseEvent)
+  const eye = (id: string) => {
+    const preview = item(id)
+    openFilePreview("test", { sessionId: "session", slug: "root", directory: "/repo",
+      path: preview.path, scope: preview.section, originalPath: preview.originalPath })
+  }
+  return { git, item, click, select, eye, close() { dispose(); closeFilePreview("test") } }
 }
 
 test("stage and unstage move the central local preview with its sidebar selection", async () => {
@@ -163,7 +169,7 @@ test("passive filesystem reconciliation also moves the relevant local preview", 
 
 test("refresh and mutation preserve unrelated previews and fence navigation during pending requests", async () => {
   const others: Partial<FilePreviewTarget>[] = [
-    { kind: "workspace" }, { commit: "abcdef" }, { path: "b.ts" }, { slug: "other" }, { directory: "/other" },
+    { kind: "workspace" }, { commit: "abcdef" }, { slug: "other" }, { directory: "/other" },
   ]
   for (const other of others) {
     const h = await setup()
@@ -240,4 +246,45 @@ test("pending mutation cannot replace a newly opened reader even without a sideb
       assert.equal(getFilePreview("test"), newer)
     } finally { h.close() }
   }
+})
+
+test("an eye-opened diff reconciles independently of the selected row, including later selection clicks", async () => {
+  const h = await setup()
+  try {
+    h.select("unstaged:a.ts")
+    h.eye("unstaged:b.ts")
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:a.ts")
+    const gate = deferred()
+    fixture.mutationGate = gate.promise
+    h.git.stageGitFile(h.item("unstaged:b.ts"))
+    h.select("unstaged:c.ts")
+    gate.resolve()
+    await until(() => getFilePreview("test")?.scope === "staged")
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:c.ts")
+    assert.equal(getFilePreview("test")?.path, "b.ts")
+    fixture.mutationGate = null
+    h.git.unstageGitFile(h.item("staged:b.ts"))
+    await until(() => getFilePreview("test")?.scope === "unstaged")
+    assert.deepEqual(fixture.requests.map(request => request.paths), [["b.ts"], ["b.ts"]])
+    fixture.entries = [entry("a.ts"), entry("c.ts")]
+    await h.git.refreshGitStatus()
+    assert.equal(getFilePreview("test"), null)
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:c.ts")
+  } finally { h.close() }
+})
+
+test("passive refresh and commits reconcile an eye-opened file without selecting it", async () => {
+  const h = await setup()
+  try {
+    h.select("unstaged:a.ts")
+    h.eye("unstaged:b.ts")
+    fixture.entries = [entry("a.ts"), entry("b.ts", true)]
+    invalidateFilesystemCaches("test")
+    await until(() => getFilePreview("test")?.scope === "staged")
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:a.ts")
+    h.git.setGitCommitMessage("Commit B")
+    await h.git.submitGitCommit()
+    assert.equal(getFilePreview("test"), null)
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:a.ts")
+  } finally { h.close() }
 })

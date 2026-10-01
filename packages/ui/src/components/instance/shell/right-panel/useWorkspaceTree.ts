@@ -12,7 +12,7 @@ interface TreeState {
 type TreeRow = FileSystemEntry & { depth: number; parent: string }
 export function useWorkspaceTree(instanceId: string, directory: Accessor<string>, active: Accessor<boolean>) {
   const empty = (): TreeState => ({ directories: new Map(), expanded: new Set(["."]), selected: null })
-  const cache = new Map<string, TreeState>()
+  const cache = new Map<string, { state: TreeState; versions: Map<string, number> }>()
   const [state, setState] = createSignal<TreeState>(empty())
   const [errors, setErrors] = createSignal(new Map<string, string>())
   const [busy, setBusy] = createSignal(new Set<string>())
@@ -22,11 +22,12 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   // Filesystem-invalidation version seen by each loaded directory. Reopening a
   // directory serves its cached children unless the filesystem changed since
   // they were read; collapsed subtrees are never re-read on expand.
-  const loadedVersions = new Map<string, number>()
+  let loadedVersions = new Map<string, number>()
 
   async function load(path: string, force = false) {
     if (!active() || requests.has(path) || (!force && state().directories.has(path))) return
     const scope = directory(), controller = new AbortController()
+    const version = filesystemInvalidationVersion(instanceId)
     requests.set(path, controller)
     setBusy(new Set(requests.keys()))
     setErrors(previous => { const next = new Map(previous); next.delete(path); return next })
@@ -34,7 +35,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       const entries = await backgroundReads.run(controller.signal,
         () => serverApi.listWorkspaceFiles(instanceId, path, scope, controller.signal), "visible")
       if (controller.signal.aborted || directory() !== scope) return
-      loadedVersions.set(path, filesystemInvalidationVersion(instanceId))
+      loadedVersions.set(path, version)
       setState(previous => ({ ...previous, directories: new Map(previous.directories).set(path, entries
         .slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name))) }))
     } catch (error) {
@@ -94,13 +95,15 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   createEffect(on(busy, value => { if (!value.size && dirty && active()) debounced.trigger() }))
   createEffect(on(directory, value => {
     cancel()
-    cache.set(current, state())
+    debounced.cancel()
+    cache.set(current, { state: state(), versions: loadedVersions })
     if (cache.size > 8) cache.delete(cache.keys().next().value!)
     current = value
-    loadedVersions.clear()
-    setState(cache.get(value) ?? empty())
+    const cached = cache.get(value)
+    loadedVersions = cached?.versions ?? new Map()
+    setState(cached?.state ?? empty())
     setErrors(new Map())
-    dirty = false
+    dirty = loadedVersions.get(".") !== filesystemInvalidationVersion(instanceId)
   }))
   createEffect(on(() => active() ? directory() : null, value => {
     if (value === null) { cancel(); return }

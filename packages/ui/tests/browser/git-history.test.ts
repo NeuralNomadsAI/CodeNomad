@@ -77,6 +77,99 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     assert.equal(await save().isDisabled(), true)
   } finally { await page.close() }
 })
+test("a pending save retains an undo to the original text after closing the real reader", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await page.goto(url)
+    const eye = () => page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true })
+    await eye().click()
+    await page.locator('.workspace-file-view .view-line').first().waitFor()
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const write = serverApi.writeWorkspaceFile
+      serverApi.writeWorkspaceFile = async (...args: Parameters<typeof write>) => {
+        ;(window as any).writeStarted = true
+        await new Promise<void>(resolve => { (window as any).releaseWrite = resolve })
+        await write(...args)
+        serverApi.writeWorkspaceFile = write
+      }
+      const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
+      ;(window as any).originalText = editor.getValue()
+      editor.setValue('{"saved": true}')
+    })
+    await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).click()
+    await page.waitForFunction(() => (window as any).writeStarted)
+    await page.evaluate(() => {
+      const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
+      editor.setValue((window as any).originalText)
+    })
+    await eye().click()
+    await page.evaluate(() => (window as any).releaseWrite())
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save"))
+    await eye().click()
+    await page.locator('.workspace-file-view .view-line').first().waitFor()
+    assert.equal(await page.evaluate(() => {
+      const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
+      return editor.getValue() === (window as any).originalText
+    }), true)
+    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isEnabled(), true)
+  } finally { await page.close() }
+})
+
+test("the eye-opened Changes reader follows staging without changing the selected row", async () => {
+  const page = await browser.newPage({ viewport: { width: 1800, height: 960 } })
+  try {
+    await page.goto(url)
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const status = serverApi.fetchWorktreeGitStatus, stage = serverApi.stageWorktreeGitPaths
+      let staged = false
+      serverApi.fetchWorktreeGitStatus = async (...args: Parameters<typeof status>) => (await status(...args)).map(entry =>
+        staged && entry.path.endsWith("git-history.css") ? { ...entry, stagedStatus: "modified", unstagedStatus: null } : entry)
+      serverApi.stageWorktreeGitPaths = async (...args: Parameters<typeof stage>) => { const result = await stage(...args); staged = true; return result }
+    })
+    await page.getByRole("button", { name: "Changements", exact: true }).click()
+    const selected = page.locator('.git-panel-file-row').filter({ hasText: "src/components/git-panel.tsx" })
+    await selected.locator('.git-panel-file-main').click()
+    const eye = page.getByRole("button", { name: "Aperçu du fichier · src/styles/panels/git-history.css", exact: true })
+    await eye.click()
+    await page.locator('.git-diff-content .line-insert').first().waitFor()
+    await page.getByRole("button", { name: "Indexer le fichier · src/styles/panels/git-history.css", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.target()?.scope === "staged")
+    assert.equal(await selected.locator('.git-panel-file-main').getAttribute("aria-current"), "true")
+    assert.equal(await eye.getAttribute("aria-pressed"), "true")
+    assert.equal(await page.evaluate(() => (window as any).fixture.target().path), "src/styles/panels/git-history.css")
+  } finally { await page.close() }
+})
+
+test("returning to an invalidated worktree lazily refreshes cached Workspace rows", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  try {
+    await page.goto(url)
+    await page.getByRole("treeitem", { name: "package.json", exact: true }).waitFor()
+    const selector = page.getByRole("combobox", { name: "Worktree à consulter" })
+    await selector.selectOption("review")
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "files" && call.slug.endsWith("/review")))
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const list = serverApi.listWorkspaceFiles
+      serverApi.listWorkspaceFiles = async (...args: Parameters<typeof list>) => {
+        const entries = await list(...args)
+        return args[2] === "/CodeNomad" && args[1] === "."
+          ? entries.map(entry => entry.path === "package.json" ? { ...entry, name: "new.json", path: "new.json" } : entry) : entries
+      }
+      ;(window as any).fixture.invalidate()
+    })
+    await page.waitForFunction(() => (window as any).fixture.calls.filter((call: any) => call.kind === "files" && call.slug.endsWith("/review")).length >= 2)
+    await selector.selectOption("root")
+    await page.getByRole("treeitem", { name: "new.json", exact: true }).waitFor()
+    assert.equal(await page.getByRole("treeitem", { name: "package.json", exact: true }).count(), 0)
+  } finally { await page.close() }
+})
+
 before(async () => {
   prepareGitPrototypeAssets()
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",

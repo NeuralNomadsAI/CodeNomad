@@ -168,24 +168,25 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const selection = describeGitSelection(gitSelectedItemId())
     const target = options.externalDiff ? getFilePreview(options.instanceId) : null
     const preview = target && target.kind !== "workspace" && !target.commit &&
-      target.slug === options.worktreeSlug() && target.path === selection.path &&
-      (target.scope ?? "unstaged") === selection.section &&
+      target.slug === options.worktreeSlug() &&
       target.directory === gitLocation(target.slug).directory ? target : null
     return { selection, preview, version: gitDiffRequestVersion }
   }
 
   const reconcileGitSelection = async (previous: ReturnType<typeof captureGitSelection>) => {
-    // A status response is not a new user selection. Fence clicks and reader navigation.
-    if (previous.version !== gitDiffRequestVersion) return
-    const selected = resolveValidGitSelection(previous.selection)
+    // The eye and sidebar selection are independent. Reader navigation is fenced
+    // by target identity; sidebar clicks are fenced by their selection version.
     const preview = previous.preview
     if (preview && getFilePreview(options.instanceId) === preview) {
-      const item = gitListItems().find(item => item.id === selected && item.path === preview.path)
+      const candidates = gitListItems().filter(item => item.path === preview.path)
+      const item = candidates.find(item => item.section === (preview.scope ?? "unstaged")) ?? candidates[0]
       if (item) {
         // A fresh target also reloads unchanged content on explicit refresh.
         openFilePreview(options.instanceId, { ...preview, path: item.path, originalPath: item.originalPath, scope: item.section })
       } else closeFilePreview(options.instanceId)
     }
+    if (previous.version !== gitDiffRequestVersion) return
+    const selected = resolveValidGitSelection(previous.selection)
     if (selected) await openGitFile(selected)
     else { setGitSelectedItemId(null); clearSelectedGitDiff() }
   }
@@ -331,7 +332,6 @@ export function useGitChanges(options: UseGitChangesOptions) {
     try {
       if (!await loadGitStatus(true)) return
       if (passiveGitRefresh !== refresh || !gitActive()) return
-      if (previous.version !== gitDiffRequestVersion) return
       const nextSelection = resolveValidGitSelection(previousSelection)
 
       if (!nextSelection) {
@@ -346,7 +346,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         previousFingerprint !== nextFingerprint ||
         previousSelection.itemId === nextSelection
 
-      if (shouldReloadSelectedDiff) {
+      if (shouldReloadSelectedDiff || previous.preview) {
         await reconcileGitSelection(previous)
       }
     } finally {
