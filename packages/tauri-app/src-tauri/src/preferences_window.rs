@@ -302,7 +302,7 @@ fn open_preferences(
     } else {
         builder
     };
-    let preferences_window = builder
+    let preferences_window = crate::window_zoom::configure(builder)
         .title("Preferences")
         .inner_size(1100.0, 760.0)
         .min_inner_size(760.0, 560.0)
@@ -310,7 +310,6 @@ fn open_preferences(
         .fullscreen(false)
         .decorations(false)
         .background_color(tauri::window::Color(26, 26, 26, 255))
-        .zoom_hotkeys_enabled(true)
         .visible(false)
         .build()
         .map_err(|error| error.to_string())?;
@@ -617,7 +616,8 @@ mod tests {
     fn preferences_capability_is_exact_and_excludes_workspace_state_authority() {
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/preferences-window.json")).unwrap();
-        assert_eq!(capability["windows"], json!([LABEL]));
+        assert_eq!(capability["webviews"], json!([LABEL]));
+        assert!(capability.get("windows").is_none());
         let permissions = capability["permissions"].as_array().unwrap();
         for excluded in [
             "client-state",

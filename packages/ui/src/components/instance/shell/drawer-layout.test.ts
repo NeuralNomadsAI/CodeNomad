@@ -4,7 +4,7 @@ import test from "node:test"
 import { clampEmbeddedDrawerWidth, resolveEmbeddedDrawers } from "./drawer-layout.ts"
 
 const widths = {
-  minimumCenterWidth: 480,
+  minimumCenterWidth: 390,
   minimumLeftWidth: 220,
   minimumRightWidth: 200,
   leftWidth: 320,
@@ -20,31 +20,31 @@ test("drawers shrink before progressively overlaying", () => {
     leftWidth: 320,
     rightWidth: 400,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 1_000 }), {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 910 }), {
     left: true,
     right: true,
     leftWidth: 320,
     rightWidth: 200,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 900 }), {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 810 }), {
     left: true,
     right: true,
     leftWidth: 220,
     rightWidth: 200,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 700 }), {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 610 }), {
     left: true,
     right: false,
     leftWidth: 220,
     rightWidth: 400,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 699 }), {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 609 }), {
     left: false,
     right: false,
     leftWidth: 320,
     rightWidth: 400,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 900, leftOpen: false }), {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 810, leftOpen: false }), {
     left: false,
     right: true,
     leftWidth: 320,
