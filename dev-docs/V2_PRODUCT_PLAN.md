@@ -40,6 +40,9 @@ capability boundaries in the relevant PR rather than silently shrinking scope.
   disclosure/focus loss. https://github.com/NeuralNomadsAI/CodeNomad/pull/789#pullrequestreview-5326475808
 - #790: Web results/consent; gatekeeper zero findings at `3e443abe`.
   https://github.com/NeuralNomadsAI/CodeNomad/pull/790#pullrequestreview-5326492067
+- #791: Native skill attachments; gatekeeper zero findings at `ea3b4ef6`, after
+  adding bounded skill draft persistence to the window-state codec.
+  https://github.com/NeuralNomadsAI/CodeNomad/pull/791#pullrequestreview-5326551568
 
 ## Skill validation
 
@@ -49,3 +52,13 @@ historical attachment identity and queued payload. Location startup registers
 plugins progressively; visible catalog demand therefore consumes native skill
 and config events, coalesces trailing reads and fences view changes. No local
 file scraping or prompt-body skill injection is used.
+
+## Web settings boundary
+
+OpenChamber's `/api/config/websearch` is its own backend endpoint, not a native
+OpenCode 2.0.18 method. CodeNomad edits the selected authorized document via the
+existing host/WSL atomic configuration machinery, preserving foreign fields and
+comments. Native configuration watching applies edits; no `location.reload`.
+The isolated fixture validates global watching on 2.0.7/2.0.18 and project
+document persistence/reset. It disables project discovery to exclude ancestor
+user config; project precedence is covered by deterministic backend tests.

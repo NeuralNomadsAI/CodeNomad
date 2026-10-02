@@ -311,13 +311,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoadError(null)
     try {
       const location = { location: requestLocation(catalogLocation) }
-      const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
+      const [providerResponse, modelResponse, integrationResponse, searchResponse] = await Promise.all([
         authClient.provider.list(location, requestLocationOptions(catalogLocation)),
         authClient.model.list(location, requestLocationOptions(catalogLocation)),
         authClient.integration.list(location, requestLocationOptions(catalogLocation)),
+        props.embedded ? authClient.websearch.providers(location, requestLocationOptions(catalogLocation)) : undefined,
       ])
       if (!isCurrentLoad()) return
-      const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data).map((provider) => ({
+      // Search-only integrations belong to the separate Web search group.
+      const searchIds = new Set(searchResponse?.data.map(item => item.id))
+      const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data)
+        .filter(provider => !searchIds.has(provider.id) || provider.modelCount > 0)
+        .map((provider) => ({
         ...provider,
         models: buildProviderVisibilityModels(provider.id, providerResponse.data, modelResponse.data),
       }))
@@ -327,7 +332,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       ]))
       setAvailableProviders(listed)
       setMethodsByProvider(methods)
-      setSelectedProviderId((current) => current ?? listed[0]?.id ?? integrationResponse.data[0]?.id ?? null)
+      setSelectedProviderId((current) => current ?? listed[0]?.id ?? null)
     } catch (error) {
       if (!isCurrentLoad()) return
       setLoadError(extractProviderAuthErrorMessage(error, t("settings.providers.errors.loadFailed")))
@@ -830,7 +835,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
               </Show>
 
               <section class="providers-list-section">
-                <h3 class="settings-card-title">{t("settings.providers.configured.title")}</h3>
+                <Show when={!props.embedded}><h3 class="settings-card-title">{t("settings.providers.configured.title")}</h3></Show>
                 <Show when={managedProvider()} fallback={
                   <>
                     <Show when={loading()}><div class="providers-loading-row" role="status"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
