@@ -2,6 +2,7 @@
 @import "./tool-call/todo.css";
 @import "./tool-call/task.css";
 @import "./tool-call/skill.css";
+@import "./tool-call/execute.css";
 
 .tool-call-message {
   @apply flex flex-col gap-0 p-0 w-full;

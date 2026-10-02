@@ -1,4 +1,8 @@
 export const toolCallMessages = {
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "嵌套工具调用",
+  "toolCall.execute.more": "已省略另外 {count} 个调用。",
+  "toolCall.execute.truncated": "原生输出已截断。完整输出：",
   "toolCall.pending.waitingToRun": "等待运行...",
   "toolCall.error.label": "错误：",
 

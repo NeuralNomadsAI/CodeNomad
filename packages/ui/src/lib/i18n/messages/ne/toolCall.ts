@@ -1,4 +1,8 @@
 export const toolCallMessages = {
+  "toolCall.execute.script": "Code Mode",
+  "toolCall.execute.calls": "नेस्टेड उपकरण कलहरू",
+  "toolCall.execute.more": "थप {count} कलहरू लुकाइएका छन्।",
+  "toolCall.execute.truncated": "नेटिभ आउटपुट छोट्याइएको छ। पूरा आउटपुट:",
   "toolCall.pending.waitingToRun": "चलाउनको लागि पर्खँदै...",
   "toolCall.error.label": "त्रुटि:",
 
