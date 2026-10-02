@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "הבקשה הקודמת",
+  "interruption.next": "הבקשה הבאה",
+  "interruption.toggle": "הרחבה או צמצום בקשות",
+  "interruption.global": "בקשת שירות",
+  "interruption.reveal": "הצגה בשיחה",
+  "interruption.respond": "מענה ליד שדה ההקלדה",
+  "interruption.answered": "נענתה",
+  "interruption.noAnswer": "אין תשובה",
   "promptInput.skills.title": "מיומנויות",
   "promptInput.skills.remove": "הסרת מיומנות {name}",
   "promptInput.skills.loading": "טוען מיומנויות…",

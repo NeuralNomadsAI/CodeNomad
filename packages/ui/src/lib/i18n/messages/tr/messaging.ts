@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Önceki istek",
+  "interruption.next": "Sonraki istek",
+  "interruption.toggle": "İstekleri genişlet veya daralt",
+  "interruption.global": "Hizmet isteği",
+  "interruption.reveal": "Konuşmada göster",
+  "interruption.respond": "Yazma alanının yanında yanıtla",
+  "interruption.answered": "Yanıtlandı",
+  "interruption.noAnswer": "Yanıt yok",
   "promptInput.skills.title": "Beceriler",
   "promptInput.skills.remove": "{name} becerisini kaldır",
   "promptInput.skills.loading": "Beceriler yükleniyor…",

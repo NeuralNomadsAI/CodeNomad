@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "上一个请求",
+  "interruption.next": "下一个请求",
+  "interruption.toggle": "展开或折叠请求",
+  "interruption.global": "服务请求",
+  "interruption.reveal": "在对话中查看",
+  "interruption.respond": "在输入框旁回复",
+  "interruption.answered": "已回答",
+  "interruption.noAnswer": "无回答",
   "promptInput.skills.title": "技能",
   "promptInput.skills.remove": "移除技能 {name}",
   "promptInput.skills.loading": "正在加载技能…",

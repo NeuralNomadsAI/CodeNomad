@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
@@ -41,6 +41,7 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 }
 
 interface SessionViewProps {
+  interruptionPanel?: JSXElement
   sessionId: string
   activeSessions: Map<string, Session>
   instanceId: string
@@ -692,6 +693,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           />
         </Show>
 
+        {props.interruptionPanel}
         <PromptInput
           instanceId={props.instanceId}
           instanceFolder={session()?.location.directory ?? props.instanceFolder}

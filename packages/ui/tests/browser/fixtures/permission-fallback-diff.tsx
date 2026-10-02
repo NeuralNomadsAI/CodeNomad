@@ -1,6 +1,6 @@
-import { createSignal } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
-import PermissionApprovalModal from "../../../src/components/permission-approval-modal"
+import { InterruptionDock } from "../../../src/components/interruption-dock"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
@@ -21,7 +21,7 @@ addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: `/wor
 addPermissionToQueue(instanceId, current)
 const [open, setOpen] = createSignal(true)
 render(() => <ConfigProvider><I18nProvider>
-  <PermissionApprovalModal instanceId={instanceId} isOpen={open()} onClose={() => setOpen(false)} />
+  <Show when={open()}><InterruptionDock instanceId={instanceId} /></Show>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   diff,
@@ -35,4 +35,5 @@ render(() => <ConfigProvider><I18nProvider>
     setOpen(true)
   },
   reopen: () => setOpen(true),
+  dismiss: () => setOpen(false),
 }
