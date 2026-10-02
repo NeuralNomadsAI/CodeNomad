@@ -181,7 +181,9 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
           </For>
         </div>
       </Show>
-      <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} active={props.mcpActive} />
+      <Show when={mcpServers().length > 0}>
+        <McpCodeModeControls instanceId={instance().id} directory={pluginLocation().directory} active={props.mcpActive} />
+      </Show>
     </section>
   )
 
