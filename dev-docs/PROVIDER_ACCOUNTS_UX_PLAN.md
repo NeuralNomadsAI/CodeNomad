@@ -56,7 +56,10 @@ is fetched only while Settings is mounted; it is not persisted as a catalog.
   credential, without temporarily activating candidates. At most 20 candidates
   are considered within a 15-second preflight. Unknown, missing, past-reset or
   failed quota responses cannot authorize a fallback. No quota display cache is
-  used for an activation decision. Other providers need independent adapters.
+  used for an activation decision. Unlike the display parser, selection rejects
+  every malformed declared window, missing/past resets, duplicate durations,
+  out-of-range percentages and contradictory availability flags before any
+  normalization can omit or clamp them. Other providers need independent adapters.
 - Persist only the opt-in policy. Keep native
   exports on the server stack, redact failures, and never expose tokens through
   the account catalog, browser, logs or persisted display cache.

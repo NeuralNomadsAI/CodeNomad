@@ -1,7 +1,7 @@
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { SettingsService } from "../settings/service"
 import { codexCredential } from "../usage/codex-credential"
-import { fetchCodexQuota } from "../usage/native-codex"
+import { fetchCodexSelectionQuota } from "../usage/native-codex"
 import type { ProviderUsage } from "../usage/types"
 import type { ProviderAccountsSnapshot } from "../api-types"
 import { readLocationRef } from "../opencode/compatibility/location"
@@ -14,7 +14,7 @@ export class ProviderAccountsService {
   private policyRevision = 0
   private readonly states = new WeakMap<ServiceConnection, { epoch: number; manual: number; pending?: Promise<void> }>()
   constructor(private readonly settings: Pick<SettingsService, "getOwner" | "mergePatchOwner">,
-    private readonly quota = fetchCodexQuota) {}
+    private readonly quota = fetchCodexSelectionQuota) {}
 
   private state(connection: ServiceConnection) {
     let state = this.states.get(connection)

@@ -4,6 +4,7 @@ import type { ProviderUsageResponse } from "../api-types"
 import type { ProviderUsage } from "./types"
 import { codexCredential } from "./codex-credential"
 import { parseCodexUsage } from "./providers/oauth"
+import { parseCodexSelectionQuota } from "./codex-selection-quota"
 
 interface UsageScope {
   instanceId: string
@@ -112,6 +113,14 @@ export function createNativeCodexUsage() {
 }
 
 export async function fetchCodexQuota(access: string, accountID: string, signal: AbortSignal): Promise<ProviderUsage> {
+  return fetchQuota(access, accountID, signal, false)
+}
+
+export async function fetchCodexSelectionQuota(access: string, accountID: string, signal: AbortSignal): Promise<ProviderUsage> {
+  return fetchQuota(access, accountID, signal, true)
+}
+
+async function fetchQuota(access: string, accountID: string, signal: AbortSignal, selection: boolean): Promise<ProviderUsage> {
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     signal, redirect: "error", headers: { Authorization: `Bearer ${access}`, "ChatGPT-Account-Id": accountID, "Content-Type": "application/json" },
   })
@@ -134,7 +143,8 @@ export async function fetchCodexQuota(access: string, accountID: string, signal:
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
-    return parseCodexUsage(JSON.parse(Buffer.concat(chunks).toString("utf8")))
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    return selection ? parseCodexSelectionQuota(payload) : parseCodexUsage(payload)
   } finally {
     signal.removeEventListener("abort", abort)
     await reader.cancel().catch(() => {})
