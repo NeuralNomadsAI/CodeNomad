@@ -23,6 +23,73 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+for (const surface of ["recovery", "settings"]) test(`${surface} shows sustained install progress through checking and connection`, async () => {
+  const page = await browser.newPage()
+  let finishInstall!: () => void, finishCheck!: () => void, finishConnect!: () => void
+  const installGate = new Promise<void>(resolve => { finishInstall = resolve })
+  const checkGate = new Promise<void>(resolve => { finishCheck = resolve })
+  const connectGate = new Promise<void>(resolve => { finishConnect = resolve })
+  let installed = false, connected = false, installs = 0, connects = 0
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      installs++
+      await installGate
+      installed = true
+      return route.fulfill({ json: { success: true, version: "2.0.17" } })
+    }
+    if (request.url().endsWith("/api/opencode/service")) {
+      connects++
+      assert.equal(request.postDataJSON().restart, false)
+      await connectGate
+      connected = true
+    } else if (installed) await checkGate
+    return route.fulfill({ json: { state: installed ? "ready" : "missing", currentVersion: installed ? "2.0.17" : null,
+      latestVersion: "2.0.17", minimumVersion: "2.0.7", recommendedVersion: "2.0.16", binaryPath: "opencode2", target: "host",
+      canUpgrade: !installed, updateAvailable: !installed, serviceState: connected ? "ready" : "stopped", canRestart: false } })
+  })
+  try {
+    await page.clock.install()
+    await page.goto(`${url}${surface === "settings" ? "?settings" : ""}`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByRole("button", { name: "Install and start OpenCode" }).click()
+    const progress = page.locator(".opencode-setup-progress")
+    await progress.getByText("Installing OpenCode…", { exact: true }).waitFor()
+    assert.equal(await progress.getByText(/Keep CodeNomad open/).count(), 1)
+    assert.equal(await progress.locator("svg.animate-spin").count(), 1)
+    assert.equal(await progress.evaluate(el => el.closest('[aria-busy="true"]') === null), true, "live progress must not be suppressed by a busy ancestor")
+    await page.clock.fastForward(65_000)
+    await progress.getByRole("timer").filter({ hasText: "1:05" }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Updating OpenCode...", exact: true }).isDisabled(), true)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, `opencode-install-${surface}.png`) })
+    if (surface === "recovery") {
+      await page.getByRole("button", { name: "Close", exact: true }).click()
+      await page.locator(".opencode-setup-reminder").getByText("Installing OpenCode…", { exact: true }).waitFor()
+      await page.getByRole("button", { name: "OpenCode setup required" }).click()
+      await page.getByRole("dialog").getByRole("timer").filter({ hasText: "1:05" }).waitFor()
+    }
+    finishInstall()
+    await progress.getByText("Reading installed version...", { exact: true }).waitFor()
+    finishCheck()
+    await progress.getByText("Connecting to OpenCode…", { exact: true }).waitFor()
+    assert.equal(await progress.getByText(/Keep CodeNomad open/).count(), 1)
+    if (surface === "recovery") {
+      await page.getByRole("button", { name: "Close", exact: true }).click()
+      await page.locator(".opencode-setup-reminder").getByText("Connecting to OpenCode…", { exact: true }).waitFor()
+      await page.getByRole("button", { name: "OpenCode setup required" }).click()
+    }
+    finishConnect()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.equal(installs, 1, "closing/reopening must not retry installation")
+    assert.equal(connects, 1)
+    assert.deepEqual(errors, [])
+  } finally {
+    finishInstall(); finishCheck(); finishConnect()
+    await page.close()
+  }
+})
+
 test("missing installation and incompatible daemon expose different actions; restart is explicit", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
@@ -309,7 +376,7 @@ test("settings keep executable selection and management inline, disclosures coll
     await panel.getByText("Troubleshooting", { exact: true }).click()
     await panel.getByText(/cancels pending permissions and forms/).waitFor()
     await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
-    await panel.getByText("Reloading OpenCode configuration…", { exact: true }).waitFor()
+    await page.locator(".opencode-setup-progress").getByText("Reloading OpenCode configuration…", { exact: true }).waitFor()
     await page.waitForFunction(() => document.querySelector('[aria-busy="true"]'))
     // Wait for the request to reach the route before releasing its result.
     for (let count = 0; count < 100 && !releaseReload; count++) await page.waitForTimeout(10)

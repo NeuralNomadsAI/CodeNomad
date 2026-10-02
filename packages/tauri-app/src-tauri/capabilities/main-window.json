@@ -24,7 +24,6 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "notification:allow-show",
-    "core:webview:allow-set-webview-zoom",
     "allow-cli-get-status",
     "allow-cli-restart",
     "allow-wake-lock-start",

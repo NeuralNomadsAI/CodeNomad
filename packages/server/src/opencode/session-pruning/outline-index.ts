@@ -42,13 +42,25 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
     let examined = 0
+    // Row counts do not bound time: one assistant can contain megabytes of tool
+    // output. Cooperate during both checkpoint reads and JSON projection. A
+    // single SQLite step is still synchronous, so this is not a hard deadline.
+    let turnStarted = performance.now()
     do {
       signal.throwIfAborted()
       const previous = known.find(item => item.after === after)
       // Grow the last range to 512 rows before creating another checkpoint.
       // Otherwise one append per refresh eventually exhausts the manifest budget.
       const end = Math.min(previous && previous !== known.at(-1) ? previous.through : through, through)
-      const rows = headers.all(...params, after, end)
+      const rows = []
+      for (const row of headers.iterate(...params, after, end)) {
+        signal.throwIfAborted()
+        rows.push(row)
+        if (rows.length % 128 === 0 || performance.now() - turnStarted >= 8) {
+          await yieldTurn(undefined, { signal })
+          turnStarted = performance.now()
+        }
+      }
       // If a cached range gained >512 rows, split and rebuild it instead of
       // declaring the unseen suffix unchanged.
       const last = rows.at(-1)
@@ -59,17 +71,22 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
         || chunkEnd >= maximum
       if (changed) {
         for (const row of project.iterate(...params, after, chunkEnd)) {
+          signal.throwIfAborted()
           const tools = Number(row.tools)
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
             tools, reasoning: Number(row.reasoning),
             ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}) })
-          if (entries.length % 128 === 0) await yieldTurn(undefined, { signal })
+          if (entries.length % 128 === 0 || performance.now() - turnStarted >= 8) {
+            await yieldTurn(undefined, { signal })
+            turnStarted = performance.now()
+          }
         }
       }
       checkpoints.push({ after, through: chunkEnd, digest, changed })
       after = chunkEnd
       examined += rows.length
       await yieldTurn(undefined, { signal })
+      turnStarted = performance.now()
     // Old ranges shrink after deletions. Reserve a whole block before reading
     // another; the page budget is not necessarily a multiple of 512 anymore.
     } while (after < through && examined <= 16384 - 512 && checkpoints.length < 512)

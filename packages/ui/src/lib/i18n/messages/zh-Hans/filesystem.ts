@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "前往文件夹",
   "directoryBrowser.goToParent": "上级文件夹",
   "directoryBrowser.goToHome": "家目录",
+  "directoryBrowser.goToRoot": "工作区根目录",
   "directoryBrowser.goToInitial": "返回 {name}",
   "directoryBrowser.selectCurrent": "选择当前",
   "directoryBrowser.newFolder": "新建文件夹",

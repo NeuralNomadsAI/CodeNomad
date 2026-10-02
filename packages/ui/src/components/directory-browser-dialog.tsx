@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal, createMemo, createEffect, onCleanup } from "solid-js"
-import { ArrowRightSquare, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
+import { ArrowRightSquare, ArrowUpLeft, File as FileIcon, Folder as FolderIcon, FolderPlus, Loader2, X } from "lucide-solid"
 import type { FileSystemEntry, FileSystemListingMetadata } from "../../../server/src/api-types"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
@@ -263,6 +263,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
   })
 
   function handleNavigateTo(path: string) {
+    setAddressOpen(false)
     setPathInputDirty(false)
     void navigateTo(path)
   }
@@ -298,12 +299,11 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
       const name = initial.split(/[\\/]/).filter(Boolean).at(-1) ?? initial
       add({ target: initial, label: t("directoryBrowser.goToInitial", { name }), kind: "initial" })
     }
+    if (meta.rootPath) {
+      add({ target: meta.rootPath, label: t("directoryBrowser.goToRoot"), kind: "root" })
+    }
     if (meta.scope === "unrestricted" && meta.homePath) {
       add({ target: meta.homePath, label: t("directoryBrowser.goToHome"), kind: "home" })
-    }
-    if (meta.parentPath) {
-      const parent = meta.pathKind === "relative" ? resolveAbsolutePath(meta.rootPath, meta.parentPath) : meta.parentPath
-      add({ target: parent, label: t("directoryBrowser.goToParent"), kind: "parent" })
     }
     // Use the already loaded listing; typing never starts a speculative filesystem request.
     const input = pathInput().trim().replace(/\\/g, "/")
@@ -493,10 +493,27 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                 }
               >
                 <Show
-                  when={folderRows().length > 0}
+                  when={folderRows().length > 0 || Boolean(currentMetadata()?.parentPath)}
                   fallback={<div class="panel-empty-state flex-1">{t("directoryBrowser.noFolders")}</div>}
                 >
                   <div class="panel-list panel-list--fill flex-1 min-h-0 overflow-auto directory-browser-list" role="listbox">
+                    <Show when={currentMetadata()?.parentPath}>
+                      {(parent) => (
+                        <div class="panel-list-item" role="option">
+                          <div class="panel-list-item-content directory-browser-row">
+                            {/* Keep address blur from reflowing the list before the click lands. */}
+                            <button type="button" class="directory-browser-row-main" disabled={creatingFolder()}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => handleNavigateTo(parent())}>
+                              <div class="directory-browser-row-icon"><ArrowUpLeft class="w-4 h-4" aria-hidden="true" /></div>
+                              <div class="directory-browser-row-text">
+                                <span class="directory-browser-row-name">{t("directoryBrowser.upOneLevel")}</span>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </Show>
                     <For each={folderRows()}>
                       {(entry) => {
                         const isFolder = entry.type === "directory"

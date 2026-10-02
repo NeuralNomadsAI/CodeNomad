@@ -5,7 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { getServerMeta } from "../../lib/server-meta"
 import { canOpenRemoteWindows, runtimeEnv } from "../../lib/runtime-env"
 import { openSettings } from "../../stores/settings-screen"
-import { buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode } from "./info-settings-diagnostics"
+import { buildDiagnosticReport, getDiagnosticAddresses, getDiagnosticListeningMode, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 interface UserAgentData {
   platform?: string
@@ -125,6 +125,8 @@ export const InfoSettingsSection: Component = () => {
     reportTitle: t("settings.info.diagnostics.reportTitle"),
     generated: t("settings.info.diagnostics.generated"),
     serverVersion: t("settings.info.version.server"),
+    serverOs: t("settings.info.server.os"),
+    serverArch: t("settings.info.server.arch"),
     uiVersion: t("settings.info.version.ui"),
     uiSource: t("settings.info.version.uiSource"),
     runtime: t("settings.info.runtime.type"),
@@ -275,6 +277,14 @@ export const InfoSettingsSection: Component = () => {
                 <div class="settings-info-row">
                   <dt class="settings-info-label">{t("settings.info.version.server")}</dt>
                   <dd class="settings-info-value" dir="ltr">{serverMeta().serverVersion ?? "—"}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.os")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{getServerOperatingSystem(serverMeta())}</dd>
+                </div>
+                <div class="settings-info-row">
+                  <dt class="settings-info-label">{t("settings.info.server.arch")}</dt>
+                  <dd class="settings-info-value" dir="ltr">{serverMeta().system?.arch ?? "—"}</dd>
                 </div>
                 <div class="settings-info-row">
                   <dt class="settings-info-label">{t("remoteAccess.sections.listeningMode.label")}</dt>
