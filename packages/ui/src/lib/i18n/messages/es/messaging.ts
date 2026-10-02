@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Skills",
+  "promptInput.skills.remove": "Quitar skill {name}",
+  "promptInput.skills.loading": "Cargando skills…",
+  "promptInput.skills.select": "Adjuntar un skill…",
+  "promptInput.skills.error": "No se pudieron cargar los skills. Cierre y vuelva a abrir para reintentar.",
+  "promptInput.skills.empty": "No hay skills disponibles en este directorio.",
   "toolCall.image.label": "Imagen {number}",
   "toolCall.image.unavailable": "No se puede mostrar esta imagen.",
   "promptInput.btw.title": "/btw — Pregunta aparte",
@@ -203,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
 
   "promptInput.placeholder.shell": "Ejecuta un comando de shell (Esc para salir)...",
-  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, o pega imágenes y texto...",
+  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, @skill, o pega imágenes y texto...",
   "promptInput.hints.shell.exit": "para salir del modo shell",
   "promptInput.hints.shell.enable": "Modo shell",
   "promptInput.hints.commands": "Comandos",

@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "Навыки",
+  "promptInput.skills.remove": "Удалить навык {name}",
+  "promptInput.skills.loading": "Загрузка навыков…",
+  "promptInput.skills.select": "Прикрепить навык…",
+  "promptInput.skills.error": "Не удалось загрузить навыки. Закройте и откройте снова для повтора.",
+  "promptInput.skills.empty": "В этом каталоге нет доступных навыков.",
   "toolCall.image.label": "Изображение {number}",
   "toolCall.image.unavailable": "Не удалось отобразить это изображение.",
   "promptInput.btw.title": "/btw — Отдельный вопрос",
@@ -203,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Переключить высоту поля ввода",
 
   "promptInput.placeholder.shell": "Выполнить команду shell (Esc для выхода)…",
-  "promptInput.placeholder.default": "Введите сообщение, @file, @agent или вставьте изображения и текст…",
+  "promptInput.placeholder.default": "Введите сообщение, @file, @agent, @skill или вставьте изображения и текст…",
   "promptInput.hints.shell.exit": "чтобы выйти из режима shell",
   "promptInput.hints.shell.enable": "Режим shell",
   "promptInput.hints.commands": "Команды",
