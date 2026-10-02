@@ -174,6 +174,8 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
   } else if (source.type === "user") {
     parts = [
       normalizeMessagePart({ id: `${source.id}-text`, type: "text", text: source.text, sessionID: sessionId, messageID: source.id }),
+      ...(source.skills ?? []).map((skill, index) => ({ id: `${source.id}-skill-${index}`, type: "skill" as const,
+        skillId: skill.id, name: skill.name, sessionID: sessionId, messageID: source.id })),
       ...(source.files ?? []).map((file, index) => ({
         id: `${source.id}-file-${index}`,
         type: "file" as const,

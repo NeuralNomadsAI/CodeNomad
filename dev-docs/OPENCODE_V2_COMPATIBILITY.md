@@ -185,7 +185,7 @@ unchanged wire types or a passing rerun as proof of untested behavior.
 
 ### Previous stable target: 2.0.18
 
-Server/UI client, bundled plugin and recommendation advance together to **2.0.18**;
+Server/UI client, bundled plugins and recommendation advance together to **2.0.18**;
 the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
 adds `server.pair()`, `server.connect()` and optional `Shell.Info.signal`.
 The native authenticated 2.0.18 schema has 115 paths: the existing 113 paths are
@@ -315,6 +315,15 @@ qualification matrix to maintain.
 ## Decision summary
 
 The [OpenCode V2 stable-runtime transition register](OPENCODE_V2_POST_BETA.md) supersedes the earlier live-support set and records implementation and acceptance evidence. The sections below preserve the original #695 audit.
+
+**2026-09-20 package update (historical):** UI/server pinned client 2.0.11 and the bundled
+plugins compiled against plugin 2.0.11. The generated `server.info()` replaced
+`server.status()`; the connection adapter maps either GET spelling to the
+authenticated discovered info/status/health route. No write fallback is added.
+The isolated Windows Missions, automation-presence and full proxy/pruning native
+fixtures pass against CLI 2.0.11, including durable queueing, permissions, native
+worktrees, environment propagation and plugin recovery. Historical matrix runs
+below retain their original package versions; they are not retroactively relabeled.
 
 At `bcfe4d24`, CodeNomad had a working modern-client path and backward-compatible service discovery, **not a complete backward-compatible V2 integration**. The follow-up change keeps that discovery fix and addresses the remaining issues through one connection-scoped integration module and one cross-runtime acceptance matrix.
 

@@ -4,6 +4,7 @@ import { applyPatchRenderer } from "./renderers/apply-patch"
 import { bashRenderer } from "./renderers/bash"
 import { defaultRenderer } from "./renderers/default"
 import { editRenderer } from "./renderers/edit"
+import { executeRenderer } from "./renderers/execute"
 import { invalidRenderer } from "./renderers/invalid"
 import { patchRenderer } from "./renderers/patch"
 import { questionRenderer } from "./renderers/question"
@@ -13,15 +14,16 @@ import { skillRenderer } from "./renderers/skill"
 import { taskRenderer } from "./renderers/task"
 import { todoRenderer } from "./renderers/todo"
 import { webfetchRenderer } from "./renderers/webfetch"
+import { websearchRenderer } from "./renderers/websearch"
 import { writeRenderer } from "./renderers/write"
 
 export * from "./tool-presentation"
 
 const renderers: Record<string, ToolRenderer> = {
   bash: bashRenderer, read: readRenderer, write: writeRenderer, edit: editRenderer,
-  patch: patchRenderer, apply_patch: applyPatchRenderer, webfetch: webfetchRenderer,
+  patch: patchRenderer, apply_patch: applyPatchRenderer, webfetch: webfetchRenderer, websearch: websearchRenderer,
   glob: searchRenderer, grep: searchRenderer, todowrite: todoRenderer, task: taskRenderer,
-  skill: skillRenderer, question: questionRenderer, invalid: invalidRenderer,
+  skill: skillRenderer, question: questionRenderer, invalid: invalidRenderer, execute: executeRenderer,
 }
 
 export function resolveToolRenderer(toolName: string): ToolRenderer {
