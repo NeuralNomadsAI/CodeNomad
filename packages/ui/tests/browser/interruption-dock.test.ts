@@ -36,6 +36,33 @@ async function fixture(width = 1100) {
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
 
+test("source navigation closes file previews and loads the source transcript", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => { (window as any).fixture.ask(); (window as any).fixture.preview() })
+    await page.waitForFunction(() => (window as any).fixture.hasPreview())
+    await answer(page).fill("Preserved through preview")
+    await page.getByRole("button", { name: "View in conversation" }).click()
+    await page.locator('[data-interruption-reveal="true"]').waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.hasPreview()), false)
+    assert.equal(await answer(page).inputValue(), "Preserved through preview")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("explicit reveal invalidates the resident hidden permission tool's display cache", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.hiddenPermission())
+    await page.getByRole("button", { name: "View in conversation" }).waitFor()
+    assert.equal(await page.locator('.tool-call').count(), 0)
+    await page.getByRole("button", { name: "View in conversation" }).click()
+    await page.locator('[data-interruption-reveal="true"]').waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("badge opens the dock independent of loaded history; source navigation and native answer receipt survive reload", async () => {
   const { page, errors } = await fixture()
   try {

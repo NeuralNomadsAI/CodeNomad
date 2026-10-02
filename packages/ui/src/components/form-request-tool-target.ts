@@ -83,4 +83,3 @@ export function resolveFormToolTarget(form: FormInfo, store: MessageStoreReader)
   }
   return null
 }
-

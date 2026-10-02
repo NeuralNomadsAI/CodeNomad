@@ -667,6 +667,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.usageMetricsVisibility(),
       props.systemMessagesVisibility?.() ?? "hidden",
       props.technicalGroupingSignature?.() ?? "",
+      revealedPartId() ?? "",
     ].join("|")
 
     // Removing and rehydrating a record can reuse revision/info version zero.

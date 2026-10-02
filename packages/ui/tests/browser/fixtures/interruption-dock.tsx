@@ -9,13 +9,14 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
-import { addInstance, addPendingForm, addPermissionToQueue } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue } from "../../../src/stores/instances"
 import { getFormQueue } from "../../../src/stores/forms"
 import { sessions, setSessions, setActiveSession, activeSessionId, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadMessageAnchor } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
+import { openFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import "../../../src/index.css"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
@@ -51,7 +52,7 @@ const client: any = {
       emit("form.replied", { sessionID: input.sessionID, id: input.formID, answer: input.answer })
     }, cancel: async (input: any) => { replies.push(input); emit("form.cancelled", { sessionID: input.sessionID, id: input.formID }) } },
   },
-  permission: { reply: async (input: any) => { replies.push(input) }, list: async () => ({ data: [] }) },
+  permission: { reply: async (input: any) => { replies.push(input) }, list: async () => ({ data: getPermissionQueue(instanceId) }) },
   form: { list: async () => ({ data: getFormQueue(instanceId) }) },
   model: { default: async () => ({ data: model }) },
   message: { list: async ({ sessionID, cursor, limit = 200 }: any) => {
@@ -106,6 +107,17 @@ const store = messageStoreBus.getOrCreate(instanceId)
   focus: (id = "question") => focusInterruption(instanceId, undefined, id),
   switch: (id: string) => setActiveSession(instanceId, id),
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
+  preview: () => openFilePreview(instanceId, { sessionId, slug: instanceId, directory: "/fixture", path: "example.ts", kind: "workspace" }),
+  hasPreview: () => Boolean(getFilePreview(instanceId)),
+  hiddenPermission: async () => {
+    await applyUiSettings({ locale: "en", showMessageTimeline: false, toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "hidden", bash: "hidden" } } })
+    addPermissionToQueue(instanceId, { id: "first-permission", sessionID: sessionId, action: "bash", resources: ["first"], metadata: {} })
+    emit("session.step.started", { assistantMessageID: "permission-message", agent: "build", model })
+    emit("session.tool.input.started", { assistantMessageID: "permission-message", id: "bash-tool", name: "bash" })
+    emit("session.tool.called", { assistantMessageID: "permission-message", id: "bash-tool", input: { command: "git status" } })
+    addPermissionToQueue(instanceId, { id: "hidden-permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {}, source: { messageID: "permission-message", id: "bash-tool" } })
+    focusInterruption(instanceId, sessionId, "hidden-permission")
+  },
   remoteReply: () => emit("form.replied", { id: "question", answer: { q0: "Another client" } }),
   fail: (value: boolean) => { fail = value }, hold: () => { hold = true }, release: () => { hold = false; release?.() },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),

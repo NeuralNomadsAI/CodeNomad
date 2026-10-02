@@ -10,6 +10,7 @@ import { explicitToolReference } from "./form-request-tool-target"
 import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
 import { showSessionChat } from "../stores/session-previews"
+import { closeFilePreview } from "../stores/files-preview"
 import { instances } from "../stores/instances"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean }) {
@@ -38,6 +39,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   const reveal = () => {
     const target = source()
     if (!target) return
+    closeFilePreview(props.instanceId)
     showSessionChat(instances().get(props.instanceId)?.folder ?? target.sessionId)
     ensureSessionAncestorsExpanded(props.instanceId, target.sessionId)
     setActiveSessionFromList(props.instanceId, target.sessionId)
