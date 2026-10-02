@@ -35,6 +35,7 @@ const client: any = {
     switchAgent: async () => {}, switchModel: async () => {}, prompt: native.session.prompt,
   },
   model: { default: async () => model },
+  skill: { list: async () => ({ data: [] }) },
   message: { list: async () => ({ data: [], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)

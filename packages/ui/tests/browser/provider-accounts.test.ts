@@ -1,12 +1,18 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 let server: ViteDevServer, browser: Browser, url: string
+let cacheDir: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  // Independent invocations must not replace each other's optimized modules.
+  cacheDir = await mkdtemp(join(tmpdir(), "opencode", "provider-accounts-vite-"))
+  server = await createServer({ configFile: false, cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "accounts-fixture", configureServer(s) {
       for (const [route, fixture] of [["/fixture", "provider-accounts"], ["/design", "provider-accounts-preview"]]) {
         s.middlewares.use(route, async (_req, res) => {
@@ -19,7 +25,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); if (cacheDir) await rm(cacheDir, { recursive: true, force: true }) })
 
 test("native account dropdown activates by identity and preserves failed rename drafts", async () => {
   const page = await browser.newPage({ viewport: { width: 380, height: 900 }, locale: "en-US" })
