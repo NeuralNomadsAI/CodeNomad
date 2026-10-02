@@ -4,7 +4,7 @@ import SessionView from "../../../src/components/session/session-view"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
 import PermissionNotificationBanner from "../../../src/components/permission-notification-banner"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, setThemePreference } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -16,7 +16,6 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadMessageAnchor } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
-import { openFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import "../../../src/index.css"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
@@ -25,9 +24,25 @@ const model = { providerID: "fixture", id: "fixture" }
 let time = 1000, fail = false, hold = false, release: (() => void) | undefined
 const replies: any[] = [], windows: any[] = []
 let completed: string[][] | undefined
+const longQuestions = [
+  { header: "Deployment", question: "How should we deploy the updated interruption dock to existing workspaces?", options: [
+    { label: "Gradual rollout", description: "Enable the new panel for a small group first, review feedback, then expand to all workspaces." },
+    { label: "All workspaces", description: "Release the updated panel everywhere after the browser checks pass and support documentation is ready." },
+    { label: "Preview only", description: "Keep the new interaction in preview while collecting keyboard and mobile accessibility feedback." },
+  ] },
+  { header: "Validation", question: "Which checks must finish before the release can proceed?", multiple: true, options: [
+    { label: "Browser coverage", description: "Verify narrow layouts, keyboard navigation, persistent answers and bounded panel actions." },
+    { label: "Visual review", description: "Review both light and dark appearances, question hierarchy and lengthy option descriptions." },
+    { label: "Native integration", description: "Confirm that completed native questions retain their answers when the conversation is reloaded." },
+  ] },
+  { header: "Notes", question: "What additional release notes should the team include?", options: [] },
+]
+let questions: Array<{ header: string; question: string; options: Array<{ label: string; description: string }>; multiple?: boolean }> = [
+  { question: "Which approach?", header: "Approach", options: [] },
+]
 const question = () => ({ id: messageId, type: "assistant", agent: "build", model, time: { created: 1, ...(completed ? { completed: 2 } : {}) },
   content: [{ type: "tool", id: toolId, name: "question", time: { created: 1 }, state: {
-    status: completed ? "completed" : "running", input: { questions: [{ question: "Which approach?", header: "Approach", options: [] }] },
+    status: completed ? "completed" : "running", input: { questions },
     ...(completed ? { output: { answers: completed }, metadata: { answers: completed }, content: [{ type: "text", text: "Answered" }] } : {}),
   } }] })
 const history = () => [question(), ...Array.from({ length: 249 }, (_, index) => ({
@@ -46,7 +61,10 @@ const client: any = {
       if (hold) await new Promise<void>(resolve => { release = resolve })
       if (fail) throw new Error("Reply failed")
       if (input.formID === "question") {
-        completed = [[String(input.answer.q0)]]
+        completed = questions.map((_, index) => {
+          const value = input.answer[`q${index}`]
+          return Array.isArray(value) ? value : [String(value)]
+        })
         emit("session.tool.success", { assistantMessageID: messageId, id: toolId, output: { answers: completed }, metadata: { answers: completed }, content: [{ type: "text", text: "Answered" }], executed: true })
       }
       emit("form.replied", { sessionID: input.sessionID, id: input.formID, answer: input.answer })
@@ -76,8 +94,18 @@ setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", nam
 setActiveSession(instanceId, sessionId)
 const form = (id = "question", sid = sessionId) => ({ id, sessionID: sid, title: id === "question" ? "Questions" : "Other question",
   metadata: id === "question" ? { kind: "question", tool: { messageID: messageId, id: toolId } } : {},
-  fields: [{ key: "q0", type: "string", title: "Approach", description: "Which approach?", required: true }], state: { status: "pending" },
+  fields: (id === "question" ? questions : [{ header: "Approach", question: "Which approach?", options: [] }]).map((item, index) => ({
+    key: `q${index}`, type: "multiple" in item && item.multiple ? "multiselect" : "string", title: item.header,
+    description: item.question, required: true,
+    ...(item.options.length ? { options: item.options.map(option => ({ value: option.label, ...option })) } : {}),
+  })), state: { status: "pending" },
 }) as any
+let uiState: Record<string, unknown> = {}
+serverApi.fetchStateOwner = async () => uiState as any
+serverApi.patchStateOwner = async (_owner, patch) => {
+  uiState = { ...uiState, ...patch as Record<string, unknown> }
+  return uiState as any
+}
 await applyUiSettings({ locale: "en", showMessageTimeline: false, toolInputsVisibility: "hidden", toolOutputExpansion: "expanded",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "expanded" } } })
 function App() {
@@ -93,8 +121,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><App /></ThemeProvider
 const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
   replies, windows,
+  theme: setThemePreference,
   ask: () => emit("form.created", { form: form() }),
-  liveAsk: () => {
+  liveAsk: (long = false) => {
+    if (long) questions = longQuestions
     messageId = "msg_streaming"
     emit("session.step.started", { assistantMessageID: messageId, agent: "build", model })
     emit("session.tool.input.started", { assistantMessageID: messageId, id: toolId, name: "question" })
@@ -107,17 +137,6 @@ const store = messageStoreBus.getOrCreate(instanceId)
   focus: (id = "question") => focusInterruption(instanceId, undefined, id),
   switch: (id: string) => setActiveSession(instanceId, id),
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
-  preview: () => openFilePreview(instanceId, { sessionId, slug: instanceId, directory: "/fixture", path: "example.ts", kind: "workspace" }),
-  hasPreview: () => Boolean(getFilePreview(instanceId)),
-  hiddenPermission: async () => {
-    await applyUiSettings({ locale: "en", showMessageTimeline: false, toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "hidden", bash: "hidden" } } })
-    addPermissionToQueue(instanceId, { id: "first-permission", sessionID: sessionId, action: "bash", resources: ["first"], metadata: {} })
-    emit("session.step.started", { assistantMessageID: "permission-message", agent: "build", model })
-    emit("session.tool.input.started", { assistantMessageID: "permission-message", id: "bash-tool", name: "bash" })
-    emit("session.tool.called", { assistantMessageID: "permission-message", id: "bash-tool", input: { command: "git status" } })
-    addPermissionToQueue(instanceId, { id: "hidden-permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {}, source: { messageID: "permission-message", id: "bash-tool" } })
-    focusInterruption(instanceId, sessionId, "hidden-permission")
-  },
   remoteReply: () => emit("form.replied", { id: "question", answer: { q0: "Another client" } }),
   fail: (value: boolean) => { fail = value }, hold: () => { hold = true }, release: () => { hold = false; release?.() },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),

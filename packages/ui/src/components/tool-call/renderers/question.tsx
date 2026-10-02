@@ -21,7 +21,7 @@ export const questionRenderer: ToolRenderer = {
       const value = metadata.answers ?? (output && typeof output === "object" ? (output as Record<string, unknown>).answers : undefined)
       return Array.isArray(value) ? value : undefined
     }
-    return <dl class="interruption-receipt">
+    return <Show when={toolState()?.status === "completed"}><dl class="interruption-receipt">
       <For each={questions()}>{(question, index) => <>
         <dt>{typeof question?.question === "string" ? question.question : ""}</dt>
         <Show when={toolState()?.status === "completed"}>
@@ -30,6 +30,6 @@ export const questionRenderer: ToolRenderer = {
             : t("interruption.noAnswer")}</dd>
         </Show>
       </>}</For>
-    </dl>
+    </dl></Show>
   },
 }
