@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Previous request",
+  "interruption.next": "Next request",
+  "interruption.toggle": "Expand or collapse requests",
+  "interruption.global": "Service request",
+  "interruption.reveal": "View in conversation",
+  "interruption.respond": "Respond near the composer",
+  "interruption.answered": "Answered",
+  "interruption.noAnswer": "No answer",
   "toolCall.image.label": "Image {number}",
   "toolCall.image.unavailable": "Unable to display this image.",
   "promptInput.btw.title": "/btw — Side question",

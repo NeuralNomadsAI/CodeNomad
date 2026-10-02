@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Vorherige Anfrage",
+  "interruption.next": "Nächste Anfrage",
+  "interruption.toggle": "Anfragen ein- oder ausklappen",
+  "interruption.global": "Dienstanfrage",
+  "interruption.reveal": "Im Gespräch anzeigen",
+  "interruption.respond": "Beim Eingabefeld antworten",
+  "interruption.answered": "Beantwortet",
+  "interruption.noAnswer": "Keine Antwort",
   "toolCall.image.label": "Bild {number}",
   "toolCall.image.unavailable": "Dieses Bild kann nicht angezeigt werden.",
   "promptInput.btw.title": "/btw — Zwischenfrage",

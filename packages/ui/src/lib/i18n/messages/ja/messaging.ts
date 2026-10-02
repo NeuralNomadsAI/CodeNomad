@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "前のリクエスト",
+  "interruption.next": "次のリクエスト",
+  "interruption.toggle": "リクエストを展開・折りたたむ",
+  "interruption.global": "サービスのリクエスト",
+  "interruption.reveal": "会話内で表示",
+  "interruption.respond": "入力欄の近くで回答",
+  "interruption.answered": "回答済み",
+  "interruption.noAnswer": "回答なし",
   "toolCall.image.label": "画像 {number}",
   "toolCall.image.unavailable": "この画像を表示できません。",
   "promptInput.btw.title": "/btw — 補足の質問",

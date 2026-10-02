@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "הבקשה הקודמת",
+  "interruption.next": "הבקשה הבאה",
+  "interruption.toggle": "הרחבה או צמצום בקשות",
+  "interruption.global": "בקשת שירות",
+  "interruption.reveal": "הצגה בשיחה",
+  "interruption.respond": "מענה ליד שדה ההקלדה",
+  "interruption.answered": "נענתה",
+  "interruption.noAnswer": "אין תשובה",
   "toolCall.image.label": "תמונה {number}",
   "toolCall.image.unavailable": "לא ניתן להציג את התמונה הזו.",
   "promptInput.btw.title": "/btw — שאלה צדדית",

@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Предыдущий запрос",
+  "interruption.next": "Следующий запрос",
+  "interruption.toggle": "Развернуть или свернуть запросы",
+  "interruption.global": "Запрос сервиса",
+  "interruption.reveal": "Показать в беседе",
+  "interruption.respond": "Ответить рядом с полем ввода",
+  "interruption.answered": "Ответ получен",
+  "interruption.noAnswer": "Нет ответа",
   "toolCall.image.label": "Изображение {number}",
   "toolCall.image.unavailable": "Не удалось отобразить это изображение.",
   "promptInput.btw.title": "/btw — Отдельный вопрос",

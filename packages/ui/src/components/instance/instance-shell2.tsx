@@ -25,10 +25,8 @@ import InstanceWelcomeView from "../instance-welcome-view"
 import InfoView from "../info-view"
 import CommandPalette from "../command-palette"
 import PermissionNotificationBanner from "../permission-notification-banner"
-import PermissionApprovalModal from "../permission-approval-modal"
-import { getFormRequestAutoOpenId } from "../form-request-auto-open"
-import { shouldRenderFormInFallback } from "../form-request-tool-target"
-import { messageStoreBus } from "../../stores/message-v2/bus"
+import { InterruptionDock } from "../interruption-dock"
+import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -41,7 +39,7 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
-import { activeInterruption, getPermissionQueueLength } from "../../stores/instances"
+import { getPermissionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
@@ -142,8 +140,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   let headerRightEl: HTMLElement | undefined
   const [headerIndicatorsEl, setHeaderIndicatorsEl] = createSignal<HTMLElement>()
 
-  const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
-  let lastAutoOpenedFormId: string | null = null
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
   const pendingFirstPromptText = new Map<string, string>()
@@ -168,21 +164,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
   })
 
-  createEffect(() => {
-    const active = activeInterruption().get(props.instance.id)
-    const form = active?.kind === "form"
-      ? getFormQueue(props.instance.id).find((entry) => entry.id === active.id)
-      : undefined
-    if (form && !shouldRenderFormInFallback(form, activeSessionIdForInstance(), messageStoreBus.getOrCreate(props.instance.id))) {
-      lastAutoOpenedFormId = form.id
-      return
-    }
-
-    const formId = getFormRequestAutoOpenId(active, lastAutoOpenedFormId)
-    if (!formId) return
-    lastAutoOpenedFormId = formId
-    setPermissionModalOpen(true)
-  })
+  // Shell ownership keeps partially answered requests alive as session panes change.
+  const interruptionPanel = <InterruptionDock instanceId={props.instance.id}
+    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} />
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
@@ -597,7 +581,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
-          onClick={() => setPermissionModalOpen(true)}
+          onClick={() => { handleBackToConversation(); focusInterruption(props.instance.id, activeSessionIdForInstance() ?? undefined) }}
         />
       </Show>
       {renderYoloModePill()}
@@ -1228,6 +1212,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       />
                     </Show>
 
+                    {interruptionPanel}
                     <PromptInput
                       instanceId={props.instance.id}
                       instanceFolder={props.instance.folder}
@@ -1267,6 +1252,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       >
                         <Show when={isActive()}>
                           <SessionView
+                            interruptionPanel={interruptionPanel}
                             sessionId={sessionId}
                             activeSessions={activeSessions()}
                             instanceId={props.instance.id}
@@ -1328,11 +1314,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         onExecute={props.onExecuteCommand}
       />
 
-      <PermissionApprovalModal
-        instanceId={props.instance.id}
-        isOpen={permissionModalOpen()}
-        onClose={() => setPermissionModalOpen(false)}
-      />
     </>
   )
 }

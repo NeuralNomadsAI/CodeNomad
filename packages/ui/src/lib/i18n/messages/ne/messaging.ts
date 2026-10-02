@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "अघिल्लो अनुरोध",
+  "interruption.next": "अर्को अनुरोध",
+  "interruption.toggle": "अनुरोधहरू विस्तार वा सङ्कुचन गर्नुहोस्",
+  "interruption.global": "सेवाको अनुरोध",
+  "interruption.reveal": "कुराकानीमा हेर्नुहोस्",
+  "interruption.respond": "लेख्ने ठाउँ नजिक उत्तर दिनुहोस्",
+  "interruption.answered": "उत्तर दिइयो",
+  "interruption.noAnswer": "उत्तर छैन",
   "toolCall.image.label": "तस्बिर {number}",
   "toolCall.image.unavailable": "यो तस्बिर देखाउन सकिएन।",
   "promptInput.btw.title": "/btw — छुट्टै प्रश्न",

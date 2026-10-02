@@ -1,5 +1,6 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
+import { interruptionReveal, setInterruptionReveal } from "../stores/interruption-navigation"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
@@ -494,6 +495,27 @@ export default function MessageSection(props: MessageSectionProps) {
   )
 
   onCleanup(cancelWindowNavigation)
+  onCleanup(() => {
+    const target = interruptionReveal()
+    if (target?.instanceId === props.instanceId && target.sessionId === props.sessionId) setInterruptionReveal(undefined)
+  })
+  createEffect(on(() => [interruptionReveal(), props.isActive] as const, ([target]) => {
+    if (!target || props.isActive === false || target.instanceId !== props.instanceId || target.sessionId !== props.sessionId) return
+    const locate = () => {
+      if (interruptionReveal() !== target || props.isActive === false) return
+      listApi()?.setAutoScroll(false)
+      listApi()?.scrollToKey(target.messageId, { block: "start" })
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (interruptionReveal() !== target || props.isActive === false) return
+        document.getElementById(getMessageAnchorId(target.messageId))
+          ?.querySelector('[data-interruption-reveal="true"]')?.scrollIntoView({ block: "center" })
+      }))
+    }
+    if (untrack(messageIds).includes(target.messageId)) {
+      cancelWindowNavigation()
+      locate()
+    } else void pageWindow("around", locate, target.messageId)
+  }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()

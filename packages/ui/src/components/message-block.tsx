@@ -1,4 +1,5 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
+import { interruptionReveal } from "../stores/interruption-navigation"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import SystemMessage from "./system-message"
@@ -609,7 +610,20 @@ export default function MessageBlock(props: MessageBlockProps) {
       const target = resolveFormToolTarget(form, props.store())
       return target ? [technicalPartKey(target.messageId, target.partId)] : []
     })))
-  const pendingFormToolTargets = () => props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
+  const revealedPartId = createMemo(() => {
+    const target = interruptionReveal()
+    if (target?.instanceId !== props.instanceId || target.sessionId !== props.sessionId || target.messageId !== props.messageId) return undefined
+    const current = record()
+    return current?.partIds.find(id => {
+      const part = current.parts[id]?.data
+      return part?.type === "tool" && (!target.callId || target.callId === id || target.callId === part.callID)
+    })
+  })
+  const pendingFormToolTargets = () => {
+    const targets = props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
+    const partId = revealedPartId()
+    return partId ? new Set([...targets, technicalPartKey(props.messageId, partId)]) : targets
+  }
   const technicalCleanupPartKeys = () => props.technicalCleanupPartKeys?.() ?? new Set<string>()
   let lastInlineScrolledSearchMatchId: string | null = null
   const handleContentRendered = () => {
@@ -990,7 +1004,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       isActive={props.isActive}
                       store={props.store}
                       pendingFormToolTargets={pendingFormToolTargets()}
-                      activePartId={activeSearchMatch()?.partId}
+                      activePartId={revealedPartId() ?? activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
                         ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, false) ?? false
