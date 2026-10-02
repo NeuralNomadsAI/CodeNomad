@@ -165,7 +165,7 @@ try {
   assert.equal((await client.server.info()).version, runtimeVersion)
   console.log(`Testing official runtime ${runtimeVersion}`)
   const { testNativeLocationIdentity } = await import("./test-opencode-location-native.mjs")
-  await testNativeLocationIdentity({ client, connection, root })
+  await testNativeLocationIdentity({ client, connection, root, service: sharedService })
   const { testNativeProxy } = await import("./test-opencode-proxy-native.mjs")
   await testNativeProxy({ client, baseUrl, root, runtimeFetch, connection, authorization: `Basic ${Buffer.from("opencode:isolated-pruning-fixture").toString("base64")}`,
     exercise: async (proxy, sessionID) => {

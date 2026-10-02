@@ -7,6 +7,33 @@ import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
 
 let server: ViteDevServer, browser: Browser, url: string
+const gitFocusBoundaryInitScript = String.raw`(() => {
+  const trace = []
+  window.gitFocusBoundaryTrace = trace
+  const describeElement = target => target instanceof Element
+    ? { tag: target.tagName, id: target.id, className: target.className, partId: target.getAttribute("data-part-id") }
+    : null
+  const pushTrace = entry => {
+    trace.push(entry)
+    if (trace.length > 200) trace.shift()
+  }
+  for (const type of ["focusin", "focusout", "pointerdown", "click"]) {
+    document.addEventListener(type, event => {
+      pushTrace({ kind: type, target: describeElement(event.target), active: describeElement(document.activeElement), time: performance.now() })
+    }, true)
+  }
+  window.addEventListener("DOMContentLoaded", () => {
+    new MutationObserver(records => {
+      for (const record of records) for (const node of record.removedNodes) {
+        if (!(node instanceof Element)) continue
+        if (!node.matches(".git-change-context-widget, .git-change-context-widget-host")
+          && !node.querySelector(".git-change-context-widget")) continue
+        pushTrace({ kind: "widget-removed", active: describeElement(document.activeElement), time: performance.now() })
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true })
+  }, { once: true })
+})()`
+
 test("large Changes inventories keep the reader controls responsive", async () => {
   const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
   try {
@@ -592,6 +619,7 @@ test("central diff inserts local lines and revision-qualified history into the r
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.stack ?? error.message))
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) await page.addInitScript({ content: gitFocusBoundaryInitScript })
   try {
     await page.goto(`${url}?session=1`)
     const composer = page.locator(".session-view textarea.prompt-input")
@@ -606,6 +634,8 @@ test("central diff inserts local lines and revision-qualified history into the r
     await insert.click()
     assert.match(await composer.inputValue(), /Conserver ce brouillon/)
     assert.match(await composer.inputValue(), /Git Diff: Worktree: \/CodeNomad : File: src\/components\/git-panel.tsx : 3-3/)
+    const composerElement = (await composer.elementHandle())!
+    await page.waitForFunction(element => element === document.activeElement, composerElement)
     assert.equal(await composer.evaluate(element => element === document.activeElement), true)
 
     // Native editor keyboard selection must keep the full range, not just the hovered line.
@@ -659,7 +689,25 @@ test("central diff inserts local lines and revision-qualified history into the r
     await page.evaluate(() => (window as any).fixture.switchSession("session"))
     assert.equal(await composer.inputValue(), draft)
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally {
+    if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) {
+      try {
+        console.error("Git focus boundary trace", await page.evaluate(() => ({
+          events: (window as any).gitFocusBoundaryTrace,
+          active: document.activeElement instanceof Element
+            ? { tag: document.activeElement.tagName, id: document.activeElement.id, className: document.activeElement.className }
+            : null,
+          widgets: Array.from(document.querySelectorAll<HTMLElement>(".git-change-context-widget")).map(widget => ({
+            connected: widget.isConnected, rect: widget.getBoundingClientRect().toJSON(),
+          })),
+          selections: (window as any).monaco?.editor?.getEditors?.().map((editor: any) => editor.getSelection?.()),
+        })))
+      } catch (error) {
+        console.error("Git focus boundary trace unavailable", error)
+      }
+    }
+    await page.close()
+  }
 })
 
 test("Workspace keyboard focus survives lazy expansion and refresh, including RTL", async () => {

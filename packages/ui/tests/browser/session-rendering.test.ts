@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
@@ -34,7 +35,15 @@ after(async () => { await browser?.close(); await server?.close() })
 async function open(name: string, run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
   const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
+  const boundaryDiagnostics: Array<Record<string, unknown>> = []
+  page.on("pageerror", error => {
+    errors.push(error.message)
+    if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) boundaryDiagnostics.push({ kind: "pageerror", message: error.message, stack: error.stack })
+  })
+  if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) {
+    page.on("console", message => boundaryDiagnostics.push({ kind: "console", type: message.type(), text: message.text() }))
+    page.on("requestfailed", request => boundaryDiagnostics.push({ kind: "requestfailed", url: request.url(), error: request.failure()?.errorText }))
+  }
   await page.addInitScript(`(() => {
     window.fixtureScrollEvents = [];
     for (const type of ['wheel', 'scroll', 'pointerdown']) document.addEventListener(type, event => {
@@ -46,18 +55,23 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
     }, { capture: true, passive: true });
   })()`)
   await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
-  try {
-    await page.goto(`${baseUrl}/fixture?${name}`)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await run(page)
-    assert.deepEqual(errors, [])
-  } catch (error) {
-    console.error("Browser fixture failure", name, await page.evaluate(() => ({
-      state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
-      streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
-    })))
-    throw error
-  } finally { await page.close() }
+  await runWithDiagnosticCleanup({
+    run: async () => {
+      await page.goto(`${baseUrl}/fixture?${name}`)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await run(page)
+      assert.deepEqual(errors, [])
+    },
+    diagnose: async () => {
+      console.error("Browser fixture failure", name, await page.evaluate(() => ({
+        state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
+        streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
+      })), { boundaryDiagnostics })
+    },
+    cleanup: () => page.close(),
+    onObservationError: error => console.error("Browser fixture diagnostic capture failed", name, error, { boundaryDiagnostics }),
+    onCleanupError: error => console.error("Browser fixture cleanup failed", name, error, { boundaryDiagnostics }),
+  })
 }
 
 test("user HTML remains literal through live delivery and history while assistant HTML still renders", async () => {
@@ -80,7 +94,7 @@ test("user HTML remains literal through live delivery and history while assistan
 })
 
 test("user HTML mode preserves Markdown, pasted disclosures and code source and fences legacy caches", async () => {
-  await open("user-html", async page => {
+  await open(process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE ? "user-html&trace=1" : "user-html", async page => {
     await page.locator("#root").evaluate(root => { root.style.display = "block"; root.style.height = "auto" })
     await page.locator("#user strong").waitFor()
     await page.locator("#assistant .sample-html").waitFor()
