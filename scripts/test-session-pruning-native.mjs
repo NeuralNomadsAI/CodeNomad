@@ -11,6 +11,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
+import { createNativeFixtureReporter } from "./native-fixture-diagnostics.mjs"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
@@ -26,6 +27,13 @@ await mkdir(temporaryRoot, { recursive: true })
 // plugin-source filter compares those to its configured roots lexically.
 // Give the isolated daemon one canonical namespace before it starts watching.
 const root = await realpath(await mkdtemp(path.join(temporaryRoot, "codenomad-pruning-native-")))
+let output = ""
+const diagnostics = createNativeFixtureReporter(root, () => output)
+const pruningUI = ui ? await import("./test-session-pruning-ui.mjs") : undefined
+if (pruningUI) {
+  await pruningUI.loadPruningUIDependencies(diagnostics)
+  diagnostics.stage("ui-dependencies-ready-before-native-preamble")
+}
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE_") && !key.startsWith("XDG_")))
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 Object.assign(env, {
@@ -117,7 +125,6 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
 })
-let output = ""
 function start() {
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--log-level", "debug", "--print-logs"], { cwd: root, env, windowsHide: true })
   const stopped = new Promise(resolve => child.once("close", resolve))
@@ -277,8 +284,7 @@ try {
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
   await testSessionNavigationNative({ client, location, locationOptions, template: target })
   if (ui) {
-    const { testPruningUI } = await import("./test-session-pruning-ui.mjs")
-    await testPruningUI({ client, connection, baseUrl, root, location, busy: async (sessionID) => {
+    await pruningUI.testPruningUI({ client, connection, baseUrl, root, location, diagnostics, busy: async (sessionID) => {
       held = new Promise(resolve => { releaseProvider = resolve })
       const before = requests.length
       await client.session.prompt({ sessionID, text: "Keep this request in flight" })
@@ -402,7 +408,9 @@ try {
   console.log("PASS: native plugin preview/prune RPC, active-claim refusal, idempotent retry, two subscribers, competing prompt, next model payload, fork isolation, pre-compaction history and restart")
   if (legacyPruning) console.log("PASS: complete native pruning suite with non-null legacy workspace identity")
 } finally {
+  diagnostics.stage("cleanup-presence")
   await closePresence?.()
+  diagnostics.stage("cleanup-native")
   streams.abort(); releaseProvider?.()
   if (db?.isTransaction) db.exec("ROLLBACK")
   db?.close()
@@ -411,3 +419,4 @@ try {
   await writeFile(path.join(root, "server.log"), output)
   console.log(`Isolated fixture retained at ${root}`)
 }
+diagnostics.complete()
