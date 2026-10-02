@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Modeller",
   "settings.websearch.title": "Web araması",
   "settings.websearch.description": "Ajanların web üzerinde bilgi aramak için kullanacağı sağlayıcıyı seçin. Değişiklikler otomatik kaydedilir.",
-  "settings.websearch.global": "Tüm projeler için varsayılan",
-  "settings.websearch.project": "Bu projeye özel ayar",
+  "settings.websearch.global": "Varsayılan arama",
+  "settings.websearch.project": "Geçerli proje için",
   "settings.websearch.credentials": "Arama sağlayıcısı API anahtarları",
   "settings.websearch.credentialsHint": "API anahtarlarını yönetmek için aşağıdan bir sağlayıcı seçin. Anahtarlar bu OpenCode hizmetinin tüm projelerinde paylaşılır. Anahtar kaydetmek yukarıda seçilen arama sağlayıcısını değiştirmez.",
   "settings.websearch.environment": "Ortamdan: {name} (salt okunur)",

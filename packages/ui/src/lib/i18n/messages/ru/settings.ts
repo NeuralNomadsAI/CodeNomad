@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Модели",
   "settings.websearch.title": "Поиск в интернете",
   "settings.websearch.description": "Выберите поисковый сервис для агентов. Изменения сохраняются автоматически.",
-  "settings.websearch.global": "По умолчанию для всех проектов",
-  "settings.websearch.project": "Отдельная настройка для этого проекта",
+  "settings.websearch.global": "Поиск по умолчанию",
+  "settings.websearch.project": "Для текущего проекта",
   "settings.websearch.credentials": "API-ключи поисковых сервисов",
   "settings.websearch.credentialsHint": "Выберите сервис ниже для управления его API-ключами. Ключи общие для всех проектов этого сервиса OpenCode. Сохранение ключа не меняет выбранный выше поисковый сервис.",
   "settings.websearch.environment": "Из окружения: {name} (только чтение)",

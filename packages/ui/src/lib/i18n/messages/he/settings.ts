@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "מודלים",
   "settings.websearch.title": "חיפוש ברשת",
   "settings.websearch.description": "בחרו את ספק החיפוש שבו הסוכנים משתמשים למציאת מידע ברשת. השינויים נשמרים אוטומטית.",
-  "settings.websearch.global": "ברירת מחדל לכל הפרויקטים",
-  "settings.websearch.project": "הגדרה ייחודית לפרויקט זה",
+  "settings.websearch.global": "חיפוש ברירת מחדל",
+  "settings.websearch.project": "עבור הפרויקט הנוכחי",
   "settings.websearch.credentials": "מפתחות API של ספקי חיפוש",
   "settings.websearch.credentialsHint": "בחרו ספק למטה לניהול מפתחות ה-API שלו. המפתחות משותפים לכל הפרויקטים בשירות OpenCode זה. שמירת מפתח אינה משנה את ספק החיפוש שנבחר למעלה.",
   "settings.websearch.environment": "מהסביבה: {name} (קריאה בלבד)",

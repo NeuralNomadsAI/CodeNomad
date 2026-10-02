@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Models",
   "settings.websearch.title": "Web search",
   "settings.websearch.description": "Choose the search provider agents use to find information on the web. Changes are saved automatically.",
-  "settings.websearch.global": "Default for all projects",
-  "settings.websearch.project": "Override for this project",
+  "settings.websearch.global": "Default search",
+  "settings.websearch.project": "For the current project",
   "settings.websearch.credentials": "Search provider API keys",
   "settings.websearch.credentialsHint": "Select a provider below to manage its API keys. Keys are shared by all projects on this OpenCode service. Saving a key does not change the search provider selected above.",
   "settings.websearch.environment": "From environment: {name} (read-only)",

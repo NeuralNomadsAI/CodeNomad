@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Modelle",
   "settings.websearch.title": "Websuche",
   "settings.websearch.description": "Wählen Sie den Suchanbieter, mit dem Agenten im Web recherchieren. Änderungen werden automatisch gespeichert.",
-  "settings.websearch.global": "Standard für alle Projekte",
-  "settings.websearch.project": "Abweichende Einstellung für dieses Projekt",
+  "settings.websearch.global": "Standardsuche",
+  "settings.websearch.project": "Für das aktuelle Projekt",
   "settings.websearch.credentials": "API-Schlüssel der Suchanbieter",
   "settings.websearch.credentialsHint": "Wählen Sie unten einen Anbieter, um dessen API-Schlüssel zu verwalten. Die Schlüssel gelten für alle Projekte dieses OpenCode-Dienstes. Das Speichern eines Schlüssels ändert nicht den oben gewählten Suchanbieter.",
   "settings.websearch.environment": "Aus der Umgebung: {name} (schreibgeschützt)",

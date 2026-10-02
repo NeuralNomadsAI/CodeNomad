@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Modèles",
   "settings.websearch.title": "Recherche web",
   "settings.websearch.description": "Choisissez le moteur utilisé par les agents pour rechercher des informations sur le web. Les changements sont enregistrés automatiquement.",
-  "settings.websearch.global": "Par défaut pour tous les projets",
-  "settings.websearch.project": "Exception pour ce projet",
+  "settings.websearch.global": "Recherche par défaut",
+  "settings.websearch.project": "Pour le projet courant",
   "settings.websearch.credentials": "Clés API des moteurs de recherche",
   "settings.websearch.credentialsHint": "Sélectionnez un moteur ci-dessous pour gérer ses clés API. Les clés sont partagées par tous les projets de ce service OpenCode. Enregistrer une clé ne change pas le moteur choisi ci-dessus.",
   "settings.websearch.environment": "Variable d’environnement : {name} (lecture seule)",

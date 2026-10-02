@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "模型",
   "settings.websearch.title": "网页搜索",
   "settings.websearch.description": "选择智能体在网上查找信息时使用的搜索服务。更改会自动保存。",
-  "settings.websearch.global": "所有项目的默认设置",
-  "settings.websearch.project": "此项目的单独设置",
+  "settings.websearch.global": "默认搜索",
+  "settings.websearch.project": "用于当前项目",
   "settings.websearch.credentials": "搜索服务 API 密钥",
   "settings.websearch.credentialsHint": "在下方选择服务以管理其 API 密钥。密钥由此 OpenCode 服务的所有项目共享。保存密钥不会更改上方选择的搜索服务。",
   "settings.websearch.environment": "来自环境变量：{name}（只读）",

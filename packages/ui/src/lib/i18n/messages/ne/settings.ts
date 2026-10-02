@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "मोडेलहरू",
   "settings.websearch.title": "वेब खोज",
   "settings.websearch.description": "एजेन्टहरूले वेबमा जानकारी खोज्न प्रयोग गर्ने प्रदायक छान्नुहोस्। परिवर्तनहरू स्वतः सुरक्षित हुन्छन्।",
-  "settings.websearch.global": "सबै परियोजनाका लागि पूर्वनिर्धारित",
-  "settings.websearch.project": "यस परियोजनाका लागि छुट्टै सेटिङ",
+  "settings.websearch.global": "पूर्वनिर्धारित खोज",
+  "settings.websearch.project": "हालको परियोजनाका लागि",
   "settings.websearch.credentials": "खोज प्रदायकका API कुञ्जीहरू",
   "settings.websearch.credentialsHint": "API कुञ्जीहरू व्यवस्थापन गर्न तल प्रदायक छान्नुहोस्। कुञ्जीहरू यस OpenCode सेवाका सबै परियोजनामा साझा हुन्छन्। कुञ्जी सुरक्षित गर्दा माथि छानिएको खोज प्रदायक बदलिँदैन।",
   "settings.websearch.environment": "वातावरणबाट: {name} (पढ्न मात्र)",

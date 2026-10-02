@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "モデル",
   "settings.websearch.title": "ウェブ検索",
   "settings.websearch.description": "エージェントがウェブで情報を検索する際のプロバイダーを選択します。変更は自動的に保存されます。",
-  "settings.websearch.global": "すべてのプロジェクトの既定値",
-  "settings.websearch.project": "このプロジェクトの個別設定",
+  "settings.websearch.global": "既定の検索",
+  "settings.websearch.project": "現在のプロジェクト用",
   "settings.websearch.credentials": "検索プロバイダーのAPIキー",
   "settings.websearch.credentialsHint": "APIキーを管理するプロバイダーを下で選択してください。キーはこのOpenCodeサービスの全プロジェクトで共有されます。キーを保存しても上で選択した検索プロバイダーは変わりません。",
   "settings.websearch.environment": "環境変数: {name}（読み取り専用）",

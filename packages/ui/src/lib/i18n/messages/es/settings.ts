@@ -1,8 +1,9 @@
 export const settingsMessages = {
+  "settings.providers.models.title": "Modelos",
   "settings.websearch.title": "Búsqueda web",
   "settings.websearch.description": "Elija el proveedor que usan los agentes para buscar información en la web. Los cambios se guardan automáticamente.",
-  "settings.websearch.global": "Predeterminado para todos los proyectos",
-  "settings.websearch.project": "Excepción para este proyecto",
+  "settings.websearch.global": "Búsqueda predeterminada",
+  "settings.websearch.project": "Para el proyecto actual",
   "settings.websearch.credentials": "Claves API de los proveedores de búsqueda",
   "settings.websearch.credentialsHint": "Seleccione un proveedor para gestionar sus claves API. Las claves se comparten entre todos los proyectos de este servicio OpenCode. Guardar una clave no cambia el proveedor seleccionado arriba.",
   "settings.websearch.environment": "Del entorno: {name} (solo lectura)",
