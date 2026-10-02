@@ -1,0 +1,14 @@
+/* Dense conversation chrome uses compact targets without widening icon gaps. */
+@media (pointer: coarse) {
+  .session-toolbar {
+    --touch-target-size: var(--touch-target-size-compact);
+  }
+
+  .session-toolbar .panel-header-actions {
+    gap: 0;
+  }
+
+  .session-toolbar .connection-status-meta {
+    gap: var(--space-xs);
+  }
+}

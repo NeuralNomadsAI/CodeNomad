@@ -165,6 +165,7 @@
   --control-height: 28px;
   --selector-height: 36px;
   --touch-target-size: 40px;
+  --touch-target-size-compact: 32px;
   --scrollbar-size: 8px;
   --icon-button-size: 26px;
   --icon-size: 14px;

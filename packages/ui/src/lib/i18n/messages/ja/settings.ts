@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "OpenCode をインストールしています…",
+  "settings.opencode.setup.elapsed": "経過時間: {elapsed}",
+  "settings.opencode.setup.keepOpen": "ダウンロードとインストールには数分かかることがあります。セットアップが完了するまで CodeNomad を開いたままにしてください。",
   "settings.opencode.setup.installation_busy": "別のインストールが OpenCode のインストールロックを保持しています。完了後に再試行してください。中断された場合は、サーバーログでロックの場所を確認してください。",
   "settings.opencode.setup.installation_in_use": "OpenCode の実行ファイルは使用中、または書き込み不可です。インストールを変更する前に更新を延期しました。実行ファイルが利用可能になったら再試行してください。",
   "settings.opencode.setup.source.path": "サーバーの PATH で実行ファイルが見つかりました。",
@@ -638,9 +641,11 @@ export const settingsMessages = {
   "settings.info.version.server": "サーバーバージョン",
   "settings.info.version.ui": "UI バージョン",
   "settings.info.version.uiSource": "UI ソース",
-  "settings.info.runtime.type": "ランタイム",
-  "settings.info.runtime.platform": "プラットフォーム",
-  "settings.info.runtime.os": "オペレーティングシステム",
+  "settings.info.runtime.type": "クライアントのランタイム",
+  "settings.info.runtime.platform": "クライアントのプラットフォーム",
+  "settings.info.runtime.os": "クライアントのOS",
+  "settings.info.server.os": "サーバーのOS",
+  "settings.info.server.arch": "サーバーのアーキテクチャ",
   "settings.info.server.url": "サーバー URL",
   "settings.info.server.root": "ワークスペースルート",
   "settings.info.runtime.windowContext": "ウィンドウコンテキスト",
@@ -668,4 +673,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "クリップボードにコピー",
   "settings.info.diagnostics.download": ".txt をダウンロード",
   "settings.info.diagnostics.copied": "診断情報をクリップボードにコピーしました。",
+  "providerUsage.nativeCredentialApiUnavailable": "使用状況の表示には OpenCode {version} 以降が必要です。OpenCode を更新し、設定からサービスを再起動してください。",
 } as const

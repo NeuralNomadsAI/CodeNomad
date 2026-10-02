@@ -4,8 +4,12 @@
 @import "./panels/modal.css";
 @import "./panels/panel-shell.css";
 @import "./panels/session-layout.css";
+@import "./panels/session-toolbar-touch.css";
 @import "./components/session-row-actions.css";
 @import "./components/session-tree.css";
 @import "./components/transcript-filters.css";
 @import "./panels/right-panel.css";
 @import "./panels/control-hover.css";
+@import "./panels/git-history.css";
+@import "./panels/workspace-tree.css";
+@import "./panels/file-row-actions.css";
