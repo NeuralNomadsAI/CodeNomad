@@ -1,10 +1,10 @@
 // Interactive design sandbox: synthetic labels and quotas, no live credentials.
-import { Show, createSignal, onCleanup, onMount } from "solid-js"
-import { Portal, render } from "solid-js/web"
+import { createSignal } from "solid-js"
+import { render } from "solid-js/web"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { setActiveSettingsSection } from "../../../src/stores/settings-screen"
 import { ConfigProvider } from "../../../src/stores/preferences"
-import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
@@ -18,10 +18,10 @@ const single = params.has("single")
 const [automatic, setAutomatic] = createSignal(params.has("auto"))
 const [used, setUsed] = createSignal<Record<string, number>>({ personal: 76, work: 24, spare: 12 })
 const [rows, setRows] = createSignal<any[]>([
-  { type: "credential", id: "personal", label: "alex@exemple.fr", method: "oauth" },
+  { type: "credential", id: "personal", label: "default", method: "oauth" },
   ...single ? [] : [
     { type: "credential", id: "work", label: "alex@studio.fr", method: "oauth" },
-    { type: "credential", id: "spare", label: "Compte équipe", method: "key" },
+    { type: "credential", id: "spare", label: "Compte équipe", method: "oauth" },
   ],
 ])
 const integrations: any[] = [
@@ -60,24 +60,20 @@ let global: string | false | null = "exa", project: string | false | null = null
 serverApi.getWebSearchSettings = async () => ({ location: { directory: "/preview" }, effective: project ?? global,
   scopes: [{ scope: "global", path: "/preview/global.jsonc", selection: global }, { scope: "project", path: "/preview/project.jsonc", selection: project }] })
 serverApi.setWebSearchSettings = async (_id, input) => { if (input.scope === "global") global = input.provider; else project = input.provider }
+const policyWrites: boolean[] = []
+let failPolicy = false
+serverApi.getProviderAccounts = async (_id, integrationID) => ({ supported: integrationID === "openai" && rows().length > 1,
+  enabled: automatic(), logins: integrationID === "openai" ? { personal: "alex@exemple.fr" } : {} })
+serverApi.setProviderAccountSelection = async (_id, integrationID, directory, enabled) => {
+  policyWrites.push(enabled)
+  if (failPolicy) { failPolicy = false; throw new Error("Synthetic policy failure") }
+  setAutomatic(enabled); notify()
+  return serverApi.getProviderAccounts("preview", integrationID, directory)
+}
 await applyUiSettings({ locale: "fr", theme: params.has("light") ? "light" : "dark" })
 setActiveSettingsSection("providers")
 
 function Simulation() {
-  const { t } = useI18n()
-  const [mounts, setMounts] = createSignal<Record<string, HTMLElement>>({})
-  onMount(() => {
-    const update = () => {
-      const next: Record<string, HTMLElement> = {}
-      const openai = Array.from(document.querySelectorAll<HTMLElement>(".providers-card")).find(card => card.querySelector("h4")?.textContent === "OpenAI")
-      if (openai) next.footer = openai
-      setMounts(previous => Object.keys(next).length === Object.keys(previous).length && Object.keys(next).every(key => next[key] === previous[key]) ? previous : next)
-    }
-    const observer = new MutationObserver(update)
-    observer.observe(document.getElementById("root")!, { childList: true, subtree: true })
-    update()
-    onCleanup(() => observer.disconnect())
-  })
   const exhaust = () => {
     const current = rows()[0]
     if (!current) return
@@ -95,16 +91,11 @@ function Simulation() {
       <span aria-live="polite">Usage simulé : {used()[rows()[0]?.id] ?? "—"} %</span>
       <button type="button" class="selector-button" onClick={exhaust}>Simuler 100 %</button>
     </nav>
-    <Show when={mounts().footer && rows().length > 1}><Portal mount={mounts().footer}>
-      <label class="accounts-preview-auto" title={t("settings.accounts.autoSelectHint")}>
-        <input type="checkbox" checked={automatic()} onChange={event => setAutomatic(event.currentTarget.checked)} />
-        <span>{t("settings.accounts.autoSelect")}</span>
-      </label>
-    </Portal></Show>
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><div class="accounts-preview-root">
   <SettingsScreen standalone providerContext={{ instanceId: "preview", location: { directory: "/preview" } }} />
   <Simulation />
 </div></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).accountsPreview = { rows, used, automatic }
+;(window as any).accountsPreview = { rows, used, automatic, policyWrites, failPolicy: () => { failPolicy = true },
+  refresh: notify }

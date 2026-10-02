@@ -8,9 +8,3 @@
 .accounts-preview-toolbar > span { margin-inline-end: auto; }
 .accounts-preview-toolbar a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
 .accounts-preview-toolbar .selector-button { font-size: var(--font-size-xs); min-height: 26px; width: auto; flex: 0 0 auto; }
-.accounts-preview-auto {
-  grid-column: 1 / -1;
-  display: flex; align-items: center; gap: var(--space-sm); width: 100%;
-  padding: var(--space-sm) var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-sm);
-}
-.accounts-preview-auto input { accent-color: var(--text-primary); }

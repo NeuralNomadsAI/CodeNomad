@@ -112,6 +112,8 @@ test("dropdown design simulates opt-in rotation and hides the option for one acc
     await page.goto(design)
     await select.waitFor()
     assert.equal(await select.inputValue(), "credential:personal")
+    assert.equal(await select.locator('option[value="credential:personal"]').textContent(), "alex@exemple.fr")
+    assert.equal(await select.locator('option[value="credential:spare"]').textContent(), "Compte équipe")
     assert.equal(await select.locator("option").count(), 3)
     await page.mouse.move(0, 0)
     await select.evaluate(el => (el as HTMLElement).blur())
@@ -152,5 +154,27 @@ test("dropdown design simulates opt-in rotation and hides the option for one acc
     await page.setViewportSize({ width: 390, height: 800 })
     assert.equal(await page.locator(".providers-accounts-list").evaluate(el => el.scrollWidth <= el.clientWidth), true)
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("production auto-selection control persists opt-in and never replays a failed setting write", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url.replace("/fixture", "/design"))
+    const toggle = page.getByRole("checkbox", { name: "Sélection automatique du compte" })
+    await toggle.waitFor()
+    assert.equal(await toggle.isChecked(), false)
+    await toggle.check()
+    await page.waitForFunction(() => (window as any).accountsPreview.automatic() === true)
+    await page.evaluate(() => (window as any).accountsPreview.refresh())
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".provider-account-auto input")?.disabled)
+    assert.equal(await toggle.isChecked(), true)
+    await page.evaluate(() => (window as any).accountsPreview.failPolicy())
+    await toggle.click() // Failed persistence deliberately restores the checked state.
+    await page.getByRole("alert").waitFor()
+    assert.equal(await toggle.isChecked(), true)
+    assert.deepEqual(await page.evaluate(() => (window as any).accountsPreview.policyWrites), [true, false])
+    assert.equal(await page.locator(".providers-accounts-list").evaluate(el => el.scrollWidth <= el.clientWidth), true)
   } finally { await page.close() }
 })

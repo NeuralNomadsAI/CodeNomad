@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "Использовать аккаунт",
   "settings.accounts.error": "Операция не удалась. Обновите текущее состояние.",
   "settings.accounts.autoSelect": "Автоматически выбирать аккаунт",
-  "settings.accounts.autoSelectHint": "При 100% использования переключаться на доступный аккаунт этого провайдера.",
+  "settings.accounts.autoSelectHint": "Перед следующей отправкой при 100% использования Codex выбрать OAuth-аккаунт с проверенной доступностью. Выбор действует для всего сервиса; неудачные запросы не повторяются.",
   "settings.providers.models.title": "Модели",
   "settings.websearch.title": "Поиск в интернете",
   "settings.websearch.description": "Выберите поисковый сервис для агентов. Изменения сохраняются автоматически.",

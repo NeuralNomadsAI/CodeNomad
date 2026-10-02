@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "Hesabı kullan",
   "settings.accounts.error": "Hesap işlemi başarısız. Güncel durumu yenileyin.",
   "settings.accounts.autoSelect": "Hesabı otomatik seç",
-  "settings.accounts.autoSelectHint": "%100 kullanıma ulaşıldığında bu sağlayıcının kullanılabilir bir hesabına geç.",
+  "settings.accounts.autoSelectHint": "Sonraki gönderimden önce Codex kullanımı %100 ise kullanılabilirliği doğrulanmış bir OAuth hesabı seç. Seçim hizmet genelinde geçerlidir; başarısız istekler yeniden gönderilmez.",
   "settings.providers.models.title": "Modeller",
   "settings.websearch.title": "Web araması",
   "settings.websearch.description": "Ajanların web üzerinde bilgi aramak için kullanacağı sağlayıcıyı seçin. Değişiklikler otomatik kaydedilir.",

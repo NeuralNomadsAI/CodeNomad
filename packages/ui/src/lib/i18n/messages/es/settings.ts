@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "Usar cuenta",
   "settings.accounts.error": "La operación falló. Actualice para consultar el estado actual.",
   "settings.accounts.autoSelect": "Seleccionar cuenta automáticamente",
-  "settings.accounts.autoSelectHint": "Al llegar al 100 % de uso, cambiar a una cuenta disponible de este proveedor.",
+  "settings.accounts.autoSelectHint": "Antes del próximo envío, al llegar al 100 % de uso de Codex, seleccionar una cuenta OAuth con disponibilidad verificada. La selección se aplica a todo el servicio; las solicitudes fallidas no se repiten.",
   "settings.providers.models.title": "Modelos",
   "settings.websearch.title": "Búsqueda web",
   "settings.websearch.description": "Elija el proveedor que usan los agentes para buscar información en la web. Los cambios se guardan automáticamente.",

@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "使用账户",
   "settings.accounts.error": "账户操作失败。请刷新以查看当前状态。",
   "settings.accounts.autoSelect": "自动选择账户",
-  "settings.accounts.autoSelectHint": "使用率达到 100% 时，切换到此提供商的可用账户。",
+  "settings.accounts.autoSelectHint": "下次发送前，若 Codex 使用率达到 100%，选择已验证可用的 OAuth 账户。选择对整个服务生效；不会重发失败的请求。",
   "settings.providers.models.title": "模型",
   "settings.websearch.title": "网页搜索",
   "settings.websearch.description": "选择智能体在网上查找信息时使用的搜索服务。更改会自动保存。",

@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "השתמש בחשבון",
   "settings.accounts.error": "פעולת החשבון נכשלה. רענן לצפייה במצב הנוכחי.",
   "settings.accounts.autoSelect": "בחירת חשבון אוטומטית",
-  "settings.accounts.autoSelectHint": "בשימוש של 100%, לעבור לחשבון זמין של ספק זה.",
+  "settings.accounts.autoSelectHint": "לפני השליחה הבאה, בשימוש Codex של 100%, לבחור חשבון OAuth שזמינותו אומתה. הבחירה חלה על כל השירות; בקשות שנכשלו לא נשלחות שוב.",
   "settings.providers.models.title": "מודלים",
   "settings.websearch.title": "חיפוש ברשת",
   "settings.websearch.description": "בחרו את ספק החיפוש שבו הסוכנים משתמשים למציאת מידע ברשת. השינויים נשמרים אוטומטית.",

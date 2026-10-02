@@ -11,6 +11,7 @@ import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { cleanupMissionSession } from "./mission-cleanup"
 import { applyMissionLifecycle } from "./mission-lifecycle"
 import { missionIsRunning } from "../../missions/lifecycle-model"
+import type { ProviderAccountsService } from "../../provider-accounts/service"
 
 const inputSchema = z.object({
   kind: z.enum(["prompt", "synthetic"]),
@@ -35,7 +36,7 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 
 // Called only behind the loopback token-authenticated desktop bridge. No environment
 // values leave this backend; both native writes share ownership, connection and fence.
-export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal) {
+export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal, accounts?: ProviderAccountsService) {
   if (command && typeof command === "object" && "kind" in command && command.kind === "lifecycle") {
     return applyMissionLifecycle(manager, fence, coordinatorID, command, signal)
   }
@@ -105,7 +106,15 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     }
     signal.throwIfAborted()
     connection.assertCurrent()
-    if (kind === "prompt") await client.session.prompt(input, { signal })
+    if (kind === "prompt") {
+      await accounts?.beforeSend(connection, target.id, AbortSignal.any([signal, AbortSignal.timeout(15_000)]), async () => {
+        const current = await client.session.get({ sessionID: target.id }, { signal })
+        return sameLocation(current.location, target.location) && matchesExecution(task.execution, current)
+          && await manager.ownsLocation(workspace.id, current.location, client)
+      })
+      signal.throwIfAborted(); connection.assertCurrent()
+      await client.session.prompt(input, { signal })
+    }
     else await client.session.synthetic(input, { signal })
     return { admitted: true }
   } finally { release() }

@@ -1,8 +1,9 @@
 # Provider accounts: direct selection and opt-in rotation
 
-Design exploration for #793. The browser sandbox uses real Settings and account
-components with synthetic credentials and quota data. Auto-selection is not
-implemented in production, and preview percentages are not native measurements.
+Implemented UX and bounded backend behavior for #793. The browser sandbox uses
+real Settings and account components with synthetic credentials and quota data;
+preview percentages are not native measurements. Production auto-selection is
+opt-in and supports native OpenAI ChatGPT OAuth (Codex) only.
 
 ## Visible accounts
 
@@ -22,48 +23,64 @@ implemented in production, and preview percentages are not native measurements.
 - Preserve rename drafts across native refreshes, account switches and failed
   writes. Selection remains service-wide, not session-specific.
 
-## Login-derived names: capability boundary
+## Login-derived names
 
-The pinned 2.0.21 `ConnectionCredentialInfo` exposes ID, label, method and optional
-auth status; it does not expose a login. Native OAuth implementations may supply
-an automatic label (`packages/core/src/integration.ts`), otherwise native
-credential creation falls back to `default`. A login cannot be inferred from
-a credential ID or an API key.
+The pinned 2.0.22 `ConnectionCredentialInfo` exposes ID, label, method and optional
+auth status, not a login. Native labels are preferred; only the native fallback
+`default` is enriched with a sanitized Codex OAuth email when available. The
+server-only `usage/codex-credential.ts` reads native credential exports and uses
+the same selected-token identity rules as the existing quota adapter. It returns
+only the bounded display email through the owned account settings route, never
+tokens, account IDs, claims or credential values. Claims are display hints, not
+authorization. No credential is automatically renamed; explicit aliases survive.
 
-Prefer an upstream sanitized identity field. If CodeNomad adds its own server
-identity adapter, limit it to supported OAuth providers and return only the
-display identity, never credential values. Preserve explicit user names; no
-credential export route or token parsing in the browser. Existing custom names
-need a defined automatic-vs-explicit origin before any automatic renaming.
+Other providers and API keys retain their native labels. An upstream sanitized
+identity field is preferable for extending provider coverage. Display metadata
+is fetched only while Settings is mounted; it is not persisted as a catalog.
 
-## Auto-select account: proposed backend behavior
+## Auto-select account: implemented backend behavior
 
-- Opt-in per provider, service-wide, visible only with at least two saved
-  accounts. An environment connection is not a selectable fallback account.
+- Opt-in for the OpenAI integration, persisted under CodeNomad's
+  `providerAccounts.autoSelect.openai` config owner. The control is visible only
+  with two supported, unexpired OAuth accounts and native credential export
+  support (2.0.20+); this feature does not raise the global technical minimum.
+  Selection is native and service-wide, not session-specific. Environment and
+  API-key connections are never automatic fallback candidates.
 - At 100% of an applicable quota window, choose the next usable account of the
   same provider in stable order. Exclude exhausted, expired or needs-auth
   accounts; unknown/stale usage is not evidence of availability.
 - If no account is demonstrably available, retain the current selection and
-  report unavailability. Do not loop, create credentials, change models or
+  let the ordinary native send report its result. Do not loop, create credentials, change models or
   silently fall back to another provider.
-- Extend the existing server-side quota adapters to address an explicit
-  credential, without temporarily activating each candidate to read its quota.
-  Current `usage/native-codex.ts` reads only the selected OAuth account; it is not
-  yet a multi-account quota catalog. Other providers need independent adapters.
-- Persist only the opt-in policy and sanitized bounded snapshots. Keep native
+- Reuse `usage/native-codex.ts`'s bounded quota transport with each explicit
+  credential, without temporarily activating candidates. At most 20 candidates
+  are considered within a 15-second preflight. Unknown, missing, past-reset or
+  failed quota responses cannot authorize a fallback. No quota display cache is
+  used for an activation decision. Other providers need independent adapters.
+- Persist only the opt-in policy. Keep native
   exports on the server stack, redact failures, and never expose tokens through
   the account catalog, browser, logs or persisted display cache.
-- Apply decisions before the next eligible model request, independent of an
-  open Settings window. Serialize decisions across workspaces, freshly verify
+- Apply decisions before the next prompt/custom-command admission, including
+  Mission assignments, independent of an open Settings window. Shell, `/btw`,
+  tools, autonomous native steps and already queued requests are not replayed
+  or intercepted. Serialize decisions across this backend's workspaces, freshly verify
   connection/ownership/deletion fences and current credential before activation.
-  A manual selection racing a quota read wins; stale responses cannot switch it.
+  A local manual mutation or policy change racing a quota read wins, including
+  away-and-back selection; stale responses cannot switch it. Native selection,
+  credential fingerprints, session model/location and ownership are reread before
+  activation. An ambiguous activation failure blocks that send with a redacted
+  error, without retrying another candidate or the prompt.
 - Do not automatically replay a failed prompt, custom command or tool operation.
   In-flight OpenCode steps may retain a previously acquired account; seamless
   mid-generation failover needs a proven upstream contract, not a UI promise.
-- Validate opt-in persistence, quota resets, unknown usage, all-exhausted cases,
-  manual-switch races and concurrent sessions using isolated native data before
-  offering the production toggle. No blanket minimum-version increase based on
-  this preview.
+- Native activation has no compare-and-set contract: a TUI/other backend can
+  still change selection after the last read. The local serialization fence does
+  not claim distributed locking or atomic selection against external clients.
+- Validation: server policy/ownership/admission regressions, real Chromium
+  controls and `scripts/test-provider-account-selection-native.mjs` against an
+  isolated 2.0.22 CLI/database, with synthetic OAuth and injected quota responses.
+  The native fixture covers concurrency, exhaustion, alias preservation and a
+  fresh read of persisted YAML. No real credentials or remote generation.
 
 ## Preview variants
 

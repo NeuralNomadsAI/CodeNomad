@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "यो खाता प्रयोग गर्नुहोस्",
   "settings.accounts.error": "कार्य असफल भयो। हालको अवस्था हेर्न रिफ्रेस गर्नुहोस्।",
   "settings.accounts.autoSelect": "खाता स्वतः चयन गर्नुहोस्",
-  "settings.accounts.autoSelectHint": "१००% प्रयोग भएपछि यस प्रदायकको उपलब्ध खातामा बदल्नुहोस्।",
+  "settings.accounts.autoSelectHint": "अर्को पठाउनु अघि Codex प्रयोग १००% भएमा उपलब्धता प्रमाणित भएको OAuth खाता छान्नुहोस्। चयन पूरै सेवामा लागू हुन्छ; असफल अनुरोधहरू फेरि पठाइँदैनन्।",
   "settings.providers.models.title": "मोडेलहरू",
   "settings.websearch.title": "वेब खोज",
   "settings.websearch.description": "एजेन्टहरूले वेबमा जानकारी खोज्न प्रयोग गर्ने प्रदायक छान्नुहोस्। परिवर्तनहरू स्वतः सुरक्षित हुन्छन्।",

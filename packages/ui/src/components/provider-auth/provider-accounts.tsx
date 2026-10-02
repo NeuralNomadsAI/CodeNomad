@@ -4,6 +4,8 @@ import { Plus, Pencil, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
+import { serverApi } from "../../lib/api-client"
+import type { ProviderAccountsSnapshot } from "../../../../server/src/api-types"
 
 export function ProviderAccounts(props: {
   instanceId: string
@@ -19,6 +21,9 @@ export function ProviderAccounts(props: {
   const [connections, setConnections] = createSignal<ConnectionInfo[]>([])
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal(false)
+  const emptySnapshot = (): ProviderAccountsSnapshot => ({ supported: false, enabled: false, logins: {} })
+  const [selection, setSelection] = createSignal(emptySnapshot())
+  let setAutomatic: (enabled: boolean) => Promise<void> = async () => {}
   let refresh = () => {}
   let run: (id: string, action: "activate" | "remove" | "rename", label?: string) => Promise<boolean> = async () => false
   createEffect(() => {
@@ -26,7 +31,7 @@ export function ProviderAccounts(props: {
     let disposed = false, reading = false, writing = false, trailing = false
     // Cache-first: keep the catalog snapshot while the authoritative read
     // revalidates behind it.
-    setConnections(props.initialConnections ?? []); setError(false); setBusy(false)
+    setConnections(props.initialConnections ?? []); setError(false); setBusy(false); setSelection(emptySnapshot())
     const read = async () => {
       if (disposed) return
       if (reading || writing) { trailing = true; return }
@@ -35,8 +40,12 @@ export function ProviderAccounts(props: {
         trailing = false
         try {
           const catalog = await client.integration.list({ location: toRequestLocation(location) }, requestLocationOptions(location))
+          const snapshot = integrationID === "openai"
+            ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory).catch(() => emptySnapshot())
+            : emptySnapshot()
           if (!disposed && !trailing) {
             setConnections(catalog.data.find(item => item.id === integrationID)?.connections ?? [])
+            setSelection(snapshot)
             setError(false)
           }
         } catch { if (!disposed && !trailing) setError(true) }
@@ -45,6 +54,19 @@ export function ProviderAccounts(props: {
       if (!disposed) setBusy(false)
     }
     refresh = () => { void read() }
+    setAutomatic = async enabled => {
+      if (disposed || reading || writing || props.disabled) return
+      writing = true; setBusy(true); setError(false)
+      let failed = false
+      try {
+        const snapshot = await serverApi.setProviderAccountSelection(instanceId, integrationID, location.directory, enabled)
+        if (!disposed) setSelection(snapshot)
+      } catch { failed = true }
+      finally { writing = false }
+      if (disposed) return
+      await read()
+      if (failed && !disposed) setError(true)
+    }
     run = async (credentialID, action, label) => {
       if (disposed || reading || writing || props.disabled) return false
       if (!connections().some(item => item.type === "credential" && item.id === credentialID)) return false
@@ -71,11 +93,15 @@ export function ProviderAccounts(props: {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
     const reconnect = serverEvents.onOpen(() => refresh())
-    onCleanup(() => { disposed = true; events(); status(); reconnect() })
+    const policy = serverEvents.on("storage.configChanged", payload => {
+      if (payload.type === "storage.configChanged" && ["providerAccounts", "*"].includes(payload.owner)) refresh()
+    })
+    onCleanup(() => { disposed = true; events(); status(); reconnect(); policy() })
     void read()
   })
   const ids = () => connections().map(item => item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`)
-  const connectionLabel = (item: ConnectionInfo) => item.type === "credential" ? item.label : item.name
+  const connectionLabel = (item: ConnectionInfo) => item.type === "credential"
+    ? (item.label === "default" ? selection().logins?.[item.id] ?? item.label : item.label) : item.name
   const addAccountControl = () => <Show when={props.onAdd}>
     <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
       title={t("settings.accounts.add")} aria-label={t("settings.accounts.add")} onClick={() => props.onAdd?.()}><Plus size={14} /></button>
@@ -133,5 +159,12 @@ export function ProviderAccounts(props: {
           </Show>
         </div></Show>
       }}</For>
+      <Show when={selection().supported && connections().filter(item => item.type === "credential").length > 1}>
+        <label class="provider-account-auto" title={t("settings.accounts.autoSelectHint")}>
+          <input type="checkbox" checked={selection().enabled} disabled={busy() || props.disabled}
+            onChange={event => { const enabled = event.currentTarget.checked; event.currentTarget.checked = selection().enabled; void setAutomatic(enabled) }} />
+          <span>{t("settings.accounts.autoSelect")}</span>
+        </label>
+      </Show>
   </div>
 }

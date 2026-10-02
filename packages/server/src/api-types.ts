@@ -91,6 +91,12 @@ export interface WorkspaceDeleteResponse {
   status: WorkspaceStatus
 }
 
+export interface ProviderAccountsSnapshot {
+  supported: boolean
+  enabled: boolean
+  logins: Record<string, string>
+}
+
 export interface ProviderUsageWindow {
   usedPercent: number | null
   remainingPercent: number | null

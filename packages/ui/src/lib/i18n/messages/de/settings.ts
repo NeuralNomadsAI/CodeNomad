@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "Konto verwenden",
   "settings.accounts.error": "Kontovorgang fehlgeschlagen. Aktualisieren Sie den aktuellen Zustand.",
   "settings.accounts.autoSelect": "Konto automatisch auswählen",
-  "settings.accounts.autoSelectHint": "Bei 100 % Nutzung zu einem verfügbaren Konto dieses Anbieters wechseln.",
+  "settings.accounts.autoSelectHint": "Vor dem nächsten Senden bei 100 % Codex-Nutzung ein nachweislich verfügbares OAuth-Konto wählen. Die Auswahl gilt serviceweit; fehlgeschlagene Anfragen werden nicht wiederholt.",
   "settings.providers.models.title": "Modelle",
   "settings.websearch.title": "Websuche",
   "settings.websearch.description": "Wählen Sie den Suchanbieter, mit dem Agenten im Web recherchieren. Änderungen werden automatisch gespeichert.",

@@ -23,6 +23,14 @@
   align-items: center;
   gap: var(--space-xs);
 }
+.provider-account-auto {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
 .provider-account-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); width: 100%; grid-column: 1 / -1; }
 .provider-account input { min-width: 0; flex: 1 1 10rem; }
 .provider-accounts .selector-button { width: auto; }

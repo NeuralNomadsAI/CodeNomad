@@ -9,6 +9,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { admitMissionInput } from "./mission-input"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
+import type { ProviderAccountsService } from "../../provider-accounts/service"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -17,6 +18,7 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
+  accounts?: ProviderAccountsService
 }
 
 interface DeveloperNativeStatus {
@@ -74,7 +76,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       reply.raw.once("close", close)
       try {
         const result = await admitMissionInput(deps.workspaceManager, deps.worktreeDeletionFence, body.sessionID, body.command,
-          AbortSignal.any([disconnected.signal, AbortSignal.timeout(30_000)]))
+          AbortSignal.any([disconnected.signal, AbortSignal.timeout(30_000)]), deps.accounts)
         return reply.send({ result })
       } catch {
         // Native errors can contain environment snapshots or provider credentials.

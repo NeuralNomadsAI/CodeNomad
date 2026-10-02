@@ -10,7 +10,7 @@ export const settingsMessages = {
   "settings.accounts.activate": "Use account",
   "settings.accounts.error": "Account operation failed. Refresh to reconcile the current state.",
   "settings.accounts.autoSelect": "Auto-select account",
-  "settings.accounts.autoSelectHint": "At 100% usage, switch to an available account from this provider.",
+  "settings.accounts.autoSelectHint": "Before the next send, at 100% Codex usage, select a verified available OAuth account. Selection is service-wide; failed requests are not replayed.",
   "settings.providers.models.title": "Models",
   "settings.websearch.title": "Web search",
   "settings.websearch.description": "Choose the search provider agents use to find information on the web. Changes are saved automatically.",
