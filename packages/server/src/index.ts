@@ -377,6 +377,7 @@ async function main() {
   const pruningLifecycle = new PruningLifecycle()
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
+  const missionsLifecycle = new DesktopPluginLifecycle("missions")
   const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
     let paths
     try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
@@ -388,6 +389,7 @@ async function main() {
       await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
         pruning: pruningLifecycle,
         automation: nativeParent.available ? automationLifecycle : undefined,
+        missions: nativeParent.available ? missionsLifecycle : undefined,
       })
       return true
     } catch (error) {
@@ -662,6 +664,7 @@ async function main() {
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
+            await missionsLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()

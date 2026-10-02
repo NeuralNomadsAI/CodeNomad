@@ -1,0 +1,53 @@
+.mission-execution { display: grid; gap: var(--space-xs); min-width: 0; }
+
+.mission-execution-grid { display: grid; gap: 1px; margin: 0; background: var(--border-base); border: 1px solid var(--border-base); }
+
+.mission-execution-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface-base);
+}
+
+.mission-execution-row > dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.mission-execution-row > dd { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); min-width: 0; margin: 0; }
+
+.mission-execution-cell {
+  display: grid;
+  min-width: 0;
+  padding: 2px var(--space-xs);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+  background: var(--surface-subtle);
+}
+
+.mission-execution-cell small {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.mission-execution-cell[data-state="native-default"],
+.mission-execution-cell[data-state="unknown"] { color: var(--text-muted); font-style: italic; }
+
+.mission-execution-row[data-match="differs"] .mission-execution-cell[data-state="pinned"] { color: var(--status-warning); }
+
+.mission-execution-row[data-match="matches"] .mission-execution-cell[data-state="pinned"] { color: var(--status-success); }
+
+.mission-execution-note { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+
+.mission-execution-note-drift { color: var(--status-warning); }
+
+@media (max-width: 520px) {
+  .mission-execution-row { grid-template-columns: minmax(0, 1fr); }
+  .mission-execution-row > dd { grid-template-columns: minmax(0, 1fr); }
+}
