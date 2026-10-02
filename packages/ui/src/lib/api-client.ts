@@ -351,6 +351,9 @@ export const serverApi = {
   getMcpCodeMode(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").McpCodeModeEntry[]> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/mcp-code-mode?${new URLSearchParams({ directory })}`)
   },
+  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string }): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone })}`)
+  },
   setMcpCodeMode(instanceId: string, payload: { location: { directory: string }; scope: "global" | "project"; server: string; mode: boolean | null }): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/mcp-code-mode`, { method: "PUT", body: JSON.stringify(payload) })
   },

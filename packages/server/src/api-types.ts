@@ -689,3 +689,7 @@ export interface McpCodeModeEntry {
   effective: boolean
   scopes: Array<{ scope: PluginControlScope; path: string; mode: boolean | null }>
 }
+export interface ServiceUsageSnapshot {
+  scope: "service"
+  stats: import("@opencode/client").SessionStatsInfo
+}

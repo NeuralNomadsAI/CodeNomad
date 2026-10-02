@@ -1,0 +1,16 @@
+.usage-dashboard { min-width: 0; }
+.usage-dashboard > p { color: var(--text-secondary); margin-block: 0.5rem; overflow-wrap: anywhere; }
+.usage-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
+.usage-toolbar label { display: flex; flex-direction: column; gap: 0.25rem; }
+.usage-toolbar button { width: auto; }
+.usage-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem; margin-block: 1rem; }
+.usage-metrics > div { padding: 0.75rem; background: var(--surface-base); border: 1px solid var(--border-base); min-width: 0; }
+.usage-metrics dt { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.usage-metrics dd { font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; margin: 0.25rem 0 0; }
+.usage-table-scroll { overflow-x: auto; max-width: 100%; }
+.usage-dashboard table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.usage-dashboard th, .usage-dashboard td { text-align: start; padding: 0.5rem; border-bottom: 1px solid var(--border-base); font-variant-numeric: tabular-nums; }
+.usage-dashboard h4 { margin-block: 1rem 0.5rem; }
+.usage-activity { max-height: 16rem; overflow-y: auto; }
+.usage-activity > div { display: flex; align-items: center; gap: 0.75rem; margin-block: 0.25rem; font-variant-numeric: tabular-nums; }
+.usage-activity meter { flex: 1; min-width: 1rem; }
