@@ -2,18 +2,20 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ServerMeta } from "../../../../server/src/api-types"
-import { buildDiagnosticReport } from "./info-settings-diagnostics"
+import { buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 const labels = {
   reportTitle: "CodeNomad Diagnostic Report",
   generated: "Generated",
   serverVersion: "Server version",
+  serverOs: "Server operating system",
+  serverArch: "Server architecture",
   uiVersion: "UI version",
   uiSource: "UI source",
-  runtime: "Runtime",
-  platform: "Platform",
+  runtime: "Client runtime",
+  platform: "Client platform",
   windowContext: "Window context",
-  os: "OS",
+  os: "Client operating system",
   listeningMode: "Listening mode",
   bindHost: "Bind host",
   localListener: "Local listener",
@@ -39,10 +41,34 @@ const meta: ServerMeta = {
     { ip: "127.0.0.1", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.1:9898" },
   ],
   serverVersion: "1.2.3",
+  system: { platform: "linux", arch: "arm64" },
   ui: { version: "1.2.3", source: "bundled" },
 }
 
 describe("buildDiagnosticReport", () => {
+  it("separates remote backend OS and architecture from the Windows client", () => {
+    const report = buildDiagnosticReport(meta, "Windows x64",
+      { host: "web", platform: "desktop", windowContext: "remote" }, labels)
+    assert.match(report, /Server operating system: Linux/)
+    assert.match(report, /Server architecture: arm64/)
+    assert.match(report, /Client operating system: Windows x64/)
+    assert.match(report, /Client runtime: web/)
+  })
+
+  it("does not substitute the client OS when an older server omits system metadata", () => {
+    const report = buildDiagnosticReport({ ...meta, system: undefined }, "Windows x64",
+      { host: "tauri", platform: "desktop", windowContext: "remote" }, labels)
+    assert.match(report, /Server operating system: —/)
+    assert.match(report, /Server architecture: —/)
+    assert.match(report, /Client operating system: Windows x64/)
+  })
+
+  it("formats native platform names and preserves unfamiliar server platforms", () => {
+    for (const [platform, expected] of [["win32", "Windows"], ["darwin", "macOS"], ["linux", "Linux"], ["freebsd", "freebsd"]]) {
+      assert.equal(getServerOperatingSystem({ ...meta, system: { platform, arch: "x64" } }), expected)
+    }
+    assert.equal(getServerOperatingSystem(null), "—")
+  })
   it("includes effective connectivity details and candidate addresses", () => {
     const report = buildDiagnosticReport(
       meta,
@@ -71,6 +97,8 @@ describe("buildDiagnosticReport", () => {
     )
 
     assert.match(report, /Server version: —/)
+    assert.match(report, /Server operating system: —/)
+    assert.match(report, /Server architecture: —/)
     assert.match(report, /Remote listener: —/)
     assert.match(report, /Candidate addresses: 0/)
   })

@@ -6,7 +6,7 @@
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:*", "https://127.0.0.1:*", "https://localhost:*"]
   },
-  "windows": ["preferences"],
+  "webviews": ["preferences"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",

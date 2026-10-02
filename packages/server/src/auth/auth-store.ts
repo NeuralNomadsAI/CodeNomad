@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import type { Logger } from "../logger"
-import { hashPassword, type PasswordHashRecord, verifyPassword } from "./password-hash"
+import { hashPassword, hashPasswordSync, type PasswordHashRecord, verifyPassword } from "./password-hash"
 
 export interface AuthFile {
   version: 1
@@ -20,6 +20,7 @@ export class AuthStore {
   private cachedFile: AuthFile | null = null
   private overrideAuth: AuthFile | null = null
   private bootstrapUsername: string | null = null
+  private passwordChanges: Promise<void> = Promise.resolve()
 
   constructor(private readonly authFilePath: string, private readonly logger: Logger) {}
 
@@ -65,7 +66,7 @@ export class AuthStore {
       const runtime: AuthFile = {
         version: 1,
         username: params.username,
-        password: hashPassword(password),
+        password: hashPasswordSync(password),
         userProvided: true,
         updatedAt: now,
       }
@@ -97,7 +98,7 @@ export class AuthStore {
     )
   }
 
-  validateCredentials(username: string, password: string): boolean {
+  async validateCredentials(username: string, password: string): Promise<boolean> {
     const auth = this.load()
     if (!auth) {
       return false
@@ -107,10 +108,21 @@ export class AuthStore {
       return false
     }
 
-    return verifyPassword(password, auth.password)
+    const valid = await verifyPassword(password, auth.password)
+    // A password change can commit while scrypt is off-thread. Do not grant a
+    // session from superseded credentials or retry the login automatically.
+    return valid && this.load() === auth
   }
 
-  setPassword(params: { password: string; markUserProvided: boolean }): AuthStatus {
+  setPassword(params: { password: string; markUserProvided: boolean }): Promise<AuthStatus> {
+    // Keep admission order and bootstrap state atomic across asynchronous hashing.
+    // A failed change must not poison subsequent requests.
+    const change = this.passwordChanges.then(() => this.changePassword(params))
+    this.passwordChanges = change.then(() => {}, () => {})
+    return change
+  }
+
+  private async changePassword(params: { password: string; markUserProvided: boolean }): Promise<AuthStatus> {
     if (this.overrideAuth) {
       throw new Error(
         "Server password is provided via CLI/env and cannot be changed while running. Restart without --password / CODENOMAD_SERVER_PASSWORD to use auth.json.",
@@ -127,7 +139,7 @@ export class AuthStore {
       const created: AuthFile = {
         version: 1,
         username: this.bootstrapUsername,
-        password: hashPassword(params.password),
+        password: await hashPassword(params.password),
         userProvided: params.markUserProvided,
         updatedAt: new Date().toISOString(),
       }
@@ -139,7 +151,7 @@ export class AuthStore {
 
     const next: AuthFile = {
       ...current,
-      password: hashPassword(params.password),
+      password: await hashPassword(params.password),
       userProvided: params.markUserProvided,
       updatedAt: new Date().toISOString(),
     }

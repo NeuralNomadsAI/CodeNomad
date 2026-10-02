@@ -15,3 +15,15 @@
   background-color: var(--surface-secondary);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
+
+/* Keep selected backgrounds intact and share the same subtle local rollover
+   across Files modes and their inline/overflow controls. */
+.workspace-tree-row:hover,
+.workspace-tree-row:focus-within,
+.git-panel-file-row:hover,
+.git-panel-file-row:focus-within,
+.file-row-icon-button:hover:not(:disabled),
+.file-row-icon-button:focus-visible:not(:disabled),
+.git-panel button:not(.git-panel-file-main):hover:not(:disabled) {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}

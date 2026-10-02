@@ -2,3 +2,6 @@
 .prompt-skill-attachments select { max-width: 15rem; min-width: 0; }
 .prompt-skill-attachments .badge-shape { overflow-wrap: anywhere; }
 .prompt-skill-attachments .selector-button { width: auto; }
+.prompt-skills-window { position: fixed; inset-inline-end: var(--space-lg); bottom: var(--space-lg); width: min(24rem, calc(100vw - 2 * var(--space-lg))); z-index: 100; }
+.prompt-skills-window .window-body { padding: var(--space-md); }
+.prompt-skills-window select { width: 100%; }

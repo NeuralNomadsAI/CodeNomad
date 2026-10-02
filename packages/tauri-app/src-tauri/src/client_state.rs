@@ -27,7 +27,7 @@ pub(crate) use navigation::{
 };
 pub use window::{
     capture_and_flush_all_windows, capture_and_flush_window, local_window_zoom,
-    set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL,
+    set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL, MIN_WINDOW_WIDTH,
 };
 
 use envelope::PersistedClientState;

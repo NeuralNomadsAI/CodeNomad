@@ -209,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "切换聊天输入框高度",
 
   "promptInput.placeholder.shell": "运行 shell 命令（Esc 退出）...",
-  "promptInput.placeholder.default": "输入消息、@file、@agent，或粘贴图片与文本...",
+  "promptInput.placeholder.default": "输入消息、@file、@agent、@skill，或粘贴图片与文本...",
   "promptInput.hints.shell.exit": "退出 shell 模式",
   "promptInput.hints.shell.enable": "Shell 模式",
   "promptInput.hints.commands": "命令",

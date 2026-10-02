@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "फोल्डरमा जानुहोस्",
   "directoryBrowser.goToParent": "माथिल्लो फोल्डर",
   "directoryBrowser.goToHome": "गृह",
+  "directoryBrowser.goToRoot": "कार्यस्थलको मूल डाइरेक्टरी",
   "directoryBrowser.goToInitial": "{name} मा फर्कनुहोस्",
   "directoryBrowser.selectCurrent": "हालको चयन गर्नुहोस्",
   "directoryBrowser.newFolder": "नयाँ फोल्डर",

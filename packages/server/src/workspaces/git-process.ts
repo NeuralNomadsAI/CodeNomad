@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads"
 
-interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background" }
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64" }
 interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
 interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
 
@@ -18,10 +18,10 @@ function workerMain() {
       const request = (foreground.shift() ?? queue.shift())!
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
-        encoding: "utf8", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
+        encoding: "buffer", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
         env: request.env, timeout: request.timeout,
       }, (error, stdout, stderr) => {
-        parentPort!.postMessage({ id: request.id, stdout, stderr,
+        parentPort!.postMessage({ id: request.id, stdout: stdout.toString(request.encoding ?? "utf8"), stderr: stderr.toString("utf8"),
           ...(error ? { error: { message: error.message, code: error.code } } : {}),
         } satisfies GitResponse)
         running -= 1

@@ -71,6 +71,7 @@ declare global {
     clearClientState?: (accessToken: string) => Promise<boolean>
     registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
+    emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     claimBrowserOpen?: (requestID: string) => Promise<boolean>
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void

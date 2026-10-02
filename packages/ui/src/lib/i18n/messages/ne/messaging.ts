@@ -207,7 +207,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "च्याट इनपुट उचाइ टगल गर्नुहोस्",
 
   "promptInput.placeholder.shell": "शेल कमाण्ड चलाउनुहोस् (निस्कन Esc)...",
-  "promptInput.placeholder.default": "सन्देश, @file, @agent टाइप गर्नुहोस् वा फोटो र पाठ टाँस्नुहोस्...",
+  "promptInput.placeholder.default": "सन्देश, @file, @agent, @skill टाइप गर्नुहोस् वा फोटो र पाठ टाँस्नुहोस्...",
   "promptInput.hints.shell.exit": "शेल मोडबाट निस्कन",
   "promptInput.hints.shell.enable": "शेल मोड",
   "promptInput.hints.commands": "कमाण्डहरू",

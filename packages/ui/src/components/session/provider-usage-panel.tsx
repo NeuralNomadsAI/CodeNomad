@@ -4,74 +4,71 @@ import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../ser
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
+import { serverEvents } from "../../lib/server-events"
+import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
 interface ProviderUsagePanelProps {
+  instanceId: string
+  sessionId: string
+  directory: string
+  active: boolean
   providerId: string
   modelId: string
 }
 
 const REFRESH_INTERVAL_MS = 60_000
-const usageCache = new Map<string, { value: ProviderUsageResponse | null; updatedAt: number }>()
-
-export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) =>
-  label !== "credits_balance" || showCreditBalance
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
-  const source = createMemo(() => {
+  const source = createMemo<ProviderUsageSource | null>(() => {
+    if (!props.active) return null
     const providerId = props.providerId.trim()
     if (!providerId) return null
     const modelId = props.modelId.trim()
-    return { providerId, modelId, key: `${providerId}\0${modelId}` }
-  })
-  const initialSource = source()
-  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>(
-    initialSource ? usageCache.get(initialSource.key)?.value : undefined,
-  )
-  let requestId = 0
-
-  const refreshUsage = async (providerId: string, modelId: string, key: string, clear: boolean) => {
-    const currentRequestId = ++requestId
-    if (clear) setUsage(undefined)
-    try {
-      const response = await serverApi.fetchProviderUsage(providerId, modelId)
-      usageCache.set(key, { value: response, updatedAt: Date.now() })
-      if (currentRequestId === requestId) setUsage(response)
-    } catch {
-      if (currentRequestId === requestId && usage() === undefined) {
-        usageCache.set(key, { value: null, updatedAt: Date.now() })
-        setUsage(null)
-      }
-    }
-  }
+    return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
+  }, null, { equals: (a, b) => a === b || Boolean(a && b && providerUsageKey(a) === providerUsageKey(b)) })
+  const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
+  const state = createProviderUsageState(current => serverApi.fetchProviderUsage(
+    current.instanceId, current.sessionId, current.providerId, current.modelId,
+  ), value => setUsage(value))
 
   createEffect(() => {
-    const current = source()
-    if (!current) {
-      requestId += 1
-      setUsage(undefined)
-      return
-    }
-    const cached = usageCache.get(current.key)
-    setUsage(cached?.value)
-    if (!cached || Date.now() - cached.updatedAt >= REFRESH_INTERVAL_MS) {
-      void refreshUsage(current.providerId, current.modelId, current.key, cached === undefined)
-    }
+    state.select(source())
+    void state.refresh()
   })
 
-  const refreshTimer = setInterval(() => {
-    const current = source()
-    if (current) void refreshUsage(current.providerId, current.modelId, current.key, false)
-  }, REFRESH_INTERVAL_MS)
+  const revalidate = () => { state.invalidate(); if (source()) void state.refresh() }
+  const unsubscribeEvents = serverEvents.on("instance.event", event => {
+    if (event.type !== "instance.event" || event.instanceId !== props.instanceId) return
+    if (event.event.type === "provider.updated") {
+      // Catalogue churn is not a credential switch. Revalidate in place only
+      // for this native location; account/config/connection boundaries below
+      // still revoke the display immediately and fence pending reads.
+      if (source() && (!event.event.location || event.event.location.directory === props.directory)) void state.refresh()
+    } else if (["credential.updated", "credential.switched", "integration.updated", "config.updated", "server.connected"].includes(event.event.type)) revalidate()
+  })
+  const unsubscribeStatus = serverEvents.on("instance.eventStatus", event => {
+    if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    state.invalidate()
+    if (event.status === "connected" && source()) void state.refresh()
+  })
+  const unsubscribeTransport = serverEvents.onTransportStatus(status => {
+    state.invalidate()
+    if (status === "connected" && source()) void state.refresh()
+  })
+  const refreshTimer = setInterval(() => { if (source()) void state.refresh() }, REFRESH_INTERVAL_MS)
   onCleanup(() => {
-    requestId += 1
+    state.dispose()
     clearInterval(refreshTimer)
+    unsubscribeEvents()
+    unsubscribeStatus()
+    unsubscribeTransport()
   })
 
   const entries = createMemo(() => Object.entries(usage()?.windows ?? {}))
-  const displayedEntries = createMemo(() =>
-    entries().filter(([label]) => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
+  const displayedLabels = createMemo(() =>
+    entries().map(([label]) => label).filter(label => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
   )
 
   const windowLabel = (label: string) => {
@@ -128,44 +125,52 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                       ? "providerUsage.unsupported"
                       : !data().configured
                         ? "providerUsage.notConfigured"
-                        : "providerUsage.unavailable",
+                        : data().unavailableReason === "native-credential-api-unavailable"
+                          ? "providerUsage.nativeCredentialApiUnavailable"
+                          : "providerUsage.unavailable",
+                    { version: "2.0.20" },
                   )}
                 </div>
               }
             >
               <div class="space-y-2">
-                <For each={displayedEntries()}>
-                  {([label, window]) => (
-                    <div>
-                      <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
-                        <span class="font-medium">{windowLabel(label)}</span>
-                        <div class="flex min-w-0 items-baseline gap-1.5 text-right">
-                          <span class="shrink-0 font-medium">{displayValue(window)}</span>
-                          <Show when={resetLabel(window.resetAt)}>
-                            {(reset) => (
-                              <>
-                                <span class="text-tertiary" aria-hidden="true">·</span>
-                                <span class="truncate text-[10px] text-tertiary">{reset()}</span>
-                              </>
-                            )}
-                          </Show>
+                <For each={displayedLabels()}>
+                  {(label) => {
+                    // Retain this row's value until For reconciles a removed
+                    // label; its effects must not read an absent window.
+                    const window = createMemo<ProviderUsageWindow>(previous => usage()?.windows[label] ?? previous, usage()!.windows[label])
+                    return (
+                      <div>
+                        <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
+                          <span class="font-medium">{windowLabel(label)}</span>
+                          <div class="flex min-w-0 items-baseline gap-1.5 text-right">
+                            <span class="shrink-0 font-medium">{displayValue(window())}</span>
+                            <Show when={resetLabel(window().resetAt)}>
+                              {(reset) => (
+                                <>
+                                  <span class="text-tertiary" aria-hidden="true">·</span>
+                                  <span class="truncate text-[10px] text-tertiary">{reset()}</span>
+                                </>
+                              )}
+                            </Show>
+                          </div>
                         </div>
+                        <Show when={window().usedPercent !== null}>
+                          <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
+                            <div
+                              class="h-full transition-[width] duration-300"
+                              style={{ width: `${Math.max(0, Math.min(100, window().usedPercent ?? 0))}%`, "background-color": barColor(window().usedPercent) }}
+                              role="progressbar"
+                              aria-label={t("providerUsage.progressLabel", { window: windowLabel(label) })}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-valuenow={Math.round(window().usedPercent ?? 0)}
+                            />
+                          </div>
+                        </Show>
                       </div>
-                      <Show when={window.usedPercent !== null}>
-                        <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-base)" }}>
-                          <div
-                            class="h-full transition-[width] duration-300"
-                            style={{ width: `${Math.max(0, Math.min(100, window.usedPercent ?? 0))}%`, "background-color": barColor(window.usedPercent) }}
-                            role="progressbar"
-                            aria-label={t("providerUsage.progressLabel", { window: windowLabel(label) })}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={Math.round(window.usedPercent ?? 0)}
-                          />
-                        </div>
-                      </Show>
-                    </div>
-                  )}
+                    )
+                  }}
                 </For>
               </div>
             </Show>

@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { OpenCodeEvent } from "@opencode/client"
+export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -92,6 +93,7 @@ export interface ProviderUsageResponse {
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
+  unavailableReason?: "native-credential-api-unavailable"
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -188,6 +190,7 @@ export interface WorktreeGitDiffResponse {
   before: string
   after: string
   isBinary?: boolean
+  image?: import("./git-history-types").GitImageDiff
 }
 
 export interface WorktreeGitDiffRequest {
@@ -670,6 +673,8 @@ export interface ServerMeta {
   /** Reachable addresses for this server, external first. */
   addresses: NetworkAddress[]
   serverVersion?: string
+  /** CodeNomad backend OS and Node runtime architecture, never the UI or OpenCode host. */
+  system?: { platform: string; arch: string }
   ui?: UiMeta
   support?: SupportMeta
   /** Optional update info (dev channel only). */
