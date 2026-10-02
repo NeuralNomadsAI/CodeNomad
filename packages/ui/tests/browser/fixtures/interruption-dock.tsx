@@ -17,6 +17,7 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadMessageAnchor } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
 import { openFilePreview, getFilePreview } from "../../../src/stores/files-preview"
+import { updateMissionProjectView, missionProjectView } from "../../../src/stores/mission-view-state"
 import "../../../src/index.css"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
@@ -109,6 +110,8 @@ const store = messageStoreBus.getOrCreate(instanceId)
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
   preview: () => openFilePreview(instanceId, { sessionId, slug: instanceId, directory: "/fixture", path: "example.ts", kind: "workspace" }),
   hasPreview: () => Boolean(getFilePreview(instanceId)),
+  missionReader: () => updateMissionProjectView("/fixture", { reader: { missionId: "mission", kind: "overview" } }),
+  hasMissionReader: () => Boolean(missionProjectView("/fixture").reader),
   hiddenPermission: async () => {
     await applyUiSettings({ locale: "en", showMessageTimeline: false, toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "hidden", bash: "hidden" } } })
     addPermissionToQueue(instanceId, { id: "first-permission", sessionID: sessionId, action: "bash", resources: ["first"], metadata: {} })
