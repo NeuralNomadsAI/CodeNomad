@@ -86,7 +86,8 @@ test("Providers separates Models and Web search with shared row and input stylin
     assert.equal(await page.getByRole("heading", { name: "Configured Providers", exact: true }).count(), 0)
     await page.locator(".providers-card-title").filter({ hasText: "OpenAI" }).waitFor()
     assert.equal(await page.getByRole("region", { name: "Models", exact: true }).getByRole("heading", { name: "Alpha", exact: true }).count(), 0)
-    assert.equal(await page.evaluate(() => (window as any).fixture.integrationLists()), 2)
+    // Models + search catalogs, then the two now-visible account lists.
+    assert.equal(await page.evaluate(() => (window as any).fixture.integrationLists()), 4)
     const search = page.getByRole("region", { name: "Web search", exact: true })
     await search.getByRole("button", { name: "Connect", exact: true }).click()
     await page.getByLabel("API key", { exact: true }).waitFor()

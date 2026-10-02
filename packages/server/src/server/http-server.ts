@@ -61,6 +61,8 @@ import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./rout
 import { DeveloperCdp } from "../developer-cdp"
 import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
+import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
+import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
 
 interface HttpServerDeps {
   bindHost: string
@@ -309,6 +311,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
+  const accounts = new ProviderAccountsService(deps.settings)
+  registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
     logger: apiLogger,
@@ -357,7 +361,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts })
 
 
   if (deps.uiDevServerUrl) {
@@ -442,6 +446,7 @@ interface InstanceProxyDeps {
   workspaceManager: InstanceProxyWorkspaceManager
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
+  accounts?: ProviderAccountsService
 }
 
 interface SideCarProxyDeps {
@@ -606,6 +611,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         reply,
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
+        accounts: deps.accounts,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -620,6 +626,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         reply,
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
+        accounts: deps.accounts,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -634,6 +641,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         reply,
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
+        accounts: deps.accounts,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
         logger: deps.logger,
       })
@@ -654,6 +662,7 @@ interface InstanceProxyRequestArgs {
   reply: FastifyReply
   workspaceManager: InstanceProxyWorkspaceManager
   worktreeDeletionFence: WorktreeDeletionFence
+  accounts?: ProviderAccountsService
   logger: Logger
   pathSuffix?: string
 }
@@ -954,6 +963,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
 
   const sessionId = getSessionRouteId(pathname)
+  let authorizedSessionDirectory: string | undefined
   if (sessionId && !isGlobalFormAction(pathname, request.method)) {
     let session
     try {
@@ -975,6 +985,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
+    authorizedSessionDirectory = session.location.directory
     if (request.method !== "GET" && request.method !== "HEAD") {
       const sessionWorktree = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory))
       if (!sessionWorktree) {
@@ -988,14 +999,17 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
   signal.throwIfAborted()
-  const releaseMutation = request.method === "GET" || request.method === "HEAD"
+  const releaseFence = request.method === "GET" || request.method === "HEAD"
     ? undefined
     : worktreeDeletionFence.enter([...mutationIdentities])
-  if (request.method !== "GET" && request.method !== "HEAD" && !releaseMutation) {
+  if (request.method !== "GET" && request.method !== "HEAD" && !releaseFence) {
     reply.code(409).send({ error: "Worktree deletion is in progress" })
     return
   }
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
+  const releaseAccount = connection && request.method !== "GET" && request.method !== "HEAD"
+    && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
+  const releaseMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
 
   try {
     connection?.assertCurrent()
@@ -1028,6 +1042,20 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
       signal.throwIfAborted()
       connection?.assertCurrent()
+      if (connection && !pathname.replace(/\/$/, "").endsWith("/shell") && args.accounts) {
+        try {
+          await wait(args.accounts.beforeSend(connection, sessionId!, AbortSignal.any([signal, AbortSignal.timeout(15_000)]), async directory => {
+            const current = await connection.client.session.get({ sessionID: sessionId! }, { signal })
+            return workspaceManager.get(workspaceId) === workspace
+              && directory === authorizedSessionDirectory && current.location.directory === authorizedSessionDirectory
+              && await workspaceManager.ownsLocation(workspaceId, current.location, connection.client, signal)
+          }))
+        } catch (error) {
+          releaseMutation?.()
+          if (error instanceof AccountSelectionFailed) return reply.code(502).send({ error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
+          throw error
+        }
+      }
     }
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
@@ -1367,6 +1395,8 @@ function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
     ["DELETE", /^\/api\/shell\/[^/]+$/],
     ["POST", /^\/api\/experimental\/mcp\/[^/]+\/(?:connect|disconnect)$/],
     ["DELETE", /^\/api\/credential\/[^/]+$/],
+    ["PATCH", /^\/api\/credential\/[^/]+$/],
+    ["POST", /^\/api\/credential\/[^/]+\/activate$/],
     ["POST", /^\/api\/integration\/[^/]+\/connect\/(?:key|oauth|command)$/],
     ["GET", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],
     ["DELETE", /^\/api\/integration\/[^/]+\/connect\/(?:oauth|command)\/[^/]+$/],

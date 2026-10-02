@@ -25,6 +25,7 @@ import type {
   PluginControlLocation,
   PluginControlsSnapshot,
   ProviderUsageResponse,
+  ProviderAccountsSnapshot,
   ServerMeta,
   RemoteProxySessionCreateRequest,
   RemoteProxySessionCreateResponse,
@@ -482,6 +483,14 @@ export const serverApi = {
     )
   },
 
+  getProviderAccounts(instanceId: string, integrationID: string, directory: string): Promise<ProviderAccountsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`)
+  },
+  setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean): Promise<ProviderAccountsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}`, {
+      method: "PUT", body: JSON.stringify({ directory, enabled }),
+    })
+  },
   fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
   },

@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto"
 import { ClientError } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { ProviderUsageResponse } from "../api-types"
 import type { ProviderUsage } from "./types"
-import { decodeJwtClaims, getString } from "./shared"
+import { codexCredential } from "./codex-credential"
 import { parseCodexUsage } from "./providers/oauth"
+import { parseCodexSelectionQuota } from "./codex-selection-quota"
 
 interface UsageScope {
   instanceId: string
@@ -61,24 +61,11 @@ export function createNativeCodexUsage() {
         throw error
       })
       const entry = entries.find(entry => entry.id === selected.id && entry.integrationID === integrationID && entry.active)
-      const value = entry?.value
-      if (value?.type !== "oauth" || !["chatgpt-browser", "chatgpt-headless"].includes(value.methodID)
-        || !Number.isFinite(value.expires) || value.expires <= Date.now() + 120_000 || !getString(value.access)) {
-        throw new Error("Selected subscription credential unavailable")
-      }
-      const claims = decodeJwtClaims(value.access)
-      const jwtExpiry = Number(claims?.exp) * 1000
-      if (Number.isFinite(jwtExpiry) && jwtExpiry <= Date.now() + 120_000) throw new Error("Expired subscription credential")
-      const accountID = getString(value.metadata?.accountID)
-        ?? getString(claims?.["https://api.openai.com/auth"]?.chatgpt_account_id)
-      // Require a same-selected-credential account identity, never another store.
-      if (!accountID) throw new Error("Subscription account unavailable")
-      const identity = createHash("sha256").update(JSON.stringify([
-        integrationID, entry!.id, value.methodID, accountID, value.expires, value.access,
-      ])).digest("hex")
+      const credential = entry && codexCredential(entry)
+      if (!credential) throw new Error("Selected subscription credential unavailable")
       connection.assertCurrent()
       signal.throwIfAborted()
-      return { identity, access: value.access, accountID }
+      return credential
     }
 
     try {
@@ -97,7 +84,7 @@ export function createNativeCodexUsage() {
         requestKey = JSON.stringify([key, selected.identity])
         request = requests.get(requestKey)
         if (!request) {
-          request = fetchQuota(selected.access, selected.accountID, signal)
+          request = fetchCodexQuota(selected.access, selected.accountID, signal)
           requests.set(requestKey, request)
         }
         snapshot = { identity: selected.identity, usage: await request, fetchedAt: Date.now() }
@@ -125,7 +112,15 @@ export function createNativeCodexUsage() {
   }
 }
 
-async function fetchQuota(access: string, accountID: string, signal: AbortSignal): Promise<ProviderUsage> {
+export async function fetchCodexQuota(access: string, accountID: string, signal: AbortSignal): Promise<ProviderUsage> {
+  return fetchQuota(access, accountID, signal, false)
+}
+
+export async function fetchCodexSelectionQuota(access: string, accountID: string, signal: AbortSignal): Promise<ProviderUsage> {
+  return fetchQuota(access, accountID, signal, true)
+}
+
+async function fetchQuota(access: string, accountID: string, signal: AbortSignal, selection: boolean): Promise<ProviderUsage> {
   const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
     signal, redirect: "error", headers: { Authorization: `Bearer ${access}`, "ChatGPT-Account-Id": accountID, "Content-Type": "application/json" },
   })
@@ -148,7 +143,8 @@ async function fetchQuota(access: string, accountID: string, signal: AbortSignal
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
-    return parseCodexUsage(JSON.parse(Buffer.concat(chunks).toString("utf8")))
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    return selection ? parseCodexSelectionQuota(payload) : parseCodexUsage(payload)
   } finally {
     signal.removeEventListener("abort", abort)
     await reader.cancel().catch(() => {})

@@ -105,7 +105,7 @@ test("model picker delegates keyboard selection to its accessible Kobalte input"
   assert.doesNotMatch(kobalteBase.slice(kobalteBase.indexOf("export interface ComboboxBaseOptions"), kobalteBase.indexOf("export interface ComboboxBaseRenderProps")), /inputValue\?:/)
   assert.match(source, /const closePicker = \(\) => \{\s*setIsOpen\(false\)\s*restoreSelectedInput\(\)/)
   assert.match(source, /if \(!next\) restoreSelectedInput\(\)/)
-  assert.match(source, /closePicker\(\)\s*setProvidersModalOpen\(true\)/)
+  assert.match(source, /closePicker\(\)\s*void openSettings\("providers"\)/)
   const footer = source.slice(source.indexOf('<div class="selector-footer">'), source.indexOf("</Combobox.Content>"))
   assert.doesNotMatch(footer, /toggleFavoritesOnly/)
   assert.doesNotMatch(footer, /favoritesOnly\.showAll/)
