@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "Instalando OpenCode…",
+  "settings.opencode.setup.elapsed": "Tiempo transcurrido: {elapsed}",
+  "settings.opencode.setup.keepOpen": "La descarga y la instalación pueden tardar varios minutos. Mantén CodeNomad abierto hasta que termine la configuración.",
   "settings.opencode.setup.installation_busy": "Otra instalación mantiene el bloqueo de OpenCode. Reintenta cuando termine. Si se interrumpió, consulta la ubicación del bloqueo en el registro del servidor.",
   "settings.opencode.setup.installation_in_use": "El ejecutable de OpenCode está en uso o no permite escritura. La actualización se aplazó antes de modificar la instalación. Reintenta cuando esté disponible.",
   "settings.opencode.setup.source.path": "Ejecutable encontrado en el PATH del servidor.",
@@ -638,9 +641,11 @@ export const settingsMessages = {
   "settings.info.version.server": "Versión del servidor",
   "settings.info.version.ui": "Versión de la UI",
   "settings.info.version.uiSource": "Origen de la UI",
-  "settings.info.runtime.type": "Runtime",
-  "settings.info.runtime.platform": "Plataforma",
-  "settings.info.runtime.os": "Sistema operativo",
+  "settings.info.runtime.type": "Entorno de ejecución del cliente",
+  "settings.info.runtime.platform": "Plataforma del cliente",
+  "settings.info.runtime.os": "Sistema operativo del cliente",
+  "settings.info.server.os": "Sistema operativo del servidor",
+  "settings.info.server.arch": "Arquitectura del servidor",
   "settings.info.server.url": "URL del servidor",
   "settings.info.server.root": "Raíz del workspace",
   "settings.info.runtime.windowContext": "Contexto de ventana",
@@ -668,4 +673,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copiar al portapapeles",
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.copied": "Información de diagnóstico copiada al portapapeles.",
+  "providerUsage.nativeCredentialApiUnavailable": "El uso requiere OpenCode {version} o posterior. Actualiza OpenCode y reinicia su servicio desde Configuración.",
 } as const

@@ -127,7 +127,7 @@ export class OpenCodeSharedService {
     try {
       connection = await this.connect(serviceOptions, requestOptions?.deadlineAt)
       const nativeRequestOptions = requestOptions?.signal ? { signal: requestOptions.signal } : undefined
-      return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection)
+      return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection, requestOptions?.signal)
     } catch (error) {
       if (connection && !requestOptions?.signal?.aborted) this.invalidateConnection(connection)
       throw error
@@ -291,14 +291,28 @@ export class OpenCodeSharedService {
     }
   }
 
-  private async *invalidateAfterStream(events: AsyncIterable<OpenCodeEvent>, connection: ServiceConnection) {
+  private async *invalidateAfterStream(events: AsyncIterable<OpenCodeEvent>, connection: ServiceConnection, signal?: AbortSignal) {
+    const iterator = events[Symbol.asyncIterator]()
     try {
-      for await (const event of events) {
+      while (true) {
+        let result: IteratorResult<OpenCodeEvent>
+        try {
+          result = await iterator.next()
+        } catch (error) {
+          if (!signal?.aborted) this.invalidateConnection(connection)
+          throw error
+        }
+        if (result.done) {
+          if (!signal?.aborted) this.invalidateConnection(connection)
+          return
+        }
         connection.assertCurrent()
-        yield event
+        // Consumer return/throw and subscriber-local abort are not failures of
+        // the shared source. Uncancelled iterator EOF/errors still invalidate.
+        yield result.value
       }
     } finally {
-      this.invalidateConnection(connection)
+      await iterator.return?.()
     }
   }
 

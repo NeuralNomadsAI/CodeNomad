@@ -192,7 +192,7 @@ export const messagingMessages = {
   "attachmentChip.removeAriaLabel": "Eki kaldır",
   "expandButton.toggleAriaLabel": "Sohbet girişi yüksekliğini değiştir",
   "promptInput.placeholder.shell": "Shell komutu çalıştır (çıkmak için Esc)...",
-  "promptInput.placeholder.default": "Mesajını yaz, @file, @agent veya resim ve metin yapıştır...",
+  "promptInput.placeholder.default": "Mesajını yaz, @file, @agent, @skill veya resim ve metin yapıştır...",
   "promptInput.hints.shell.exit": "shell modundan çıkmak için",
   "promptInput.hints.shell.enable": "Shell modu",
   "promptInput.hints.commands": "Komutlar",

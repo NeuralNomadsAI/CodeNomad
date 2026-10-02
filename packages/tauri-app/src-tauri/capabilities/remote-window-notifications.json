@@ -6,7 +6,7 @@
   "remote": {
     "urls": ["http://*:*", "https://*:*"]
   },
-  "windows": ["remote-*"],
+  "webviews": ["remote-*"],
   "permissions": [
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

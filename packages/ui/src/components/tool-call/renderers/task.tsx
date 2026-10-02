@@ -1,4 +1,4 @@
-import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
@@ -82,20 +82,23 @@ function TaskToolCallRow(props: {
   const messageVersion = createMemo(() => record()?.revision ?? 0)
   const partVersion = createMemo(() => partEntry()?.revision ?? 0)
 
-  const rendered = createMemo(() => {
-    const part = toolPart()
-    if (!part) return null
-    return props.renderToolCall({
-      toolCall: part as any,
-      messageId: messageId(),
-      messageVersion: messageVersion(),
-      partVersion: partVersion(),
-      sessionId: props.sessionId,
+  // Keep one shell for this key. Native page reprojections and unrelated text
+  // revisions must update its props, not discard disclosure/scroll state.
+  // Rows follow their tool identity, not their position in the bounded window.
+  // A new identity still needs a fresh shell with its default disclosure.
+  // Nonzero-arity Show callbacks mount untracked; getters update the child props.
+  return <Show when={props.toolKey} keyed>{(_key) => (
+    <Show when={toolPart()}>{(_part) => props.renderToolCall({
+      get toolCall() { partVersion(); return toolPart()! },
+      get messageId() { return messageId() },
+      get messageVersion() { return messageVersion() },
+      // Native page hydration resets the per-part revision to zero. Let
+      // Markdown use its content hash instead of pinning changed output to 0;
+      // the getter above still fences versioned in-place snapshot updates.
+      get sessionId() { return props.sessionId },
       forceCollapsed: true,
-    })
-  })
-
-  return <>{rendered()}</>
+    })}</Show>
+  )}</Show>
 }
 
 function normalizeStatus(status?: string | null): ToolState["status"] | undefined {
@@ -229,15 +232,9 @@ export const taskRenderer: ToolRenderer = {
     const [childToolsTruncated, setChildToolsTruncated] = createSignal(false)
 
     let indexedSessionId = ""
-    let indexedMessageCount = 0
-    let indexedMessageTail = ""
-    const indexedPartCounts = new Map<string, number>()
 
     function resetChildToolIndex(nextSessionId: string) {
       indexedSessionId = nextSessionId
-      indexedMessageCount = 0
-      indexedMessageTail = ""
-      indexedPartCounts.clear()
       setChildToolKeys([])
       setChildToolsTruncated(false)
     }
@@ -265,15 +262,11 @@ export const taskRenderer: ToolRenderer = {
         keys.unshift(`${messageId}::${partId}`)
       }
       if (idx >= oldestScannedIndex) setChildToolsTruncated(true)
-      indexedPartCounts.set(messageId, partIds.length)
       return keys
     }
 
     function fullRescanChildTools(sessionId: string, messageIds: string[]) {
       indexedSessionId = sessionId
-      indexedMessageCount = messageIds.length
-      indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
-      indexedPartCounts.clear()
       setChildToolsTruncated(false)
 
       const nextKeys: string[] = []
@@ -284,93 +277,35 @@ export const taskRenderer: ToolRenderer = {
         const keys = scanMessageToolParts(messageIds[index], 0, scanLimit - nextKeys.length, budget)
         for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) nextKeys.unshift(keys[keyIndex])
       }
-      for (let index = oldestScannedIndex; index < messageIds.length; index += 1) {
-        const messageId = messageIds[index]
-        if (!indexedPartCounts.has(messageId)) indexedPartCounts.set(messageId, store.getMessage(messageId)?.partIds.length ?? 0)
-      }
       setChildToolsTruncated((truncated) => isTaskScanTruncated(truncated, oldestScannedIndex > 0, isTaskStepListTruncated(nextKeys.length)))
-      setChildToolKeys(nextKeys.slice(-TASK_STEP_RENDER_LIMIT))
+      const keys = nextKeys.slice(-TASK_STEP_RENDER_LIMIT)
+      setChildToolKeys(previous => previous.length === keys.length && previous.every((key, index) => key === keys[index]) ? previous : keys)
     }
 
     createEffect(() => {
       const id = childSessionId()
       const loaded = childSessionLoaded()
 
-      if (!id || !loaded) {
-        if (indexedSessionId) {
-          resetChildToolIndex("")
-        }
+      if (!id || (indexedSessionId && indexedSessionId !== id)) {
+        resetChildToolIndex("")
+      }
+      if (!id) return
+      if (!loaded) {
+        // Invalidation requests a fresh page, but its resident display snapshot
+        // may still be valid. Keep its shells while that read is pending, but
+        // clear membership and truncation when deletion/eviction removed it.
+        if (store.getSessionMessageIds(id).length === 0) resetChildToolIndex("")
+        // Rebuild resident membership after the authoritative page arrives.
         return
       }
 
-      // We use the session revision as the reactive change point, but avoid
-      // rescanning the entire session on every update.
+      // Authoritative pages can remove, replace or reorder parts without changing
+      // message counts. Revalidate only bounded structural identities (not output
+      // payloads); unchanged keys retain their array and keyed tool shells.
       store.getSessionRevision(id)
 
       untrack(() => {
-        const messageIds = store.getSessionMessageIds(id)
-
-        if (!indexedSessionId || indexedSessionId !== id) {
-          fullRescanChildTools(id, messageIds)
-          return
-        }
-
-        // Detect structural changes (reorder/shrink) and fall back to a full rescan.
-        if (messageIds.length < indexedMessageCount) {
-          fullRescanChildTools(id, messageIds)
-          return
-        }
-        if (indexedMessageCount > 0) {
-          const expectedTailIndex = indexedMessageCount - 1
-          if (expectedTailIndex >= 0 && messageIds[expectedTailIndex] !== indexedMessageTail) {
-            fullRescanChildTools(id, messageIds)
-            return
-          }
-        }
-
-        const appendedKeys: string[] = []
-        const budget = { remaining: TASK_MESSAGE_SCAN_LIMIT }
-
-        // Scan any new messages appended since last index.
-        const appendedStart = Math.max(indexedMessageCount, messageIds.length - TASK_MESSAGE_SCAN_LIMIT)
-        if (appendedStart > indexedMessageCount) setChildToolsTruncated(true)
-        for (let idx = appendedStart; idx < messageIds.length && budget.remaining > 0; idx += 1) {
-          const messageId = messageIds[idx]
-          appendedKeys.push(...scanMessageToolParts(messageId, 0, TASK_STEP_RENDER_LIMIT, budget))
-          if (appendedKeys.length > TASK_STEP_RENDER_LIMIT) {
-            setChildToolsTruncated(true)
-            appendedKeys.splice(0, appendedKeys.length - TASK_STEP_RENDER_LIMIT)
-          }
-        }
-
-        // Scan the bounded indexed window so out-of-order updates are not missed.
-        const existingCount = Math.min(indexedMessageCount, messageIds.length)
-        const windowStart = Math.max(0, existingCount - TASK_MESSAGE_SCAN_LIMIT)
-        for (let idx = windowStart; idx < existingCount && budget.remaining > 0; idx += 1) {
-          const messageId = messageIds[idx]
-          const previousPartCount = indexedPartCounts.get(messageId) ?? 0
-          const record = store.getMessage(messageId)
-          const nextPartCount = record?.partIds.length ?? 0
-          if (nextPartCount > previousPartCount) {
-            appendedKeys.push(...scanMessageToolParts(messageId, previousPartCount, TASK_STEP_RENDER_LIMIT, budget))
-            if (appendedKeys.length > TASK_STEP_RENDER_LIMIT) {
-              setChildToolsTruncated(true)
-              appendedKeys.splice(0, appendedKeys.length - TASK_STEP_RENDER_LIMIT)
-            }
-          }
-        }
-
-        indexedMessageCount = messageIds.length
-        indexedMessageTail = messageIds[messageIds.length - 1] ?? ""
-        if (indexedPartCounts.size > TASK_MESSAGE_SCAN_LIMIT) {
-          const retainedIds = new Set(messageIds.slice(-TASK_MESSAGE_SCAN_LIMIT))
-          for (const messageId of indexedPartCounts.keys()) if (!retainedIds.has(messageId)) indexedPartCounts.delete(messageId)
-        }
-
-        if (appendedKeys.length > 0) {
-          if (childToolKeys().length + appendedKeys.length > TASK_STEP_RENDER_LIMIT) setChildToolsTruncated(true)
-          setChildToolKeys((prev) => [...prev, ...appendedKeys].slice(-TASK_STEP_RENDER_LIMIT))
-        }
+        fullRescanChildTools(id, store.getSessionMessageIds(id))
       })
     })
     const promptContent = createMemo(() => {
@@ -591,12 +526,12 @@ export const taskRenderer: ToolRenderer = {
                   }
                 >
                     <div class="tool-call-task-summary">
-                    <Index each={childToolKeys()}>
+                     <For each={childToolKeys()}>
                       {(key) => (
                         <Show when={renderToolCall}>
                           {(render) => (
                             <TaskToolCallRow
-                              toolKey={key()}
+                               toolKey={key}
                               store={store}
                               sessionId={childSessionId()}
                               renderToolCall={render()}
@@ -604,7 +539,7 @@ export const taskRenderer: ToolRenderer = {
                           )}
                         </Show>
                       )}
-                    </Index>
+                     </For>
                   </div>
                   {scrollHelpers?.renderSentinel?.()}
                 </div>

@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "browser.viewport.emulationHint": "Перезагрузка с мобильной идентификацией, сенсорным вводом и плотностью пикселей. Движок браузера, клавиатура и системные панели не эмулируются.",
+  "browser.viewport.emulationUnavailable": "Для эмуляции устройства нужен нативный веб-предпросмотр в настольном приложении.",
   "sessionList.filter.includeMainSessions": "Показывать основные сессии",
   "sessionList.filter.includeSubsessions": "Показывать подсессии",
   "session.pruning.maintenance_required": "Сессия или её хранилище заняты. Дождитесь завершения текущей операции и повторите очистку.",

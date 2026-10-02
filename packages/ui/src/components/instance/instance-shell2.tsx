@@ -49,7 +49,7 @@ import RightPanel from "./shell/right-panel/RightPanel"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
-import { Command as CommandIcon, Globe, Maximize2, Search, ShieldAlert } from "lucide-solid"
+import { Command as CommandIcon, Globe, ListFilter, Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
@@ -88,7 +88,7 @@ import { runtimeEnv } from "../../lib/runtime-env"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
-const MIN_SESSION_CENTER_WIDTH = 480
+const MIN_SESSION_CENTER_WIDTH = 390
 type SessionCenterWidthStep = "narrow" | "medium" | "wide"
 
 function getSessionCenterWidthStep(width: number): SessionCenterWidthStep {
@@ -134,10 +134,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const [sessionCenterEl, setSessionCenterEl] = createSignal<HTMLElement | null>(null)
   const [sessionCenterWidthStep, setSessionCenterWidthStep] = createSignal<SessionCenterWidthStep>("wide")
   const [headerDensity, setHeaderDensity] = createSignal(0)
+  const [narrowHeaderActions, setNarrowHeaderActions] = createSignal(false)
+  const headerActionsCollapsed = () => narrowHeaderActions() || headerDensity() === 4
+  const [filtersOpen, setFiltersOpen] = createSignal(false)
   let sessionToolbarEl: HTMLElement | undefined
   let headerLeftEl: HTMLElement | undefined
   let headerRightEl: HTMLElement | undefined
-  let headerIndicatorsEl: HTMLElement | undefined
+  const [headerIndicatorsEl, setHeaderIndicatorsEl] = createSignal<HTMLElement>()
 
   const [permissionModalOpen, setPermissionModalOpen] = createSignal(false)
   let lastAutoOpenedFormId: string | null = null
@@ -193,7 +196,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const isPhoneLayout = createMemo(() => layoutMode() === "phone")
   const mobileFullscreen = createMemo(() => props.mobileFullscreenMode)
-  const compactPromptLayout = createMemo(() => layoutMode() !== "desktop")
 
   const { setDrawerHost, drawerContainer, drawerHostWidth, measureDrawerHost } = useDrawerHostMeasure()
 
@@ -323,11 +325,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   createEffect(() => {
     if (!props.isActiveInstance || mobileFullscreen() || typeof ResizeObserver === "undefined") return
+    // Session/status changes can replace this subtree. Rebind the observer to
+    // the current node instead of continuing to observe a detached indicator.
+    const indicators = headerIndicatorsEl()
+    if (!indicators) return
     let frame = 0
     const measure = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
-        if (!sessionToolbarEl || !headerLeftEl || !headerRightEl || !headerIndicatorsEl) return
+        if (!sessionToolbarEl || !headerLeftEl || !headerRightEl) return
 
         const gap = 8
         let density = 4
@@ -335,7 +341,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sessionCenterEl()?.setAttribute("data-session-header-density", String(candidate))
           const leftRect = headerLeftEl.getBoundingClientRect()
           const rightRect = headerRightEl.getBoundingClientRect()
-          const indicatorsRect = headerIndicatorsEl.getBoundingClientRect()
+          const indicatorsRect = indicators.getBoundingClientRect()
           const sidesFit = leftRect.right + gap <= rightRect.left
           const indicatorsFit = indicatorsRect.width === 0 ||
             (indicatorsRect.left >= leftRect.right + gap && indicatorsRect.right <= rightRect.left - gap)
@@ -348,7 +354,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       })
     }
     const observer = new ResizeObserver(measure)
-    ;[sessionToolbarEl, headerLeftEl, headerRightEl, headerIndicatorsEl]
+    ;[sessionToolbarEl, headerLeftEl, headerRightEl, indicators]
       .forEach((element) => element && observer.observe(element))
     measureDrawerHost()
     measure()
@@ -377,9 +383,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
 
+    let focusFrame = 0
     const updateWidthStep = (width: number) => {
       if (width <= 0) return
+      const moveFocus = width < 420 && sessionToolbarEl?.querySelector(".session-header-expanded-actions")?.contains(document.activeElement)
       setSessionCenterWidthStep(getSessionCenterWidthStep(width))
+      setNarrowHeaderActions(width < 420)
+      if (moveFocus) {
+        cancelAnimationFrame(focusFrame)
+        focusFrame = requestAnimationFrame(() => {
+          if (headerActionsCollapsed()) sessionToolbarEl?.querySelector<HTMLButtonElement>(".session-header-actions-menu")?.focus()
+        })
+      }
     }
 
     measureDrawerHost()
@@ -391,7 +406,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     })
     observer.observe(element)
 
-    onCleanup(() => observer.disconnect())
+    onCleanup(() => {
+      observer.disconnect()
+      cancelAnimationFrame(focusFrame)
+    })
   })
 
   const connectionStatus = () => sseManager.getStatus(props.instance.id)
@@ -575,7 +593,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const renderSessionHeaderIndicators = () => (
-    <div ref={(element) => { headerIndicatorsEl = element }} class="session-header-indicators flex items-center justify-center gap-2">
+    <div ref={setHeaderIndicatorsEl} class="session-header-indicators flex items-center justify-center gap-2">
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
@@ -626,6 +644,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const searchWindowId = () => sessionSearchWindowId(props.instance.id, activeSessionIdForInstance() ?? "")
   const paletteWindowId = () => `command-palette-${props.instance.id}`
 
+  createEffect(() => {
+    activeSessionIdForInstance()
+    props.isActiveInstance
+    setFiltersOpen(false)
+  })
+
   const headerActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = [{
       key: "commands",
@@ -651,6 +675,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           ? <Maximize2 class="w-4 h-4" aria-hidden="true" />
           : <Globe class="w-4 h-4" aria-hidden="true" />,
         onSelect: runtimeEnv.platform === "mobile" ? props.onEnterMobileFullscreen : handlePreviewButtonClick,
+      },
+      {
+        key: "content",
+        label: t("transcriptFilters.title"),
+        icon: <ListFilter class="w-4 h-4" aria-hidden="true" />,
+        onSelect: () => { setFiltersOpen(true) },
       },
     )
     return items
@@ -1036,6 +1066,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         ref={setSessionCenterEl}
         data-session-center-width={sessionCenterWidthStep()}
         data-session-header-density={String(headerDensity())}
+        data-session-header-actions-forced={narrowHeaderActions() ? "true" : "false"}
         sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, minHeight: 0, overflowX: "hidden" }}
       >
         <Show when={!mobileFullscreen()}>
@@ -1094,6 +1125,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
                           {renderHeaderThirdActionButton()}
+                          <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
+                            overflowAnchor={() => headerActionsCollapsed()
+                              ? sessionToolbarEl?.querySelector<HTMLElement>(".session-header-actions-menu") ?? undefined
+                              : undefined} />
                         </Show>
                       </div>
                       <ActionOverflowMenu
@@ -1119,9 +1154,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <span class="status-dot" />
                         <span class="status-text">{t("instanceShell.connection.disconnected")}</span>
                       </span>
-                    </Show>
-                    <Show when={!showingInfoView()}>
-                      <div class="panel-header-actions"><TranscriptFilters /></div>
                     </Show>
                   </div>
                 </div>
@@ -1201,7 +1233,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       instanceFolder={props.instance.folder}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
                       isActive={props.isActiveInstance}
-                      compactLayout={compactPromptLayout()}
                       onSend={handleFirstPromptSend}
                       onCommand={handleFirstPromptCommand}
                       onRunShell={handleFirstPromptShell}
@@ -1242,7 +1273,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             instanceFolder={props.instance.folder}
                             escapeInDebounce={props.escapeInDebounce}
                             isPhoneLayout={isPhoneLayout()}
-                            compactPromptLayout={compactPromptLayout()}
                             focusConversationOnActivate={focusConversationSessionId() === sessionId}
                             onConversationFocusHandled={() => {
                               if (focusConversationSessionId() === sessionId) setFocusConversationSessionId(null)

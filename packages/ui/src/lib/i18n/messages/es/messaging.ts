@@ -209,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
 
   "promptInput.placeholder.shell": "Ejecuta un comando de shell (Esc para salir)...",
-  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, o pega imágenes y texto...",
+  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, @skill, o pega imágenes y texto...",
   "promptInput.hints.shell.exit": "para salir del modo shell",
   "promptInput.hints.shell.enable": "Modo shell",
   "promptInput.hints.commands": "Comandos",

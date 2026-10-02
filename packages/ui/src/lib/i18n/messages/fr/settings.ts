@@ -1,4 +1,7 @@
 export const settingsMessages = {
+  "settings.opencode.setup.progress.install": "Installation d’OpenCode en cours…",
+  "settings.opencode.setup.elapsed": "Temps écoulé : {elapsed}",
+  "settings.opencode.setup.keepOpen": "Le téléchargement et l’installation peuvent prendre plusieurs minutes. Gardez CodeNomad ouvert jusqu’à la fin de la configuration.",
   "settings.opencode.setup.installation_busy": "Une autre installation détient le verrou d’installation d’OpenCode. Réessayez après sa fin. Si elle a été interrompue, le journal du serveur indique l’emplacement du verrou.",
   "settings.opencode.setup.installation_in_use": "L’exécutable OpenCode est utilisé ou non modifiable. La mise à jour a été différée avant toute modification de l’installation. Réessayez lorsque l’exécutable sera disponible.",
   "settings.opencode.setup.source.path": "Exécutable trouvé dans le PATH du serveur.",
@@ -638,9 +641,11 @@ export const settingsMessages = {
   "settings.info.version.server": "Version du serveur",
   "settings.info.version.ui": "Version de l'interface",
   "settings.info.version.uiSource": "Source de l'interface",
-  "settings.info.runtime.type": "Environnement d'exécution",
-  "settings.info.runtime.platform": "Plateforme",
-  "settings.info.runtime.os": "Système d'exploitation",
+  "settings.info.runtime.type": "Environnement d'exécution du client",
+  "settings.info.runtime.platform": "Plateforme du client",
+  "settings.info.runtime.os": "Système d'exploitation du client",
+  "settings.info.server.os": "Système d'exploitation du serveur",
+  "settings.info.server.arch": "Architecture du serveur",
   "settings.info.server.url": "URL du serveur",
   "settings.info.server.root": "Racine de l'espace de travail",
   "settings.info.runtime.windowContext": "Contexte de la fenêtre",
@@ -668,4 +673,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.copy": "Copier dans le presse-papiers",
   "settings.info.diagnostics.download": "Télécharger .txt",
   "settings.info.diagnostics.copied": "Informations de diagnostic copiées dans le presse-papiers.",
+  "providerUsage.nativeCredentialApiUnavailable": "L’usage nécessite OpenCode {version} ou plus récent. Mettez OpenCode à jour, puis redémarrez son service depuis les paramètres.",
 } as const

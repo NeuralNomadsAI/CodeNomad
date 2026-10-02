@@ -16,7 +16,8 @@
       "capabilities": [
         "main-window-native-dialogs",
         "preferences-window",
-        "remote-window-notifications"
+        "remote-window-notifications",
+        "owned-webview-zoom"
       ]
     }
   },

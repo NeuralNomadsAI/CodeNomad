@@ -1,4 +1,6 @@
 export const sessionMessages = {
+  "browser.viewport.emulationHint": "मोबाइल पहिचान, टच र पिक्सेल घनत्वसहित पुनः लोड गर्छ। ब्राउजर इन्जिन, किबोर्ड र प्रणाली बारहरू अनुकरण गरिँदैनन्।",
+  "browser.viewport.emulationUnavailable": "उपकरण अनुकरणका लागि डेस्कटप एपको नेटिभ वेब पूर्वावलोकन चाहिन्छ।",
   "sessionList.filter.includeMainSessions": "मुख्य सत्रहरू देखाउनुहोस्",
   "sessionList.filter.includeSubsessions": "उप-सत्रहरू देखाउनुहोस्",
   "session.pruning.maintenance_required": "सत्र वा यसको भण्डारण व्यस्त छ। हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",

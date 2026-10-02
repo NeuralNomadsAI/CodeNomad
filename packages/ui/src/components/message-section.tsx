@@ -1,8 +1,9 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
+import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
@@ -1397,6 +1398,7 @@ export default function MessageSection(props: MessageSectionProps) {
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
                   <div class="window-toolbar history-search-toolbar">
+                    <div class="history-search-options">
                     <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
@@ -1405,6 +1407,8 @@ export default function MessageSection(props: MessageSectionProps) {
                     <label><input type="checkbox" checked={includeTechnical()} onChange={event => batch(() => {
                       setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
                     })} /> {t("history.technical")}</label>
+                    </div>
+                    <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
                   </div>
                   <Show when={isSearchOpen()}>
                     <HistoryStatistics instanceId={props.instanceId} sessionId={searchWorkspace() ? undefined : props.sessionId} />
@@ -1468,15 +1472,6 @@ export default function MessageSection(props: MessageSectionProps) {
                         title={t("messageSection.search.nextAriaLabel")}
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="message-search-button"
-                        onClick={closeSearch}
-                        aria-label={t("messageSection.search.closeAriaLabel")}
-                        title={t("messageSection.search.closeAriaLabel")}
-                      >
-                        <X class="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>

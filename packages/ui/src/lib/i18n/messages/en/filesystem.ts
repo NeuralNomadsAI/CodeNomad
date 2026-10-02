@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "Go to a folder",
   "directoryBrowser.goToParent": "Parent folder",
   "directoryBrowser.goToHome": "Home",
+  "directoryBrowser.goToRoot": "Workspace root",
   "directoryBrowser.goToInitial": "Back to {name}",
   "directoryBrowser.selectCurrent": "Select Current",
   "directoryBrowser.newFolder": "New Folder",

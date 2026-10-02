@@ -209,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
 
   "promptInput.placeholder.shell": "シェルコマンドを実行 (Esc で終了)...",
-  "promptInput.placeholder.default": "メッセージ、@file、@agent を入力、または画像/テキストを貼り付け...",
+  "promptInput.placeholder.default": "メッセージ、@file、@agent、@skill を入力、または画像/テキストを貼り付け...",
   "promptInput.hints.shell.exit": "でシェルモードを終了",
   "promptInput.hints.shell.enable": "シェルモード",
   "promptInput.hints.commands": "コマンド",

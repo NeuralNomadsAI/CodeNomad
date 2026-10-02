@@ -12,6 +12,20 @@
   overflow-y: auto;
 }
 
+.history-search-toolbar {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.history-search-options {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .history-search-result {
   display: flex;
   flex-direction: column;

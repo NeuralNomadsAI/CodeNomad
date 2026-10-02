@@ -209,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Переключить высоту поля ввода",
 
   "promptInput.placeholder.shell": "Выполнить команду shell (Esc для выхода)…",
-  "promptInput.placeholder.default": "Введите сообщение, @file, @agent или вставьте изображения и текст…",
+  "promptInput.placeholder.default": "Введите сообщение, @file, @agent, @skill или вставьте изображения и текст…",
   "promptInput.hints.shell.exit": "чтобы выйти из режима shell",
   "promptInput.hints.shell.enable": "Режим shell",
   "promptInput.hints.commands": "Команды",

@@ -71,7 +71,7 @@ export class AuthManager {
     return this.tokenManager.consume(token)
   }
 
-  validateLogin(username: string, password: string): boolean {
+  async validateLogin(username: string, password: string): Promise<boolean> {
     if (!this.authEnabled) {
       return true
     }

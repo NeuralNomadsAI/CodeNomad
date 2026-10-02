@@ -5,8 +5,9 @@ import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { sseManager } from "../lib/sse-manager"
 import { OpenCodeSetupPanel } from "./settings/opencode-setup-panel"
+import { OpenCodeSetupProgress } from "./settings/opencode-setup-progress"
 import { OpenCodeExecutableCard } from "./settings/opencode-executable-card"
-import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupOpen, openCodeSetupStatus,
+import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupBusy, openCodeSetupOpen, openCodeSetupStatus,
   openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
 
 export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
@@ -37,8 +38,9 @@ export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
     })
   })
   return <>
-    <Show when={props.automatic !== false && needsOpenCodeSetup() && !openCodeSetupOpen()}>
-      <Portal><div class="fixed bottom-4 right-4 z-50 border border-base bg-surface-secondary p-3" role="status">
+    <Show when={props.automatic !== false && (needsOpenCodeSetup() || openCodeSetupBusy()) && !openCodeSetupOpen()}>
+      <Portal><div class="opencode-setup-reminder fixed bottom-4 right-4 z-50 border border-base bg-surface-secondary p-3">
+        <OpenCodeSetupProgress />
         <button class="selector-button" onClick={() => openOpenCodeSetup()}>{t("settings.opencode.setup.required")}</button>
       </div></Portal>
     </Show>

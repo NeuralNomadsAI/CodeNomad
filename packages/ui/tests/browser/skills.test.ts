@@ -33,6 +33,7 @@ test("skills attach once through the @ menu with a removable badge", async () =>
     assert.equal(await page.getByRole("button", { name: "Skills", exact: true }).count(), 0)
     assert.equal(await page.getByRole("dialog").count(), 0)
     const textarea = page.locator(".prompt-input-container textarea").first()
+    assert.equal(await textarea.getAttribute("placeholder"), "Type your message, @file, @agent, @skill, or paste images and text...")
     await textarea.fill("@rev")
     await page.waitForFunction(() => (window as any).fixture.pending().length === 1)
     await page.evaluate(() => (window as any).fixture.resolve(0, "review"))

@@ -207,7 +207,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Höhe der Chat-Eingabe umschalten",
 
   "promptInput.placeholder.shell": "Einen Shell-Befehl ausführen (Esc zum Verlassen)...",
-  "promptInput.placeholder.default": "Nachricht eingeben, @datei, @agent, oder Bilder und Text einfügen...",
+  "promptInput.placeholder.default": "Nachricht eingeben, @datei, @agent, @skill, oder Bilder und Text einfügen...",
   "promptInput.hints.shell.exit": "um den Shell-Modus zu verlassen",
   "promptInput.hints.shell.enable": "Shell-Modus",
   "promptInput.hints.commands": "Befehle",
