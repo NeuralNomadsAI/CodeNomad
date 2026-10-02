@@ -1,4 +1,5 @@
 import { Component, For, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { focusInterruption } from "../stores/interruption-navigation"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
@@ -733,7 +734,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           <button
             type="button"
             class="session-item-select"
-            onClick={() => selectSession(sessionId())}
+            onClick={() => { selectSession(sessionId()); if (needsInput()) focusInterruption(props.instanceId, sessionId()) }}
             title={title()}
             aria-current={isActive() ? "true" : undefined}
           >

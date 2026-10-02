@@ -27,6 +27,7 @@ const client: any = { provider: { list: async () => {
   return { data: [{ id: "provider", name: "Fixture provider", activation: "enabled", package: "fixture" }] }
 } },
   model: { list: async () => ({ data: [] }) },
+  websearch: { providers: async () => ({ data: [] }) },
   integration: { list: async () => { reads++; return { data: [{ id: "provider", name: "Fixture provider", methods: [{ type: "key", label: "API key" }], connections: structuredClone(connections) }] } } },
   credential: { activate: (input: any) => mutate("activate", input), update: (input: any) => mutate("rename", input), remove: (input: any) => mutate("remove", input) } }
 await applyUiSettings({})

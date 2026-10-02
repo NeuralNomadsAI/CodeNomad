@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Vorherige Anfrage",
+  "interruption.next": "Nächste Anfrage",
+  "interruption.toggle": "Anfragen ein- oder ausklappen",
+  "interruption.global": "Dienstanfrage",
+  "interruption.reveal": "Im Gespräch anzeigen",
+  "interruption.respond": "Beim Eingabefeld antworten",
+  "interruption.answered": "Beantwortet",
+  "interruption.noAnswer": "Keine Antwort",
   "promptInput.skills.title": "Skills",
   "promptInput.skills.remove": "Skill {name} entfernen",
   "promptInput.skills.loading": "Skills werden geladen…",
@@ -207,7 +215,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Höhe der Chat-Eingabe umschalten",
 
   "promptInput.placeholder.shell": "Einen Shell-Befehl ausführen (Esc zum Verlassen)...",
-  "promptInput.placeholder.default": "Nachricht eingeben, @datei, @agent, oder Bilder und Text einfügen...",
+  "promptInput.placeholder.default": "Nachricht eingeben, @datei, @agent, @skill, oder Bilder und Text einfügen...",
   "promptInput.hints.shell.exit": "um den Shell-Modus zu verlassen",
   "promptInput.hints.shell.enable": "Shell-Modus",
   "promptInput.hints.commands": "Befehle",

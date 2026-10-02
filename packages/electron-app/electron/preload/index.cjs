@@ -72,6 +72,7 @@ const localElectronAPI = {
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
   registerBrowserTarget: (payload) => ipcRenderer.invoke("browser-target:register", payload),
+  emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
   claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
   releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),

@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Предыдущий запрос",
+  "interruption.next": "Следующий запрос",
+  "interruption.toggle": "Развернуть или свернуть запросы",
+  "interruption.global": "Запрос сервиса",
+  "interruption.reveal": "Показать в беседе",
+  "interruption.respond": "Ответить рядом с полем ввода",
+  "interruption.answered": "Ответ получен",
+  "interruption.noAnswer": "Нет ответа",
   "promptInput.skills.title": "Навыки",
   "promptInput.skills.remove": "Удалить навык {name}",
   "promptInput.skills.loading": "Загрузка навыков…",
@@ -209,7 +217,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Переключить высоту поля ввода",
 
   "promptInput.placeholder.shell": "Выполнить команду shell (Esc для выхода)…",
-  "promptInput.placeholder.default": "Введите сообщение, @file, @agent или вставьте изображения и текст…",
+  "promptInput.placeholder.default": "Введите сообщение, @file, @agent, @skill или вставьте изображения и текст…",
   "promptInput.hints.shell.exit": "чтобы выйти из режима shell",
   "promptInput.hints.shell.enable": "Режим shell",
   "promptInput.hints.commands": "Команды",

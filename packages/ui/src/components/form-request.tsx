@@ -65,6 +65,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
 
   const submit = async (event: SubmitEvent) => {
     event.preventDefault()
+    if (submitting()) return
     const form = event.currentTarget as HTMLFormElement
     if (!form.reportValidity()) return
     const invalidCollection = visibleFields().find((field) => {
@@ -92,6 +93,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   }
 
   const cancel = async () => {
+    if (submitting()) return
     setSubmitting(true)
     setError(null)
     try {

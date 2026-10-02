@@ -1,0 +1,24 @@
+.interruption-dock {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-base);
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+.interruption-dock:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+.interruption-dock .window-header { flex-wrap: wrap; gap: 0.5rem; }
+.interruption-dock .window-actions { margin-inline-start: auto; }
+.interruption-toolbar { justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.interruption-toolbar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.interruption-body { overflow: auto; overscroll-behavior: contain; min-height: 0; }
+.interruption-dock [hidden] { display: none; }
+.interruption-dock .form-request { border: 0; margin: 0; }
+.interruption-dock .window-action { min-height: 32px; }
+.interruption-receipt { padding: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.interruption-receipt dt { color: var(--text-secondary); margin-block-start: 0.5rem; }
+.interruption-receipt dd { margin: 0.25rem 0 0.75rem; }
+[data-interruption-reveal="true"] { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+@media (pointer: coarse) { .interruption-dock .window-action { min-height: 44px; min-width: 44px; } }

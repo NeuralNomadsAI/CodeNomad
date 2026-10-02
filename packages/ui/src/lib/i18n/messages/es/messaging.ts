@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Solicitud anterior",
+  "interruption.next": "Solicitud siguiente",
+  "interruption.toggle": "Expandir o contraer solicitudes",
+  "interruption.global": "Solicitud del servicio",
+  "interruption.reveal": "Ver en la conversación",
+  "interruption.respond": "Responder junto al campo de texto",
+  "interruption.answered": "Respondida",
+  "interruption.noAnswer": "Sin respuesta",
   "promptInput.skills.title": "Skills",
   "promptInput.skills.remove": "Quitar skill {name}",
   "promptInput.skills.loading": "Cargando skills…",
@@ -209,7 +217,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
 
   "promptInput.placeholder.shell": "Ejecuta un comando de shell (Esc para salir)...",
-  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, o pega imágenes y texto...",
+  "promptInput.placeholder.default": "Escribe tu mensaje, @file, @agent, @skill, o pega imágenes y texto...",
   "promptInput.hints.shell.exit": "para salir del modo shell",
   "promptInput.hints.shell.enable": "Modo shell",
   "promptInput.hints.commands": "Comandos",

@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "הבקשה הקודמת",
+  "interruption.next": "הבקשה הבאה",
+  "interruption.toggle": "הרחבה או צמצום בקשות",
+  "interruption.global": "בקשת שירות",
+  "interruption.reveal": "הצגה בשיחה",
+  "interruption.respond": "מענה ליד שדה ההקלדה",
+  "interruption.answered": "נענתה",
+  "interruption.noAnswer": "אין תשובה",
   "promptInput.skills.title": "מיומנויות",
   "promptInput.skills.remove": "הסרת מיומנות {name}",
   "promptInput.skills.loading": "טוען מיומנויות…",
@@ -207,7 +215,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "שנה גובה תיבת הקלט",
 
   "promptInput.placeholder.shell": "הפעל פקודת מעטפת (Esc ליציאה)...",
-  "promptInput.placeholder.default": "הקלד הודעה, @file, @agent, או הדבק תמונות וטקסט...",
+  "promptInput.placeholder.default": "הקלד הודעה, @file, @agent, @skill, או הדבק תמונות וטקסט...",
   "promptInput.hints.shell.exit": "לצאת ממצב מעטפת",
   "promptInput.hints.shell.enable": "מצב מעטפת",
   "promptInput.hints.commands": "פקודות",

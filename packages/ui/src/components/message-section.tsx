@@ -1,8 +1,10 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
+import { interruptionReveal, setInterruptionReveal } from "../stores/interruption-navigation"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
+import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
@@ -493,6 +495,27 @@ export default function MessageSection(props: MessageSectionProps) {
   )
 
   onCleanup(cancelWindowNavigation)
+  onCleanup(() => {
+    const target = interruptionReveal()
+    if (target?.instanceId === props.instanceId && target.sessionId === props.sessionId) setInterruptionReveal(undefined)
+  })
+  createEffect(on(() => [interruptionReveal(), props.isActive] as const, ([target]) => {
+    if (!target || props.isActive === false || target.instanceId !== props.instanceId || target.sessionId !== props.sessionId) return
+    const locate = () => {
+      if (interruptionReveal() !== target || props.isActive === false) return
+      listApi()?.setAutoScroll(false)
+      listApi()?.scrollToKey(target.messageId, { block: "start" })
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (interruptionReveal() !== target || props.isActive === false) return
+        document.getElementById(getMessageAnchorId(target.messageId))
+          ?.querySelector('[data-interruption-reveal="true"]')?.scrollIntoView({ block: "center" })
+      }))
+    }
+    if (untrack(messageIds).includes(target.messageId)) {
+      cancelWindowNavigation()
+      locate()
+    } else void pageWindow("around", locate, target.messageId)
+  }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
@@ -1397,6 +1420,7 @@ export default function MessageSection(props: MessageSectionProps) {
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
                   <div class="window-toolbar history-search-toolbar">
+                    <div class="history-search-options">
                     <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
@@ -1405,6 +1429,8 @@ export default function MessageSection(props: MessageSectionProps) {
                     <label><input type="checkbox" checked={includeTechnical()} onChange={event => batch(() => {
                       setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
                     })} /> {t("history.technical")}</label>
+                    </div>
+                    <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
                   </div>
                   <Show when={isSearchOpen()}>
                     <HistoryStatistics instanceId={props.instanceId} sessionId={searchWorkspace() ? undefined : props.sessionId} />
@@ -1468,15 +1494,6 @@ export default function MessageSection(props: MessageSectionProps) {
                         title={t("messageSection.search.nextAriaLabel")}
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="message-search-button"
-                        onClick={closeSearch}
-                        aria-label={t("messageSection.search.closeAriaLabel")}
-                        title={t("messageSection.search.closeAriaLabel")}
-                      >
-                        <X class="w-4 h-4" aria-hidden="true" />
                       </button>
                     </div>
                   </div>

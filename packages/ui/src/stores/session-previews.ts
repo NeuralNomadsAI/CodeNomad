@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
+import { updateMissionProjectView } from "./mission-view-state"
 
 interface SessionPreviewRecord extends PreviewSession {
   mode: "preview" | "chat"
@@ -105,6 +106,7 @@ async function openSessionPreview(sessionId: string, url: string, storageKey = s
     return next
   })
   storePreview(record.storageKey, { targetUrl: record.targetUrl, mode: record.mode })
+  updateMissionProjectView(record.storageKey, { reader: undefined })
   if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
   return record
 }
@@ -136,6 +138,7 @@ function restoreSessionPreview(sessionId: string, storageKey = sessionId): Promi
 function showSessionPreview(storageKey: string) {
   const current = sessionPreviews().get(storageKey)
   if (!current) return
+  updateMissionProjectView(storageKey, { reader: undefined })
   setSessionPreviews((prev) => {
     const next = new Map(prev)
     next.set(storageKey, { ...current, mode: "preview" })
@@ -145,8 +148,15 @@ function showSessionPreview(storageKey: string) {
 }
 
 function showSessionChat(storageKey: string) {
+  // A reader/chat gesture wins over an earlier in-flight browser open or restore.
+  beginOperation(storageKey)
   const current = sessionPreviews().get(storageKey)
-  if (!current) return
+  if (!current) {
+    initializeStorage()
+    const stored = storedPreviews.get(storageKey)
+    if (stored) storePreview(storageKey, { ...stored, mode: "chat" })
+    return
+  }
   setSessionPreviews((prev) => {
     const next = new Map(prev)
     next.set(storageKey, { ...current, mode: "chat" })

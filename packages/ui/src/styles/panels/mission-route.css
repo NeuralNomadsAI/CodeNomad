@@ -1,0 +1,68 @@
+.mission-route-list {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding-block: 0;
+  padding-inline-start: 46px;
+  list-style: none;
+}
+
+.mission-route-task {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--border-base);
+}
+
+.mission-task-status {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mission-route-task[data-status="ready"] .mission-task-status { color: var(--accent-primary); }
+.mission-route-task[data-status="completed"] .mission-task-status { color: var(--status-success); }
+.mission-route-task[data-status="needs-input"] .mission-task-status { color: var(--status-warning); }
+.mission-route-task[data-status="failed"] .mission-task-status { color: var(--status-error); }
+
+.mission-route-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.mission-route-meta span + span::before {
+  margin-inline-end: var(--space-sm);
+  color: var(--border-strong);
+  content: "/";
+}
+
+.mission-inline-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: var(--space-sm);
+  padding: 2px var(--space-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+}
+
+.mission-inline-session:hover,
+.mission-inline-session-active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.mission-inline-session:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}

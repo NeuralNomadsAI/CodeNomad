@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { ConnectionInfo, LocationRef, OpenCodeClient } from "@opencode/client"
-import { Pencil, Trash2, LockKeyhole } from "lucide-solid"
+import { Plus, Pencil, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
@@ -13,9 +13,9 @@ export function ProviderAccounts(props: {
   disabled?: boolean
   initialConnections?: ConnectionInfo[]
   onChanged?: () => Promise<void>
+  onAdd?: () => void
 }) {
   const { t } = useI18n()
-  const [open, setOpen] = createSignal(false)
   const [connections, setConnections] = createSignal<ConnectionInfo[]>([])
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal(false)
@@ -27,7 +27,6 @@ export function ProviderAccounts(props: {
     // Cache-first: keep the catalog snapshot while the authoritative read
     // revalidates behind it.
     setConnections(props.initialConnections ?? []); setError(false); setBusy(false)
-    if (!open()) return
     const read = async () => {
       if (disposed) return
       if (reading || writing) { trailing = true; return }
@@ -76,17 +75,27 @@ export function ProviderAccounts(props: {
     void read()
   })
   const ids = () => connections().map(item => item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`)
-  const activeConnection = () => (open() ? connections() : props.initialConnections ?? [])[0]
   const connectionLabel = (item: ConnectionInfo) => item.type === "credential" ? item.label : item.name
-  return <details class="provider-accounts" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary title={t("settings.accounts.global")}>
-      <span>{t("settings.accounts.title")}</span>
-      <Show when={activeConnection()}>{item => <span class="provider-accounts-current">
-        <span>{connectionLabel(item())}</span><span class="badge-shape">{t("settings.accounts.active")}</span>
-      </span>}</Show>
-    </summary>
-    <Show when={open()}>
+  const addAccountControl = () => <Show when={props.onAdd}>
+    <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
+      title={t("settings.accounts.add")} aria-label={t("settings.accounts.add")} onClick={() => props.onAdd?.()}><Plus size={14} /></button>
+  </Show>
+  return <div class="provider-accounts" role="group" aria-label={t("settings.accounts.title")}>
       <Show when={error()}><p role="alert">{t("settings.accounts.error")}</p></Show>
+      <label class="provider-account-control">
+        <span class="settings-toggle-title">{t("settings.accounts.current")}</span>
+        <select class="selector-trigger" aria-label={t("settings.accounts.current")} title={t("settings.accounts.global")}
+          disabled={busy() || props.disabled || !connections().some(item => item.type === "credential")}
+          value={ids()[0] ?? ""} onChange={event => {
+            const id = event.currentTarget.value
+            if (id.startsWith("credential:") && id !== ids()[0]) void run(id.slice(11), "activate")
+          }}>
+          <For each={connections()}>{item => {
+            const id = item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`
+            return <option value={id} selected={id === ids()[0]} disabled={item.type === "env"}>{connectionLabel(item)}</option>
+          }}</For>
+        </select>
+      </label>
       <For each={ids()}>{(id, index) => {
         const connection = () => connections().find(item => id === (item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`))!
         const [label, setLabel] = createSignal("")
@@ -95,13 +104,10 @@ export function ProviderAccounts(props: {
         let input: HTMLInputElement | undefined
         let editRevision = 0
         createEffect(() => { const item = connection(); if (!dirty()) setLabel(item.type === "credential" ? item.label : item.name) })
-        return <div class="provider-account" data-account-id={id}>
-          <span class="provider-account-name">{connectionLabel(connection())}</span>
-          <Show when={index() === 0}><span class="badge-shape">{t("settings.accounts.active")}</span></Show>
-          <Show when={connection().type === "credential"} fallback={<span title={t("settings.providers.source.env")} aria-label={t("settings.providers.source.env")}><LockKeyhole size={14} /></span>}>
-            <div class="provider-account-actions">
-            <Show when={index() !== 0}><button type="button" class="selector-button" disabled={busy() || props.disabled}
-              onClick={() => void run(id.slice(11), "activate")}>{t("settings.accounts.activate")}</button></Show>
+        return <Show when={index() === 0}><div class="provider-account" data-account-id={id}>
+          <Show when={connection().type === "credential"} fallback={<div class="provider-account-actions">{addAccountControl()}<span title={t("settings.providers.source.env")} aria-label={t("settings.providers.source.env")}><LockKeyhole size={14} /></span></div>}>
+             <div class="provider-account-actions">
+             {addAccountControl()}
             <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
               title={t("settings.accounts.rename")} aria-label={t("settings.accounts.rename")}
               onClick={() => { setEditing(true); queueMicrotask(() => { input?.focus(); input?.select() }) }}><Pencil size={14} /></button>
@@ -125,8 +131,7 @@ export function ProviderAccounts(props: {
               onClick={() => { setDirty(false); setEditing(false); setLabel(connectionLabel(connection())) }}>{t("alertDialog.actions.cancel")}</button>
             </form></Show>
           </Show>
-        </div>
+        </div></Show>
       }}</For>
-    </Show>
-  </details>
+  </div>
 }

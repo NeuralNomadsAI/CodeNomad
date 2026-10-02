@@ -6,16 +6,36 @@ import { tsImport } from "tsx/esm/api"
 import replyFrom from "@fastify/reply-from"
 import pino from "pino"
 
-// Called only by the explicit, isolated native fixture (never service discovery).
-export async function testPruningUI({ client, baseUrl, root, location, generate, busy, connection }) {
+let dependencies
+// Initialize native browser/bundler dependencies before the long native/SQLite
+// preamble. Late Vite import can terminate Node on Windows without a JS error.
+// This is an import-order harness workaround, not an attribution of heap damage.
+export function loadPruningUIDependencies(diagnostics) {
+  return dependencies ??= loadDependencies(diagnostics)
+}
+
+async function loadDependencies(diagnostics) {
   console.log("Native pruning UI: loading browser and server dependencies")
   const uiRoot = fileURLToPath(new URL("../packages/ui/", import.meta.url))
   const requireUI = createRequire(path.join(uiRoot, "package.json"))
   const { chromium } = requireUI("playwright")
+  console.log("Native pruning UI: Playwright loaded; loading Vite")
+  diagnostics?.stage("ui-import-vite")
   const { createServer } = await import("vite")
+  console.log("Native pruning UI: Vite loaded; loading Solid plugin")
+  diagnostics?.stage("ui-import-solid")
   const { default: solid } = await import("vite-plugin-solid")
+  console.log("Native pruning UI: Solid plugin loaded; loading Fastify")
+  diagnostics?.stage("ui-import-fastify")
   const { default: Fastify } = await import("fastify")
+  return { uiRoot, chromium, createServer, solid, Fastify }
+}
+
+// Called only by the explicit, isolated native fixture (never service discovery).
+export async function testPruningUI({ client, baseUrl, root, location, generate, busy, connection, diagnostics }) {
+  const { uiRoot, chromium, createServer, solid, Fastify } = await loadPruningUIDependencies(diagnostics)
   console.log("Native pruning UI: loading production routes")
+  diagnostics?.stage("ui-import-production-routes")
   const { registerSessionPruningRoutes } = await tsImport("../packages/server/src/server/routes/session-pruning.ts", import.meta.url)
   const { registerInstanceProxyRoutes } = await tsImport("../packages/server/src/server/http-server.ts", import.meta.url)
   const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
@@ -83,6 +103,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
   })
   let browser, page
   console.log("Native pruning UI: starting browser scenario")
+  diagnostics?.stage("ui-browser-scenario")
   const pageErrors = []
   try {
     await server.listen()
@@ -225,12 +246,16 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     await page.screenshot({ path: path.join(root, "ui-after.png"), fullPage: true })
     console.log("PASS: UI whole-session command, confirmation, native persistence and reload; final text preserved")
   } catch (error) {
+    console.error("Native pruning UI failed:", error)
     if (page) {
-      console.error("UI dialogs", await page.getByRole("dialog").allTextContents())
-      await page.screenshot({ path: path.join(root, "ui-failure.png"), fullPage: true })
+      try {
+        console.error("UI dialogs", await page.getByRole("dialog").allTextContents())
+        await page.screenshot({ path: path.join(root, "ui-failure.png"), fullPage: true })
+      } catch (snapshotError) { console.error("UI failure capture failed:", snapshotError) }
     }
     throw error
   } finally {
+    diagnostics?.stage("ui-cleanup")
     await browser?.close()
     await server.close()
     await broker.close()

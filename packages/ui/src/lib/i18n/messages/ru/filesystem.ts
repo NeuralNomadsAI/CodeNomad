@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "Перейти к папке",
   "directoryBrowser.goToParent": "Родительская папка",
   "directoryBrowser.goToHome": "Домашняя папка",
+  "directoryBrowser.goToRoot": "Корень рабочего пространства",
   "directoryBrowser.goToInitial": "Вернуться к {name}",
   "directoryBrowser.selectCurrent": "Выбрать текущую",
   "directoryBrowser.newFolder": "Новая папка",

@@ -101,7 +101,7 @@ export class DesktopPluginLifecycle {
 export async function prepareDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void,
-  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle },
+  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle; missions?: DesktopPluginLifecycle },
 ): Promise<void> {
   const prepared: PreparedPlugin[] = []
   try {
@@ -109,6 +109,8 @@ export async function prepareDesktopPluginPresence(
     prepared.push(await lifecycles.pruning.prepare(paths, assertCurrent))
     assertCurrent()
     if (lifecycles.automation) prepared.push(await lifecycles.automation.prepare(paths, assertCurrent))
+    assertCurrent()
+    if (lifecycles.missions) prepared.push(await lifecycles.missions.prepare(paths, assertCurrent))
     assertCurrent()
     for (const entry of prepared) entry.commit()
   } finally {

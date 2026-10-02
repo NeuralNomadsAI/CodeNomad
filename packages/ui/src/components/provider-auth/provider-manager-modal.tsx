@@ -1,7 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
-import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, Plus, SlidersHorizontal, X } from "lucide-solid"
+import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from "lucide-solid"
 import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
@@ -360,13 +360,18 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setLoadError(null)
     try {
       const location = { location: requestLocation(catalogLocation) }
-      const [providerResponse, modelResponse, integrationResponse] = await Promise.all([
+      const [providerResponse, modelResponse, integrationResponse, searchResponse] = await Promise.all([
         authClient.provider.list(location, requestLocationOptions(catalogLocation)),
         authClient.model.list(location, requestLocationOptions(catalogLocation)),
         authClient.integration.list(location, requestLocationOptions(catalogLocation)),
+        props.embedded ? authClient.websearch.providers(location, requestLocationOptions(catalogLocation)) : undefined,
       ])
       if (!isCurrentLoad()) return
-      const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data).map((provider) => ({
+      // Search-only integrations belong to the separate Web search group.
+      const searchIds = new Set(searchResponse?.data.map(item => item.id))
+      const listed = buildListedProviders(providerResponse.data, modelResponse.data, integrationResponse.data)
+        .filter(provider => !searchIds.has(provider.id) || provider.modelCount > 0)
+        .map((provider) => ({
         ...provider,
         models: buildProviderVisibilityModels(provider.id, providerResponse.data, modelResponse.data),
         connections: integrationResponse.data.find(item => item.id === provider.id)?.connections ?? [],
@@ -828,27 +833,25 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                           <div class="providers-card-copy">
                             <h4 class="providers-card-title" title={configuredProviderSummary(provider())}>{provider().name || providerId}</h4>
                           </div>
-                          <div class="provider-model-card-actions provider-card-hover-actions">
-                            <Show when={provider().canConnect}><button type="button" class="icon-button-compact"
-                              title={t("settings.accounts.add")} aria-label={t("settings.accounts.add")}
-                              disabled={stage() !== "idle"} onClick={() => {
-                                resetFlow(providerId)
-                                queueMicrotask(() => document.querySelector<HTMLElement>(".providers-connect-panel")?.scrollIntoView({ block: "nearest" }))
-                              }}><Plus size={14} /></button></Show>
+                          <div class="provider-model-card-actions">
                             <button
                               ref={(element) => manageModelButtons.set(providerId, element)}
                               type="button"
-                              class="icon-button-compact"
+                              class="selector-button selector-button-secondary"
                               title={t("settings.providers.actions.manageModels")} aria-label={t("settings.providers.actions.manageModels")}
                               onClick={() => {
                                 managedProviderTriggerId = providerId
                                 setManagedProviderId(providerId)
                               }}
-                            ><SlidersHorizontal size={14} /></button>
+                            >{t("settings.providers.actions.manageModels")}</button>
                           </div>
                           <Show when={client() && (provider().credentialIds.length > 0 || provider().source === "env")}>
                             <ProviderAccounts instanceId={props.instanceId} integrationId={providerId} client={client()!}
                               initialConnections={provider().connections}
+                              onAdd={provider().canConnect ? () => {
+                                resetFlow(providerId)
+                                queueMicrotask(() => document.querySelector<HTMLElement>(".providers-connect-panel")?.scrollIntoView({ block: "nearest" }))
+                              } : undefined}
                               location={currentCatalogLocation()} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
                           </Show>
                         </article>

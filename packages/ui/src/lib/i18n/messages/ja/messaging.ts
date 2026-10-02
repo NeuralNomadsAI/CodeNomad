@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "前のリクエスト",
+  "interruption.next": "次のリクエスト",
+  "interruption.toggle": "リクエストを展開・折りたたむ",
+  "interruption.global": "サービスのリクエスト",
+  "interruption.reveal": "会話内で表示",
+  "interruption.respond": "入力欄の近くで回答",
+  "interruption.answered": "回答済み",
+  "interruption.noAnswer": "回答なし",
   "promptInput.skills.title": "スキル",
   "promptInput.skills.remove": "スキル {name} を削除",
   "promptInput.skills.loading": "スキルを読み込み中…",
@@ -209,7 +217,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
 
   "promptInput.placeholder.shell": "シェルコマンドを実行 (Esc で終了)...",
-  "promptInput.placeholder.default": "メッセージ、@file、@agent を入力、または画像/テキストを貼り付け...",
+  "promptInput.placeholder.default": "メッセージ、@file、@agent、@skill を入力、または画像/テキストを貼り付け...",
   "promptInput.hints.shell.exit": "でシェルモードを終了",
   "promptInput.hints.shell.enable": "シェルモード",
   "promptInput.hints.commands": "コマンド",

@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "अघिल्लो अनुरोध",
+  "interruption.next": "अर्को अनुरोध",
+  "interruption.toggle": "अनुरोधहरू विस्तार वा सङ्कुचन गर्नुहोस्",
+  "interruption.global": "सेवाको अनुरोध",
+  "interruption.reveal": "कुराकानीमा हेर्नुहोस्",
+  "interruption.respond": "लेख्ने ठाउँ नजिक उत्तर दिनुहोस्",
+  "interruption.answered": "उत्तर दिइयो",
+  "interruption.noAnswer": "उत्तर छैन",
   "promptInput.skills.title": "सीपहरू",
   "promptInput.skills.remove": "सीप {name} हटाउनुहोस्",
   "promptInput.skills.loading": "सीपहरू लोड हुँदैछन्…",
@@ -207,7 +215,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "च्याट इनपुट उचाइ टगल गर्नुहोस्",
 
   "promptInput.placeholder.shell": "शेल कमाण्ड चलाउनुहोस् (निस्कन Esc)...",
-  "promptInput.placeholder.default": "सन्देश, @file, @agent टाइप गर्नुहोस् वा फोटो र पाठ टाँस्नुहोस्...",
+  "promptInput.placeholder.default": "सन्देश, @file, @agent, @skill टाइप गर्नुहोस् वा फोटो र पाठ टाँस्नुहोस्...",
   "promptInput.hints.shell.exit": "शेल मोडबाट निस्कन",
   "promptInput.hints.shell.enable": "शेल मोड",
   "promptInput.hints.commands": "कमाण्डहरू",
