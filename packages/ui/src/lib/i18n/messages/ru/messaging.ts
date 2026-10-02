@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Предыдущий запрос",
+  "interruption.next": "Следующий запрос",
+  "interruption.toggle": "Развернуть или свернуть запросы",
+  "interruption.global": "Запрос сервиса",
+  "interruption.reveal": "Показать в беседе",
+  "interruption.respond": "Ответить рядом с полем ввода",
+  "interruption.answered": "Ответ получен",
+  "interruption.noAnswer": "Нет ответа",
   "promptInput.skills.title": "Навыки",
   "promptInput.skills.remove": "Удалить навык {name}",
   "promptInput.skills.loading": "Загрузка навыков…",

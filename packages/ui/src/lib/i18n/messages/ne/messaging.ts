@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "अघिल्लो अनुरोध",
+  "interruption.next": "अर्को अनुरोध",
+  "interruption.toggle": "अनुरोधहरू विस्तार वा सङ्कुचन गर्नुहोस्",
+  "interruption.global": "सेवाको अनुरोध",
+  "interruption.reveal": "कुराकानीमा हेर्नुहोस्",
+  "interruption.respond": "लेख्ने ठाउँ नजिक उत्तर दिनुहोस्",
+  "interruption.answered": "उत्तर दिइयो",
+  "interruption.noAnswer": "उत्तर छैन",
   "promptInput.skills.title": "सीपहरू",
   "promptInput.skills.remove": "सीप {name} हटाउनुहोस्",
   "promptInput.skills.loading": "सीपहरू लोड हुँदैछन्…",

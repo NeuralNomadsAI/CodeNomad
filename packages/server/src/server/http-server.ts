@@ -34,8 +34,11 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerMissionRoutes } from "./routes/missions"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
+import { WebSearchSettings } from "../opencode/websearch-settings"
+import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -303,9 +306,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerPluginControlRoutes(app, {
-    controls: new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger }),
-  })
+  const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
+  registerPluginControlRoutes(app, { controls: configurationControls })
+  registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
@@ -335,12 +338,14 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
     bridgeToken: deps.automationBridgeToken,
+    worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {

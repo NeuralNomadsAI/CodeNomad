@@ -1,9 +1,11 @@
-import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
+import { MissionReader } from "../mission-reader"
+import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
 import { messageStoreBus } from "../../stores/message-v2/bus"
 import PromptInput from "../prompt-input"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -39,6 +41,7 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 }
 
 interface SessionViewProps {
+  interruptionPanel?: JSXElement
   sessionId: string
   activeSessions: Map<string, Session>
   instanceId: string
@@ -102,11 +105,19 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const readingMission = () => props.isActive && Boolean(missionProjectView(props.instanceFolder).reader)
   const filePreview = createMemo(() => {
     const target = getFilePreview(props.instanceId)
     return target?.sessionId === props.sessionId ? target : null
   })
   createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
+  // The latest explicit reader selection owns the central surface. Opening one
+  // must not leave the other mounted invisibly above it; editor drafts live in
+  // their own store and the composer stays outside both readers.
+  createEffect(on(filePreview, target => {
+    if (target && props.isActive) updateMissionProjectView(props.instanceFolder, { reader: undefined })
+  }, { defer: true }))
+  createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -612,10 +623,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </div>
       }
     >
-      <div ref={rootRef} class="session-view">
+      <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
+        <div class="mission-transcript-surface">
+        <div class="mission-transcript-content" inert={readingMission()}
+          style={{ visibility: readingMission() ? "hidden" : undefined }}>
         <Show when={filePreview()} fallback={
         <Show
-          when={preview()?.mode === "preview"}
+          when={preview()?.mode === "preview" && !readingMission()}
           fallback={
             <MessageSection
               timelineMount={timelineMount()}
@@ -659,6 +673,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         </Show>
         }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
 
+        </div>
+        <Show when={readingMission()}>
+          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+        </Show>
+        </div>
+
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar
             attachments={attachments()}
@@ -673,6 +693,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           />
         </Show>
 
+        {props.interruptionPanel}
         <PromptInput
           instanceId={props.instanceId}
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
@@ -698,7 +719,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
           registerPromptInputApi={registerPromptInputApi}
         />
-        <div class="session-timeline-slot" ref={setTimelineMount} />
+        <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
       </div>
     </Show>
   )

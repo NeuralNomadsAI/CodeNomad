@@ -1,4 +1,12 @@
 export const messagingMessages = {
+  "interruption.previous": "Solicitud anterior",
+  "interruption.next": "Solicitud siguiente",
+  "interruption.toggle": "Expandir o contraer solicitudes",
+  "interruption.global": "Solicitud del servicio",
+  "interruption.reveal": "Ver en la conversación",
+  "interruption.respond": "Responder junto al campo de texto",
+  "interruption.answered": "Respondida",
+  "interruption.noAnswer": "Sin respuesta",
   "promptInput.skills.title": "Skills",
   "promptInput.skills.remove": "Quitar skill {name}",
   "promptInput.skills.loading": "Cargando skills…",

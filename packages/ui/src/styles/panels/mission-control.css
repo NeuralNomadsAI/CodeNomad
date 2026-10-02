@@ -1,0 +1,144 @@
+.mission-control {
+  min-height: 100%;
+  padding: var(--space-sm);
+  color: var(--text-primary);
+  background: var(--surface-secondary);
+}
+
+.mission-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-md);
+  padding: 0 var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+}
+
+.mission-control-icon-button {
+  display: inline-flex;
+  width: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+}
+
+.mission-control-icon-button:hover:not(:disabled) {
+  color: var(--accent-primary);
+  background: var(--surface-hover-overlay);
+}
+
+.mission-control-icon-button:disabled { opacity: .35; cursor: default; }
+
+.mission-control-icon-button:focus-visible,
+.mission-control-index-item:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.mission-control-state {
+  display: flex;
+  min-height: 280px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.mission-control-state-icon {
+  color: var(--accent-primary);
+}
+
+.mission-control-state p {
+  max-width: 34ch;
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.mission-control-stale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--status-warning);
+  background: var(--status-starting-bg);
+  border-inline-start: 2px solid var(--status-warning);
+  font-size: var(--font-size-xs);
+}
+
+.mission-control-index {
+  display: grid;
+  max-height: 192px;
+  overflow-y: auto;
+}
+
+.mission-index-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline-end: var(--space-xs);
+  border-inline-start: 2px solid transparent;
+}
+
+.mission-index-row + .mission-index-row { border-top: 1px solid var(--border-base); }
+.mission-control > .mission-disclosure { border-top: 1px solid var(--border-base); }
+
+.mission-index-row:hover { background: var(--surface-hover-overlay); }
+.mission-index-row-active { background: var(--surface-base); border-inline-start-color: var(--accent-primary); }
+.mission-index-row-active:hover { background: var(--surface-base); box-shadow: inset 0 0 0 100vmax var(--surface-hover-overlay); }
+
+.mission-index-row > .mission-control-icon-button { visibility: hidden; }
+.mission-index-row > :is(.mission-read-button, .mission-open-coordinator) { visibility: visible; }
+.mission-index-row:is(:hover, :focus-within, .mission-index-row-active) > .mission-control-icon-button { visibility: visible; }
+@media (hover: none) { .mission-index-row > .mission-control-icon-button { visibility: visible; } }
+
+.mission-control-index-item {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-sm);
+  text-align: start;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+}
+
+.mission-control-index-item span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.mission-control-index-item small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+.mission-control-index-item-active {
+  color: var(--text-primary);
+}
+
+.mission-control-index-item small:is([data-status="active"], [data-status="running"], [data-status="paused"]) { color: var(--status-starting-fg); }
+.mission-control-index-item small[data-status="completed"] { color: var(--status-ready-fg); }
+.mission-control-index-item small[data-status="failed"] { color: var(--status-error-fg); }
+.mission-lifecycle { display: flex; align-items: center; gap: var(--space-sm); padding-block: var(--space-xs); }
+.mission-lifecycle-actions { display: flex; flex-shrink: 0; }
+.mission-lifecycle small { color: var(--text-secondary); font-size: var(--font-size-xs); }

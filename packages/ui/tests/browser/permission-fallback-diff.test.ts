@@ -42,7 +42,7 @@ async function openFixture(page: Page, clipboard: "success" | "failure" | "pendi
   assert.deepEqual(errors, [], "fixture must initialize without browser errors")
 }
 
-test("source-less modal diff is complete through bounded pages even when clipboard fails", async () => {
+test("source-less dock diff is complete through bounded pages even when clipboard fails", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
     await openFixture(page, "failure")
@@ -107,7 +107,7 @@ test("late clipboard success cannot unlock a changed diff or a dismissed view", 
     await page.evaluate(() => (window as any).finishCopy())
     assert.equal(await page.getByRole("button", { name: "Allow Once", exact: true }).isDisabled(), true)
     await copy.click()
-    await page.keyboard.press("Escape")
+    await page.evaluate(() => (window as any).fixture.dismiss())
     await page.evaluate(() => (window as any).finishCopy())
     await page.evaluate(() => (window as any).fixture.reopen())
     assert.equal(await page.getByRole("button", { name: "Allow Once", exact: true }).isDisabled(), true)
