@@ -1,4 +1,6 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "Arama sonucu bulunamadı.",
+  "toolCall.websearch.provider": "Web arama sağlayıcısı",
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "İç içe araç çağrıları",
   "toolCall.execute.more": "{count} ek çağrı gizlendi.",

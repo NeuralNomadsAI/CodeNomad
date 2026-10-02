@@ -1,4 +1,6 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "לא נמצאו תוצאות חיפוש.",
+  "toolCall.websearch.provider": "ספק חיפוש ברשת",
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "קריאות כלים מקוננות",
   "toolCall.execute.more": "{count} קריאות נוספות הוסתרו.",

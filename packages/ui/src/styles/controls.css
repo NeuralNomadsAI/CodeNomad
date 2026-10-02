@@ -3,6 +3,7 @@
 @import "./components/window.css";
 @import "./components/auth-recovery.css";
 @import "./components/session-aside.css";
+@import "./components/prompt-skills.css";
 @import "./components/history-search.css";
 @import "./components/native-titlebar.css";
 @import "./components/badges.css";

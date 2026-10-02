@@ -1,4 +1,10 @@
 export const messagingMessages = {
+  "promptInput.skills.title": "技能",
+  "promptInput.skills.remove": "移除技能 {name}",
+  "promptInput.skills.loading": "正在加载技能…",
+  "promptInput.skills.select": "附加技能…",
+  "promptInput.skills.error": "无法加载技能。请关闭后重新打开以重试。",
+  "promptInput.skills.empty": "此目录中没有可用技能。",
   "toolCall.image.label": "图片 {number}",
   "toolCall.image.unavailable": "无法显示此图片。",
   "promptInput.btw.title": "/btw — 旁支问题",
@@ -203,7 +209,7 @@ export const messagingMessages = {
   "expandButton.toggleAriaLabel": "切换聊天输入框高度",
 
   "promptInput.placeholder.shell": "运行 shell 命令（Esc 退出）...",
-  "promptInput.placeholder.default": "输入消息、@file、@agent，或粘贴图片与文本...",
+  "promptInput.placeholder.default": "输入消息、@file、@agent、@skill，或粘贴图片与文本...",
   "promptInput.hints.shell.exit": "退出 shell 模式",
   "promptInput.hints.shell.enable": "Shell 模式",
   "promptInput.hints.commands": "命令",
