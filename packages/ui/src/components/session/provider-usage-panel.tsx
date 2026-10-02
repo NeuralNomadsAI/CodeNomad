@@ -48,12 +48,21 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       if (source() && (!event.event.location || event.event.location.directory === props.directory)) void state.refresh()
     } else if (["credential.updated", "credential.switched", "integration.updated", "config.updated", "server.connected"].includes(event.event.type)) revalidate()
   })
+  let lastInstanceStatus: string | undefined
+  let lastTransportStatus: string | undefined
   const unsubscribeStatus = serverEvents.on("instance.eventStatus", event => {
     if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
+    // Repeated status snapshots are not reconnects. Include the native stream
+    // generation so a new connection still fences quotas if its loss was missed.
+    const key = JSON.stringify([event.instanceId, event.status, event.generation])
+    if (key === lastInstanceStatus) return
+    lastInstanceStatus = key
     state.invalidate()
     if (event.status === "connected" && source()) void state.refresh()
   })
   const unsubscribeTransport = serverEvents.onTransportStatus(status => {
+    if (status === lastTransportStatus) return
+    lastTransportStatus = status
     state.invalidate()
     if (status === "connected" && source()) void state.refresh()
   })
