@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.21**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.22**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -50,7 +50,7 @@ Isolated HTTP/generated-client and rendered Solid fixtures cover these boundarie
 `node scripts/test-provider-usage-native.mjs <absolute-cli-path>` additionally
 exercises the production quota adapter against a fresh native daemon/database with
 synthetic OAuth/key credentials and mocked quota HTTP only. It passed on Windows
-with 2.0.20 and 2.0.21: active-account selection and `metadata.accountID`, warm-cache revocation
+with 2.0.20, 2.0.21 and 2.0.22: active-account selection and `metadata.accountID`, warm-cache revocation
 after switching to a key, and recovery despite a stale legacy file. This is not a
 real WSL or live ChatGPT quota test; no real credentials or shared daemon are used.
 
@@ -278,7 +278,7 @@ documented above. Historical migrations, standalone plugin acceptance and isolat
 npm upgrade pass; upgrade preserves the running 2.0.15 daemon's version and PID.
 Detailed test counts, environment and final review/CI outcomes belong in the PR.
 
-### Current stable target: 2.0.21
+### Previous stable target: 2.0.21
 
 The recommendation and synchronized server/UI client and plugin pins advance to
 **2.0.21**; the global minimum remains **2.0.7**, and Codex Usage's feature-local
@@ -305,6 +305,39 @@ historical migrations and isolated npm upgrade pass. Upgrade leaves the running
 cleanup `EPERM`; its unchanged focused rerun passes. Retain this failure and the
 historical intermittent Vite/import limitation rather than claiming either fixed.
 Detailed counts, review and CI outcomes belong in the PR.
+
+### Current stable target: 2.0.22
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.22**. The general minimum remains **2.0.7**, and Codex Usage's native
+credential-list requirement remains **2.0.20**. Authenticated native OpenAPI keeps
+116 paths, adding optional `parentID` and a parent-not-found response to session
+creation. A native fixture confirms that this variant ignores the supplied
+location and inherits the parent's directory. CodeNomad does not consume it:
+the workspace proxy rejects any `parentID` on creation before native forwarding,
+including an owned parent or malformed value. Creation requires an inspectable
+JSON object rather than an opaque body; ordinary owned root creation and the
+existing ownership-checked fork API remain available.
+
+Other schema changes add optional provider `headerTimeout`, allow `false` for
+`chunkTimeout`, and make configured model capability overrides partial. Published
+declarations change in 4/30 client, 2/60 plugin, 3/36 protocol and 4/102 schema
+files. Plugins additionally expose native session removal and compaction;
+CodeNomad adds no new plugin operation or proxy route. Runtime changes include
+header/chunk/whole-response timeout handling and bounded timeout retries, provider
+cache/error/tool-history fixes, MCP shutdown cleanup and forward-compatible model
+capability defaults. None establishes a new consumed API dependency.
+
+Windows qualification with Node 24.20.0 passes the seven native suites on both
+2.0.7 and 2.0.22, plus the explicit proxy suite. Native/UI pruning acceptance
+passes using the committed parent runner and #828's early dependency import order.
+This is an import-order harness workaround, not proof of repairing the underlying
+Windows heap corruption. Standalone plugin acceptance, historical migrations from
+2.0.3 and beta-19271, and native Codex Usage pass on 2.0.22. Native npm upgrade
+installs 2.0.22 while retaining the running 2.0.15 daemon's version and PID.
+The compaction-isolation fixture additionally passes on 2.0.22, preserving a
+second session's progress while the first provider response is held. Detailed
+test counts, limits, independent review and remote CI results belong in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
