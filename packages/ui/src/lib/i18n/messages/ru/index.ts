@@ -9,7 +9,6 @@ import { loadingScreenMessages } from "./loadingScreen"
 import { logMessages } from "./logs"
 import { markdownMessages } from "./markdown"
 import { messagingMessages } from "./messaging"
-import { missionMessages } from "./missions"
 import { remoteAccessMessages } from "./remoteAccess"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
@@ -29,7 +28,6 @@ export const ruMessages = mergeMessageParts(
   logMessages,
   sessionMessages,
   messagingMessages,
-  missionMessages,
   toolCallMessages,
   markdownMessages,
   settingsMessages,

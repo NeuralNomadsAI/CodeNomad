@@ -65,7 +65,3 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
-
-.session-view.mission-reading:has(> .session-timeline-slot .message-timeline-sidebar) { padding-inline-end: 0; }
-.session-view.mission-reading .session-timeline-slot,
-.session-view.mission-reading .prompt-input-footer::after { display: none; }

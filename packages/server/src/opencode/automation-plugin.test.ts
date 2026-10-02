@@ -14,7 +14,6 @@ import {
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
-  sendMissionInput,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -78,39 +77,6 @@ test("validates Developer Mode actions", () => {
   })
   assert.deepEqual(parseDeveloperAction({ action: "restart" }), { action: "restart" })
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
-})
-
-test("mission discovery waits for cold ownership validation and still rejects competing owners", { timeout: 20_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-mission-cold-owner-"))
-  const restore = isolateAutomationBridgeRegistry(root)
-  const removals: Array<() => Promise<void>> = []
-  const servers: http.Server[] = []
-  let admissions = 0
-  let cold = true
-  try {
-    const owner = await listen(async body => {
-      if (body.mode === "browser-claim") {
-        if (cold) await new Promise(resolve => setTimeout(resolve, 5_200))
-        return { result: { available: true } }
-      }
-      admissions++
-      return { result: { admitted: true } }
-    })
-    servers.push(owner.server)
-    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(owner.url)))
-    assert.deepEqual(await sendMissionInput("ses_cold", "prompt", {}), { admitted: true })
-    cold = false
-    const competing = await listen(async () => ({ result: { available: true } }))
-    servers.push(competing.server)
-    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(competing.url)))
-    await assert.rejects(sendMissionInput("ses_cold", "prompt", {}), /exactly one owning/)
-    assert.equal(admissions, 1)
-  } finally {
-    await Promise.all(removals.map(remove => remove()))
-    await Promise.all(servers.map(closeServer))
-    restore()
-    await rm(root, { recursive: true, force: true })
-  }
 })
 
 test("validates browser actions", () => {

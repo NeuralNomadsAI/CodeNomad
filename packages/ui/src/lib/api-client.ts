@@ -13,8 +13,6 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
-  MissionListResponse,
-  MissionMap,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
@@ -589,21 +587,6 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
-  fetchMissions(instanceId: string): Promise<MissionListResponse> {
-    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
-  },
-  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`, { method: "POST", body: JSON.stringify(input) })
-  },
-  editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "PATCH", body: JSON.stringify(input) })
-  },
-  deleteMission(instanceId: string, missionId: string, input: { expectedRevision: number; requestId: string; deleteManagedSessions?: boolean }): Promise<{ deleted: true }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`, { method: "DELETE", body: JSON.stringify(input) })
-  },
-  controlMission(instanceId: string, missionId: string, input: { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`, { method: "POST", body: JSON.stringify(input) })
-  },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -655,8 +638,7 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
-
   return `${url.pathname}${url.search}`
 }
 
-export type { MissionListResponse, WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }
+export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }

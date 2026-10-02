@@ -63,19 +63,6 @@ test("explicit reveal invalidates the resident hidden permission tool's display 
   } finally { await page.close() }
 })
 
-test("source navigation dismisses the mission reader and restores an interactive transcript", async () => {
-  const { page, errors } = await fixture()
-  try {
-    await page.evaluate(() => { (window as any).fixture.ask(); (window as any).fixture.missionReader() })
-    await page.locator('.mission-transcript-content[inert]').waitFor({ state: "attached" })
-    await page.getByRole("button", { name: "View in conversation" }).click()
-    await page.locator('[data-interruption-reveal="true"]').waitFor()
-    assert.equal(await page.evaluate(() => (window as any).fixture.hasMissionReader()), false)
-    assert.equal(await page.locator('.mission-transcript-content').evaluate(element => element.hasAttribute("inert")), false)
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 test("badge opens the dock independent of loaded history; source navigation and native answer receipt survive reload", async () => {
   const { page, errors } = await fixture()
   try {

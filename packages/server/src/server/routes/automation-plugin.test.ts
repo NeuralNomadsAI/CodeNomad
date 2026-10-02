@@ -4,24 +4,6 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
-test("a slow unrelated workspace cannot hide an already verified automation owner", { timeout: 2_000 }, async t => {
-  const app = Fastify()
-  let unblock!: () => void
-  const unrelated = new Promise<void>(resolve => { unblock = resolve })
-  t.after(async () => { unblock(); await app.close() })
-  registerAutomationPluginRoute(app, {
-    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: {}, developerCdp: {},
-    workspaceManager: {
-      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
-      list: () => [{ id: "slow-unrelated" }, { id: "owner" }],
-      ownsLocation: async (id: string) => { if (id === "owner") return true; await unrelated; return false },
-    },
-  } as never)
-  const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
-    headers: { "x-codenomad-automation-token": "fixture" }, payload: { mode: "browser-claim", sessionID: "ses_owner" } })
-  assert.equal(response.statusCode, 200)
-})
-
 test("targets the inspected window independently of the visible conversation", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: Array<{ method: string; params: unknown }> = []

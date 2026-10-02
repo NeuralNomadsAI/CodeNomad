@@ -60,8 +60,8 @@ is fetched only while Settings is mounted; it is not persisted as a catalog.
 - Persist only the opt-in policy. Keep native
   exports on the server stack, redact failures, and never expose tokens through
   the account catalog, browser, logs or persisted display cache.
-- Apply decisions before the next prompt/custom-command admission, including
-  Mission assignments, independent of an open Settings window. Shell, `/btw`,
+- Apply decisions before the next prompt/custom-command admission,
+  independent of an open Settings window. Shell, `/btw`,
   tools, autonomous native steps and already queued requests are not replayed
   or intercepted. Serialize decisions across this backend's workspaces, freshly verify
   connection/ownership/deletion fences and current credential before activation.
