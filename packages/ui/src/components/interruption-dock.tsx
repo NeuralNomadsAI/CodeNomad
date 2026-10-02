@@ -11,7 +11,6 @@ import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
 import { showSessionChat } from "../stores/session-previews"
 import { closeFilePreview } from "../stores/files-preview"
-import { updateMissionProjectView } from "../stores/mission-view-state"
 import { instances } from "../stores/instances"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean }) {
@@ -42,7 +41,6 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
     if (!target) return
     closeFilePreview(props.instanceId)
     const folder = instances().get(props.instanceId)?.folder
-    if (folder) updateMissionProjectView(folder, { reader: undefined })
     showSessionChat(folder ?? target.sessionId)
     ensureSessionAncestorsExpanded(props.instanceId, target.sessionId)
     setActiveSessionFromList(props.instanceId, target.sessionId)

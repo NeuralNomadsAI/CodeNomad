@@ -8,8 +8,6 @@ import type { Plugin } from "@opencode/plugin"
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
 const PROBE_TIMEOUT_MS = 5_000
-// Mission ownership may require a cold, validated linked-worktree inventory.
-const MISSION_PROBE_TIMEOUT_MS = 30_000
 const INSPECTION_TIMEOUT_MS = 15_000
 const RECONNECT_INTERVAL_MS = 250
 const MAX_REGISTRATIONS = 64
@@ -447,13 +445,12 @@ async function probeBrowserBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
   mode: "browser-claim" | "browser-probe",
-  timeoutMs = PROBE_TIMEOUT_MS,
 ): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        return (await callBridge(registration, { mode, sessionID }, timeoutMs)).status === 200 ? registration : undefined
+        return (await callBridge(registration, { mode, sessionID })).status === 200 ? registration : undefined
       } catch {
         return undefined
       }
@@ -463,14 +460,6 @@ async function probeBrowserBridges(
     }
   }
   return found.slice(0, 2)
-}
-
-export async function sendMissionInput(sessionID: string, kind: "prompt" | "synthetic" | "cleanup" | "lifecycle", input: unknown): Promise<unknown> {
-  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS)
-  if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
-  const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
-  if (response.status !== 200) throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
-  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {
