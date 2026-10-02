@@ -29,6 +29,38 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
+test("the real shell badge reopens the selected question with a same-session permission queued", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+  page.setDefaultTimeout(15000)
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.locator("textarea.prompt-input").fill("Keep the composer draft")
+    await page.evaluate(() => (window as any).fixture.askQuestion())
+    const answer = page.locator('.interruption-dock input[type="text"]:visible')
+    await answer.fill("Keep this question selected")
+    await page.evaluate(() => (window as any).fixture.queuePermission())
+    assert.equal(await page.locator(".interruption-position").innerText(), "2 / 2")
+    assert.equal(await answer.inputValue(), "Keep this question selected")
+    await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
+    assert.equal(await answer.count(), 0)
+
+    // Exercise InstanceShell's production callback, not a fixture focusInterruption intent.
+    await page.locator(".session-header-indicators .permission-center-trigger:visible").click()
+    await answer.waitFor()
+    assert.equal(await page.locator(".interruption-position").innerText(), "2 / 2")
+    assert.equal(await page.locator(".interruption-dock .window-title").innerText(), "Your response")
+    assert.equal(await answer.inputValue(), "Keep this question selected")
+    assert.equal(await page.locator("textarea.prompt-input").inputValue(), "Keep the composer draft")
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
 test("native Electron zoom preserves CSS minimums across close/recreate, shared local siblings and isolated framed remote windows", { timeout: 90000 }, async () => {
   const sandbox = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "codenomad-window-zoom-"))
   let app: ElectronApplication | undefined
