@@ -53,6 +53,12 @@ export async function testNativeProxy({ client, baseUrl, root, authorization, ru
     assert.ok(Array.isArray((await proxy.permission.request.list({ location })).data))
     for (let index = 0; index < 3; index++) created.push(await proxy.session.create({ location }))
     const sessionID = created[0].id
+    for (const parentID of [sessionID, "ses_foreign_parent"]) {
+      const rejected = await app.inject({ method: "POST", url: "/workspaces/native/instance/api/session",
+        payload: { parentID, location } })
+      assert.equal(rejected.statusCode, 403, "Native parent creation must not bypass workspace authority")
+    }
+    console.log("PASS: native parent-create variant stays closed through the production proxy; ordinary root creation remains available")
     await proxy.session.update({ sessionID, title: "Stable proxy fixture" })
     assert.equal((await proxy.session.get({ sessionID })).title, "Stable proxy fixture")
     const page = await proxy.session.list({ directory: root, limit: 1 })

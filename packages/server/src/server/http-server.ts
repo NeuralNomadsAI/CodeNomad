@@ -701,6 +701,19 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
 
+  // Native parent creation ignores the supplied location and inherits the
+  // parent's authority. It is not part of CodeNomad's root-create contract.
+  if (request.method === "POST" && pathname.replace(/\/+$/, "") === "/api/session") {
+    if (request.body !== undefined && (!request.body || typeof request.body !== "object"
+      || Array.isArray(request.body) || Buffer.isBuffer(request.body)
+      || request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !== "application/json")) {
+      return reply.code(400).send({ error: "Session creation requires a JSON object" })
+    }
+    if (request.body && "parentID" in request.body) {
+      return reply.code(403).send({ error: "Parent session creation is not available through a workspace" })
+    }
+  }
+
   const connection = await wait(Promise.resolve(workspaceManager.getSharedServiceConnection?.(workspaceId)))
   const endpoint = connection?.endpoint ?? await wait(workspaceManager.getSharedServiceEndpoint(workspaceId))
   const clientForRequest = () => {
