@@ -267,10 +267,12 @@ export class WorkspaceManager {
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
   }
 
-  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): Promise<boolean> {
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     const directory = await this.getServiceDirectoryForPath(id, location.directory)
+    signal?.throwIfAborted()
     if (!directory) return false
     if (location.workspaceID === undefined) return true
     // The directory fence alone cannot authorize a legacy native workspace.
@@ -279,8 +281,8 @@ export class WorkspaceManager {
     try {
       const requested = readLocationRef({ ...location, directory })
       const resolved = readLocationRef(client
-        ? await client.location.get({ location: { directory } }, locationRequestOptions(requested))
-        : await this.sharedService.validateLocation(requested, undefined, record[WORKSPACE_STATE].serviceOptions))
+        ? await client.location.get({ location: { directory } }, { ...locationRequestOptions(requested), signal })
+        : await this.sharedService.validateLocation(requested, { signal }, record[WORKSPACE_STATE].serviceOptions))
       return sameLocation(requested, resolved)
     } catch {
       return false

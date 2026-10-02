@@ -8,12 +8,14 @@ import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
 import { getLogger } from "../lib/logger"
+import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 
 const log = getLogger("session")
 
 type DataEntry = {
   data: Data
   emit: (event: OpenCodeEvent) => void
+  fencePendingReads: (sessionId: string) => void
   syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) => Promise<boolean>
   syncAuthoritative: (sessionId: string, isCurrent: () => boolean) => Promise<boolean>
   dispose: () => void
@@ -57,6 +59,18 @@ const messageRevisions = new Map<string, number>()
 const fullDataRevisions = new Map<string, number>()
 const instanceGenerations = new Map<string, number>()
 const instanceDataRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
+const unobservedCompactions = new Set<string>()
+type CompactionDeltaContext = {
+  instanceId: string
+  directory: string
+  onDeferred?: (data: Data) => void
+  onResynced?: (data: Data) => void
+}
+const coalescedCompactionEvents = new WeakSet<object>()
+const compactionDeltas = createCompactionDeltaBuffer<CompactionDeltaContext>((event, context) => {
+  coalescedCompactionEvents.add(event)
+  applyOpenCodeDataEvent(context.instanceId, context.directory, event, context.onDeferred, context.onResynced)
+})
 let nextInstanceGeneration = 0
 
 function messageRevisionKey(instanceId: string, sessionId: string): string {
@@ -130,6 +144,10 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
+                  // A current native page can already contain buffered text.
+                  // Reduce it before taking read authority, never append it
+                  // again to a page that was fetched after delta admission.
+                  compactionDeltas.flush(instanceId, input.sessionID)
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
                   const revision = eventRevisions.get(input.sessionID) ?? 0
@@ -137,6 +155,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
+                  compactionDeltas.flush(instanceId, input.sessionID)
                   if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
                   return response
                 }
@@ -166,6 +185,9 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       data,
       emit(details: OpenCodeEvent) {
         emit(details)
+      },
+      fencePendingReads(sessionId: string) {
+        eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
         messageSnapshots.set(sessionId, messages)
@@ -573,6 +595,7 @@ export function applyOpenCodeDataEvent(
   event: OpenCodeEvent,
   onDeferred?: (data: Data) => void,
   onResynced?: (data: Data) => void,
+  skipUnobservedCompaction = false,
 ): Data {
   if (event.type === "server.connected") destroyOpenCodeData(instanceId)
   const primary = ensureData(instanceId, directory)
@@ -581,6 +604,20 @@ export function applyOpenCodeDataEvent(
   // with sync:false, feeding these events to createData starts HTTP refreshes.
   if (!/^(session|permission|form)\./.test(event.type)) return primary.data
   const sessionId = eventSessionId(event)
+  const coalesced = coalescedCompactionEvents.delete(event)
+  if (typeof sessionId === "string" && !coalesced) {
+    if (event.type === "session.compaction.ended" || event.type === "session.compaction.failed"
+      || event.type === "session.deleted" || event.type === "session.revert.committed") {
+      // Terminal events replace summary text. Destructive events must not let
+      // a delayed fragment resurrect a removed or invalidated compaction.
+      compactionDeltas.cancel(instanceId, sessionId)
+      unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
+    } else if (event.type !== "session.compaction.delta") {
+      // A second start or another same-session event observes preceding text
+      // in native order; unrelated sessions never force a flush.
+      compactionDeltas.flush(instanceId, sessionId)
+    }
+  }
   if (event.type === "session.deleted" && typeof sessionId === "string") {
     const key = messageRevisionKey(instanceId, sessionId)
     const transcript = transcriptEntries.get(key)
@@ -595,23 +632,48 @@ export function applyOpenCodeDataEvent(
     fullDataRevisions.delete(key)
     return transcript?.entry.data ?? primary.data
   }
+  if (typeof sessionId === "string" && !coalesced) {
+    const key = messageRevisionKey(instanceId, sessionId)
+    fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
+    if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
+    if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
+    if (skipUnobservedCompaction && event.type.startsWith("session.compaction.") && !transcriptEntries.has(key)) {
+      // No native reducer/visible transcript is observing this session. The
+      // next activation loads authoritative messages instead of storing deltas.
+      if (event.type === "session.compaction.started") unobservedCompactions.add(key)
+      if (event.type === "session.compaction.ended" || event.type === "session.compaction.failed") unobservedCompactions.delete(key)
+      return primary.data
+    }
+  }
   const transcript = typeof sessionId === "string"
     ? ensureTranscript(instanceId, sessionId, directory)
     : undefined
   const entry = transcript?.entry ?? primary
   if (transcript && typeof sessionId === "string") {
+    if (event.type === "session.compaction.started") unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
     // A new execution must not inherit a preceding idle event's deferred cleanup.
     if (event.type === "session.execution.started" || eventMayAppendMessage(event)) transcript.retireWhenDrained = false
-    const key = messageRevisionKey(instanceId, sessionId)
-    fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
-    if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
-    if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
   }
   if (transcript && typeof sessionId === "string") {
     if (onResynced) transcript.onResynced = onResynced
+    if (event.type === "session.compaction.delta" && unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))) {
+      // Activation during a previously unobserved compaction has no start row
+      // in the SDK reducer. Recover its exact native summary instead of making
+      // up a start or appending a delta to a REST page that already includes it.
+      transcript.preserveNativePageOnResync = true
+      collapseTranscriptQueue(instanceId, sessionId, transcript)
+      return transcript.entry.data
+    }
     if (transcript.needsAuthoritativeResync || transcript.resyncing) {
       collapseTranscriptQueue(instanceId, sessionId, transcript)
       return transcript.entry.data
+    }
+    if (event.type === "session.compaction.delta" && !coalesced) {
+      // Admission fences both CodeNomad and SDK reads immediately, even though
+      // the reactive payload is reduced only once per interval.
+      entry.fencePendingReads(sessionId)
+      compactionDeltas.push(instanceId, sessionId, event, { instanceId, directory, onDeferred, onResynced })
+      return entry.data
     }
     if (transcript.rotating
       || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
@@ -623,6 +685,7 @@ export function applyOpenCodeDataEvent(
     }
   }
   entry.emit(event)
+  if (coalesced) onDeferred?.(entry.data)
   return entry.data
 }
 
@@ -631,6 +694,8 @@ export function getOpenCodeMessageRevision(instanceId: string, sessionId: string
 }
 
 export function invalidateOpenCodeSessionContent(instanceId: string, sessionId: string): void {
+  compactionDeltas.cancel(instanceId, sessionId)
+  unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
   const key = messageRevisionKey(instanceId, sessionId)
   bumpMutationRevision(key)
   messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
@@ -720,6 +785,8 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
 
 export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
   if (sessionId !== undefined) {
+    compactionDeltas.cancel(instanceId, sessionId)
+    unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
     const key = messageRevisionKey(instanceId, sessionId)
     const transcript = transcriptEntries.get(key)
     if (transcript) {
@@ -733,6 +800,10 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
     fullDataRevisions.delete(key)
     instanceDataRevision(instanceId)[1]((current) => current + 1)
     return
+  }
+  compactionDeltas.clear(instanceId)
+  for (const key of unobservedCompactions) {
+    if (key.startsWith(`${instanceId}\0`)) unobservedCompactions.delete(key)
   }
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()

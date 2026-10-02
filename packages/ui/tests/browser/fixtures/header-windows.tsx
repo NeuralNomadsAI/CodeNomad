@@ -14,6 +14,9 @@ import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, 
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 
+// Optional, synchronous test-only marks; no observer is installed on native pages.
+const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
+bootStage("imports-complete")
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
@@ -37,7 +40,9 @@ setProviders(previous => new Map(previous).set(id, [{ id: "fixture", name: "Fixt
 setActiveSession(id, sessionId)
 setActiveParentSession(id, sessionId)
 setSessionPage(id, [sessionId], false, true)
+bootStage("worktrees-before")
 await ensureWorktreesLoaded(id)
+bootStage("worktrees-after")
 let executions = 0
 const escapeStates: boolean[] = []
 const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
@@ -64,8 +69,12 @@ function Fixture() {
   </div>
   )
 }
+bootStage("render-before")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+bootStage("render-after")
+bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
+bootStage("preferences-after")
 ;(window as any).fixture = {
   viewAction: (action: string) => viewAction(action),
   menuInstance: setMenuInstance,
@@ -82,3 +91,4 @@ await updatePreferences({ locale: "en" })
   interrupts: () => interrupts,
   promptHeight: promptInputHeight,
 }
+bootStage("published")
