@@ -1,0 +1,20 @@
+.mission-flow { position: relative; }
+.mission-graph { position: absolute; inset-block-start: 0; inset-inline-start: 0; pointer-events: none; overflow: visible; }
+[dir="rtl"] .mission-graph { transform: scaleX(-1); }
+.mission-graph path { fill: none; stroke: var(--text-muted); stroke-width: 1; opacity: .6; }
+.mission-graph .mission-graph-tick { stroke: var(--border-base); }
+.mission-graph rect { fill: var(--surface-secondary); stroke: var(--text-muted); stroke-width: 1.5; }
+.mission-graph [data-status="completed"] rect { fill: var(--status-success); stroke: var(--status-success); }
+.mission-graph [data-status="failed"] rect { fill: var(--status-error); stroke: var(--status-error); }
+.mission-graph [data-status="needs-input"] rect { fill: var(--status-warning); stroke: var(--status-warning); }
+.mission-graph [data-status="ready"] rect,
+.mission-graph [data-status="dispatching"] rect,
+.mission-graph [data-status="queued"] rect { stroke: var(--accent-primary); }
+.mission-route-task > .mission-disclosure { padding: 0; }
+.mission-route-task .mission-disclosure-trigger { min-height: 36px; padding-inline: var(--space-xs); }
+.mission-route-task .mission-task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-route-task .mission-task-status { overflow-wrap: normal; }
+.mission-route-task .mission-disclosure > div:not([hidden]) { padding: var(--space-xs) var(--space-sm) var(--space-sm); }
+.mission-route-task .mission-text-excerpt { margin: 0 0 var(--space-xs); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.mission-task-result { display: flex; align-items: center; width: 100%; min-width: 0; }
+.mission-task-result > span { flex: 1; }

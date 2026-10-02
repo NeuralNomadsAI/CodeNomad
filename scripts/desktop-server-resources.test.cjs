@@ -59,15 +59,15 @@ test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
   })
 })
 
-test("both desktop resource layouts retain a self-contained unified automation bundle", async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-automation-resources-"))
+for (const feature of ["automation", "missions"]) test(`both desktop resource layouts retain a self-contained ${feature} bundle`, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `codenomad-${feature}-resources-`))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const serverRoot = path.join(root, "source")
   for (const name of ["public", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
   fs.writeFileSync(path.join(serverRoot, "package.json"), JSON.stringify({ type: "module" }))
-  const relative = path.join("dist", "plugins", "automation", "plugin.mjs")
+  const relative = path.join("dist", "plugins", feature, "plugin.mjs")
   await require("esbuild").build({
-    entryPoints: [path.join(__dirname, "../packages/server/src/opencode/automation/desktop-plugin.ts")],
+    entryPoints: [path.join(__dirname, `../packages/server/src/opencode/${feature}/desktop-plugin.ts`)],
     outfile: path.join(serverRoot, relative), bundle: true, platform: "node", format: "esm", target: "node22",
   })
   for (const host of ["electron", "tauri"]) {
@@ -77,7 +77,7 @@ test("both desktop resource layouts retain a self-contained unified automation b
     assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(serverRoot, relative)))
     const { desktopPlugin } = await import(require("node:url").pathToFileURL(target).href)
     const plugin = desktopPlugin(path.join(root, "absent-presence"))
-    assert.equal(plugin.id, "codenomad.automation")
+    assert.equal(plugin.id, `codenomad.${feature}`)
     const cleanup = await plugin.setup({})
     await cleanup()
   }
