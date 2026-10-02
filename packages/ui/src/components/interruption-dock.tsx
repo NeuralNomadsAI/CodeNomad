@@ -1,17 +1,12 @@
-import { For, Show, createEffect, createMemo, createSignal, on, untrack } from "solid-js"
-import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-solid"
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, untrack } from "solid-js"
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageCircleQuestion, ShieldCheck } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
-import { sessions, ensureSessionAncestorsExpanded, setActiveSessionFromList } from "../stores/sessions"
-import { interruptionFocus, setInterruptionReveal } from "../stores/interruption-navigation"
-import { getPermissionCallId, getPermissionMessageId } from "../types/permission"
-import { explicitToolReference } from "./form-request-tool-target"
+import { sessions } from "../stores/sessions"
+import { interruptionFocus } from "../stores/interruption-navigation"
 import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
-import { showSessionChat } from "../stores/session-previews"
-import { closeFilePreview } from "../stores/files-preview"
-import { instances } from "../stores/instances"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean }) {
   const { t } = useI18n()
@@ -26,63 +21,72 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   const current = createMemo(() => byKey().get(selected() ?? "") ?? queue().find(item => item.payload.sessionID === props.sessionId) ?? queue()[0])
   const index = () => queue().findIndex(item => item.key === current()?.key)
   const title = (sessionId: string) => sessions().get(props.instanceId)?.get(sessionId)?.title || sessionId
-  const source = () => {
-    const item = current()
-    if (!item) return undefined
-    const reference = item.kind === "form" ? explicitToolReference(item.payload) : {
-      messageId: getPermissionMessageId(item.payload), callId: getPermissionCallId(item.payload),
-    }
-    return reference.messageId && item.payload.sessionID !== "global"
-      ? { instanceId: props.instanceId, sessionId: item.payload.sessionID, messageId: reference.messageId, callId: reference.callId }
-      : undefined
-  }
-  const reveal = () => {
-    const target = source()
-    if (!target) return
-    closeFilePreview(props.instanceId)
-    const folder = instances().get(props.instanceId)?.folder
-    showSessionChat(folder ?? target.sessionId)
-    ensureSessionAncestorsExpanded(props.instanceId, target.sessionId)
-    setActiveSessionFromList(props.instanceId, target.sessionId)
-    setInterruptionReveal(target)
-  }
+  const heading = () => t(current()?.kind === "permission" ? "interruption.permission" : "interruption.question")
+  const sessionTitle = () => current()?.payload.sessionID === "global" ? t("interruption.global") : title(current()?.payload.sessionID ?? "")
   createEffect(on(() => props.sessionId, () => {
-    setSelected(undefined)
+    setSelected(untrack(queue).find(item => item.payload.sessionID === props.sessionId)?.key ?? untrack(current)?.key)
     setCollapsed(false)
   }))
-  createEffect(on(() => current()?.key, () => setCollapsed(false)))
+  createEffect(on(() => current()?.key, key => {
+    // Pin the request being edited, even when a permission arrives ahead of it.
+    setSelected(key)
+    setCollapsed(false)
+  }))
   createEffect(on(interruptionFocus, intent => {
     if (intent?.instanceId !== props.instanceId) return
     const item = untrack(queue).find(item => intent.requestId ? item.payload.id === intent.requestId
-      : intent.sessionId ? item.payload.sessionID === intent.sessionId : true) ?? untrack(queue)[0]
+      : intent.sessionId ? item.payload.sessionID === intent.sessionId : item.key === untrack(current)?.key) ?? untrack(queue)[0]
     if (!item) return
     setSelected(item.key)
     setCollapsed(false)
     queueMicrotask(() => { if (props.active !== false && root?.isConnected) root.focus({ preventScroll: true }) })
   }))
-  const move = (delta: number) => setSelected(queue()[(index() + delta + queue().length) % queue().length]?.key)
+  const move = (delta: number) => {
+    const next = queue()[index() + delta]
+    if (!next) return
+    setSelected(next.key)
+    setCollapsed(false)
+  }
 
   return <Show when={queue().length > 0}>
-    <section ref={root} class="interruption-dock window-shell" tabIndex={-1} aria-label={t("permissionApproval.title")}>
+    <section ref={root} class="interruption-dock window-shell" classList={{ "is-collapsed": collapsed() }} tabIndex={-1} aria-label={t("permissionApproval.title")}>
       <header class="window-header">
-        <h2 class="window-title">{t("permissionApproval.title")}</h2>
-        <span class="badge-shape">{index() + 1} / {queue().length}</span>
+        <div class="interruption-heading">
+          <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
+          <div class="interruption-heading-copy">
+            <h2 class="window-title">{heading()}</h2>
+            <span class="interruption-session" title={sessionTitle()}>{sessionTitle()}</span>
+          </div>
+        </div>
         <div class="window-actions">
-          <button type="button" class="window-action" disabled={queue().length < 2} aria-label={t("interruption.previous")} onClick={() => move(-1)}><ChevronLeft size={16} /></button>
-          <button type="button" class="window-action" disabled={queue().length < 2} aria-label={t("interruption.next")} onClick={() => move(1)}><ChevronRight size={16} /></button>
-          <button type="button" class="window-action icon-toggle" aria-label={t("interruption.toggle")} aria-expanded={!collapsed()}
-            aria-controls={`interruption-body-${props.instanceId}`} onClick={() => setCollapsed(value => !value)}><ChevronDown size={16} /></button>
+          <Show when={queue().length > 1}>
+            <div class="interruption-navigation">
+              <button type="button" class="window-icon-button" disabled={index() === 0} aria-label={t("interruption.previous")} title={t("interruption.previous")} onClick={() => move(-1)}><ChevronLeft size={16} /></button>
+              <span class="interruption-position" aria-live="polite">{index() + 1} / {queue().length}</span>
+              <button type="button" class="window-icon-button" disabled={index() === queue().length - 1} aria-label={t("interruption.next")} title={t("interruption.next")} onClick={() => move(1)}><ChevronRight size={16} /></button>
+            </div>
+          </Show>
+          <button type="button" class="window-icon-button interruption-toggle icon-toggle" aria-label={t(collapsed() ? "interruption.expand" : "interruption.collapse")} title={t(collapsed() ? "interruption.expand" : "interruption.collapse")} aria-expanded={!collapsed()}
+            aria-controls={`interruption-body-${props.instanceId}`} onClick={() => setCollapsed(value => !value)}>
+            <Show when={collapsed()} fallback={<ChevronDown size={16} />}><ChevronUp size={16} /></Show>
+          </button>
         </div>
       </header>
-      <div class="window-toolbar interruption-toolbar">
-        <span>{current()?.payload.sessionID === "global" ? t("interruption.global") : title(current()?.payload.sessionID ?? "")}</span>
-        <Show when={source()}><button type="button" class="window-action" onClick={reveal}>{t("interruption.reveal")}</button></Show>
-      </div>
       <div id={`interruption-body-${props.instanceId}`} class="window-body interruption-body" hidden={collapsed()}>
         {/* Stable request keys preserve partial answers across native reconciliation and queue navigation. */}
         <For each={queue().map(item => item.key)}>{key => {
           const item = () => byKey().get(key)!
-          return <div hidden={current()?.key !== key} inert={current()?.key !== key}>
+          let editor: HTMLDivElement | undefined
+          onCleanup(() => {
+            if (!editor?.contains(document.activeElement)) return
+            const composer = root?.closest(".session-view")?.querySelector<HTMLTextAreaElement>(".prompt-input")
+            queueMicrotask(() => {
+              if (props.active === false || (document.activeElement !== document.body && document.activeElement?.isConnected)) return
+              if (root?.isConnected) root.focus({ preventScroll: true })
+              else if (composer?.isConnected) composer.focus({ preventScroll: true })
+            })
+          })
+          return <div ref={editor} class="interruption-editor" hidden={current()?.key !== key} inert={current()?.key !== key}>
             <Show when={item().kind === "form"} fallback={<InterruptionPermission instanceId={props.instanceId} permission={item().payload as ReturnType<typeof getPermissionQueue>[number]} />}>
               <FormRequest form={item().payload as ReturnType<typeof getFormQueue>[number]}
                 onReply={answer => sendFormReply(props.instanceId, item().payload.id, answer)} onCancel={() => sendFormCancel(props.instanceId, item().payload.id)} />

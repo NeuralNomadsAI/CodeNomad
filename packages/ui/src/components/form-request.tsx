@@ -106,6 +106,19 @@ const FormRequest: Component<FormRequestProps> = (props) => {
 
   return (
     <form class="form-request" onSubmit={submit} aria-label={title()} data-websearch-provider={webSearchProvider() || undefined}>
+      <fieldset class="form-request-fields" disabled={submitting()} onFocusIn={event => {
+        const scroller = event.currentTarget
+        const control = event.target
+        // Native focus scrolling can expose only the text baseline of a control.
+        requestAnimationFrame(() => {
+          if (!control.isConnected || document.activeElement !== control || scroller.scrollHeight <= scroller.clientHeight) return
+          const viewport = scroller.getBoundingClientRect()
+          const bounds = control.getBoundingClientRect()
+          if (bounds.bottom > viewport.bottom - 8) scroller.scrollTop += bounds.bottom - viewport.bottom + 8
+          else if (bounds.top < viewport.top + 8) scroller.scrollTop += bounds.top - viewport.top - 8
+        })
+      }}>
+      <legend class="sr-only">{title()}</legend>
       <h3 class="form-request-title">{title()}</h3>
       <For each={visibleFields()}>
         {(field) => {
@@ -290,8 +303,9 @@ const FormRequest: Component<FormRequestProps> = (props) => {
           )
         }}
       </For>
+      </fieldset>
       <Show when={error()}>{(message) => <p class="form-request-error" role="alert">{message()}</p>}</Show>
-      <div class="form-request-actions">
+      <div class="form-request-actions window-footer">
         <button type="button" class="selector-button selector-button-secondary" disabled={submitting()} onClick={() => void cancel()}>
           {t("formRequest.cancel")}
         </button>
