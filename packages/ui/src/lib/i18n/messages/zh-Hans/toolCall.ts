@@ -1,4 +1,6 @@
 export const toolCallMessages = {
+  "toolCall.websearch.empty": "未找到搜索结果。",
+  "toolCall.websearch.provider": "网络搜索提供商",
   "toolCall.execute.script": "Code Mode",
   "toolCall.execute.calls": "嵌套工具调用",
   "toolCall.execute.more": "已省略另外 {count} 个调用。",
