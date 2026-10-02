@@ -173,6 +173,28 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("rejects native parent creation even when the claimed location is owned", async () => {
+    const { app, sessionGets, requestCount } = await harness()
+    for (const parentID of ["foreign-parent", "owned-parent", null, "", 42]) {
+      const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+        payload: { parentID, location: { directory: "/repo" } } })
+      assert.equal(response.statusCode, 403)
+    }
+    assert.equal(requestCount(), 0)
+    assert.deepEqual(sessionGets, [])
+    for (const contentType of ["text/plain", "application/octet-stream", "application/problem+json"]) {
+      const opaque = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+        headers: { "content-type": contentType }, payload: JSON.stringify({ parentID: "foreign-parent", location: { directory: "/repo" } }) })
+      assert.equal(opaque.statusCode, 400)
+    }
+    assert.equal(requestCount(), 0)
+    const root = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+      payload: { title: "Owned root", location: { directory: "/repo" } } })
+    assert.equal(root.statusCode, 200)
+    assert.equal(requestCount(), 1)
+    assert.deepEqual(root.json().body, { title: "Owned root", location: { directory: "/repo" } })
+  })
+
   it("keeps native credential export and creation outside the workspace proxy", async () => {
     const { app, requestCount } = await harness()
     for (const method of ["GET", "POST"] as const) {
