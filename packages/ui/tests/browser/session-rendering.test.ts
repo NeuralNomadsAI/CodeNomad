@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
@@ -54,18 +55,23 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
     }, { capture: true, passive: true });
   })()`)
   await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
-  try {
-    await page.goto(`${baseUrl}/fixture?${name}`)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await run(page)
-    assert.deepEqual(errors, [])
-  } catch (error) {
-    console.error("Browser fixture failure", name, await page.evaluate(() => ({
-      state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
-      streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
-    })), { boundaryDiagnostics })
-    throw error
-  } finally { await page.close() }
+  await runWithDiagnosticCleanup({
+    run: async () => {
+      await page.goto(`${baseUrl}/fixture?${name}`)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await run(page)
+      assert.deepEqual(errors, [])
+    },
+    diagnose: async () => {
+      console.error("Browser fixture failure", name, await page.evaluate(() => ({
+        state: (window as any).fixture?.snapshot?.(), events: (window as any).fixtureScrollEvents,
+        streams: Array.from(document.querySelectorAll(".message-stream")).map(el => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight })),
+      })), { boundaryDiagnostics })
+    },
+    cleanup: () => page.close(),
+    onObservationError: error => console.error("Browser fixture diagnostic capture failed", name, error, { boundaryDiagnostics }),
+    onCleanupError: error => console.error("Browser fixture cleanup failed", name, error, { boundaryDiagnostics }),
+  })
 }
 
 test("user HTML remains literal through live delivery and history while assistant HTML still renders", async () => {

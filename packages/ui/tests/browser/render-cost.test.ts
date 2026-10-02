@@ -221,6 +221,36 @@ test("authoritative task membership keeps the 200-step bound and clears stale tr
   assert.equal(await page.locator('.tool-call[data-part-id="parent-task"] .tool-call-diagnostic-message').count(), 0)
 }))
 
+for (const { count, legacy } of [{ count: 2, legacy: false }, { count: 201, legacy: false }, { count: 201, legacy: true }]) {
+  test(`native batched child deletion clears task membership (count=${count}, legacy=${legacy})`, async () => open(`mode=task&count=${count}${legacy ? "&legacy=1" : ""}`, async page => {
+    const parent = page.locator('.tool-call[data-part-id="parent-task"]')
+    const counter = parent.locator(".tool-call-task-section-meta").filter({ hasText: /^\d+\+? steps$/ })
+    await step(page, count - 1).waitFor()
+    assert.equal(await counter.textContent(), `${count > 200 ? "200+" : count} steps`)
+    assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), Math.min(count, 200))
+    assert.equal(await parent.locator('[data-task-id="legacy-step"]').count(), 0, "native steps supersede the parent's legacy summary")
+    await parent.evaluate(element => { (window as any).originalParentTask = element })
+    await page.evaluate(() => (window as any).fixture.deleteChild())
+    await frames(page)
+    const state = await page.evaluate(() => (window as any).fixture.snapshot())
+    assert.deepEqual(state.childMessageIds, [])
+    assert.equal(state.childLoaded, false)
+    assert.equal(state.childExists, false)
+    assert.equal(state.parentChildId, "child", "native child deletion must not need a parent metadata update")
+    assert.equal(state.loaded, 1, "parent transcript remains resident")
+    assert.equal(await parent.evaluate(element => element === (window as any).originalParentTask), true)
+    assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 0)
+    assert.equal(await parent.locator(".tool-call-diagnostic-message").count(), 0, "deleted native membership must clear its truncation state")
+    if (legacy) {
+      assert.equal(await counter.textContent(), "1 steps", "fallback count must use the parent's legacy summary, not deleted native keys")
+      assert.equal(await parent.locator('[data-task-id="legacy-step"]').textContent().then(text => text?.includes("Parent legacy summary")), true)
+    } else {
+      assert.equal(await counter.count(), 0, "a deleted child without legacy steps must not retain a ghost count")
+      assert.equal(await parent.getByText("Steps", { exact: true }).count(), 0)
+    }
+  }))
+}
+
 test("audit sample: deterministic native child deltas (timings are observations, not a CI threshold)", async () => open(`mode=task&count=80&instrument=${process.env.CODENOMAD_RENDER_INSTRUMENT ?? "on"}`, async page => {
   await step(page, 79).waitFor()
   await page.evaluate(() => (window as any).fixture.startText())

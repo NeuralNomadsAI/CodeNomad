@@ -7,8 +7,9 @@ import MessageSection from "../../../src/components/message-section"
 import { applyUiSettings } from "./ui-settings"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
-import { setSessions, setActiveSession } from "../../../src/stores/session-state"
+import { setSessions, setActiveSession, sessions, messagesLoaded } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverEvents } from "../../../src/lib/server-events"
 import { loadMessages } from "../../../src/stores/session-api"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import "../../../src/index.css"
@@ -17,6 +18,7 @@ const params = new URLSearchParams(location.search)
 const mode = params.get("mode") ?? "task"
 const count = Math.min(1000, Math.max(1, Number(params.get("count") ?? 12)))
 const outputSize = Math.min(2_000_000, Math.max(1000, Number(params.get("size") ?? 8000)))
+const legacySummary = params.has("legacy") ? [{ id: "legacy-step", tool: "read", title: "Parent legacy summary", status: "completed" }] : []
 const instanceId = "render-cost", parentId = "parent", childId = "child"
 const model = { providerID: "fixture", id: "fixture" }
 const output = Array.from({ length: Math.ceil(outputSize / "Output 00000 with deterministic text\n".length) }, (_, index) => `Output ${String(index).padStart(5, "0")} with deterministic text\n`).join("").slice(0, outputSize)
@@ -26,7 +28,7 @@ const tool = (index: number) => ({ id: `step-${index}`, type: "tool", name: "rea
 const history: Record<string, any[]> = mode === "task" ? {
   [parentId]: [{ id: "parent-message", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 },
     content: [{ id: "parent-task", type: "tool", name: "subagent", time: { created: 1, completed: 2 },
-      state: { status: "completed", input: { agent: "explore", description: "Deterministic child" }, metadata: { sessionId: childId }, content: [{ type: "text", text: "Task result" }] } }] }],
+      state: { status: "completed", input: { agent: "explore", description: "Deterministic child" }, metadata: { sessionId: childId, summary: legacySummary }, content: [{ type: "text", text: "Task result" }] } }] }],
   [childId]: [{ id: "child-message", type: "assistant", agent: "build", model, time: { created: 3 },
     content: Array.from({ length: count }, (_, index) => tool(index)) }],
 } : {
@@ -116,6 +118,15 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
   },
   failRead: () => { failChildRead = true; delta() },
   clearChild: () => { history[childId] = []; return loadMessages(instanceId, childId, { force: true }) },
+  deleteChild: () => {
+    history[childId] = []
+    // Native deletion arrives through the real dispatcher and its Solid batch,
+    // without rewriting the parent's task metadata or clearing its transcript.
+    ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId, event: {
+      id: `event-${++eventId}`, type: "session.deleted", created: eventId,
+      location: { directory: "/fixture" }, data: { sessionID: childId },
+    } }])
+  },
   toolOutput: () => (store.getMessage("child-message")?.parts["step-0"]?.data as any)?.state?.output,
   mutateTool: () => batch(() => {
     // Deliberately keep data identity and message revision unchanged; only the
@@ -153,5 +164,9 @@ observer?.observe(document.querySelector("main")!, { childList: true, subtree: t
   snapshot: () => ({ snapshots, snapshotMs, added, removed, requests, clipboard, output, held: heldReads.length,
     partIds: store.getMessage("child-message")?.partIds,
     childRevision: store.getMessage("child-message")?.revision,
+    childMessageIds: [...store.getSessionMessageIds(childId)],
+    childLoaded: messagesLoaded().get(instanceId)?.has(childId) ?? false,
+    childExists: sessions().get(instanceId)?.has(childId) ?? false,
+    parentChildId: (store.getMessage("parent-message")?.parts["parent-task"]?.data as any)?.state?.metadata?.sessionId,
     loaded: store.getSessionMessageIds(parentId).length }),
 }

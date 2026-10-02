@@ -292,8 +292,10 @@ export const taskRenderer: ToolRenderer = {
       if (!id) return
       if (!loaded) {
         // Invalidation requests a fresh page, but its resident display snapshot
-        // is still valid. Do not unmount every step while that read is pending.
-        // Rebuild membership after the authoritative page arrives.
+        // may still be valid. Keep its shells while that read is pending, but
+        // clear membership and truncation when deletion/eviction removed it.
+        if (store.getSessionMessageIds(id).length === 0) resetChildToolIndex("")
+        // Rebuild resident membership after the authoritative page arrives.
         return
       }
 

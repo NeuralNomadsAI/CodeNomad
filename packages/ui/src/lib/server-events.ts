@@ -34,7 +34,7 @@ class ServerEvents {
 
   constructor() {
     authRecovery.onRestored(() => this.restart("authentication restored"))
-    void this.connect()
+    if (typeof window !== "undefined") void this.connect()
   }
 
   private async connect() {
