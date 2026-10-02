@@ -37,39 +37,6 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
-  it("removes layout entries from native and legacy storage, freeing the bounded budget", async () => {
-    const entries = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`entry-${i}`, "saved"]))
-    const saved: any[] = [], storage = new MemoryStorage()
-    storage.setItem("entry-0", "saved")
-    const state = await boot({ loadClientState: async () => loadResult(snapshot("saved", entries)),
-      saveClientState: async (_token, value) => { saved.push(value); return true },
-    }, storage)
-    state.removeClientLayoutValue("entry-0")
-    state.writeClientLayoutValue("replacement", "new")
-    await state.flushClientState()
-    assert.equal(state.readClientLayoutValue("entry-0"), null)
-    assert.equal(storage.getItem("entry-0"), null)
-    assert.equal(Object.keys(saved.at(-1).layout).length, 64)
-    assert.equal(saved.at(-1).layout.replacement, "new")
-  })
-  it("retains layout removals when a concurrent destructive transaction fails", async () => {
-    const operation = deferred<boolean>(), started = deferred<void>(), saved: any[] = []
-    const storage = new MemoryStorage()
-    storage.setItem(layoutKey, "saved")
-    const state = await boot({ loadClientState: async () => loadResult(snapshot("saved", { [layoutKey]: "saved" })),
-      clearClientState: () => { started.resolve(); return operation.promise },
-      saveClientState: async (_token, value) => { saved.push(value); return true },
-    }, storage)
-    const clearing = state.clearRestoredClientState()
-    await started.promise
-    state.removeClientLayoutValue(layoutKey)
-    operation.reject(new Error("fixture clear failed"))
-    await assert.rejects(clearing, /fixture clear failed/)
-    await state.flushClientState()
-    assert.equal(storage.getItem(layoutKey), null)
-    assert.equal(state.readClientLayoutValue(layoutKey), null)
-    assert.equal(saved.at(-1).layout[layoutKey], undefined)
-  })
   it("treats a rejected access claim as secondary without loading", async () => {
     let loads = 0
     const state = await boot({

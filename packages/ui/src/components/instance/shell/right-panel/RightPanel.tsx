@@ -223,7 +223,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       activeSessionId: props.activeSessionId,
       isTabActive: (tabId) => rightPanelTab() === tabId,
       openTab: openRightPanelTab,
-      revealConversation: () => { if (props.isPhoneLayout()) props.onCloseRightDrawer() },
       reportAttention: () => undefined,
     },
   )

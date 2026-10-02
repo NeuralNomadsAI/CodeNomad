@@ -34,7 +34,6 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
-import { registerMissionRoutes } from "./routes/missions"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
@@ -338,14 +337,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
     bridgeToken: deps.automationBridgeToken,
-    worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
