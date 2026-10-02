@@ -9,6 +9,8 @@ import { build } from "esbuild"
 import { chromium, devices, _electron, type ElectronApplication, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -128,50 +130,58 @@ test("native Electron zoom preserves CSS minimums across close/recreate, shared 
 })
 
 for (const touch of [false, true]) for (const [width, height] of [[320, 740], [360, 740], [390, 844], [430, 932], [932, 430]]) {
-  test(`composer controls fit ${width}px ${touch ? "touch" : "mouse"} with a preserved draft`, async () => {
+  test(`composer controls fit ${width}px ${touch ? "touch" : "mouse"} with a preserved draft`, async (t) => {
     const page = await browser.newPage({ ...(touch ? devices["Pixel 5"] : {}), viewport: { width, height } })
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    try {
-      await page.goto(url)
-      await page.waitForFunction(() => Boolean((window as any).fixture))
-      await page.evaluate(() => (window as any).fixture.setLocale("fr"))
-      const input = page.locator("textarea.prompt-input")
-      await input.fill("Brouillon mobile conservé")
-      const geometry = await page.evaluate(() => {
-        const footer = document.querySelector(".prompt-input-footer")!.getBoundingClientRect()
-        const buttons = [...document.querySelectorAll<HTMLElement>(".prompt-context-controls .selector-trigger, .prompt-input-footer-actions button")]
-          .filter(el => el.getBoundingClientRect().width > 0).map(el => {
-            const r = el.getBoundingClientRect()
-            return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
-          })
-        return { footer: { x: footer.x, right: footer.right, bottom: footer.bottom, width: footer.width }, buttons,
-          selectors: [...document.querySelectorAll(".prompt-context-controls .selector-trigger")].map(el => el.getBoundingClientRect().y),
-          actionsY: document.querySelector(".prompt-input-footer-actions")!.getBoundingClientRect().y }
-      })
-      for (const b of geometry.buttons) {
-        assert.ok(b.x >= geometry.footer.x - 1 && b.right <= geometry.footer.right + 1 && b.bottom <= geometry.footer.bottom + 1, JSON.stringify(b))
-        if (touch) assert.ok(b.width >= 32 && b.height >= 32, "dense touch controls retain compact targets")
-      }
-      for (let i = 0; i < geometry.buttons.length; i++) for (const b of geometry.buttons.slice(i + 1)) {
-        const a = geometry.buttons[i]
-        assert.ok(a.right <= b.x + 1 || b.right <= a.x + 1 || a.bottom <= b.y + 1 || b.bottom <= a.y + 1, "controls must not overlap")
-      }
-      assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
-      assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
-      if (width === 390) {
-        const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
-        assert.match(await worktree.innerText(), /Espace de travail/)
-        await worktree.focus()
-        await page.keyboard.press("ArrowDown")
-        await page.getByRole("listbox").waitFor({ state: "visible" })
-        await page.keyboard.press("Escape")
-        await page.getByRole("listbox").waitFor({ state: "hidden" })
+    const diagnostics = observeHeaderFixture(page)
+    await runWithDiagnosticCleanup({
+      run: async () => {
+        await page.route("**/api/**", route => route.fulfill({ json: {} }))
+        await diagnostics.install()
+        await page.goto(url)
+        await page.waitForFunction(() => Boolean((window as any).fixture))
+        await page.evaluate(() => (window as any).fixture.setLocale("fr"))
+        const input = page.locator("textarea.prompt-input")
+        await input.fill("Brouillon mobile conservé")
+        const geometry = await page.evaluate(() => {
+          const footer = document.querySelector(".prompt-input-footer")!.getBoundingClientRect()
+          const buttons = [...document.querySelectorAll<HTMLElement>(".prompt-context-controls .selector-trigger, .prompt-input-footer-actions button")]
+            .filter(el => el.getBoundingClientRect().width > 0).map(el => {
+              const r = el.getBoundingClientRect()
+              return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
+            })
+          return { footer: { x: footer.x, right: footer.right, bottom: footer.bottom, width: footer.width }, buttons,
+            selectors: [...document.querySelectorAll(".prompt-context-controls .selector-trigger")].map(el => el.getBoundingClientRect().y),
+            actionsY: document.querySelector(".prompt-input-footer-actions")!.getBoundingClientRect().y }
+        })
+        for (const b of geometry.buttons) {
+          assert.ok(b.x >= geometry.footer.x - 1 && b.right <= geometry.footer.right + 1 && b.bottom <= geometry.footer.bottom + 1, JSON.stringify(b))
+          if (touch) assert.ok(b.width >= 32 && b.height >= 32, "dense touch controls retain compact targets")
+        }
+        for (let i = 0; i < geometry.buttons.length; i++) for (const b of geometry.buttons.slice(i + 1)) {
+          const a = geometry.buttons[i]
+          assert.ok(a.right <= b.x + 1 || b.right <= a.x + 1 || a.bottom <= b.y + 1 || b.bottom <= a.y + 1, "controls must not overlap")
+        }
+        assert.equal(new Set(geometry.selectors).size, 1, "selectors retain one compact row")
+        assert.ok(Math.abs(geometry.actionsY - geometry.selectors[0]) <= 1, "actions and selectors always share one row")
+        if (width === 390) {
+          const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
+          assert.match(await worktree.innerText(), /Espace de travail/)
+          await worktree.focus()
+          await page.keyboard.press("ArrowDown")
+          await page.getByRole("listbox").waitFor({ state: "visible" })
+          await page.keyboard.press("Escape")
+          await page.getByRole("listbox").waitFor({ state: "hidden" })
+          assert.equal(await input.inputValue(), "Brouillon mobile conservé")
+        }
+        if (process.env.CODENOMAD_MOBILE_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_MOBILE_CAPTURE}/${touch ? "touch" : "mouse"}-${width}.png`, scale: "css" })
+        await page.setViewportSize({ width: 600, height: 851 })
         assert.equal(await input.inputValue(), "Brouillon mobile conservé")
-      }
-      if (process.env.CODENOMAD_MOBILE_CAPTURE) await page.screenshot({ path: `${process.env.CODENOMAD_MOBILE_CAPTURE}/${touch ? "touch" : "mouse"}-${width}.png`, scale: "css" })
-      await page.setViewportSize({ width: 600, height: 851 })
-      assert.equal(await input.inputValue(), "Brouillon mobile conservé")
-    } finally { await page.close() }
+      },
+      diagnose: () => diagnostics.diagnose(message => t.diagnostic(message)),
+      cleanup: async () => { diagnostics.detach(); await page.close() },
+      onObservationError: () => t.diagnostic("header diagnostic emission failed"),
+      onCleanupError: () => t.diagnostic("header page cleanup failed after primary error"),
+    })
   })
 }
 
