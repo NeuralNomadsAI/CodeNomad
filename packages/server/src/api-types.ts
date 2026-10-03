@@ -609,6 +609,25 @@ export type WorkspaceEventType =
   | "instance.eventStatus"
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
+  | "permission.receiptsChanged"
+
+export interface PermissionReceipt {
+  requestId: string
+  sessionId: string
+  action?: string
+  resources: string[]
+  requestMessage?: string
+  source?: { messageId: string; callId: string }
+  decision: "once" | "always" | "reject"
+  reason?: string
+  origin: "codenomad" | "yolo" | "native"
+  resolvedAt: number
+}
+
+export interface PermissionReceiptPage {
+  receipts: PermissionReceipt[]
+  next?: string
+}
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -626,6 +645,7 @@ export type WorkspaceEventPayload =
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
+  | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
 
 export interface NetworkAddress {
   ip: string

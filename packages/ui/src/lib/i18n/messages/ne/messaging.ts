@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "तपाईंको उत्तर",
+  "question-receipt.unavailable": "उत्तर उपलब्ध छैन",
+  "question-receipt.otherChoices": "अन्य विकल्पहरू ({count})",
+  "question-receipt.offeredChoices": "प्रस्तावित विकल्पहरू ({count})",
   "interruption.question": "तपाईंको जवाफ",
   "interruption.permission": "अनुमति आवश्यक छ",
   "interruption.expand": "अनुरोधहरू विस्तार गर्नुहोस्",

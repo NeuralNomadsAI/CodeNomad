@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "Yanıtınız",
+  "question-receipt.unavailable": "Yanıt mevcut değil",
+  "question-receipt.otherChoices": "Diğer seçenekler ({count})",
+  "question-receipt.offeredChoices": "Sunulan seçenekler ({count})",
   "interruption.question": "Yanıtınız",
   "interruption.permission": "İzin gerekli",
   "interruption.expand": "İstekleri genişlet",

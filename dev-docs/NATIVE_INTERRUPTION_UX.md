@@ -43,9 +43,39 @@ does not invent a local assistant/user message or persist a parallel transcript.
 Pending questions are not duplicated in transcript tool cards. Native completed
 answers remain readable there; native errors continue to use the tool error renderer.
 
+Question receipts retain the question, selected answers and matching option
+descriptions. Other proposed choices are available through a native disclosure;
+free-text answers stay verbatim. Native answers remain the authority.
+
 Arbitrary Forms are not necessarily conversation artifacts. A provider/auth Form
-does not acquire a synthetic transcript receipt. Similarly, this change does not
-invent durable permission-decision history when the native tool lacks that data.
+does not acquire a synthetic transcript receipt.
+
+Permission decisions have a separate CodeNomad-owned durable receipt: request,
+resources, confirmed decision (`once`, `always`, `reject`), and the supplied reason
+when known. Receipts are read-only transcript annotations, not synthetic native
+messages. A source message anchors the receipt; requests without one remain
+available as session receipts. Reads are bounded and ownership-checked.
+
+Native permission events are ephemeral and replies omit the reason. CodeNomad
+therefore captures confirmed replies and observed native settlements separately.
+Native settlement does not imply a user click: it can come from another client
+or a cascade. Yolo decisions are identified as automatic. A failed or ambiguous
+reply never becomes a fabricated decision and is never replayed automatically.
+Decisions lost before capture was available, or while CodeNomad was offline,
+cannot be reconstructed from a tool's success/error or from saved permission rules.
+These annotations are not part of native full-history search, copy or export.
+
+Permission snapshots and receipts live under the CodeNomad profile's
+`permission-receipts` directory, in atomic per-request files. The namespace uses
+the execution host, native discovery root and authenticated service channel;
+credential rotation starts a new namespace. Session deletion removes its receipts.
+Stored text is capped at 4096 characters and resources at 64 entries; native
+metadata and diffs are not copied. Reads return up to 100 receipts and scan at most
+500 records per page, so an empty page can still have a continuation cursor.
+Reconnect recovery enumerates loaded native Locations and filters them through
+registered-only workspace ownership before querying pending permissions. This
+includes descendant directories inside the project and its worktrees; it never
+uses the daemon's default directory as a substitute or triggers strategy discovery.
 
 ## Validation
 
@@ -59,3 +89,11 @@ geometry with reachable footer actions.
 `permission-fallback-diff.test.ts` now targets the panel, retaining full-source
 access, changed-diff and late-copy regressions. No shared daemon or user database
 is used by these tests.
+
+`permissions/receipts.test.ts` exercises disk reload, all decisions, native versus
+manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
+`tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
+pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
+`node scripts/test-permission-receipts-native.mjs` runs isolated native recovery
+against project/worktree roots and descendant Locations, with external replies
+and disk reload. It never uses a shared daemon or user database.

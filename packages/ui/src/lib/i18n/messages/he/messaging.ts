@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "התשובה שלך",
+  "question-receipt.unavailable": "התשובה אינה זמינה",
+  "question-receipt.otherChoices": "אפשרויות אחרות ({count})",
+  "question-receipt.offeredChoices": "אפשרויות שהוצעו ({count})",
   "interruption.question": "התשובה שלך",
   "interruption.permission": "נדרשת הרשאה",
   "interruption.expand": "הרחבת הבקשות",

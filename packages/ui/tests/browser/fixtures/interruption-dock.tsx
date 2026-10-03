@@ -16,6 +16,7 @@ import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages, loadMessageAnchor } from "../../../src/stores/session-api"
 import { applyUiSettings } from "./ui-settings"
+import { getQuestionToolSearchText } from "../../../src/components/tool-call/search-text"
 import "../../../src/index.css"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
@@ -106,6 +107,7 @@ serverApi.patchStateOwner = async (_owner, patch) => {
   uiState = { ...uiState, ...patch as Record<string, unknown> }
   return uiState as any
 }
+serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
 await applyUiSettings({ locale: "en", showMessageTimeline: false, toolInputsVisibility: "hidden", toolOutputExpansion: "expanded",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "expanded" } } })
 function App() {
@@ -130,6 +132,18 @@ const store = messageStoreBus.getOrCreate(instanceId)
     emit("session.tool.input.started", { assistantMessageID: messageId, id: toolId, name: "question" })
     emit("session.tool.called", { assistantMessageID: messageId, id: toolId, input: question().content[0].state.input })
     emit("form.created", { form: form() })
+  },
+  complete: (answers: unknown, output: unknown = { answers }) => {
+    completed = answers as string[][]
+    emit("session.tool.success", { assistantMessageID: messageId, id: toolId, output, metadata: { answers }, content: [{ type: "text", text: "Answered" }], executed: true })
+    emit("form.replied", { id: "question", answer: {} })
+    return getQuestionToolSearchText({ toolCall: question().content[0], toolName: "question", toolState: {
+      ...question().content[0].state, status: "completed", metadata: { answers }, output,
+    } } as any)
+  },
+  toolError: () => {
+    emit("form.cancelled", { id: "question" })
+    emit("session.tool.failed", { assistantMessageID: messageId, id: toolId, error: { message: "Question cancelled" }, metadata: {} })
   },
   other: () => addPendingForm(instanceId, form("other", "other")),
   global: () => addPendingForm(instanceId, { ...form("global-question", "global"), location: { directory: "/fixture" } }),

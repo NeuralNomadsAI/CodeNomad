@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "Your answer",
+  "question-receipt.unavailable": "Answer unavailable",
+  "question-receipt.otherChoices": "Other choices ({count})",
+  "question-receipt.offeredChoices": "Choices offered ({count})",
   "interruption.question": "Your response",
   "interruption.permission": "Permission required",
   "interruption.expand": "Expand requests",

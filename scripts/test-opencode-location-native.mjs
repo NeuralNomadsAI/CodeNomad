@@ -187,7 +187,7 @@ export async function testNativeLocationIdentity({ client, connection, root, ser
   }
 }
 
-async function runIsolated(cli) {
+export async function runIsolated(cli, run = testNativeLocationIdentity) {
   if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable path")
   const temporaryRoot = path.join(os.tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
@@ -232,7 +232,7 @@ async function runIsolated(cli) {
     console.log(`Testing official runtime ${identity.version}`)
     assert.equal((await client.server.info()).version, identity.version)
     console.log(`PASS: production ${identity.discovery} discovery and canonical client.server.info()`)
-    await testNativeLocationIdentity({ client, connection, root })
+    await run({ client, connection, root })
   } finally {
     child.kill()
     await stopped

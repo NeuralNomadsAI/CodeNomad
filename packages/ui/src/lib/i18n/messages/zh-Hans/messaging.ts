@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "你的回答",
+  "question-receipt.unavailable": "回答不可用",
+  "question-receipt.otherChoices": "其他选项（{count}）",
+  "question-receipt.offeredChoices": "提供的选项（{count}）",
   "interruption.question": "请您回答",
   "interruption.permission": "需要授权",
   "interruption.expand": "展开请求",

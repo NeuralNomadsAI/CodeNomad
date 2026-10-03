@@ -8,6 +8,7 @@ import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
+import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
@@ -1278,6 +1279,7 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} />
               <Show when={olderMessageLoadFailed()}>
                 <div class="flex justify-center py-2">
                   <button
@@ -1352,6 +1354,7 @@ export default function MessageSection(props: MessageSectionProps) {
             </>
           )}
           renderItem={(messageId, index) => (
+            <>
             <MessageBlock
               messageId={messageId}
               instanceId={props.instanceId}
@@ -1384,6 +1387,8 @@ export default function MessageSection(props: MessageSectionProps) {
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
+            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </>
           )}
           renderOverlay={() => (
             <>
