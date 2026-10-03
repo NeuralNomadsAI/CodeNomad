@@ -15,9 +15,10 @@ export function seedSessionCatalog(instanceId: string, catalog: PersistedSession
     setSessions(previous => {
       const current = new Map(previous.get(instanceId) ?? [])
       for (const row of catalog) {
-        if (current.has(row.id) || deleted.has(row.id)) continue
-        current.set(row.id, { ...row, instanceId, status: "idle", runtimeStatusKnown: false, catalogSnapshot: true })
+        if (deleted.has(row.id)) continue
         candidates.push(row.id)
+        if (current.has(row.id)) continue
+        current.set(row.id, { ...row, instanceId, status: "idle", runtimeStatusKnown: false, catalogSnapshot: true })
       }
       return new Map(previous).set(instanceId, current)
     })

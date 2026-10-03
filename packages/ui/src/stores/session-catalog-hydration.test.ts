@@ -176,3 +176,48 @@ test("directory-only cached roots appear whether scope arrives before or after s
     }
   } finally { serverApi.fetchWorktrees = original }
 })
+
+test("directory-only seeding indexes an already loaded row without replacing its newer metadata", async () => {
+  const id = "catalog-preexisting-local-root", f = fixture(id), original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root", directoryOnly: true },
+  ] })
+  try {
+    const local = { ...row("local", "external-parent"), location: { directory: "/repo" } }
+    const live = { ...local, title: "Newer live title", instanceId: id }
+    f.saved.sessionCatalog = captureSessionCatalog([local])
+    setSessions(previous => new Map(previous).set(id, new Map([[local.id, live]])))
+    await ensureWorktreesLoaded(id)
+    seedRestoredWorkspaceState(id, f.saved)
+    assert.deepEqual(getSessionListIds(id), ["local"])
+    assert.equal(getSessionThreads(id)[0].session.title, "Newer live title")
+    assert.equal(sessions().get(id)?.get("local"), live)
+  } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})
+
+test("complete directory-only reconciliation keeps concurrently changed and introduced local roots visible", async () => {
+  const id = "catalog-concurrent-local-roots", f = fixture(id), original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [
+    { slug: "root", directory: "/repo", kind: "root", directoryOnly: true },
+  ] })
+  try {
+    const local = { ...row("local", "external-parent"), location: { directory: "/repo" } }
+    f.saved.sessionCatalog = captureSessionCatalog([local])
+    await ensureWorktreesLoaded(id)
+    seedRestoredWorkspaceState(id, f.saved)
+    setInstanceMetadata(id, { project: { id: "project" } as any })
+    const inventory = deferred<any>()
+    f.client.session.list = async (input: any) => input.parentID === null ? { data: [], cursor: {} } : inventory.promise
+    const refresh = fetchSessions(id)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    setSessions(previous => new Map(previous).set(id, new Map(previous.get(id))
+      .set("local", { ...local, instanceId: id, title: "Concurrent rename" })))
+    const added = { ...row("added", "another-external-parent"), location: { directory: "/repo" } }
+    seedRestoredWorkspaceState(id, { ...f.saved, sessionCatalog: captureSessionCatalog([added]) })
+    inventory.resolve({ data: [], cursor: {} })
+    await refresh
+    assert.deepEqual(new Set(getSessionListIds(id)), new Set(["local", "added"]))
+    assert.deepEqual(new Set(getSessionThreads(id).map(thread => thread.session.id)), new Set(["local", "added"]))
+    assert.equal(sessions().get(id)?.get("local")?.title, "Concurrent rename")
+  } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})

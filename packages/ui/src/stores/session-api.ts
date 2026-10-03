@@ -712,7 +712,7 @@ async function fetchSessions(instanceId: string, options?: {
         return root ? [root.id] : []
       }))
       const concurrentRootIds = new Set(Array.from(sessions().get(instanceId)?.values() ?? [])
-        .filter((session) => !existingSessions.has(session.id) && session.parentId === null)
+        .filter((session) => !existingSessions.has(session.id) && getSessionRoot(instanceId, session.id)?.id === session.id)
         .map((session) => session.id))
       const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
       const currentSessions = sessions().get(instanceId) ?? new Map()
@@ -755,14 +755,14 @@ async function fetchSessions(instanceId: string, options?: {
     // concurrent updates which fenced an inventory eviction.
     for (const sessionId of existingCatalogIds) {
       const session = sessions().get(instanceId)?.get(sessionId)
-      if (session?.parentId === null && !seenRootIds.has(sessionId)) {
+      if (session && getSessionRoot(instanceId, sessionId)?.id === sessionId && !seenRootIds.has(sessionId)) {
         seenRootIds.add(sessionId)
         rootIds.push(sessionId)
       }
     }
     const concurrentRootIds = getSessionListIds(instanceId).filter((sessionId) => {
       const session = sessions().get(instanceId)?.get(sessionId)
-      return !existingCatalogIds.has(sessionId) && session?.parentId === null && !seenRootIds.has(sessionId)
+      return !existingCatalogIds.has(sessionId) && session && getSessionRoot(instanceId, sessionId)?.id === sessionId && !seenRootIds.has(sessionId)
     })
     for (let index = concurrentRootIds.length - 1; index >= 0; index -= 1) {
       const sessionId = concurrentRootIds[index]!
