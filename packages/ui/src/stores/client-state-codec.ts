@@ -1,4 +1,5 @@
 import type { ScrollSnapshot } from "./message-v2/types"
+import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
 import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
@@ -11,6 +12,7 @@ export interface RestorableWorkspaceTabState {
   generationRecovery: Record<string, PersistedGenerationRecovery>
   expandedSessionIds?: string[]
   outlineIndexes?: Record<string, PersistedOutline>
+  sessionCatalog?: PersistedSessionCatalogEntry[]
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
@@ -181,6 +183,8 @@ function normalizeWorkspaceTab(
   if (expandedSessionIds !== undefined) result.expandedSessionIds = expandedSessionIds
   const outlineIndexes = normalizeOutlineIndexes(value.outlineIndexes, budget.outlines, identity.activeSessionId)
   if (outlineIndexes) result.outlineIndexes = outlineIndexes
+  const sessionCatalog = normalizeSessionCatalog(value.sessionCatalog)
+  if (sessionCatalog) result.sessionCatalog = sessionCatalog
   if (Number.isInteger(value.occurrence) && Number(value.occurrence) >= 0 && Number(value.occurrence) < MAX_TABS) {
     result.occurrence = Number(value.occurrence)
   }

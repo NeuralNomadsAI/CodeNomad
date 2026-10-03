@@ -7,6 +7,7 @@ import { messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bu
 import { getSessionAncestorIdsFromMap } from "./session-tree"
 import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
+import { seedSessionCatalog } from "./session-catalog-hydration"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -23,6 +24,11 @@ export function seedRestoredWorkspaceState(
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
   seedSessionOutlineIndexes(instanceId, snapshot.outlineIndexes)
+  seedSessionCatalog(instanceId, snapshot.sessionCatalog)
+  hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
+  hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
+  hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds ?? [])
+  hydrateWorkspacePromptState(instanceId, snapshot, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 

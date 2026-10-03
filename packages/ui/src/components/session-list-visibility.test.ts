@@ -12,6 +12,7 @@ describe("session list visibility", () => {
 
   it("keeps the error state exclusive from session rows", () => {
     assert.equal(shouldRenderSessionRows(true, true), false)
+    assert.equal(shouldRenderSessionRows(true, true, true), true)
     assert.equal(shouldRenderSessionRows(false, true), true)
     assert.equal(shouldRenderSessionRows(false, false), false)
   })

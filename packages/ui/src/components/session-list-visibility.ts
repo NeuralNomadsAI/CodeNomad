@@ -10,6 +10,6 @@ export function isSessionListViewportAttached(
   return viewport.isConnected && Boolean(viewport.ownerDocument.defaultView)
 }
 
-export function shouldRenderSessionRows(hasError: boolean, hasContent: boolean): boolean {
-  return !hasError && hasContent
+export function shouldRenderSessionRows(hasError: boolean, hasContent: boolean, hasSavedRows = false): boolean {
+  return hasContent && (!hasError || hasSavedRows)
 }
