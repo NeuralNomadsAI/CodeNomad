@@ -169,7 +169,7 @@ test("supported snapshot batching also stops before the next batch during compac
   assert.equal(batches, 1)
   assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
   compact(h, "ended")
-  await until(() => batches === 5)
+  await until(() => batches === 27)
   assert.deepEqual(h.reads, [])
   assert.deepEqual(getFormQueue(h.id), [])
 })

@@ -199,7 +199,10 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   try {
     for (;;) {
       const { value, done } = await reader.read()
-      if (done) return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+      if (done) return JSON.parse(Buffer.concat(chunks).toString("utf8"), (_key, value) => {
+        if (typeof value === "number" && !Number.isFinite(value)) throw new Error("Invalid pending JSON number")
+        return value
+      })
       size += value.byteLength
       if (size > MAX_RESPONSE_BYTES) throw new Error("Pending response exceeded bound")
       chunks.push(value)

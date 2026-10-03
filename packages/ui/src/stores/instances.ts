@@ -704,7 +704,8 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     if (!isCurrent()) throw pendingRequestSyncSuperseded
     if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
     let end = offset, queryBytes = 0
-    while (end < directories.length && end - offset < 64) {
+    // ponytail: eight directories bound Git-heavy batches; tune only with native recovery proof.
+    while (end < directories.length && end - offset < 8) {
       queryBytes += new URLSearchParams({ directories: directories[end] }).toString().length + 1
       if (end > offset && queryBytes > 7000) break
       end++

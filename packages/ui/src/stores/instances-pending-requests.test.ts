@@ -47,7 +47,7 @@ function harness() {
   } }
 }
 
-test("one supported snapshot avoids all ordinary pending lists with 100 cold historical and 100 worktree locations", async () => {
+test("eight-directory snapshots avoid ordinary pending lists with 100 cold historical and 100 worktree locations", async () => {
   const h = harness()
   const originalWorktrees = serverApi.fetchWorktrees
   try {
@@ -73,8 +73,8 @@ test("one supported snapshot avoids all ordinary pending lists with 100 cold his
     assert.equal(first, second)
     pending.resolve(snapshot(h.directory, [permission("remote")], [form("external-global")]))
     await first
-    assert.equal(calls, 4)
-    assert.deepEqual(batches.map((batch) => batch.length), [64, 64, 64, 9])
+    assert.equal(calls, 26)
+    assert.deepEqual(batches.map((batch) => batch.length), [...Array(25).fill(8), 1])
     assert.equal(batches.flat().length, 201)
     assert.deepEqual(h.calls, [])
     assert.deepEqual(getPermissionQueue(h.id).map((entry) => entry.id), ["remote"])

@@ -362,6 +362,13 @@ time through the existing Git worker). Overflow or unsafe serialization
 fails rather than truncates. This is unsupported internal coupling: another
 runtime needs separate qualification, not a version-range expansion.
 
+The UI sends at most eight directories per request, also retaining the escaped
+URL budget, to bound Git-heavy historical authorization within its independent
+ten-second request deadline. This imposes no whole-history scan deadline or
+completion guarantee on arbitrarily slow filesystems. The broker rejects
+overflowing raw JSON numbers before coverage/capability admission, including
+unknown metadata; native numeric codec strings remain unchanged.
+
 `GET /api/workspaces/:id/pending-requests` retains its existing UI wire shape and
 uses only the authenticated connection's fixed
 `POST /api/rpc/codenomad.pending-requests/snapshot?location[directory]=<root>` with

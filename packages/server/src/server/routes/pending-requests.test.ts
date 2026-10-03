@@ -332,6 +332,24 @@ test("native numeric JSON codec values survive the broker without coercion", asy
   } finally { await h.cleanup() }
 })
 
+test("overflowing raw JSON numbers in fields or metadata fail closed before capability admission", async () => {
+  for (const invalid of [
+    { ...form, fields: [{ key: "number", type: "number", default: "OVERFLOW" }] },
+    { ...form, metadata: { nested: { number: "OVERFLOW" } } },
+  ]) {
+    const h = await harness()
+    try {
+      const raw = JSON.stringify({ output: { originDirectory: h.root,
+        data: [complete(h.root, [{ ...emptyLocation(h.root), forms: [invalid] }])],
+      } }).replace('"OVERFLOW"', "1e400")
+      h.connection.fetch = async () => new Response(raw, { headers: { "content-type": "application/json" } })
+      assert.equal((await h.app.inject({ url: h.url() })).statusCode, 503)
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "Malformed numbers cannot verify capability")
+    } finally { await h.cleanup() }
+  }
+})
+
 test("full provenance/coverage validation precedes connection-scoped capability negotiation", async () => {
   const h = await harness()
   try {
