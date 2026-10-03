@@ -279,6 +279,15 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
     f.state.owned = true
     assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/w/instance/api/session/s" })).statusCode, 204)
     assert.equal((await f.receipts.list("w", "s", { messageId: "m" })).receipts.length, 0)
+    const prepare = f.receipts.prepare.bind(f.receipts)
+    Object.assign(f.receipts, { prepare: async (...args: Parameters<typeof prepare>) => {
+      const confirm = await prepare(...args)
+      f.state.current = false
+      return confirm
+    } })
+    const beforeStale = forwards
+    assert.equal((await send("stale-after-preparation")).statusCode, 500)
+    assert.equal(forwards, beforeStale, "Receipt preparation cannot authorize a stale connection")
   } finally { await app.close(); await f.close() }
 })
 

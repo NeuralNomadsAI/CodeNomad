@@ -43,6 +43,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceCreateResponse,
   WorkspaceDescriptor,
+  WorkspacePendingRequestsResponse,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
 
@@ -373,6 +374,10 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  getPendingRequests(id: string, directories: string[], signal?: AbortSignal): Promise<WorkspacePendingRequestsResponse> {
+    const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+    return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
   },
   cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
     return request<WorkspaceCloneResponse>("/api/workspaces/clone", {

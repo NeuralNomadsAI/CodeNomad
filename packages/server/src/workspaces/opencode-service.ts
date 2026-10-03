@@ -11,6 +11,7 @@ import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
+import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -51,6 +52,7 @@ export interface OpenCodeSharedServiceDependencies {
 export class OpenCodeSharedService {
   private connection?: Promise<ServiceConnection>
   private connected?: ServiceConnection
+  private previousConnection?: ServiceConnection
   private healthCheck?: Promise<ServiceConnection>
   private serviceOptions?: OpenCodeSharedServiceOptions
   private serviceIdentity?: string
@@ -271,6 +273,10 @@ export class OpenCodeSharedService {
     }
     this.negotiationControllers.set(connection, negotiation)
     if (generation === this.generation) {
+      if (this.previousConnection && this.sameEndpoint(this.previousConnection.endpoint, connection.endpoint)) {
+        carryPendingCompactions(this.previousConnection, connection)
+      }
+      this.previousConnection = undefined
       this.hasValidatedConnection = true
       this.connected = connection
       this.connection = Promise.resolve(connection)
@@ -310,6 +316,7 @@ export class OpenCodeSharedService {
           return
         }
         connection.assertCurrent()
+        observePendingDiscovery(connection, result.value)
         // Consumer return/throw and subscriber-local abort are not failures of
         // the shared source. Uncancelled iterator EOF/errors still invalidate.
         nativeEventConnections.set(result.value, connection)
@@ -325,6 +332,7 @@ export class OpenCodeSharedService {
   }
 
   private clear(): void {
+    if (this.connected) this.previousConnection = this.connected
     if (this.connected) this.negotiationControllers.get(this.connected)?.abort()
     this.connection = undefined
     this.connected = undefined
