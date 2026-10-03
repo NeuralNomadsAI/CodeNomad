@@ -1052,7 +1052,9 @@ export default function MessageSection(props: MessageSectionProps) {
       frame = requestAnimationFrame(() => {
         if (!isCurrentSearch()) return
         batch(() => {
-          setSearchMatches(page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map(hit => ({
+          // Progress only appends hits within this page. Preserve row identities
+          // so Solid keeps existing result buttons and their keyboard focus.
+          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
