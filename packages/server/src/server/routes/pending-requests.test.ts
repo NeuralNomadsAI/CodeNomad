@@ -157,7 +157,7 @@ test("WSL host roots and worktrees are translated before dispatch with exact nat
     const hostWorktree = join(h.root, "linked-worktree")
     await git("git", ["-C", h.root, "worktree", "add", "--quiet", "--detach", hostWorktree])
     const serviceRoot = "/home/fixture/repo", serviceWorktree = "/home/fixture/worktree"
-    const hostRootAlias = h.root.replace(/\\/g, "/")
+    const hostRootAlias = "C:/fixture/repo"
     const directories = new Map([[h.root, serviceRoot], [hostRootAlias, serviceRoot], [serviceRoot, serviceRoot],
       [hostWorktree, serviceWorktree], [serviceWorktree, serviceWorktree]])
     const hosts = new Map([[serviceRoot, h.root], [serviceWorktree, hostWorktree]])
