@@ -952,15 +952,43 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(() => {
     const element = beforeItemsElement()
-    if (!element) return
+    const stream = scrollElement()
+    if (!element || !stream) return
+    let height = element.getBoundingClientRect().height
+    let stableOffset = stream.scrollTop
+    setBeforeItemsHeight(height)
+    const captureOffset = () => {
+      // A shrinking prefix can clamp scrollTop before ResizeObserver runs.
+      // Retain the pre-layout offset until that resize has been accounted for.
+      if (element.getBoundingClientRect().height === height) stableOffset = stream.scrollTop
+    }
     const measure = () => {
-      setBeforeItemsHeight(element.getBoundingClientRect().height)
-      api.notifyContentRendered()
+      const nextHeight = element.getBoundingClientRect().height
+      const delta = nextHeight - height
+      const offset = delta < 0 && stream.scrollTop >= stream.scrollHeight - stream.clientHeight
+        ? stableOffset : stream.scrollTop
+      const retainReader = delta !== 0 && isActive() && !autoScroll() && !scrollController.snapshot().restoring
+        && !hasActiveExplicitBottomPin()
+      if (retainReader) readerSettlement.cancel()
+      setBeforeItemsHeight(nextHeight)
+      if (retainReader && !nativeScrollbarDragging && offset >= height) {
+        // One synchronous layout correction, not a deferred pin that can
+        // reassert over the next wheel/thumb gesture. Header readers stay put.
+        markProgrammaticScroll()
+        stream.scrollTop = Math.max(0, offset + delta)
+        scrollController.recordProgrammaticOffset(stream.scrollTop, false)
+      }
+      height = nextHeight
+      stableOffset = stream.scrollTop
+      if (isActive() && !nativeScrollbarDragging) api.notifyContentRendered()
     }
     const observer = new ResizeObserver(measure)
     observer.observe(element)
-    measure()
-    onCleanup(() => observer.disconnect())
+    stream.addEventListener("scroll", captureOffset, { passive: true })
+    onCleanup(() => {
+      observer.disconnect()
+      stream.removeEventListener("scroll", captureOffset)
+    })
   })
 
   createEffect(on(explicitBottomPinIntent, (intent) => {

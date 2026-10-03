@@ -31,6 +31,7 @@ async function fixture() {
   const connection = {
     endpoint: { url: "http://127.0.0.1:4096", auth: { type: "basic", username: "opencode", password: "fixture-only" } },
     client: {
+      debug: { location: { list: async () => [{ directory: "/project" }] } },
       config: { get: async () => [{ type: "directory", path: state.directory }] },
       session: { get: async () => ({ id: "s", location: { directory: "/project" } }) },
       permission: {
@@ -43,7 +44,6 @@ async function fixture() {
   } as unknown as ServiceConnection
   const manager = {
     get: () => workspace,
-    getWorktrees: async () => ({ worktrees: [{ slug: "root", kind: "root", directory: "/project", serviceDirectory: "/project" }] }),
     getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => state.distro,
     getServicePathStyle: () => "posix",
@@ -97,21 +97,18 @@ test("all decisions persist across reload, SSE-before-HTTP upgrades only the exa
   } finally { await f.close() }
 })
 
-test("initial connection and reconnect recover every registered owned Location, never the daemon cwd", async () => {
+test("initial connection and reconnect recover every loaded owned Location, including descendants", async () => {
   const f = await fixture()
-  const directories = ["/project", "/project-worktree"]
+  const directories = ["/project", "/project/packages/app", "/project-worktree", "/project-worktree/packages/app"]
   const requested: string[] = []
   let generation = 1
   Object.assign(f.manager, {
-    getWorktrees: async (_id: string, mode: string, purpose: string) => {
-      assert.equal(mode, "validated"); assert.equal(purpose, "event")
-      return { worktrees: directories.map(serviceDirectory => ({ serviceDirectory })) }
-    },
     ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, _signal: unknown, purpose?: string) => {
       if (purpose) assert.equal(purpose, "event")
       return directories.includes(location.directory)
     },
   })
+  Object.assign(f.connection.client.debug.location, { list: async () => [...directories, "/foreign", "/daemon-cwd"].map(directory => ({ directory })) })
   Object.assign(f.connection.client.permission.request, { list: async (input?: { location: { directory: string } }) => {
     assert.ok(input?.location.directory, "must not default to daemon cwd")
     requested.push(input.location.directory)
@@ -130,7 +127,7 @@ test("initial connection and reconnect recover every registered owned Location, 
     }
     assert.deepEqual(requested, [...directories, ...directories])
     const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
-    assert.equal(rows.length, 4)
+    assert.equal(rows.length, 8)
     for (const row of rows) {
       assert.equal(row.action, "shell")
       assert.deepEqual(row.resources, ["git status"])
@@ -291,7 +288,7 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
     await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
-    const manager = { get: f.manager.get, getWorktrees: f.manager.getWorktrees, ownsLocation: f.manager.ownsLocation,
+    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation,
       getServiceWslDistro: f.manager.getServiceWslDistro, getServicePathStyle: f.manager.getServicePathStyle,
       getSharedServiceConnection: f.manager.getSharedServiceConnection }
     const otherManager = { ...manager, getSharedServiceConnection: async () => otherConnection }

@@ -6,9 +6,10 @@ import type { Logger } from "../logger"
 import type { WorkspaceManager } from "../workspaces/manager"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import { nativeEventConnections } from "../workspaces/opencode-service"
+import { locationRequestOptions, readLocationRef } from "../opencode/compatibility/location"
 import { PermissionReceiptStore, permissionSnapshot, receiptHash, type ReceiptQuery } from "./receipt-store"
 
-type Manager = Pick<WorkspaceManager, "get" | "getWorktrees" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
+type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 export class PermissionReceipts {
   private readonly scopes = new WeakMap<ServiceConnection, Promise<string>>()
@@ -109,12 +110,17 @@ export class PermissionReceipts {
       if (!current()) return
       const scope = await this.scope(event.instanceId, connection)
       if (!current()) return
-      const { worktrees } = await this.manager.getWorktrees(event.instanceId, "validated", "event")
-      // Native pending permissions are Location-scoped; an omitted location
-      // queries only the daemon cwd. Never trigger strategy discovery here.
-      for (const directory of new Set(worktrees.map(worktree => worktree.serviceDirectory).filter((value): value is string => Boolean(value)))) {
+      const locations = await connection.client.debug.location.list({ signal: AbortSignal.timeout(10_000) })
+      // Pending permissions live in loaded native Locations, including descendant
+      // directories that neither the daemon cwd nor worktree-root lists cover.
+      for (const value of locations) {
         if (!current()) return
-        const pending = await connection.client.permission.request.list({ location: { directory } }, { signal: AbortSignal.timeout(10_000) })
+        const location = readLocationRef(value)
+        if (!await this.manager.ownsLocation(event.instanceId, location, connection.client, undefined, "event")) continue
+        if (!current()) return
+        const pending = await connection.client.permission.request.list({ location: { directory: location.directory } }, {
+          ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000),
+        })
         for (const value of pending.data) {
           if (!current()) return
           const request = permissionSnapshot(value)

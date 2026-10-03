@@ -72,6 +72,10 @@ credential rotation starts a new namespace. Session deletion removes its receipt
 Stored text is capped at 4096 characters and resources at 64 entries; native
 metadata and diffs are not copied. Reads return up to 100 receipts and scan at most
 500 records per page, so an empty page can still have a continuation cursor.
+Reconnect recovery enumerates loaded native Locations and filters them through
+registered-only workspace ownership before querying pending permissions. This
+includes descendant directories inside the project and its worktrees; it never
+uses the daemon's default directory as a substitute or triggers strategy discovery.
 
 ## Validation
 
@@ -90,3 +94,6 @@ is used by these tests.
 manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
 `tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
 pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
+`node scripts/test-permission-receipts-native.mjs` runs isolated native recovery
+against project/worktree roots and descendant Locations, with external replies
+and disk reload. It never uses a shared daemon or user database.

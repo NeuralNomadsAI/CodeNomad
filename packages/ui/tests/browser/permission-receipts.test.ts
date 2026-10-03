@@ -22,7 +22,8 @@ before(async () => {
   })
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined,
+    ignoreDefaultArgs: ["--hide-scrollbars"], args: ["--disable-features=OverlayScrollbar"] })
 })
 after(async () => { await browser?.close(); await server?.close() })
 
@@ -157,19 +158,31 @@ test("event bursts reconcile authoritatively with a trailing read, retry preserv
 test("expanded unanchored receipts participate in latest, anchor and manual scroll geometry", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
   try {
+    let receiptCount = 1
     const errors = await prepare(page, route => fulfill(route,
       new URL(route.request().url()).searchParams.has("unanchored")
-        ? [receipt("long-session-receipt", "reject", { source: undefined, reason: "Long permission decision.\n".repeat(45) })] : []))
-    await page.goto(`${url}?scroll`)
-    await page.getByRole("button", { name: "Aller au premier message", exact: true }).click()
-    const stream = page.locator(".message-stream")
-    await page.locator('[data-permission-message="unanchored"] summary').click()
-    await page.waitForFunction(() => document.querySelector('.permission-receipt-reason')!.getBoundingClientRect().height > 700)
-    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).click()
-    await page.waitForFunction(() => {
+        ? Array.from({ length: receiptCount }, (_, index) => receipt(`long-session-receipt-${index}`, "reject", {
+          source: undefined, reason: "Long permission decision.\n".repeat(index ? 20 : 45),
+        })) : []))
+    const refresh = async (count: number) => {
+      receiptCount = count
+      await page.evaluate(() => (window as any).receiptFixture.event({ messageId: undefined }))
+      await page.waitForFunction(count => document.querySelectorAll('[data-permission-message="unanchored"] li').length === count, count)
+      await page.waitForTimeout(250)
+    }
+    const anchorOffset = () => page.locator('[data-virtual-follow-key="message-12"]').evaluate(element =>
+      element.getBoundingClientRect().top - document.querySelector(".message-stream")!.getBoundingClientRect().top)
+    const atBottom = () => page.waitForFunction(() => {
       const stream = document.querySelector(".message-stream")!
       return Math.abs(stream.scrollHeight - stream.clientHeight - stream.scrollTop) <= 1
     })
+    await page.goto(`${url}?scroll`)
+    const stream = page.locator(".message-stream")
+    await stream.press("Home")
+    await page.locator('[data-permission-message="unanchored"] summary').click()
+    await page.waitForFunction(() => document.querySelector('.permission-receipt-reason')!.getBoundingClientRect().height > 700)
+    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).click()
+    await atBottom()
     await page.getByRole("button", { name: "Aller au dernier message", exact: true }).waitFor({ state: "detached" })
     await page.locator('.message-timeline-segment[data-message-id="message-12"]').click()
     await page.waitForFunction(() => {
@@ -180,10 +193,85 @@ test("expanded unanchored receipts participate in latest, anchor and manual scro
     await stream.hover()
     await page.mouse.wheel(0, 180)
     await page.waitForTimeout(250)
+    const offset = await anchorOffset()
     const position = await stream.evaluate(element => element.scrollTop)
-    await page.evaluate(() => (window as any).receiptFixture.event({ messageId: undefined }))
+    await refresh(2)
+    assert.ok(await stream.evaluate(element => element.scrollTop) > position + 300, "the prefix actually grew")
+    assert.ok(Math.abs(await anchorOffset() - offset) <= 2, "prefix growth preserves the manually read message")
+    await refresh(1)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - position) <= 2, "prefix shrink restores the corresponding physical position")
+    assert.ok(Math.abs(await anchorOffset() - offset) <= 2, "prefix shrink preserves the manually read message")
+
+    const thumb = await stream.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      const inset = element.offsetWidth - element.clientWidth
+      const track = element.clientHeight - inset * 2
+      const height = Math.max(18, track * element.clientHeight / element.scrollHeight)
+      const ratio = element.scrollTop / (element.scrollHeight - element.clientHeight)
+      return { x: rect.right - inset / 2, y: rect.top + inset + height / 2 + (track - height) * ratio }
+    })
+    await page.mouse.move(thumb.x, thumb.y)
+    await page.mouse.down()
+    await page.waitForTimeout(750)
+    const heldOffset = await stream.evaluate(element => element.scrollTop)
+    await refresh(2)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - heldOffset) <= 2, "prefix resize must not move a held native thumb")
+    await page.mouse.move(thumb.x, thumb.y + 60, { steps: 8 })
+    await page.mouse.up()
     await page.waitForTimeout(250)
-    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - position) <= 2, "receipt refresh preserves manual reader position")
+    assert.ok(await stream.evaluate(element => element.scrollTop) > heldOffset + 100, "thumb motion owns the new position after growth")
+
+    await page.getByRole("button", { name: "Aller au premier message", exact: true }).click()
+    await stream.hover()
+    await page.mouse.wheel(0, 120)
+    await page.waitForTimeout(250)
+    const headerPosition = await stream.evaluate(element => element.scrollTop)
+    assert.ok(headerPosition > 0 && headerPosition < 500)
+    await refresh(3)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - headerPosition) <= 2, "reading the prefix itself does not jump on growth")
+    await refresh(1)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - headerPosition) <= 2, "reading the prefix itself does not jump on shrink")
+
+    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).click()
+    await atBottom()
+    await refresh(2)
+    await atBottom()
+    await stream.hover()
+    await page.mouse.wheel(0, -80)
+    await page.waitForTimeout(250)
+    const nearEnd = await stream.evaluate(element => {
+      const top = element.getBoundingClientRect().top
+      const row = Array.from(element.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")).find(row => {
+        const rect = row.getBoundingClientRect()
+        return rect.top <= top && rect.bottom > top
+      })!
+      return { key: row.dataset.virtualFollowKey, offset: row.getBoundingClientRect().top - top }
+    })
+    await refresh(1)
+    const afterShrink = await page.locator(`[data-virtual-follow-key="${nearEnd.key}"]`).evaluate(element =>
+      element.getBoundingClientRect().top - document.querySelector(".message-stream")!.getBoundingClientRect().top)
+    assert.ok(Math.abs(afterShrink - nearEnd.offset) <= 2, "shrink compensates browser clamping near the end without rejoining follow")
+    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).click()
+    await atBottom()
+
+    await page.locator('.message-timeline-segment[data-message-id="message-12"]').click()
+    await page.waitForFunction(() => {
+      const target = document.querySelector('[data-virtual-follow-key="message-12"]')
+      return target && Math.abs(target.getBoundingClientRect().top - document.querySelector(".message-stream")!.getBoundingClientRect().top) <= 2
+    })
+    await page.evaluate(() => {
+      ;(window as any).receiptFixture.active(false)
+      document.querySelector<HTMLElement>("main")!.style.display = "none"
+    })
+    await page.waitForTimeout(100)
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>("main")!.style.display = "flex"
+      ;(window as any).receiptFixture.active(true)
+    })
+    await page.waitForFunction(() => {
+      const target = document.querySelector('[data-virtual-follow-key="message-12"]')
+      return target && Math.abs(target.getBoundingClientRect().top - document.querySelector(".message-stream")!.getBoundingClientRect().top) <= 2
+    })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
