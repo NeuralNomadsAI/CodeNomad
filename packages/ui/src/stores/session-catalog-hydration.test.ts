@@ -5,9 +5,10 @@ import { serverApi } from "../lib/api-client"
 import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions, hydrateRestoredSessionChain, removeSessionRuntimeState } from "./session-api"
-import { seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
+import { hydrateRestoredWorkspaceState, seedRestoredWorkspaceState } from "./app-session-workspace-hydration"
+import { ensureWorktreesLoaded } from "./worktrees"
 import { captureSessionCatalog } from "./session-catalog-persistence"
-import { activeSessionId, getSessionDraftPrompt, getSessionListIds, isSessionExpanded, sessions, setSessions } from "./session-state"
+import { activeSessionId, getSessionDraftPrompt, getSessionListIds, getSessionThreads, isSessionExpanded, sessions, setSessions } from "./session-state"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import type { Session } from "../types/session"
 
@@ -122,4 +123,56 @@ test("a concurrent rename survives selected-row revalidation and a concurrent ro
     assert.equal(sessions().get(id)?.get("root")?.title, "Newest title")
     assert.ok(getSessionListIds(id).includes("root"))
   } finally { serverApi.fetchWorktrees = original; f.cleanup() }
+})
+
+test("legacy selected descendants expand loaded ancestors, while explicit collapsed snapshots remain collapsed", async () => {
+  for (const explicit of [false, true]) {
+    const id = `catalog-legacy-expansion-${explicit}`, f = fixture(id)
+    try {
+      delete f.saved.sessionCatalog
+      if (explicit) f.saved.expandedSessionIds = []
+      else delete f.saved.expandedSessionIds
+      setSessions(previous => new Map(previous).set(id, new Map([
+        ["root", row("root")], ["child", row("child", "root")], ["grandchild", row("grandchild", "child")],
+      ])))
+      await hydrateRestoredWorkspaceState(id, f.saved, new AbortController().signal, () => true)
+      assert.equal(activeSessionId().get(id), "grandchild")
+      assert.equal(isSessionExpanded(id, "root"), !explicit)
+      assert.equal(isSessionExpanded(id, "child"), !explicit)
+    } finally { f.cleanup() }
+  }
+})
+
+test("directory-only cached roots appear whether scope arrives before or after seeding and partial reads", async () => {
+  const original = serverApi.fetchWorktrees
+  serverApi.fetchWorktrees = async () => ({ gitAvailable: false, worktrees: [
+    { slug: "root", directory: "/repo", serviceDirectory: "/repo", kind: "root", directoryOnly: true },
+  ] })
+  try {
+    for (const before of [false, true]) for (const parentLoaded of [false, true]) {
+      const id = `catalog-directory-root-${before}-${parentLoaded}`, f = fixture(id)
+      try {
+        const local = { ...row("local", "outside-parent"), location: { directory: "/repo" } }
+        const nested = { ...row("nested", "local"), location: { directory: "/repo" } }
+        const outside = { ...row("outside-parent"), location: { directory: "/elsewhere" } }
+        f.saved.sessionCatalog = captureSessionCatalog([local, nested, ...(parentLoaded ? [outside] : [])])
+        if (before) await ensureWorktreesLoaded(id)
+        seedRestoredWorkspaceState(id, f.saved)
+        if (!before) {
+          assert.ok(!getSessionListIds(id).includes("local"), "unknown scope must not invent a native root")
+          await fetchSessions(id)
+          // Metadata can be revalidated before worktree scope; the candidate
+          // must survive both this update and a non-authoritative directory page.
+          setSessions(previous => new Map(previous).set(id, new Map(previous.get(id)).set("local", { ...local, instanceId: id })))
+          await ensureWorktreesLoaded(id)
+        }
+        assert.deepEqual(getSessionListIds(id), ["local"])
+        const threads = getSessionThreads(id)
+        assert.equal(threads.length, 1)
+        assert.equal(threads[0].session.id, "local")
+        assert.equal(threads[0].children[0].session.id, "nested")
+        assert.equal(sessions().get(id)?.get("local")?.parentId, "outside-parent", "keep native ancestry intact")
+      } finally { f.cleanup() }
+    }
+  } finally { serverApi.fetchWorktrees = original }
 })

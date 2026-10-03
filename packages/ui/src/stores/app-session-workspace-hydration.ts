@@ -27,7 +27,7 @@ export function seedRestoredWorkspaceState(
   seedSessionCatalog(instanceId, snapshot.sessionCatalog)
   hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
   hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
-  hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds ?? [])
+  if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
   hydrateWorkspacePromptState(instanceId, snapshot, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }

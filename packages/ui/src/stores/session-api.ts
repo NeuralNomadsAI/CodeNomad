@@ -777,7 +777,7 @@ async function fetchSessions(instanceId: string, options?: {
       })
     }
 
-    setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), options?.reset ?? true, response.nextCursor)
+    setSessionPage(instanceId, rootIds, Boolean(response.nextCursor), inventoryComplete && (options?.reset ?? true), response.nextCursor)
     sessionPageTraversals.set(instanceId, {
       cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
       pages: 1,
