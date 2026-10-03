@@ -24,15 +24,24 @@ export async function walkHistory(instanceId: string, input: HistoryQuery, visit
   } while (cursor)
 }
 
-export async function findHistoryMatches(instanceId: string, input: HistoryQuery, signal: AbortSignal): Promise<HistoryPage> {
-  const seen = new Set<string>()
+export async function findHistoryMatches(instanceId: string, input: HistoryQuery, signal: AbortSignal,
+  progress?: (page: HistoryPage) => void): Promise<HistoryPage> {
+  const seen = new Set<string>(input.cursor ? [input.cursor] : [])
   let cursor = input.cursor
-  let skipped = 0
+  const result: HistoryPage = { status: "page", scanned: 0, tools: 0, reasoning: 0, skipped: 0, hits: [], candidates: [], cursor: null }
   for (;;) {
     const page = await readHistoryPage(instanceId, { ...input, cursor }, signal)
-    skipped += page.skipped
-    if (page.hits.length || !page.cursor) return { ...page, skipped }
-    if (seen.has(page.cursor)) throw new Error(tGlobal("session.pruning.conflict"))
+    if (page.cursor && seen.has(page.cursor)) throw new Error(tGlobal("session.pruning.conflict"))
+    result.scanned += page.scanned
+    result.tools += page.tools
+    result.reasoning += page.reasoning
+    result.skipped += page.skipped
+    result.hits.push(...page.hits)
+    result.cursor = page.cursor
+    progress?.({ ...result, hits: [...result.hits] })
+    // ponytail: whole transport batches keep cursor semantics lossless; a UI
+    // page holds 32–63 hits. Add a native result limit only if that bound matters.
+    if (result.hits.length >= 32 || !page.cursor) return result
     seen.add(page.cursor)
     cursor = page.cursor
   }

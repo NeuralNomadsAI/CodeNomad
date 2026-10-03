@@ -9,6 +9,7 @@ const page = { status: "page", scanned: 1, tools: 1, reasoning: 0, skipped: 0, h
 function fixture(options: { owned?: boolean; cursor?: string | null; output?: unknown } = {}) {
   const app = Fastify()
   const calls: any[] = []
+  const ownershipChecks: string[] = []
   const fence = new WorktreeDeletionFence()
   registerSessionHistoryRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
     getServiceLocation: () => ({ directory: "/repo" }),
@@ -16,7 +17,10 @@ function fixture(options: { owned?: boolean; cursor?: string | null; output?: un
       { slug: "nested", directory: "/repo/.codenomad/worktrees/a", serviceDirectory: "/repo/.codenomad/worktrees/a", kind: "worktree" },
       { slug: "outside", directory: "/linked", serviceDirectory: "/linked", kind: "worktree" },
     ] }),
-    ownsLocation: async (_id, location) => options.owned !== false && ["/repo", "/linked"].includes(location.directory),
+    ownsLocation: async (_id, location) => {
+      ownershipChecks.push(location.directory)
+      return options.owned !== false && ["/repo", "/linked"].includes(location.directory)
+    },
     getWorktreeIdentityForPath: async () => "/repo",
     getSharedServiceClient: async () => ({
       session: { get: async () => ({ id: "s", location: { directory: "/repo" } }) },
@@ -24,7 +28,7 @@ function fixture(options: { owned?: boolean; cursor?: string | null; output?: un
       rpc: { call: async (input: unknown) => { calls.push(input); return { output: options.output ?? { ...page, cursor: options.cursor ?? null } } } },
     }) as any,
   } })
-  return { app, calls, fence }
+  return { app, calls, fence, ownershipChecks }
 }
 const queryUrl = "/api/workspaces/w/session-history/query"
 test("workspace queries exclude contributions from independent clones even under the authorized directory", async () => {
@@ -53,6 +57,17 @@ test("workspace history enumerates only validated roots, avoiding nested-worktre
     assert.equal(second.json().cursor, null)
     assert.deepEqual(calls.map(c => c.location.directory), ["/linked", "/repo"])
     assert(calls.every(c => c.rpcID === "codenomad.session-pruning" && c.method === "history"))
+  } finally { await app.close() }
+})
+test("a workspace page authorizes each distinct contributing location once, without caching across requests", async () => {
+  const sessions = Array.from({ length: 32 }, (_, n) => ({ ...page.sessions[0], sessionID: `s-${n}`, directory: n < 16 ? "/repo" : "/repo/independent-clone" }))
+  const { app, ownershipChecks } = fixture({ output: { ...page, sessions } })
+  try {
+    for (let n = 0; n < 2; n++) {
+      const response = (await app.inject({ method: "POST", url: queryUrl, payload: {} })).json()
+      assert.equal(response.scanned, 16)
+    }
+    assert.deepEqual(ownershipChecks, ["/linked", "/repo", "/repo/independent-clone", "/linked", "/repo", "/repo/independent-clone"])
   } finally { await app.close() }
 })
 test("history rejects foreign sessions, invented roots and changed-query cursor reuse", async () => {

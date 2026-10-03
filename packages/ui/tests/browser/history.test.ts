@@ -23,21 +23,24 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-test("real search window counts, searches unloaded history and switches workspace scope without loading transcripts", async () => {
+test("search derives page progress from search responses without a separate count scan", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const errors: string[] = [], requests: any[] = []
+  let releaseScan!: () => void
+  const pauseScan = new Promise<void>(resolve => { releaseScan = resolve })
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
     if (!route.request().url().endsWith("/session-history/query")) return route.fulfill({ contentType: "application/json", body: "{}" })
     const input = route.request().postDataJSON(); requests.push(input)
     const scan = Number(input.cursor ?? 0)
     const result = { status: "page", scanned: 32, tools: 16, reasoning: 8, skipped: 0, candidates: [], hits: [] as any[], cursor: null as string | null }
-    if (input.purpose === "stats") result.cursor = scan < 8 ? String(scan + 1) : null
-    else if (input.query === "needle") {
+    if (input.query === "empty") result.scanned = 0
+    if (input.query === "needle") {
       if (!input.cursor) result.cursor = "1"
       else {
-        result.hits = [{ sessionID: input.sessionID ?? "other-session", messageID: `unloaded-${scan}`, role: "assistant", partIndex: 0, kind: "text", excerpt: input.sessionID ? `Old needle answer ${scan}` : `Workspace needle answer ${scan}` }]
-        result.cursor = scan === 1 ? "2" : null
+        if (input.sessionID && scan === 2) await pauseScan
+        result.hits = [{ sessionID: input.sessionID ?? `other-session-${scan}`, messageID: `unloaded-${scan}`, role: "assistant", partIndex: 0, kind: "text", excerpt: input.sessionID ? `Old needle answer ${scan}` : `Workspace needle answer ${scan}` }]
+        result.cursor = scan < 34 ? String(scan + 1) : null
       }
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
@@ -46,27 +49,49 @@ test("real search window counts, searches unloaded history and switches workspac
     await page.goto(`${baseUrl}/fixture`)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.open())
-    await page.getByText("288 messages · 144 tools · 72 thinking blocks", { exact: false }).waitFor()
+    await page.getByRole("searchbox").waitFor()
+    await page.getByRole("checkbox", { name: "Include tools and thinking" }).check()
+    await page.getByRole("checkbox", { name: "Include tools and thinking" }).uncheck()
+    assert.equal(requests.length, 0, "opening and toggling an empty search performs no scan")
     await page.getByRole("searchbox").fill("needle")
     await page.getByText("Old needle answer 1", { exact: true }).waitFor()
+    await page.getByText("This page: 1 results · 64 messages scanned", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Next results" }).isDisabled(), true, "partial results are visible while the next scan is pending")
+    releaseScan()
+    await page.getByText("Old needle answer 32", { exact: true }).waitFor()
+    await page.getByText("This page: 32 results · 1056 messages scanned", { exact: true }).waitFor()
     await page.getByRole("button", { name: "Next results" }).click()
-    await page.getByText("Old needle answer 2", { exact: true }).waitFor()
+    await page.getByText("Old needle answer 34", { exact: true }).waitFor()
+    await page.getByText("This page: 2 results · 64 messages scanned", { exact: true }).waitFor()
     assert.equal(await page.getByText("Old needle answer 1", { exact: true }).count(), 0, "result pages remain bounded")
     await page.getByRole("combobox", { name: "Search scope" }).selectOption("workspace")
     await page.getByText("Workspace needle answer 1", { exact: true }).waitFor()
+    await page.getByText("Workspace needle answer 32", { exact: true }).waitFor()
+    await page.getByText("This page: 32 results · 1056 messages scanned", { exact: true }).waitFor()
+    assert.equal(await page.locator(".history-search-result").count(), 32, "workspace results span many sessions and scan batches")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.snapshot()), { ids: ["resident"], loads: 0, previewReads: [] })
     await page.getByText("Workspace needle answer 1", { exact: true }).click()
     await page.getByText("Full selected historical message", { exact: true }).waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.snapshot()), { ids: ["resident"], loads: 0, previewReads: ["unloaded-1"] })
-    assert(requests.some(input => input.sessionID === undefined && input.purpose === "search"))
+    assert(requests.some(input => input.sessionID === undefined && input.purpose === "search" && input.includeTechnical === false))
     const captures = path.join(os.tmpdir(), "opencode")
     await mkdir(captures, { recursive: true })
     await page.screenshot({ path: path.join(captures, "history-search-browser.png") })
+    await page.getByRole("checkbox", { name: "Include tools and thinking" }).check()
+    await page.getByText("This page: 32 results · 1056 messages scanned", { exact: true }).waitFor()
+    await page.getByRole("searchbox").fill("absent")
+    await page.getByText("This page: 0 results · 32 messages scanned", { exact: true }).waitFor()
+    await page.getByRole("searchbox").fill("empty")
+    await page.getByText("This page: 0 results · 0 messages scanned", { exact: true }).waitFor()
+    await page.getByRole("searchbox").fill("")
+    await page.getByText("This page:", { exact: false }).waitFor({ state: "hidden" })
+    assert(requests.every(input => input.purpose === "search"), "search never starts a separate statistics traversal")
+    assert(requests.some(input => input.includeTechnical === true && input.query === "needle"))
     await page.evaluate(() => (window as any).fixture.deactivate())
     await page.getByRole("searchbox").waitFor({ state: "hidden" })
     assert.deepEqual(errors, [])
   } catch (error) {
     console.error({ errors, requests, body: await page.locator("body").innerText() })
     throw error
-  } finally { await page.close() }
+  } finally { releaseScan(); await page.close() }
 })
