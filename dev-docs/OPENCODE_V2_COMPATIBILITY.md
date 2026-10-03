@@ -339,6 +339,64 @@ The compaction-isolation fixture additionally passes on 2.0.22, preserving a
 second session's progress while the first provider response is held. Detailed
 test counts, limits, independent review and remote CI results belong in the PR.
 
+### Loaded-only pending recovery on 2.0.22
+
+The bundled pruning entry also registers the fixed read-only
+`codenomad.pending-requests.snapshot` RPC under its existing backend-presence
+lifecycle. This narrow native-internals exception is qualified against published
+OpenCode **2.0.22** and bundled Effect **4.0.0-rc.112**. Registration uses the
+native setup context's version, not browser input or plugin options. Missing or
+different versions omit only this new capability; the global minimum remains
+**2.0.7** and the recommendation remains **2.0.22**. Existing pruning/history
+methods retain their own support and write checks.
+
+The reader uses private native LocationServiceMap, Location, Form and Permission
+services, scoped existing-only leases and repeated inventory/object-identity
+checks. It preserves global/idle Forms and native numeric JSON codecs, returning
+complete coverage (including empty cold directories) with actual caller
+`originDirectory`. Bounds are 64 requested directories/selected placements,
+2048 loaded keys, 1024 Forms and Permissions per placement/directory, 4 MiB
+UTF-8 output and a two-second reader deadline. The broker's 30-second overall
+deadline includes bounded Git ownership revalidation (eight directories at a
+time through the existing Git worker). Overflow or unsafe serialization
+fails rather than truncates. This is unsupported internal coupling: another
+runtime needs separate qualification, not a version-range expansion.
+
+`GET /api/workspaces/:id/pending-requests` retains its existing UI wire shape and
+uses only the authenticated connection's fixed
+`POST /api/rpc/codenomad.pending-requests/snapshot?location[directory]=<root>` with
+`{ "input": { "directories": [...] } }`. The root comes from the established
+workspace's owned native Location, never startup environment or a submitted
+candidate. The broker validates requested directories/common-repository identity,
+native execution-host origin, full coverage and every returned placement,
+including cold/empty authority and WSL translations/aliases. Legacy workspace
+identities are rejected rather than erased. Workspace/connection replacement,
+root and candidate deletion and changed directory authority fence dispatch and
+publication. Cold UI coverage synthesizes a location from the validated native
+entry directory, not the browser's alias.
+
+Only HTTP 400 with a bounded, declared native `RpcError` type `rpc.unavailable`
+or `rpc.method_not_found` means `supported:false`. Plain 404s, malformed output,
+authentication failures, reader errors, timeouts and overflow return
+non-authoritative 503s; they neither clear queues nor retry native mutations.
+Successful capability negotiation is connection-scoped and occurs only after
+all origin/coverage/placement checks. The existing compaction guard defers an
+unverified capability before inventory work and again before forwarding. It
+cannot probe during an observed compaction until capability was previously
+verified; this conservative hold is intentional. Older/unsupported runtimes
+retain guarded legacy discovery. No general RPC proxy, native pending-API
+dependency, provisioning mutation, reload or service restart was added.
+
+Candidate traversal does not construct cold Locations. Native HTTP middleware
+may still warm/rebuild the single bootstrap root before handler execution;
+root eviction/config rebuild is not a construction-free guarantee. Snapshots
+can stale after leases release or transport, so existing per-kind mutation
+fences and settlement tombstones remain essential. This work does not fix
+existing graph/Bus/TUI CPU costs or claim live desktop acceptance. Isolated
+published production-loader/authenticated-router proof and ordinary bundle
+resolution are separate from desktop deployment qualification; detailed checks
+and receipts belong in the PR.
+
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.
 

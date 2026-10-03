@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
-import { afterEach, test } from "node:test"
+import { afterEach, beforeEach, test } from "node:test"
 import type { OpenCodeClient, PermissionReplyInput } from "@opencode/client"
 import { OpenCode } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager"
+import { serverApi } from "../lib/api-client"
 import type { Instance } from "../types/instance"
 import {
   addInstance,
@@ -22,6 +23,8 @@ import { setSessions } from "./session-state"
 
 const instanceIds: string[] = []
 const originalCreateClient = sdkManager.createClient
+const originalPendingRequests = serverApi.getPendingRequests
+beforeEach(() => { serverApi.getPendingRequests = async () => ({ supported: false }) })
 
 function addTestInstance(id: string, client: OpenCodeClient): void {
   instanceIds.push(id)
@@ -37,6 +40,7 @@ function addTestInstance(id: string, client: OpenCodeClient): void {
 }
 
 afterEach(() => {
+  serverApi.getPendingRequests = originalPendingRequests
   for (const instanceId of instanceIds.splice(0)) {
     clearPermissionQueue(instanceId)
     setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
