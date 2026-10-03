@@ -976,6 +976,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           <Show when={shouldRenderSessionRows(
             Boolean(sessionListError()),
             listViewportAttached() && (visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()),
+            visibleProjection().ids.length > 0,
           )}>
            <div class="session-section">
              <Show when={visibleProjection().ids.length > 0}>

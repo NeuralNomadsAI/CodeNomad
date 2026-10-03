@@ -90,7 +90,7 @@ function enqueuePendingSave(): Promise<void> {
     revision: ++revision,
     savedAt: Date.now(),
     layout: { ...layout },
-    session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutOutlineIndexes(loadedRestorableSession()),
+    session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
   if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
@@ -128,10 +128,10 @@ function enqueuePendingSave(): Promise<void> {
   return saveAttempt
 }
 
-function withoutOutlineIndexes(state: RestorableSessionState | null): RestorableSessionState | null {
+function withoutPartitionCaches(state: RestorableSessionState | null): RestorableSessionState | null {
   return state && { ...state, tabs: state.tabs.map(tab => {
     if (tab.kind !== "workspace") return tab
-    const { outlineIndexes: _, ...rest } = tab
+    const { outlineIndexes: _, sessionCatalog: _catalog, ...rest } = tab
     return rest
   }) }
 }

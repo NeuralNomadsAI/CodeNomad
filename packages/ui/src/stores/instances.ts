@@ -22,7 +22,6 @@ import {
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   clearInstanceSessionSelection,
-  resetSessionPagination,
 } from "./sessions"
 import {
   ensureWorktreesLoaded,
@@ -1027,7 +1026,8 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
   const sessions = Promise.resolve().then(async () => {
-    resetSessionPagination(instanceId)
+    // fetchSessions reconciles the index after publication. Clearing it here
+    // hides restored rows while the first network request is still pending.
     await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })

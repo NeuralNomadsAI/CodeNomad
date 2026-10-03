@@ -34,6 +34,7 @@ import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-au
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
+import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
 import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
@@ -88,6 +89,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
       ),
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
+      sessionCatalog: captureSessionCatalog(getSessions(id)),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
         ...expanded.filter((sessionId) => !expansionAuthority.has(sessionId)),

@@ -4,6 +4,7 @@ import type { RestorableAttachment } from "./client-state-attachments-codec"
 import { canonicalJson, sha256 } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
+import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
@@ -25,7 +26,7 @@ export interface ClientSnapshotV2 {
   layout: Record<string, string>
   sessionPartition: string
   partitionKeys: string[]
-  extensions?: ["outline-index-v1"]
+  extensions?: Array<"outline-index-v1" | "session-catalog-v1">
 }
 
 export interface EncodedClientSnapshotV2 {
@@ -163,6 +164,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       if (tab.activeParentSessionId !== undefined) workspace.activeParentSessionId = tab.activeParentSessionId
       if (tab.activeSessionId !== undefined) workspace.activeSessionId = tab.activeSessionId
       if (tab.expandedSessionIds !== undefined) workspace.expandedSessionIds = tab.expandedSessionIds
+      if (tab.sessionCatalog !== undefined) workspace.catalogPartitions = await encodeCatalogPartitions(tab.sessionCatalog, addPartition)
       const shell: Record<string, unknown> = {
         kind: tab.kind,
         folder: tab.folder,
@@ -187,6 +189,9 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
 
 export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promise<EncodedClientSnapshotV2> {
   const graph = await encodeSessionGraph(snapshot.session)
+  const extensions: NonNullable<ClientSnapshotV2["extensions"]> = []
+  if (snapshot.session?.tabs.some(tab => tab.kind === "workspace" && Object.keys(tab.outlineIndexes ?? {}).length)) extensions.push("outline-index-v1")
+  if (snapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.sessionCatalog !== undefined)) extensions.push("session-catalog-v1")
   return {
     root: {
       version: 2,
@@ -195,8 +200,7 @@ export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promis
       layout: snapshot.layout,
       sessionPartition: graph.sessionPartition,
       partitionKeys: graph.partitionKeys,
-      ...(snapshot.session?.tabs.some(tab => tab.kind === "workspace" && Object.keys(tab.outlineIndexes ?? {}).length)
-        ? { extensions: ["outline-index-v1"] as ["outline-index-v1"] } : {}),
+      ...(extensions.length ? { extensions } : {}),
     },
     partitions: graph.partitions,
     partitionKeys: graph.partitionKeys,
@@ -226,7 +230,9 @@ function decodeRoot(value: unknown): { root: ClientSnapshotV1; partitionKey: str
     || !isPartitionKeyArray(value.partitionKeys)
     || !value.partitionKeys.includes(value.sessionPartition)
     || Object.keys(value).sort().join("\0") !== [...ROOT_KEYS, ...(value.extensions === undefined ? [] : ["extensions"])].sort().join("\0")
-    || (value.extensions !== undefined && !canonicalEquals(value.extensions, ["outline-index-v1"]))) return null
+    || (value.extensions !== undefined && (!Array.isArray(value.extensions) || !value.extensions.length
+      || !value.extensions.every((entry, index, entries) => ["outline-index-v1", "session-catalog-v1"].includes(entry)
+        && (index === 0 || entries[index - 1] < entry))))) return null
   let serialized: string
   try {
     serialized = JSON.stringify(value)
@@ -366,7 +372,7 @@ async function decodeGraph(
     const workspace = await loadCanonical(shell.workspacePartition)
     if (!workspace || (workspace.format !== 1 && workspace.format !== 2)
       || !hasExactKeys(workspace, ["format", "sessions"],
-        ["activeParentSessionId", "activeSessionId", "expandedSessionIds"])
+        ["activeParentSessionId", "activeSessionId", "expandedSessionIds", "catalogPartitions"])
       || !isRecord(workspace.sessions)) return
     legacyGraph ||= workspace.format === 1
     if (!Object.keys(workspace.sessions).every(isSafePersistedSessionId)
@@ -389,6 +395,11 @@ async function decodeGraph(
     }
     for (const key of ["activeParentSessionId", "activeSessionId", "expandedSessionIds"] as const) {
       if (hasOwn(workspace, key)) tab[key] = workspace[key]
+    }
+    if (workspace.catalogPartitions !== undefined) {
+      const catalog = await decodeCatalogPartitions(workspace.catalogPartitions, new Set(persistedKeys), declaredGraph, loadCanonical)
+      if (catalog) tab.sessionCatalog = catalog
+      else degraded = true
     }
     const entries: Array<{ sessionId: string; documentKey: string; partitionKeys: string[] }> = []
     for (const [sessionId, rawEntry] of Object.entries(workspace.sessions)) {

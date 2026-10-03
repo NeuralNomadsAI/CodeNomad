@@ -80,6 +80,7 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   idleSince?: number | null // Timestamp set when work finished but the session has not been viewed yet
   generationRecovery?: GenerationRecoveryState | null // Local recovery state for work interrupted across restarts
   runtimeStatusKnown?: boolean // Whether idle/working came from an authoritative runtime response
+  catalogSnapshot?: true // Restored display row; selected metadata still needs a native read
   generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
   modelSelectionPending?: boolean // Protects optimistic model choice from catalog snapshots during its native write
 }
