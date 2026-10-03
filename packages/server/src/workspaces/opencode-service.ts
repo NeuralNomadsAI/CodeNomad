@@ -40,6 +40,9 @@ export interface ServiceConnection {
   profile: (signal?: AbortSignal) => Promise<ContractProfile>
 }
 
+// Server-only provenance. Weak keys neither retain events nor serialize native credentials over SSE.
+export const nativeEventConnections = new WeakMap<object, ServiceConnection>()
+
 export interface OpenCodeSharedServiceDependencies {
   headers: typeof Service.headers
   makeClient: typeof OpenCode.make
@@ -316,6 +319,7 @@ export class OpenCodeSharedService {
         observePendingDiscovery(connection, result.value)
         // Consumer return/throw and subscriber-local abort are not failures of
         // the shared source. Uncancelled iterator EOF/errors still invalidate.
+        nativeEventConnections.set(result.value, connection)
         yield result.value
       }
     } finally {

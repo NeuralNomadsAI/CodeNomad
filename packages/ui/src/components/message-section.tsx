@@ -1,6 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
-import { interruptionReveal, setInterruptionReveal } from "../stores/interruption-navigation"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
@@ -9,6 +8,7 @@ import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
+import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
@@ -495,27 +495,6 @@ export default function MessageSection(props: MessageSectionProps) {
   )
 
   onCleanup(cancelWindowNavigation)
-  onCleanup(() => {
-    const target = interruptionReveal()
-    if (target?.instanceId === props.instanceId && target.sessionId === props.sessionId) setInterruptionReveal(undefined)
-  })
-  createEffect(on(() => [interruptionReveal(), props.isActive] as const, ([target]) => {
-    if (!target || props.isActive === false || target.instanceId !== props.instanceId || target.sessionId !== props.sessionId) return
-    const locate = () => {
-      if (interruptionReveal() !== target || props.isActive === false) return
-      listApi()?.setAutoScroll(false)
-      listApi()?.scrollToKey(target.messageId, { block: "start" })
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (interruptionReveal() !== target || props.isActive === false) return
-        document.getElementById(getMessageAnchorId(target.messageId))
-          ?.querySelector('[data-interruption-reveal="true"]')?.scrollIntoView({ block: "center" })
-      }))
-    }
-    if (untrack(messageIds).includes(target.messageId)) {
-      cancelWindowNavigation()
-      locate()
-    } else void pageWindow("around", locate, target.messageId)
-  }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
@@ -1300,6 +1279,7 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} />
               <Show when={olderMessageLoadFailed()}>
                 <div class="flex justify-center py-2">
                   <button
@@ -1374,6 +1354,7 @@ export default function MessageSection(props: MessageSectionProps) {
             </>
           )}
           renderItem={(messageId, index) => (
+            <>
             <MessageBlock
               messageId={messageId}
               instanceId={props.instanceId}
@@ -1406,6 +1387,8 @@ export default function MessageSection(props: MessageSectionProps) {
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
+            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </>
           )}
           renderOverlay={() => (
             <>

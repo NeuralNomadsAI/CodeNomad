@@ -35,6 +35,8 @@ import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
+import { PermissionReceipts } from "./permissions/receipts"
+import { PermissionReceiptStore } from "./permissions/receipt-store"
 import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
@@ -419,10 +421,14 @@ async function main() {
   const previewManager = new PreviewManager()
   const yoloLogger = logger.child({ component: "yolo" })
   const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
+  const permissionReceipts = new PermissionReceipts(
+    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus, yoloLogger,
+  )
+  permissionReceipts.start()
   const yoloManager = new AutoAcceptManager({
     eventBus,
     logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager }),
+    replier: createOpencodePermissionReplier({ workspaceManager, permissionReceipts }),
     persistence: sessionMetadataPersistence,
   })
   yoloManager.start()
@@ -516,6 +522,7 @@ async function main() {
         clientConnectionManager,
         remoteProxySessionManager,
         yoloManager,
+        permissionReceipts,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: uiResolution.uiDevServerUrl,
         logger,
@@ -544,6 +551,7 @@ async function main() {
         clientConnectionManager,
         remoteProxySessionManager,
         yoloManager,
+        permissionReceipts,
         uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
         logger,
@@ -658,13 +666,19 @@ async function main() {
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
-          stopWorkspaces: () => workspaceManager.shutdown(),
+          stopWorkspaces: async () => {
+            instanceEventBridge.shutdown()
+            yoloManager.stop()
+            await permissionReceipts.stop()
+            await workspaceManager.shutdown()
+          },
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()
+            await permissionReceipts.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

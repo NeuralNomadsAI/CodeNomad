@@ -66,6 +66,9 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", async route => {
     const request = route.request(), method = request.url().split("/").at(-1)
+    if (new URL(request.url()).pathname.endsWith("/permission-receipts")) {
+      return route.fulfill({ contentType: "application/json", body: '{"receipts":[]}' })
+    }
     if (!request.url().includes("/session-history/") || !["outline", "outlinePreview", "window"].includes(method!)) {
       return route.fulfill({ contentType: "application/json", body: "{}" })
     }

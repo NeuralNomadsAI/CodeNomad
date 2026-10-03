@@ -7,7 +7,6 @@ import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
 import { activeInterruption } from "../stores/instances"
-import { focusInterruption, interruptionReveal } from "../stores/interruption-navigation"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
@@ -184,7 +183,6 @@ function ToolCallDetails(props: {
   const ansiRunningCache = createVariantCache("ansi-running", () => "running")
   const ansiFinalCache = createVariantCache("ansi-final")
 
-  const permissionDetails = createMemo(() => props.pendingPermission()?.permission)
 
 
   const followScroll = createFollowScroll({
@@ -342,11 +340,6 @@ function ToolCallDetails(props: {
     }
     return null
   }
-
-  const renderPermissionBlock = () => (
-    <Show when={permissionDetails()}>{permission => <button type="button" class="tool-call-permission-button"
-      onClick={() => focusInterruption(props.instanceId, props.sessionId, permission().id)}>{props.t("interruption.respond")}</button>}</Show>
-  )
 
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
@@ -534,7 +527,6 @@ function ToolCallDetails(props: {
         </div>
       </Show>
 
-      {renderPermissionBlock()}
     </div>
   )
 }
@@ -633,15 +625,13 @@ export default function ToolCall(props: ToolCallProps) {
 
   const hasPendingForm = createMemo(() => Boolean(pendingForm()))
 
-  const revealed = () => {
-    const target = interruptionReveal()
-    return target?.instanceId === props.instanceId && target.sessionId === props.sessionId && target.messageId === props.messageId
-      && (!target.callId || target.callId === toolCallMemo().callID || target.callId === toolCallIdentifier())
-  }
-  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || hasPendingForm() || revealed())
+  const isToolVisible = createMemo(() => {
+    if (hasPendingForm()) return false
+    if (toolName() === "question" && (toolState()?.status === "running" || toolState()?.status === "pending")) return false
+    return toolVisibility() !== "hidden"
+  })
 
   const expanded = () => {
-    if (isPermissionActive() || hasPendingForm() || revealed()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -660,18 +650,10 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [toolCallRootEl, setToolCallRootEl] = createSignal<HTMLDivElement | undefined>()
-  createEffect(() => {
-    const element = toolCallRootEl()
-    if (!revealed() || !element) return
-    element.dataset.interruptionReveal = "true"
-    const frame = requestAnimationFrame(() => element.scrollIntoView({ block: "center" }))
-    onCleanup(() => { cancelAnimationFrame(frame); delete element.dataset.interruptionReveal })
-  })
   const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || hasPendingForm()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -705,10 +687,6 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function toggle() {
-    const permission = pendingPermission()
-    if (permission?.active) {
-      return
-    }
     setUserExpanded((prev) => {
       const current = prev === null ? defaultExpandedForTool() : prev
       return !current
@@ -1007,17 +985,6 @@ export default function ToolCall(props: ToolCallProps) {
         )}
       </Show>
 
-      <Show keyed when={pendingForm()}>
-        {(form) => (
-          <div class="interruption-receipt">
-            <p>{form.title}</p>
-            <Show when={form.metadata?.kind === "question"}>
-              <For each={form.fields.filter(field => !("hidden" in field && field.hidden))}>{field => <p>{field.description || field.title}</p>}</For>
-            </Show>
-            <button type="button" class="tool-call-permission-button" onClick={() => focusInterruption(props.instanceId, props.sessionId, form.id)}>{t("interruption.respond")}</button>
-          </div>
-        )}
-      </Show>
     </div>
     </Show>
   )

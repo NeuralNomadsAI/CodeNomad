@@ -25,6 +25,8 @@ import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerYoloRoutes } from "./routes/yolo"
+import { registerPermissionReceiptRoutes } from "./routes/permission-receipts"
+import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
@@ -86,6 +88,7 @@ interface HttpServerDeps {
   clientConnectionManager: ClientConnectionManager
   remoteProxySessionManager: RemoteProxySessionManager
   yoloManager: AutoAcceptManager
+  permissionReceipts?: PermissionReceipts
   uiStaticDir: string
   uiDevServerUrl?: string
   logger: Logger
@@ -363,8 +366,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     logger: proxyLogger,
   })
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
+  if (deps.permissionReceipts) registerPermissionReceiptRoutes(app, deps.permissionReceipts)
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts })
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts })
 
 
   if (deps.uiDevServerUrl) {
@@ -450,6 +454,7 @@ interface InstanceProxyDeps {
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  permissionReceipts?: PermissionReceipts
 }
 
 interface SideCarProxyDeps {
@@ -615,6 +620,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        permissionReceipts: deps.permissionReceipts,
         pathSuffix: "",
         logger: deps.logger,
       })
@@ -630,6 +636,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        permissionReceipts: deps.permissionReceipts,
         pathSuffix: request.params["*"] ?? "",
         logger: deps.logger,
       })
@@ -645,6 +652,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        permissionReceipts: deps.permissionReceipts,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
         logger: deps.logger,
       })
@@ -666,6 +674,7 @@ interface InstanceProxyRequestArgs {
   workspaceManager: InstanceProxyWorkspaceManager
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  permissionReceipts?: PermissionReceipts
   logger: Logger
   pathSuffix?: string
 }
@@ -1024,7 +1033,19 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
 
   try {
     connection?.assertCurrent()
-    // Recheck after authorization I/O, immediately before upstream forwarding.
+    const permissionReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/permission\/([^/]+)\/reply\/?$/)
+    const permissionBody = body as { decision?: unknown; message?: unknown } | undefined
+    const confirmPermission = permissionReply && connection && args.permissionReceipts && sessionId
+      && permissionBody && ["once", "always", "reject"].includes(String(permissionBody.decision))
+      && (permissionBody.message === undefined || typeof permissionBody.message === "string")
+      ? await args.permissionReceipts.prepare(workspaceId, connection, sessionId, permissionReply[1],
+        permissionBody.decision as "once" | "always" | "reject", "codenomad", permissionBody.message as string | undefined)
+      : undefined
+    const confirmDeletion = request.method === "DELETE" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
+      && connection && args.permissionReceipts && sessionId
+      ? await args.permissionReceipts.prepareDeletion(workspaceId, connection, sessionId) : undefined
+    connection?.assertCurrent()
+    // Recheck after authorization and receipt preparation, before forwarding.
     if (deferList()) return reply.header("Retry-After", "30").header("Cache-Control", "no-store").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
     if (connection && ((request.method === "POST" && /^\/api\/session\/[^/]+\/(?:permission|form)\/[^/]+\/reply\/?$/.test(pathname))
       || (request.method === "DELETE" && /^\/api\/session\/[^/]+\/form\/[^/]+\/?$/.test(pathname)))) {
@@ -1084,7 +1105,11 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       signal.throwIfAborted()
       return await forwardRuntimeRequest({
         request, reply, url: targetUrl.toString(), body, headers,
-        fetch: runtimeFetch, release: releaseMutation,
+        fetch: confirmPermission || confirmDeletion ? async (input, init) => {
+          const response = await runtimeFetch(input, init)
+          if (response.ok) { await confirmPermission?.(); await confirmDeletion?.() }
+          return response
+        } : runtimeFetch, release: releaseMutation,
         invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
       })
     }

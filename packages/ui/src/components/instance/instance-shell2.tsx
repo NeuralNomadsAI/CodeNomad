@@ -581,7 +581,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
         <PermissionNotificationBanner
           instanceId={props.instance.id}
-          onClick={() => { handleBackToConversation(); focusInterruption(props.instance.id, activeSessionIdForInstance() ?? undefined) }}
+          onClick={() => { handleBackToConversation(); focusInterruption(props.instance.id) }}
         />
       </Show>
       {renderYoloModePill()}
