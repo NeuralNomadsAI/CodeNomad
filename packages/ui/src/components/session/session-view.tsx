@@ -1,7 +1,7 @@
-import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, type Attachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { messageStoreBus } from "../../stores/message-v2/bus"
@@ -23,6 +23,8 @@ import { clearConversationPlaybackForSession } from "../../stores/conversation-s
 import { useConfig } from "../../stores/preferences"
 import { getSessionPreview } from "../../stores/session-previews"
 import { SessionPreviewView } from "../session-preview-view"
+import { FilesPreviewView } from "../files-preview-view"
+import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
 import { isSnapshotAutoFollowing } from "../virtual-follow-behavior"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
@@ -37,13 +39,13 @@ function isTextPart(part: ClientPart): part is ClientPart & { type: "text"; text
 }
 
 interface SessionViewProps {
+  interruptionPanel?: JSXElement
   sessionId: string
   activeSessions: Map<string, Session>
   instanceId: string
   instanceFolder: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
-  compactPromptLayout?: boolean
   focusConversationOnActivate?: boolean
   onConversationFocusHandled?: () => void
   showSidebarToggle?: boolean
@@ -101,6 +103,11 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
   const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
+  const filePreview = createMemo(() => {
+    const target = getFilePreview(props.instanceId)
+    return target?.sessionId === props.sessionId ? target : null
+  })
+  createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
 
   const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 
@@ -472,6 +479,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               return attachment
             }),
             ...(item.payload.agents ?? []).map((agent) => createAgentAttachment(agent.name)),
+            ...(item.payload.skills ?? []).map((skill) => createSkillAttachment(skill.id, skill.name)),
           ]
           clearAttachments(props.instanceId, props.sessionId)
           for (const attachment of restoredAttachments) addAttachment(props.instanceId, props.sessionId, attachment)
@@ -606,6 +614,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     >
       <div ref={rootRef} class="session-view">
+        <Show when={filePreview()} fallback={
         <Show
           when={preview()?.mode === "preview"}
           fallback={
@@ -649,6 +658,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             onInsertComment={handleInsertPreviewComment}
           />
         </Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
 
         <Show when={attachments().length > 0}>
           <PromptAttachmentsBar
@@ -664,12 +674,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           />
         </Show>
 
+        {props.interruptionPanel}
         <PromptInput
           instanceId={props.instanceId}
           instanceFolder={session()?.location.directory ?? props.instanceFolder}
           sessionId={props.sessionId}
           isActive={props.isActive}
-          compactLayout={props.compactPromptLayout}
           onSend={handleSendMessage}
           onRunShell={handleRunShell}
           escapeInDebounce={props.escapeInDebounce}

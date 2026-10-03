@@ -71,7 +71,8 @@ for (const host of ["electron", "tauri"] as const) {
         proxyPath: `/workspaces/project-${i}/instance`, binaryId: "fixture", binaryLabel: "fixture",
         createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
       })) : path === "/api/storage/config/ui" ? { settings: { locale: "en" } }
-        : path.includes("/instance/api/") ? [] : {}
+        : path.includes("/instance/api/") ? { location: { directory: "D:/current-project" }, data: [] }
+        : path.endsWith("/websearch-settings") ? { location: { directory: "D:/current-project" }, scopes: [], effective: null } : {}
       await route.fulfill({ json: body })
     })
     try {
@@ -97,13 +98,18 @@ for (const host of ["electron", "tauri"] as const) {
       assert.deepEqual(workspaceRequests, [], "reconnect/events must not hydrate unrelated projects")
       await Promise.all([
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/integration")),
+        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/model")),
+        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/websearch-settings")),
         page.getByRole("button", { name: "Fournisseurs", exact: true }).click(),
       ])
-      assert.equal(workspaceRequests.length, 3)
+      assert.deepEqual(new Set(workspaceRequests.map(request => new URL(request).pathname)), new Set([
+        "/workspaces/current-project/instance/api/provider", "/workspaces/current-project/instance/api/model",
+        "/workspaces/current-project/instance/api/integration", "/workspaces/current-project/instance/api/websearch/provider",
+        "/api/workspaces/current-project/websearch-settings",
+      ]))
       for (const request of workspaceRequests) {
         const target = new URL(request)
-        assert.match(target.pathname, /^\/workspaces\/current-project\/instance\/api\/(provider|model|integration)$/)
-        assert.equal(target.searchParams.get("location[directory]"), "D:/current-project")
+        assert.equal(target.searchParams.get(target.pathname.startsWith("/api/") ? "directory" : "location[directory]"), "D:/current-project")
       }
       assert.deepEqual(errors, [])
     } catch (error) {

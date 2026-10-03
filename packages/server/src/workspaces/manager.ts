@@ -257,20 +257,22 @@ export class WorkspaceManager {
     this.sharedService.invalidate?.()
   }
 
-  async ownsDirectory(id: string, directory: string): Promise<boolean> {
+  async ownsDirectory(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     if (directory === record.path || directory === record.location?.directory) return true
-    if (await this.ownsHostDirectory(record, directory)) return true
+    if (await this.ownsHostDirectory(record, directory, purpose)) return true
     if (!record.wslDistro) return false
     const hostDirectory = await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
-    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory))
+    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory, purpose))
   }
 
-  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient): Promise<boolean> {
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
+    signal?.throwIfAborted()
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory)
+    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose)
+    signal?.throwIfAborted()
     if (!directory) return false
     if (location.workspaceID === undefined) return true
     // The directory fence alone cannot authorize a legacy native workspace.
@@ -279,15 +281,15 @@ export class WorkspaceManager {
     try {
       const requested = readLocationRef({ ...location, directory })
       const resolved = readLocationRef(client
-        ? await client.location.get({ location: { directory } }, locationRequestOptions(requested))
-        : await this.sharedService.validateLocation(requested, undefined, record[WORKSPACE_STATE].serviceOptions))
+        ? await client.location.get({ location: { directory } }, { ...locationRequestOptions(requested), signal })
+        : await this.sharedService.validateLocation(requested, { signal }, record[WORKSPACE_STATE].serviceOptions))
       return sameLocation(requested, resolved)
     } catch {
       return false
     }
   }
 
-  async getServiceDirectoryForPath(id: string, directory: string): Promise<string | undefined> {
+  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     // Directory authorization does not need the checkout's Git mutation identity.
@@ -298,7 +300,7 @@ export class WorkspaceManager {
       ])
       if (target && target === root) return target
     }
-    const owned = await this.resolveOwnedWorktree(record, directory)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
     return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
@@ -356,6 +358,8 @@ export class WorkspaceManager {
     load: (id) => this.nativeWorktreeContext(id).then(listNativeWorktrees),
     changed: (id) => {
       invalidateWorktreeCache(id)
+      invalidateWorktreeCache(`event:${id}`)
+      this.eventWorktreeInventory.invalidate(id)
       this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
     },
     failed: (id, error) => this.options.logger.warn({ workspaceId: id, err: error }, "Failed to refresh worktree inventory"),
@@ -366,8 +370,28 @@ export class WorkspaceManager {
     return this.worktreeInventory.read(id, mode)
   }
 
+  // Registered-only reads cannot join discovery scans. They retain all native,
+  // physical Git, mutation and disposal checks used by the ordinary catalogue.
+  private readonly eventWorktreeInventory = new WorktreeInventory({
+    load: (id) => this.nativeWorktreeContext(id).then(context => listNativeWorktrees(context, { refresh: false })),
+    changed: (id) => {
+      invalidateWorktreeCache(`event:${id}`)
+      this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
+    },
+    failed: (id, error) => this.options.logger.debug({ id, err: error }, "Event worktree inventory refresh failed"),
+    now: () => this.now(),
+  })
+
+  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event") {
+    const mode = refresh ? "fresh" : "validated"
+    return (await (purpose === "event"
+      ? this.eventWorktreeInventory.read(id, mode)
+      : this.getWorktrees(id, mode))).worktrees
+  }
+
   invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
     this.worktreeInventory.invalidate(undefined, mode)
+    this.eventWorktreeInventory.invalidate(undefined, mode)
     invalidateWorktreeCache()
   }
 
@@ -383,22 +407,22 @@ export class WorkspaceManager {
     finally { this.invalidateWorktrees("blocking") }
   }
 
-  private async ownsHostDirectory(record: WorkspaceRecord, directory: string): Promise<boolean> {
+  private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
     const [target, root] = await Promise.all([
       realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
     ])
     if (target && target === root) return true
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
     return (await resolveOwnedWorktreePath({
-      workspaceId: record.id,
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory,
-      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
       logger: this.options.logger,
     })) !== null
   }
 
-  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string) {
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request") {
     const hostDirectory = record.wslDistro
       ? isWindowsHostPath(directory)
         ? directory
@@ -424,10 +448,10 @@ export class WorkspaceManager {
     }
     if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
     return resolveOwnedWorktreePath({
-      workspaceId: record.id,
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory: hostDirectory,
-      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
       logger: this.options.logger,
     })
   }
@@ -492,6 +516,12 @@ export class WorkspaceManager {
     }
   }
 
+  async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
+    const result = await browser.readFileContent(relativePath, { encoding: "base64" })
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+  }
+
   async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
     this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: directory })
@@ -512,8 +542,7 @@ export class WorkspaceManager {
   }
 
   async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
-    this.requireWorkspace(workspaceId)
-    const browser = new FileSystemBrowser({ rootDir: directory })
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     await browser.writeFile(relativePath, contents)
   }
 
@@ -1143,7 +1172,9 @@ export class WorkspaceManager {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
     this.worktreeInventory.forget(id)
+    this.eventWorktreeInventory.forget(id)
     invalidateWorktreeCache(id)
+    invalidateWorktreeCache(`event:${id}`)
     clearWorkspaceSearchCache(record.path)
     if (publishStopped) this.publishStopped(record, reason)
   }

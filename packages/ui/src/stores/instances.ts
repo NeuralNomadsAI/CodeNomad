@@ -6,7 +6,8 @@ import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry, WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
+import { PENDING_RECONCILIATION_HEADER } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
   fetchSessions,
@@ -139,56 +140,12 @@ const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
 const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boolean>>(new Map())
 
-const COMPACTION_PROJECTION_INTERVAL_MS = 250
-const pendingCompactionProjections = new Map<string, {
-  timeout: ReturnType<typeof setTimeout>
-  project: () => void
-}>()
-
-function compactionProjectionKey(instanceId: string, sessionId: string): string {
-  return `${instanceId}\0${sessionId}`
-}
-
-function scheduleCompactionProjection(instanceId: string, sessionId: string, project: () => void): void {
-  const key = compactionProjectionKey(instanceId, sessionId)
-  const pending = pendingCompactionProjections.get(key)
-  if (pending) {
-    pending.project = project
-    return
-  }
-
-  const next = {
-    project,
-    timeout: setTimeout(() => {
-      pendingCompactionProjections.delete(key)
-      next.project()
-    }, COMPACTION_PROJECTION_INTERVAL_MS),
-  }
-  pendingCompactionProjections.set(key, next)
-}
-
-function cancelCompactionProjection(instanceId: string, sessionId: string): void {
-  const key = compactionProjectionKey(instanceId, sessionId)
-  const pending = pendingCompactionProjections.get(key)
-  if (!pending) return
-  clearTimeout(pending.timeout)
-  pendingCompactionProjections.delete(key)
-}
-
-function clearCompactionProjections(instanceId: string): void {
-  const prefix = `${instanceId}\0`
-  for (const [key, pending] of pendingCompactionProjections) {
-    if (!key.startsWith(prefix)) continue
-    clearTimeout(pending.timeout)
-    pendingCompactionProjections.delete(key)
-  }
-}
-
 // Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
-const permissionRequestLocations = new Map<string, Map<string, string>>()
-const formRequestLocations = new Map<string, Map<string, string>>()
+type RequestLocationRegistry = Map<string, Map<string, { key: string; location: RequestLocation }>>
+const permissionRequestLocations: RequestLocationRegistry = new Map()
+const formRequestLocations: RequestLocationRegistry = new Map()
 
 type RequestAuthorityLocation = RequestLocation | { directory: string }
 
@@ -199,19 +156,24 @@ function requestLocationKey(location?: RequestAuthorityLocation | string): strin
   return locationAuthorityKey({ ...location, directory: normalizeWorkspacePath(location.directory) })
 }
 
-function rememberRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
+function rememberRequestLocation(registry: RequestLocationRegistry, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
   const key = requestLocationKey(location)
   if (!key) return
-  const entries = registry.get(instanceId) ?? new Map<string, string>()
-  entries.set(requestId, key)
+  const entries = registry.get(instanceId) ?? new Map<string, { key: string; location: RequestLocation }>()
+  // Comparison keys are normalized, but dispatch must retain native spelling.
+  entries.set(requestId, { key, location: typeof location === "string" ? { directory: location } : { ...location } })
   registry.set(instanceId, entries)
 }
 
-function forgetRequestLocation(registry: Map<string, Map<string, string>>, instanceId: string, requestId: string): void {
+function forgetRequestLocation(registry: RequestLocationRegistry, instanceId: string, requestId: string): void {
   const entries = registry.get(instanceId)
   if (!entries) return
   entries.delete(requestId)
   if (!entries.size) registry.delete(instanceId)
+}
+
+function rememberedRequestLocation(registry: RequestLocationRegistry, instanceId: string, requestId: string): RequestLocation | undefined {
+  return registry.get(instanceId)?.get(requestId)?.location
 }
 
 class InterruptionRegistry<T extends { id: string }> {
@@ -293,13 +255,78 @@ const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
 const pendingRequestSyncs = new Map<string, {
   generation: number
+  targeted: boolean
   token: { cancelled: boolean }
   promise: Promise<void>
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
+const pendingDiscoveryDeferred = new Error("Pending discovery deferred during compaction")
+type PendingCompaction = {
+  client: NonNullable<Instance["client"]>; active: boolean; created: number; sequence?: number
+}
+const pendingCompactions = new Map<string, Map<string, PendingCompaction>>()
+const deferredPendingDiscovery = new Set<string>()
+let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
+
+function isPendingDiscoveryCompacting(): boolean {
+  // ponytail: one daemon per backend; only observed compactions are known here.
+  for (const instance of instances().values()) {
+    const tracked = pendingCompactions.get(instance.id)
+    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
+    if (!instance.client || instance.status !== "ready") continue
+    if (Array.from(sessions().get(instance.id)?.values() ?? []).some((session) => session.status === "compacting" && !tracked?.has(session.id))) return true
+  }
+  return false
+}
+
+function deferPendingDiscovery(instanceId: string): boolean {
+  if (!isPendingDiscoveryCompacting()) return false
+  deferredPendingDiscovery.add(instanceId)
+  return true
+}
+
+function resumePendingDiscovery(): void {
+  if (pendingDiscoveryResume || !deferredPendingDiscovery.size || isPendingDiscoveryCompacting()) return
+  const resume = Promise.resolve().then(async () => {
+    while (deferredPendingDiscovery.size && !isPendingDiscoveryCompacting()) {
+      const id = deferredPendingDiscovery.values().next().value!
+      await pendingRequestSyncs.get(id)?.promise.catch(() => {})
+      if (isPendingDiscoveryCompacting()) break
+      if (!deferredPendingDiscovery.delete(id)) continue
+      const instance = instances().get(id)
+      if (instance?.client && instance.status === "ready") await syncPendingRequests(id).catch((error) => {
+        log.warn("Failed to resume pending discovery after compaction", { instanceId: id, error })
+      })
+    }
+  }).finally(() => {
+    if (pendingDiscoveryResume === resume) pendingDiscoveryResume = undefined
+    resumePendingDiscovery()
+  })
+  pendingDiscoveryResume = resume
+}
+
+function observePendingCompaction(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
+  const starting = event.type === "session.compaction.started" || event.type === "session.compaction.delta"
+  if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed" && event.type !== "session.idle") return
+  const client = instances().get(instanceId)?.client
+  if (!client || !("sessionID" in event.data)) return
+  const id = event.data.sessionID
+  const entries = pendingCompactions.get(instanceId) ?? new Map<string, PendingCompaction>()
+  const previous = entries.get(id)
+  if (!starting && previous && (!previous.active || previous.client !== client)) return
+  if (event.type === "session.idle" && !previous && sessions().get(instanceId)?.get(id)?.status !== "compacting") return
+  const sequence = "durable" in event ? event.durable.seq : undefined
+  if (previous?.client === client && (sequence === undefined ? event.created <= previous.created
+    : previous.sequence !== undefined && sequence <= previous.sequence)) return
+  entries.set(id, { client, active: starting, created: Math.max(event.created, previous?.created ?? 0), sequence: sequence ?? previous?.sequence })
+  pendingCompactions.set(instanceId, entries)
+  if (starting) {
+    for (const [id, sync] of pendingRequestSyncs) if (!sync.targeted) deferredPendingDiscovery.add(id)
+  } else resumePendingDiscovery()
+}
 
 async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true): Promise<T> {
   const controller = new AbortController()
@@ -308,6 +335,8 @@ async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: Ab
   pendingRequestControllers.set(instanceId, controllers)
   try {
     const timed = async () => {
+      // Check after background queue admission, immediately before dispatch.
+      if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
       const timeout = setTimeout(() => controller.abort(), 10_000)
       try { return await run(controller.signal) }
       finally { clearTimeout(timeout) }
@@ -651,10 +680,60 @@ function getPendingRequestLocations(instanceId: string, rootDirectory?: string) 
   ])
 }
 
+function pendingSnapshotResults<T>(
+  snapshot: Extract<WorkspacePendingRequestsResponse, { supported: true }>,
+  select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
+): PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>[] {
+  return snapshot.directories.flatMap<PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>>((entry) => {
+    // Only broker-validated native placement keys are authority, never UI aliases.
+    const locations = entry.locations ?? []
+    return [
+      ...locations.map((location) => ({ status: "fulfilled" as const, value: {
+        location: location.location, response: { location: location.location, data: select(location), complete: entry.status === "ok" },
+      } })),
+      ...(entry.status === "error" ? [{ status: "rejected" as const, reason: new Error("Pending directory snapshot unavailable") }] : []),
+    ]
+  })
+}
+
+async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean): Promise<WorkspacePendingRequestsResponse> {
+  const directories = [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
+    .flatMap((location) => location.directory ? [location.directory] : []))]
+  const snapshot: Extract<WorkspacePendingRequestsResponse, { supported: true }> = { supported: true, directories: [] }
+  for (let offset = 0; offset < directories.length;) {
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+    let end = offset, queryBytes = 0
+    // ponytail: eight directories bound Git-heavy batches; tune only with native recovery proof.
+    while (end < directories.length && end - offset < 8) {
+      queryBytes += new URLSearchParams({ directories: directories[end] }).toString().length + 1
+      if (end > offset && queryBytes > 7000) break
+      end++
+    }
+    // Leave room for the route prefix/headers; an unsplittable oversized path
+    // still fails closed rather than reporting its pending queue as empty.
+    const batch = directories.slice(offset, end)
+    offset = end
+    try {
+      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal))
+      if (next.supported === false) return next
+      if (next.supported !== true) throw new Error("Invalid pending request snapshot")
+      snapshot.directories.push(...next.directories)
+    } catch (error) {
+      if (error === pendingDiscoveryDeferred) throw error
+      if (!isCurrent()) throw pendingRequestSyncSuperseded
+      snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const })))
+    }
+  }
+  return snapshot
+}
+
 async function syncPendingPermissions(
   instanceId: string,
   propagateErrors = false,
   isCurrent: () => boolean = () => true,
+  snapshot?: Promise<WorkspacePendingRequestsResponse>,
+  targetLocations?: RequestLocation[],
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -663,29 +742,35 @@ async function syncPendingPermissions(
   try {
     const syncStartedAt = Date.now()
     const remote: Array<{ request: PermissionRequest; location: RequestAuthorityLocation; key: string }> = []
-    const locations = getPendingRequestLocations(instanceId, instance.folder)
     const scannedLocations = new Set<string>()
-    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+    const pending = await snapshot
+    if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.permissions) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.permission.request.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
-      ))
+        instance.client!.permission.request.list({ location: toRequestLocation(location) }, {
+          ...requestLocationOptions(location), signal,
+          ...(targetLocations ? { headers: { ...requestLocationOptions(location)?.headers, [PENDING_RECONCILIATION_HEADER]: "1" } } : {}),
+        })
+      ), !targetLocations)
       return { location, response }
     })
     const failures: unknown[] = []
+    if (!pending?.supported && results.length < locations.length && !targetLocations) failures.push(pendingDiscoveryDeferred)
     for (const result of results) {
       if (result.status === "rejected") {
         failures.push(result.reason)
         continue
       }
       const { location, response } = result.value
-      log.info("permission.request.list", { instanceId, location, resolvedLocation: response.location })
+      log.info(pending?.supported ? "location.pending permissions" : "permission.request.list", { instanceId, location, resolvedLocation: response.location })
       const authority = {
         directory: response.location.directory || location.directory,
         workspaceID: locationWorkspaceID(response.location),
       }
       const key = requestLocationKey(authority)
       if (!key) continue
-      scannedLocations.add(key)
+      if (!("complete" in response) || response.complete !== false) scannedLocations.add(key)
       remote.push(...response.data.map((request) => ({ request, location: authority, key })))
     }
 
@@ -694,7 +779,9 @@ async function syncPendingPermissions(
       if (propagateErrors) throw pendingRequestSyncSuperseded
       return
     }
-    if (!failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
+    // ponytail: retain tombstones until instance removal; location-scoped settlement
+    // provenance is needed before bounded coverage can safely retire them.
+    if (!pending?.supported && !targetLocations && !failures.length) pruneRepliedPermissions(instanceId, remotePendingIds, syncStartedAt)
 
     const pendingRemote = remote.filter(({ request }) => !hasRepliedPermission(instanceId, request.id))
     const remoteIds = new Set(pendingRemote.map(({ request }) => request.id))
@@ -702,7 +789,7 @@ async function syncPendingPermissions(
 
     // Remove any stale local permissions missing from server.
     for (const entry of local) {
-      const key = permissionRequestLocations.get(instanceId)?.get(entry.id)
+      const key = permissionRequestLocations.get(instanceId)?.get(entry.id)?.key
         ?? requestLocationKey(sessions().get(instanceId)?.get(getPermissionSessionId(entry) ?? "")?.location)
       if (!remoteIds.has(entry.id) && key && scannedLocations.has(key)) {
         removePermissionFromQueue(instanceId, entry.id)
@@ -717,11 +804,11 @@ async function syncPendingPermissions(
     }
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) {
-      log.warn("Pending permission scan was partial", { instanceId, failedLocations: failures.length })
+      if (failures.some((error) => error !== pendingDiscoveryDeferred)) log.warn("Pending permission scan was partial", { instanceId, failedLocations: failures.length })
       if (propagateErrors) throw failures[0]
     }
   } catch (error) {
-    log.warn("Failed to sync pending permissions", { instanceId, error })
+    if (error !== pendingDiscoveryDeferred) log.warn("Failed to sync pending permissions", { instanceId, error })
     if (propagateErrors) throw error
   }
 }
@@ -730,6 +817,8 @@ async function syncPendingForms(
   instanceId: string,
   propagateErrors = false,
   isCurrent: () => boolean = () => true,
+  snapshot?: Promise<WorkspacePendingRequestsResponse>,
+  targetLocations?: RequestLocation[],
 ): Promise<void> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
@@ -738,15 +827,21 @@ async function syncPendingForms(
   try {
     const syncStartedAt = Date.now()
     const remote: Array<{ form: FormWithLocation; location: RequestAuthorityLocation; key: string }> = []
-    const locations = getPendingRequestLocations(instanceId, instance.folder)
     const scannedLocations = new Set<string>()
-    const results = await allSettledBounded(locations, isCurrent, async (location) => {
+    const pending = await snapshot
+    if (!targetLocations && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+    const locations = pending?.supported ? [] : targetLocations ?? getPendingRequestLocations(instanceId, instance.folder)
+    const results = pending?.supported ? pendingSnapshotResults(pending, (entry) => entry.forms) : await allSettledBounded(locations, () => isCurrent() && (Boolean(targetLocations) || !deferPendingDiscovery(instanceId)), async (location) => {
       const response = await withPendingRequestTimeout(instanceId, (signal) => (
-        instance.client!.form.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal })
-      ))
+        instance.client!.form.list({ location: toRequestLocation(location) }, {
+          ...requestLocationOptions(location), signal,
+          ...(targetLocations ? { headers: { ...requestLocationOptions(location)?.headers, [PENDING_RECONCILIATION_HEADER]: "1" } } : {}),
+        })
+      ), !targetLocations)
       return { location, response }
     })
     const failures: unknown[] = []
+    if (!pending?.supported && results.length < locations.length && !targetLocations) failures.push(pendingDiscoveryDeferred)
     for (const result of results) {
       if (result.status === "rejected") {
         failures.push(result.reason)
@@ -759,7 +854,7 @@ async function syncPendingForms(
       }
       const key = requestLocationKey(authority)
       if (!key) continue
-      scannedLocations.add(key)
+      if (!("complete" in response) || response.complete !== false) scannedLocations.add(key)
       remote.push(...response.data.map((form) => ({
         form: form.sessionID === "global" ? { ...form, location: response.location } : form,
         location: authority,
@@ -771,11 +866,11 @@ async function syncPendingForms(
       return
     }
     const remotePendingIds = new Set(remote.map(({ form }) => form.id))
-    if (!failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
+    if (!pending?.supported && !targetLocations && !failures.length) pruneSettledForms(instanceId, remotePendingIds, syncStartedAt)
     const pendingRemote = remote.filter(({ form }) => !hasSettledForm(instanceId, form.id))
     const remoteIds = new Set(pendingRemote.map(({ form }) => form.id))
     for (const form of getFormQueue(instanceId)) {
-      const key = formRequestLocations.get(instanceId)?.get(form.id)
+      const key = formRequestLocations.get(instanceId)?.get(form.id)?.key
         ?? requestLocationKey(form.location)
         ?? requestLocationKey(sessions().get(instanceId)?.get(form.sessionID)?.location)
       if (!remoteIds.has(form.id) && key && scannedLocations.has(key)) removePendingForm(instanceId, form.id)
@@ -783,11 +878,11 @@ async function syncPendingForms(
     for (const { form, location } of pendingRemote) addPendingForm(instanceId, form, location)
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) {
-      log.warn("Pending form scan was partial", { instanceId, failedLocations: failures.length })
+      if (failures.some((error) => error !== pendingDiscoveryDeferred)) log.warn("Pending form scan was partial", { instanceId, failedLocations: failures.length })
       if (propagateErrors) throw failures[0]
     }
   } catch (error) {
-    log.warn("Failed to sync pending forms", { instanceId, error })
+    if (error !== pendingDiscoveryDeferred) log.warn("Failed to sync pending forms", { instanceId, error })
     if (propagateErrors) throw error
   }
 }
@@ -796,20 +891,30 @@ async function runPendingRequestSync(
   instanceId: string,
   generation: number,
   token: { cancelled: boolean },
+  targetLocations?: RequestLocation[],
 ): Promise<void> {
   for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
+    if (!targetLocations && deferPendingDiscovery(instanceId)) return
     const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
     pendingRequestSyncEpochs.set(instanceId, epoch)
+    const client = instances().get(instanceId)?.client
+    if (!client) return
     const isCurrent = () => !token.cancelled
+      && instances().get(instanceId)?.client === client
       && pendingRequestSyncEpochs.get(instanceId) === epoch
       && pendingRequestSyncGenerations.get(instanceId) === generation
     try {
-      await Promise.all([
-        syncPendingPermissions(instanceId, true, isCurrent),
-        syncPendingForms(instanceId, true, isCurrent),
+      // ponytail: capability only, not an unreleased version gate. Older daemons
+      // keep their existing discovery scans so background/global Forms survive.
+      const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
+      const results = await Promise.allSettled([
+        syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
+        syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
+      for (const result of results) if (result.status === "rejected") throw result.reason
       return
     } catch (error) {
+      if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
   }
@@ -821,11 +926,14 @@ async function runPendingRequestSync(
 function syncPendingRequests(
   instanceId: string,
   registerInvalidation?: (invalidate: () => void) => void,
+  targetLocations?: RequestLocation[],
 ): Promise<void> {
   const generation = pendingRequestSyncGenerations.get(instanceId)
   if (generation === undefined) return Promise.resolve()
+  if (!targetLocations && deferPendingDiscovery(instanceId)) return Promise.resolve()
   const existing = pendingRequestSyncs.get(instanceId)
   if (existing?.generation === generation) {
+    if (!targetLocations && existing.targeted) { deferredPendingDiscovery.add(instanceId); resumePendingDiscovery() }
     registerInvalidation?.(() => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
@@ -836,10 +944,11 @@ function syncPendingRequests(
     return existing.promise
   }
   const token = { cancelled: false }
-  const promise = runPendingRequestSync(instanceId, generation, token).finally(() => {
+  if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
+  const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
   })
-  pendingRequestSyncs.set(instanceId, { generation, token, promise })
+  pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
   registerInvalidation?.(() => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
@@ -850,13 +959,14 @@ function syncPendingRequests(
   return promise
 }
 
-function schedulePendingRequestReconciliation(instanceId: string): void {
+function schedulePendingRequestReconciliation(instanceId: string, location?: RequestLocation): void {
   const current = pendingRequestSyncs.get(instanceId)
   if (current) current.token.cancelled = true
   abortPendingRequestWork(instanceId)
   pendingRequestSyncs.delete(instanceId)
   invalidatePendingRequestSync(instanceId)
-  void syncPendingRequests(instanceId).catch((error) => {
+  const targets = location ? [location] : undefined
+  void syncPendingRequests(instanceId, undefined, targets).catch((error) => {
     log.warn("Failed to reconcile pending requests after an ambiguous mutation", { instanceId, error })
   })
 }
@@ -865,9 +975,19 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
   const instanceSessions = sessions().get(instanceId)
   const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
   let sessionError: unknown
-  if (hasRunningSession || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
+  const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
+  const client = instances().get(instanceId)?.client
+  if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
-      await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
+      const active = await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
+      if (active && instances().get(instanceId)?.client === client) {
+        for (const [id, baseline] of compactions) {
+          if (baseline.active && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {
+            pendingCompactions.get(instanceId)!.set(id, { ...baseline, active: false })
+          }
+        }
+        resumePendingDiscovery()
+      }
     } catch (error) {
       sessionError = error
     }
@@ -1214,11 +1334,12 @@ function addInstance(instance: Instance) {
 function updateInstance(id: string, updates: Partial<Instance>) {
   const existing = instances().get(id)
   if (updates.client !== undefined && existing?.client && updates.client !== existing.client) {
+    deferredPendingDiscovery.delete(id)
     clearSessionListRequestState(id)
     clearSessionCatalogState(id)
     clearCommands(id)
     clearInstanceMetadata(id)
-    clearCompactionProjections(id)
+    destroyOpenCodeData(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1234,6 +1355,8 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  deferredPendingDiscovery.delete(id)
+  pendingCompactions.delete(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
@@ -1282,7 +1405,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearSettledForms(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
-  clearCompactionProjections(id)
+  destroyOpenCodeData(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -1292,6 +1415,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   abortPendingRequestWork(id)
   pendingRequestLiveness.delete(id)
   pendingRequestSyncGenerations.delete(id)
+  resumePendingDiscovery()
   settleInstanceReadyWaiters(id, new Error(`Workspace ${id} was removed before it became ready`))
 
   if (activeInstanceId() === id) {
@@ -1836,8 +1960,8 @@ async function sendPermissionResponse(
     throw new Error("Instance not ready")
   }
 
+  const permission = getPermissionQueue(instanceId).find((entry) => entry.id === requestId)
   try {
-    const permission = getPermissionQueue(instanceId).find((entry) => entry.id === requestId)
     if (!permission) throw new Error(`Permission request not found: ${requestId}`)
     await getRootClient(instanceId).permission.reply({
       sessionID: permission.sessionID,
@@ -1853,7 +1977,8 @@ async function sendPermissionResponse(
     removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
-    schedulePendingRequestReconciliation(instanceId)
+    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
+      ?? sessions().get(instanceId)?.get(permission?.sessionID ?? "")?.location)
     throw error
   }
 }
@@ -1870,7 +1995,7 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId)
+    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }
@@ -1933,7 +2058,7 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId)
+    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }
@@ -1947,16 +2072,13 @@ const USAGE_EVENT_TYPES = new Set<string>([
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  observePendingCompaction(instanceId, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID
     : event.type === "form.created"
       ? event.data.form.sessionID
       : undefined
   const isCompactionDelta = event.type === "session.compaction.delta"
-  if (event.type === "server.connected") clearCompactionProjections(instanceId)
-  if (sessionId && (event.type === "session.compaction.ended" || event.type === "session.compaction.failed")) {
-    cancelCompactionProjection(instanceId, sessionId)
-  }
   const projectMessages = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true, force = false) => {
     if (sessionId && event.type.startsWith("session.")
       && activeSessionId().get(instanceId) !== sessionId
@@ -1964,7 +2086,6 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       invalidateSessionMessageLoad(instanceId, sessionId)
     }
     if (isCompactionDelta && !force) {
-      if (sessionId) scheduleCompactionProjection(instanceId, sessionId, () => projectMessages(data, preserveOmitted, true))
       return
     }
     if (sessionId && (force || event.type.startsWith("session.")) && (
@@ -1992,10 +2113,14 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       }
     }
   }
-  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, project, (next) => {
+  const data = applyOpenCodeDataEvent(instanceId, instance.folder, event, (next) => {
+    if (isCompactionDelta) projectMessages(next, true, true)
+    else project(next)
+  }, (next) => {
     projectMessages(next, false, true)
     schedulePendingRequestReconciliation(instanceId)
-  })
+  }, Boolean(sessionId && activeSessionId().get(instanceId) !== sessionId
+    && !messageStoreBus.getInstance(instanceId)?.getSessionMessageIds(sessionId).length))
   project(data)
   if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
     const current = data.session.permission.list(sessionId) ?? []

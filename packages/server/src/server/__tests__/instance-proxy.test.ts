@@ -3,12 +3,13 @@ import { afterEach, describe, it } from "node:test"
 import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance } from "fastify"
 import replyFrom from "@fastify/reply-from"
-import type { OpenCodeClient, SessionInfo } from "@opencode/client"
+import { OpenCode, isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { Logger } from "../../logger"
 import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
+import { observePendingDiscovery, PENDING_RECONCILIATION_HEADER, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -173,6 +174,79 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("defers legacy pending lists before slow ownership, rechecks at forwarding, and admits only authorized settlement reconciliation", async () => {
+    const { app, manager, requestCount } = await harness()
+    const connection = (await manager.getSharedServiceConnection!("workspace"))!
+    manager.getSharedServiceConnection = async () => connection
+    const compact = (phase: "started" | "ended", seq: number) => observePendingDiscovery(connection, {
+      id: `compact-${seq}`, created: seq, type: `session.compaction.${phase}`,
+      durable: { aggregateID: "unknown", seq, version: 1 },
+      data: { sessionID: "unknown", reason: "auto", recent: "r", text: "summary" },
+    } as any)
+    const owns = manager.ownsDirectory
+    let ownership = 0
+    manager.ownsDirectory = async (...args) => { ownership++; return owns(...args) }
+    compact("started", 1)
+    for (const path of ["permission/request", "form"]) {
+      const response = await app.inject({ url: `/workspaces/workspace/instance/api/${path}?location[directory]=/repo/worktree` })
+      assert.equal(response.statusCode, 503)
+      assert.equal(response.headers["retry-after"], "30")
+      assert.equal(response.json().error, PENDING_DISCOVERY_DEFERRED)
+    }
+    assert.equal(ownership, 0)
+    assert.equal(requestCount(), 0)
+    // A browser assertion alone never bypasses early admission.
+    const headers = { [PENDING_RECONCILIATION_HEADER]: "1" }
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree", headers })).statusCode, 503)
+    // Mutations remain authorized and forwarded once; their attempted directory
+    // grants a short, exact, workspace-bound read-only reconciliation exception.
+    assert.equal((await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/permission/p/reply", payload: { decision: "once" } })).statusCode, 200)
+    const reconciled = await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree", headers })
+    assert.equal(reconciled.statusCode, 200)
+    assert.equal(reconciled.json().headers[PENDING_RECONCILIATION_HEADER], undefined)
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree&directory=/repo", headers })).statusCode, 503)
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/other", headers })).statusCode, 503)
+    compact("ended", 2)
+    const prior = requestCount()
+    manager.ownsDirectory = async (...args) => { compact("started", 3); return owns(...args) }
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo" })).statusCode, 503)
+    assert.equal(requestCount(), prior, "mid-authorization compaction cannot admit the pending list upstream")
+  })
+  it("rejects native parent creation even when the claimed location is owned", async () => {
+    const { app, sessionGets, requestCount } = await harness()
+    for (const parentID of ["foreign-parent", "owned-parent", null, "", 42]) {
+      const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+        payload: { parentID, location: { directory: "/repo" } } })
+      assert.equal(response.statusCode, 403)
+    }
+    assert.equal(requestCount(), 0)
+    assert.deepEqual(sessionGets, [])
+    for (const contentType of ["text/plain", "application/octet-stream", "application/problem+json"]) {
+      const opaque = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+        headers: { "content-type": contentType }, payload: JSON.stringify({ parentID: "foreign-parent", location: { directory: "/repo" } }) })
+      assert.equal(opaque.statusCode, 400)
+    }
+    assert.equal(requestCount(), 0)
+    const root = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+      payload: { title: "Owned root", location: { directory: "/repo" } } })
+    assert.equal(root.statusCode, 200)
+    assert.equal(requestCount(), 1)
+    assert.deepEqual(root.json().body, { title: "Owned root", location: { directory: "/repo" } })
+  })
+
+  it("keeps native credential export and creation outside the workspace proxy", async () => {
+    const { app, requestCount } = await harness()
+    for (const method of ["GET", "POST"] as const) {
+      const response = await app.inject({
+        method,
+        url: "/workspaces/workspace/instance/api/credential",
+        ...(method === "POST" ? { payload: { integrationID: "fixture", value: { type: "key", key: "synthetic-key" } } } : {}),
+      })
+      assert.equal(response.statusCode, 403)
+    }
+    assert.equal(requestCount(), 0)
+  })
+
   it("forwards side generation for an owned busy session without mutating its environment", async () => {
     const { app, manager, sessionGets, requestCount } = await harness("/repo/worktree", { owned: { type: "running" } })
     manager.getSessionEnvironment = async () => { throw new Error("Side generation must not replace the session environment") }
@@ -762,6 +836,50 @@ describe("instance proxy location enforcement", () => {
     assert.equal(requestCount(), 0)
   })
 
+  it("preserves the missing-session contract without exposing upstream error details or forwarding", async () => {
+    const missing = Object.assign(new Error("private upstream details"), {
+      _tag: "SessionNotFoundError", sessionID: "untrusted-upstream-id", internal: "private",
+    })
+    const { app, sessionGets, requestCount } = await harness("/repo/worktree", {}, { missing })
+    for (const [method, suffix] of [["GET", ""], ["GET", "/message"], ["DELETE", ""]] as const) {
+      const response = await app.inject({ method, url: `/workspaces/workspace/instance/api/session/missing${suffix}` })
+      assert.equal(response.statusCode, 404)
+      assert.deepEqual(response.json(), {
+        _tag: "SessionNotFoundError", sessionID: "missing", message: "Session not found",
+      })
+    }
+    assert.deepEqual(sessionGets, ["missing", "missing", "missing"])
+    assert.equal(requestCount(), 0)
+
+    // Exercise decoding with the real browser SDK, not just its tag guard.
+    const client = OpenCode.make({ baseUrl: "http://fixture/workspaces/workspace/instance", fetch: async (input, init) => {
+      const request = new Request(input, init)
+      const response = await app.inject({ method: "GET", url: new URL(request.url).pathname })
+      return new Response(response.body, { status: response.statusCode, headers: { "content-type": "application/json" } })
+    } })
+    await assert.rejects(client.session.get({ sessionID: "missing" }), error => {
+      assert.ok(error instanceof Error)
+      assert.ok(isSessionNotFoundError(error))
+      assert.equal(error.sessionID, "missing")
+      assert.equal(error.message, "Session not found")
+      return true
+    })
+    assert.equal(requestCount(), 0)
+  })
+
+  it("does not classify foreign sessions or unrelated lookup failures as missing sessions", async () => {
+    const { app, requestCount } = await harness("/repo/worktree", {}, {
+      foreign: "/other", unavailable: new Error("temporary lookup failure"),
+    })
+    const foreign = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/foreign" })
+    assert.equal(foreign.statusCode, 403)
+    assert.equal(isSessionNotFoundError(foreign.json()), false)
+    const unavailable = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/unavailable" })
+    assert.equal(unavailable.statusCode, 500)
+    assert.equal(isSessionNotFoundError(unavailable.json()), false)
+    assert.equal(requestCount(), 0)
+  })
+
   it("filters active sessions to the workspace without failing on stale ids", async () => {
     const active = { owned: { type: "running" as const }, foreign: { type: "running" as const }, stale: { type: "running" as const } }
     const { app, sessionGets, requestCount } = await harness("/repo/worktree", active, {
@@ -831,6 +949,18 @@ describe("instance proxy location enforcement", () => {
     }
     assert.deepEqual(sessionGets, ["foreign"])
     assert.equal(requestCount(), 0)
+  })
+
+  it("allows only native credential rename, activate and remove operations with directory ownership", async () => {
+    const { app, requestCount } = await harness()
+    for (const [method, suffix, payload] of [
+      ["PATCH", "account", { label: "Renamed" }], ["POST", "account/activate", undefined], ["DELETE", "account", undefined],
+    ] as const) {
+      assert.equal((await app.inject({ method, url: `/workspaces/workspace/instance/api/credential/${suffix}`, payload })).statusCode, 200)
+      assert.equal((await app.inject({ method, url: `/workspaces/workspace/instance/api/credential/${suffix}?location[directory]=/other`, payload })).statusCode, 403)
+    }
+    assert.equal(requestCount(), 3)
+    assert.equal((await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/credential/account/export" })).statusCode, 403)
   })
 
   it("validates prompt file ownership before translating root, worktree, and Windows URIs", async () => {

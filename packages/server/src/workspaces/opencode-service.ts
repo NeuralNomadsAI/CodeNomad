@@ -11,6 +11,7 @@ import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
+import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -39,6 +40,9 @@ export interface ServiceConnection {
   profile: (signal?: AbortSignal) => Promise<ContractProfile>
 }
 
+// Server-only provenance. Weak keys neither retain events nor serialize native credentials over SSE.
+export const nativeEventConnections = new WeakMap<object, ServiceConnection>()
+
 export interface OpenCodeSharedServiceDependencies {
   headers: typeof Service.headers
   makeClient: typeof OpenCode.make
@@ -48,6 +52,7 @@ export interface OpenCodeSharedServiceDependencies {
 export class OpenCodeSharedService {
   private connection?: Promise<ServiceConnection>
   private connected?: ServiceConnection
+  private previousConnection?: ServiceConnection
   private healthCheck?: Promise<ServiceConnection>
   private serviceOptions?: OpenCodeSharedServiceOptions
   private serviceIdentity?: string
@@ -127,7 +132,7 @@ export class OpenCodeSharedService {
     try {
       connection = await this.connect(serviceOptions, requestOptions?.deadlineAt)
       const nativeRequestOptions = requestOptions?.signal ? { signal: requestOptions.signal } : undefined
-      return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection)
+      return this.invalidateAfterStream(connection.client.event.subscribe(nativeRequestOptions), connection, requestOptions?.signal)
     } catch (error) {
       if (connection && !requestOptions?.signal?.aborted) this.invalidateConnection(connection)
       throw error
@@ -268,6 +273,10 @@ export class OpenCodeSharedService {
     }
     this.negotiationControllers.set(connection, negotiation)
     if (generation === this.generation) {
+      if (this.previousConnection && this.sameEndpoint(this.previousConnection.endpoint, connection.endpoint)) {
+        carryPendingCompactions(this.previousConnection, connection)
+      }
+      this.previousConnection = undefined
       this.hasValidatedConnection = true
       this.connected = connection
       this.connection = Promise.resolve(connection)
@@ -291,14 +300,30 @@ export class OpenCodeSharedService {
     }
   }
 
-  private async *invalidateAfterStream(events: AsyncIterable<OpenCodeEvent>, connection: ServiceConnection) {
+  private async *invalidateAfterStream(events: AsyncIterable<OpenCodeEvent>, connection: ServiceConnection, signal?: AbortSignal) {
+    const iterator = events[Symbol.asyncIterator]()
     try {
-      for await (const event of events) {
+      while (true) {
+        let result: IteratorResult<OpenCodeEvent>
+        try {
+          result = await iterator.next()
+        } catch (error) {
+          if (!signal?.aborted) this.invalidateConnection(connection)
+          throw error
+        }
+        if (result.done) {
+          if (!signal?.aborted) this.invalidateConnection(connection)
+          return
+        }
         connection.assertCurrent()
-        yield event
+        observePendingDiscovery(connection, result.value)
+        // Consumer return/throw and subscriber-local abort are not failures of
+        // the shared source. Uncancelled iterator EOF/errors still invalidate.
+        nativeEventConnections.set(result.value, connection)
+        yield result.value
       }
     } finally {
-      this.invalidateConnection(connection)
+      await iterator.return?.()
     }
   }
 
@@ -307,6 +332,7 @@ export class OpenCodeSharedService {
   }
 
   private clear(): void {
+    if (this.connected) this.previousConnection = this.connected
     if (this.connected) this.negotiationControllers.get(this.connected)?.abort()
     this.connection = undefined
     this.connected = undefined

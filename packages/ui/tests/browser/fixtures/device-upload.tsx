@@ -35,6 +35,7 @@ const client: any = {
     switchAgent: async () => {}, switchModel: async () => {}, prompt: native.session.prompt,
   },
   model: { default: async () => model },
+  skill: { list: async () => ({ data: [] }) },
   message: { list: async () => ({ data: [], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
@@ -55,6 +56,7 @@ await updatePreferences({ locale: (params.get("locale") || "en") as any })
   switch: (id: string) => setActiveSession(instanceId, id),
   active: setActive,
   mounted: setMounted,
+  submitOnEnter: (value: boolean) => updatePreferences({ promptSubmitOnEnter: value }),
   move: (directory: string) => setSessions(previous => {
     const next = new Map(previous), list = new Map(next.get(instanceId))
     const id = activeSessionId().get(instanceId)!

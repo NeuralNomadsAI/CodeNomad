@@ -9,6 +9,7 @@ import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { compareVersionStrings } from "../releases/release-monitor"
 import { assertExecutableWritable, withInstallationLock } from "./installation-lock"
 import { upgradeSharedOpenCode } from "./native-upgrade"
+import { isIncompleteWindowsNpmShim } from "./incomplete-installation"
 
 export interface InstallationHost {
   home?: string
@@ -107,10 +108,14 @@ export function findPathOpenCode(host: InstallationHost = {}): string | undefine
 }
 
 export function resolveDefaultInstallation(host: InstallationHost = {}): { path: string; source?: "path" | "user" } {
-  const command = findPathOpenCode(host)
-  if (command) return { path: command, source: "path" }
+  const platform = host.platform ?? process.platform
   const prefix = userNpmPrefix(host)
-  const binary = npmCommand(prefix, host.platform ?? process.platform)?.binary ?? npmExecutable(prefix, host.platform)
+  const binary = npmCommand(prefix, platform)?.binary ?? npmExecutable(prefix, platform)
+  const command = findPathOpenCode(host)
+  if (command) {
+    if (platform === "win32" && isIncompleteWindowsNpmShim(command, prefix, binary)) return { path: binary, source: "user" }
+    return { path: command, source: "path" }
+  }
   if (existsSync(binary) && !isRetiredInstallation(binary)) return { path: binary, source: "user" }
   return { path: "opencode2" }
 }
@@ -126,7 +131,8 @@ export function sharedInstallPrefix(host: InstallationHost = {}): string | undef
   if (!command) return userPrefix
   const prefix = platform === "win32" ? path.dirname(command) : path.dirname(path.dirname(command))
   try {
-    if (!npmLauncher(command, prefix, platform)) return undefined
+    if (!npmLauncher(command, prefix, platform)
+      && !(platform === "win32" && isIncompleteWindowsNpmShim(command, userPrefix, npmExecutable(userPrefix, platform)))) return undefined
     accessSync(prefix, constants.W_OK)
     return prefix
   } catch { return undefined }

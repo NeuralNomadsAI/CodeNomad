@@ -4,8 +4,9 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ## Prerequisites
 
-- **Node.js 18+** and npm
-- **OpenCode CLI** in your `PATH` (CodeNomad uses one shared native V2 service for all workspace locations)
+- **Node.js** from [`.node-version`](.node-version) and npm
+- **Git** available to the CodeNomad backend
+- **OpenCode V2 CLI** (`opencode`) in your `PATH` or selected in CodeNomad settings; see [Requirements](README.md#requirements) for minimum and recommended versions. CodeNomad uses one shared native V2 service for all workspace locations.
 
 ## Quick Start
 

@@ -8,6 +8,7 @@ export const filesystemMessages = {
   "directoryBrowser.goTo": "フォルダーに移動",
   "directoryBrowser.goToParent": "親フォルダー",
   "directoryBrowser.goToHome": "ホーム",
+  "directoryBrowser.goToRoot": "ワークスペースのルート",
   "directoryBrowser.goToInitial": "{name} に戻る",
   "directoryBrowser.selectCurrent": "現在のフォルダを選択",
   "directoryBrowser.newFolder": "新しいフォルダ",

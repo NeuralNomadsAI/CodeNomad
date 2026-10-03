@@ -6,13 +6,17 @@ import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
-import { addInstance, instances } from "../../../src/stores/instances"
-import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId } from "../../../src/stores/session-state"
+import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
+import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 
+// Optional, synchronous test-only marks; no observer is installed on native pages.
+const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
+bootStage("imports-complete")
 const id = "header-windows", sessionId = "session"
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
@@ -36,7 +40,9 @@ setProviders(previous => new Map(previous).set(id, [{ id: "fixture", name: "Fixt
 setActiveSession(id, sessionId)
 setActiveParentSession(id, sessionId)
 setSessionPage(id, [sessionId], false, true)
+bootStage("worktrees-before")
 await ensureWorktreesLoaded(id)
+bootStage("worktrees-after")
 let executions = 0
 const escapeStates: boolean[] = []
 const [menuInstance, setMenuInstance] = createSignal<string | undefined>(id)
@@ -63,16 +69,34 @@ function Fixture() {
   </div>
   )
 }
+bootStage("render-before")
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+bootStage("render-after")
+bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
+bootStage("preferences-after")
 ;(window as any).fixture = {
+  askQuestion: () => addPendingForm(id, {
+    id: "dock-question", sessionID: sessionId, title: "Questions", metadata: { kind: "question" },
+    fields: [{ key: "q0", type: "string", title: "Approach", description: "Which approach?", required: true }],
+    state: { status: "pending" },
+  }),
+  queuePermission: () => addPermissionToQueue(id, {
+    id: "dock-permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {},
+  }),
   viewAction: (action: string) => viewAction(action),
   menuInstance: setMenuInstance,
   setPreferences: updatePreferences,
   executions: () => executions,
   showInfo: () => setActiveSession(id, "info"),
+  showSession: () => setActiveSession(id, sessionId),
+  setContext: (used: number, available: number) => setSessionInfoByInstance(previous => new Map(previous).set(id,
+    new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),
   setWorking: () => setSessionStatus(id, sessionId, "working", { force: true }),
+  setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
+  promptHeight: promptInputHeight,
 }
+bootStage("published")

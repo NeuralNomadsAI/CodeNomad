@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it } from "node:test"
 import {
   activeInterruption,
   addInstance,
@@ -15,6 +15,11 @@ import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sessions, setSessions } from "./session-state.ts"
 import { hasSettledForm, markFormSettled } from "./form-settlements.ts"
+import { serverApi } from "../lib/api-client.ts"
+
+const originalPendingRequests = serverApi.getPendingRequests
+beforeEach(() => { serverApi.getPendingRequests = async () => ({ supported: false }) })
+afterEach(() => { serverApi.getPendingRequests = originalPendingRequests })
 
 const form = {
   id: "form-1",

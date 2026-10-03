@@ -1,13 +1,14 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { CommandInfo } from "@opencode/client"
 import type { Agent } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, createTextAttachment } from "../../types/attachment"
+import { createAgentAttachment, createFileAttachment, createSkillAttachment, createTextAttachment } from "../../types/attachment"
 import { addAttachment, getAttachments } from "../../stores/attachments"
 import type { PickerMode } from "./types"
 import type { PickerSelectAction } from "../unified-picker"
 
 type PickerItem =
   | { type: "agent"; agent: Agent }
+  | { type: "skill"; skill: { id: string; name: string } }
   | { type: "file"; file: { path: string; relativePath?: string; isGitFile: boolean; isDirectory?: boolean } }
   | { type: "command"; command: CommandInfo }
 
@@ -158,6 +159,34 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
           if (nextTextarea) {
             const newCursorPos = pos + attachmentText.length + 1
             nextTextarea.setSelectionRange(newCursorPos, newCursorPos)
+          }
+        }, 0)
+      }
+    } else if (item.type === "skill") {
+      // Skills attach as removable badges; no "@text" stays in the prompt.
+      const existingAttachments = getAttachments(options.instanceId(), options.sessionId())
+      const alreadyAttached = existingAttachments.some(
+        (att) => att.source.type === "skill" && att.source.id === item.skill.id,
+      )
+
+      if (!alreadyAttached) {
+        const attachment = createSkillAttachment(item.skill.id, item.skill.name)
+        addAttachment(options.instanceId(), options.sessionId(), attachment)
+      }
+
+      const currentPrompt = options.prompt()
+      const pos = atPosition()
+      const cursorPos = textarea?.selectionStart || 0
+
+      if (pos !== null) {
+        const before = currentPrompt.substring(0, pos)
+        const after = currentPrompt.substring(cursorPos)
+        options.setPrompt(before + after)
+
+        setTimeout(() => {
+          const nextTextarea = options.getTextarea()
+          if (nextTextarea) {
+            nextTextarea.setSelectionRange(pos, pos)
           }
         }, 0)
       }

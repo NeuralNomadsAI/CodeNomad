@@ -6,16 +6,13 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
 import { useConfig } from "../stores/preferences"
-import { activeInterruption, sendFormCancel, sendFormReply, sendPermissionResponse } from "../stores/instances"
+import { activeInterruption } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
-import { getPermissionSessionId } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
 import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
-import { PermissionToolBlock } from "./tool-call/permission-block"
-import FormRequest from "./form-request"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
@@ -186,16 +183,7 @@ function ToolCallDetails(props: {
   const ansiRunningCache = createVariantCache("ansi-running", () => "running")
   const ansiFinalCache = createVariantCache("ansi-final")
 
-  const permissionDetails = createMemo(() => props.pendingPermission()?.permission)
 
-  const activePermissionKey = createMemo(() => {
-    const permission = permissionDetails()
-    return permission && props.isPermissionActive() ? permission.id : ""
-  })
-
-  const [permissionSubmitting, setPermissionSubmitting] = createSignal(false)
-  const [permissionApprovalBlocked, setPermissionApprovalBlocked] = createSignal(true)
-  const [permissionError, setPermissionError] = createSignal<string | null>(null)
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -216,68 +204,6 @@ function ToolCallDetails(props: {
     scrollHelpers.restoreAfterRender()
   }
 
-  createEffect(() => {
-    const permission = permissionDetails()
-    if (!permission) {
-      setPermissionSubmitting(false)
-      setPermissionError(null)
-    } else {
-      setPermissionError(null)
-    }
-  })
-
-  createEffect(() => {
-    const activeKey = activePermissionKey()
-    if (!activeKey) return
-    requestAnimationFrame(() => {
-      props.toolCallRootEl()?.scrollIntoView({ block: "center", behavior: "smooth" })
-    })
-  })
-
-  async function handlePermissionResponse(permission: PermissionRequest, response: "once" | "always" | "reject", message?: string) {
-    if (!permission) return
-    setPermissionSubmitting(true)
-    setPermissionError(null)
-    try {
-      const sessionId = getPermissionSessionId(permission)
-      if (!sessionId) throw new Error("Permission request is missing sessionID")
-      await sendPermissionResponse(props.instanceId, sessionId, permission.id, response, message)
-    } catch (error) {
-      log.error("Failed to send permission response", error)
-      setPermissionError(error instanceof Error ? error.message : props.t("toolCall.permission.errors.unableToUpdate"))
-    } finally {
-      setPermissionSubmitting(false)
-    }
-  }
-
-  createEffect(() => {
-    const activeKey = activePermissionKey()
-    if (!activeKey) return
-    const handler = (event: KeyboardEvent) => {
-      if (isTextInputFocused()) return
-      const permission = permissionDetails()
-      if (!permission || !props.isPermissionActive()) return
-      if (permissionApprovalBlocked()) return
-      if (event.key === "Enter") {
-        event.preventDefault()
-        void handlePermissionResponse(permission, "once")
-      } else if (event.key === "a" || event.key === "A") {
-        event.preventDefault()
-        void handlePermissionResponse(permission, "always")
-      }
-    }
-    document.addEventListener("keydown", handler)
-    onCleanup(() => document.removeEventListener("keydown", handler))
-  })
-
-  function isTextInputFocused() {
-    const active = document.activeElement
-    return (
-      active?.tagName === "TEXTAREA" ||
-      active?.tagName === "INPUT" ||
-      (active?.hasAttribute("contenteditable") ?? false)
-    )
-  }
 
   const status = () => props.toolState()?.status || ""
 
@@ -414,19 +340,6 @@ function ToolCallDetails(props: {
     }
     return null
   }
-
-  const renderPermissionBlock = () => (
-    <PermissionToolBlock
-      permission={permissionDetails}
-      active={props.isPermissionActive}
-      submitting={permissionSubmitting}
-      error={permissionError}
-      renderDiff={renderDiffContent}
-      fallbackSessionId={() => props.sessionId}
-      onApprovalBlockedChange={setPermissionApprovalBlocked}
-      onRespond={(permission, sessionId, response, message) => void handlePermissionResponse(permission, response, message)}
-    />
-  )
 
   const shouldShowPendingMessage = () => {
     const tool = props.toolName()
@@ -614,7 +527,6 @@ function ToolCallDetails(props: {
         </div>
       </Show>
 
-      {renderPermissionBlock()}
     </div>
   )
 }
@@ -713,10 +625,13 @@ export default function ToolCall(props: ToolCallProps) {
 
   const hasPendingForm = createMemo(() => Boolean(pendingForm()))
 
-  const isToolVisible = createMemo(() => toolVisibility() !== "hidden" || isPermissionActive() || hasPendingForm())
+  const isToolVisible = createMemo(() => {
+    if (hasPendingForm()) return false
+    if (toolName() === "question" && (toolState()?.status === "running" || toolState()?.status === "pending")) return false
+    return toolVisibility() !== "hidden"
+  })
 
   const expanded = () => {
-    if (isPermissionActive() || hasPendingForm()) return true
     const override = userExpanded()
     if (override !== null) return override
     return defaultExpandedForTool()
@@ -739,7 +654,6 @@ export default function ToolCall(props: ToolCallProps) {
   const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
 
   const diagnosticsExpanded = () => {
-    if (isPermissionActive() || hasPendingForm()) return true
     const override = diagnosticsOverride()
     if (override !== undefined) return override
     return diagnosticsDefaultExpanded()
@@ -773,10 +687,6 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function toggle() {
-    const permission = pendingPermission()
-    if (permission?.active) {
-      return
-    }
     setUserExpanded((prev) => {
       const current = prev === null ? defaultExpandedForTool() : prev
       return !current
@@ -1075,15 +985,6 @@ export default function ToolCall(props: ToolCallProps) {
         )}
       </Show>
 
-      <Show keyed when={pendingForm()}>
-        {(form) => (
-          <FormRequest
-            form={form}
-            onReply={(answer) => sendFormReply(props.instanceId, form.id, answer)}
-            onCancel={() => sendFormCancel(props.instanceId, form.id)}
-          />
-        )}
-      </Show>
     </div>
     </Show>
   )

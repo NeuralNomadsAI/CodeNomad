@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 PR #696's corrected technical minimum is **2.0.7**, when native step-start events
-gain the `data.started` field consumed by the current Solid reducer. **2.0.16**
+gain the `data.started` field consumed by the current Solid reducer. **2.0.22**
 is the recommended release-tested target, not the minimum. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
@@ -27,6 +27,32 @@ current import/cursor authorization, cancellation and connection checks remain.
 The isolated 2.0.3→2.0.11 seed confirms native workspace-selector collapse while
 preserving session IDs and complete history. See the
 [transition register](OPENCODE_V2_POST_BETA.md) for actual coverage and release gates.
+
+### Native Codex subscription usage
+
+Codex/OpenAI quota reads require the **2.0.20** native `credential.list` API.
+This is a feature-local dependency, not a new global minimum: a missing endpoint,
+expired token or unsupported connection yields unavailable usage. The server
+identifies a credential-endpoint HTTP 404 with a sanitized, feature-local upgrade
+reason; the panel explains the required service version without blocking the app.
+The server
+resolves the owned session's native directory and provider integration, then uses
+only that integration's first connection and its matching active ChatGPT OAuth
+credential (`chatgpt-browser` or `chatgpt-headless`). It never reads host legacy
+`auth.json`, Codex CLI credentials or SQLite, refreshes OAuth independently, or
+substitutes another saved account. WSL uses the selected daemon's credentials.
+
+Quota snapshots are scoped to the acquired native connection, instance, session,
+directory, provider and selected credential identity. Warm and pending results
+revalidate native selection before publication. Credentials remain server-only;
+browser credential export and generic RPC are still blocked by the proxy.
+Isolated HTTP/generated-client and rendered Solid fixtures cover these boundaries.
+`node scripts/test-provider-usage-native.mjs <absolute-cli-path>` additionally
+exercises the production quota adapter against a fresh native daemon/database with
+synthetic OAuth/key credentials and mocked quota HTTP only. It passed on Windows
+with 2.0.20, 2.0.21 and 2.0.22: active-account selection and `metadata.accountID`, warm-cache revocation
+after switching to a key, and recovery despite a stale legacy file. This is not a
+real WSL or live ChatGPT quota test; no real credentials or shared daemon are used.
 
 ### Side questions (`/btw`)
 
@@ -116,7 +142,7 @@ startup phase diagnostics for a recurrence; this passing rerun does not establis
 the cause or a fix for the intermittent exit. Detailed results and remaining CI
 gates belong in #752 rather than being inferred from other passing platforms.
 
-### Current stable target: 2.0.16
+### Previous stable target: 2.0.16
 
 Server/UI client, bundled plugin and recommendation advance together to **2.0.16**;
 the evidence-based minimum remains **2.0.7**. Comparing the tagged
@@ -156,6 +182,227 @@ failure as unresolved intermittent evidence, not a corrected regression. The
 independent gatekeeper reports zero actionable findings. Detailed native suite
 completion and cross-platform qualification belong in the PR/CI; do not treat
 unchanged wire types or a passing rerun as proof of untested behavior.
+
+### Previous stable target: 2.0.18
+
+Server/UI client, bundled plugin and recommendation advance together to **2.0.18**;
+the demonstrated minimum remains **2.0.7**. The published 2.0.16→2.0.18 client
+adds `server.pair()`, `server.connect()` and optional `Shell.Info.signal`.
+The native authenticated 2.0.18 schema has 115 paths: the existing 113 paths are
+unchanged, with `/api/pair` and `/auth/connect/{code}` added. Component changes
+are limited to the optional Shell signal and the two pairing response schemas.
+The tagged `packages/protocol/openapi.json` is stale (113 paths); use the actual
+runtime schema and published declarations when reviewing this boundary.
+
+CodeNomad retains its authenticated service connection and explicit proxy allowlist;
+the new pairing routes are not exposed. Plugin declaration changes concern TUI
+model variants; CodeNomad's server-plugin surface is unchanged. Upstream also
+flushes batched transcript deltas before starting the next content block, reports
+signal-terminated Shells, fixes provider/reasoning budgets and restores the Shell
+no-output placeholder. The 2.0.18 provider-context decoder upgrades pre-2.0.15
+media in stored compaction checkpoints. These are reasons to prefer the newer
+runtime, not new CodeNomad API dependencies or a higher minimum.
+
+The native npm upgrade fixture follows the recommendation constant while keeping
+2.0.15 as its source boundary; installation and daemon restart remain separate.
+Detailed qualification results and independent review belong in the PR and CI.
+
+Windows qualification with Node 24.20.0 passes the seven native suites on 2.0.7
+with the 2.0.18 dependencies, and the 2.0.18 native/UI acceptance on its diagnostic
+rerun. The first 2.0.18 pruning/UI run exited with Windows heap-corruption status
+`0xC0000374` while loading browser/server dependencies, after native history and
+proxy checks passed. The earlier 2.0.16 dependency baseline passes against runtime
+2.0.18 too. The passing rerun does not explain or fix the intermittent exit
+previously recorded above. Both historical migrations (2.0.3 and beta-19271) to
+2.0.18 pass; the native npm installation leaves the 2.0.15 daemon and PID intact.
+
+### Previous stable target: 2.0.19
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.19**; the timestamp-based minimum remains **2.0.7**. The authenticated native
+2.0.19 OpenAPI has the same 115 paths and component schemas as native 2.0.18.
+All published client, plugin, protocol and schema declarations are byte-identical
+(30, 60, 36 and 102 declaration files respectively). No new API adapter or proxy
+route follows from this release.
+
+Upstream refactors compaction and adjusts output limits to the context window
+(with a 256k output cap), including bounded shrinking after provider overflow
+rejections. It also improves provider prompt-cache reuse and session affinity,
+one-shot generation attribution, error classification and media handling. Native
+Shell tools add `AGENT=1`, `OPENCODE=1`, default `AI_AGENT=opencode` and the current
+`OPENCODE_SESSION_ID`; these native tool conventions are distinct from CodeNomad's
+per-send session environment snapshot. Qualification must exercise compaction,
+history persistence, side questions and environment propagation, not infer them
+from the unchanged HTTP schema alone. Detailed outcomes belong in the PR/CI.
+
+The seven native suites pass on both 2.0.7 and 2.0.19 with the new pins, including
+pruning/compaction, history navigation, proxy/relay ownership, automation, per-send
+environment, forks, side questions, blank-session cleanup and Git-degraded recovery.
+Both historical migrations to 2.0.19 and the isolated native npm upgrade pass;
+the latter preserves the running 2.0.15 daemon's version and PID.
+
+Ordinary native/UI runs stopped at Vite import with shell exit 116, reproduced
+with a 2.0.18 runtime control and the previous dependency pins. Per-import traces
+now isolate that phase more precisely. These observations do not establish the
+same cause as the earlier heap-corruption exit, or resolve the fixture failure.
+The full native/UI acceptance passes when a diagnostic launcher preloads Vite
+before the native fixture. That run changes import order, not the assertions or
+runtime; it provides acceptance coverage without proving the ordinary launcher
+is reliable. Keep both outcomes visible in the PR.
+
+### Previous stable target: 2.0.20
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.20**; the demonstrated timestamp-based minimum remains **2.0.7**. Authenticated
+native OpenAPI adds `GET`/`POST /api/credential` (116 paths, with the previous 115
+path definitions unchanged). Credential export/creation remains outside the
+workspace proxy; a regression verifies rejection before any upstream request.
+Existing components gain optional `Session.StructuredError.response.body` and
+connection `status` (`needs_auth`, message and optional URL); the other additions
+describe credentials. Published declarations propagate these additions and expose
+the plugin's `integration.connection.status` reporting method. No consumed API
+requires a production adapter or higher runtime minimum. The UI normalizer retains
+the optional response body while keeping the existing display message contract.
+
+Upstream also improves provider error messages, Bedrock/Mistral reasoning blocks,
+prompt caching, ChatGPT token-sharing authentication and database-file permissions.
+The new CLI `service disabled` setting controls implicit CLI connections; isolated
+validation with CodeNomad's real lifecycle confirms explicit `service start` and
+authenticated discovery still work with `disabled=true`, without clearing it.
+CodeNomad never writes native service configuration to accommodate the setting.
+
+Seven native suites pass on both 2.0.7 and 2.0.20 with the new pins. Native/UI
+acceptance also passes through the ordinary launcher, without Vite preloading.
+This passing run does not identify or fix the intermittent Windows import failure
+documented above. Historical migrations, standalone plugin acceptance and isolated
+npm upgrade pass; upgrade preserves the running 2.0.15 daemon's version and PID.
+Detailed test counts, environment and final review/CI outcomes belong in the PR.
+
+### Previous stable target: 2.0.21
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.21**; the global minimum remains **2.0.7**, and Codex Usage's feature-local
+credential-list requirement remains **2.0.20**. Authenticated native OpenAPI keeps
+116 paths: only form cancellation changes, with an optional `message` query and
+optional `message` in cancelled `Form.State`. Existing cancellation without a
+message remains supported. A synthetic native fixture verifies session/global
+cancellation both ways, including exact preservation of URL-sensitive text.
+
+Published declarations change in two client files, one protocol file and one
+schema file; all 60 plugin declaration files are unchanged. No new consumed API
+or required field justifies an adapter or higher minimum. Plugin optional OpenTUI
+peer floors advance to 0.5.14; CodeNomad does not install these terminal peers.
+The release also fixes provider context-overflow classification, passthrough and
+prompt-cache behavior, avoids reinjecting ancestor instructions, adds namespaced
+session identity headers to provider requests, and makes native browser tools
+conditional on desktop attachment. CodeNomad's own automation acceptance passes.
+
+Seven native suites pass on both 2.0.7 and 2.0.21 with the new pins. The native
+Codex Usage fixture also passes on 2.0.21 with synthetic credentials and mocked
+quota HTTP. Ordinary-launcher native/UI acceptance, standalone plugin acceptance,
+historical migrations and isolated npm upgrade pass. Upgrade leaves the running
+2.0.15 daemon and PID unchanged. The full server run has one Windows Git-fixture
+cleanup `EPERM`; its unchanged focused rerun passes. Retain this failure and the
+historical intermittent Vite/import limitation rather than claiming either fixed.
+Detailed counts, review and CI outcomes belong in the PR.
+
+### Current stable target: 2.0.22
+
+The recommendation and synchronized server/UI client and plugin pins advance to
+**2.0.22**. The general minimum remains **2.0.7**, and Codex Usage's native
+credential-list requirement remains **2.0.20**. Authenticated native OpenAPI keeps
+116 paths, adding optional `parentID` and a parent-not-found response to session
+creation. A native fixture confirms that this variant ignores the supplied
+location and inherits the parent's directory. CodeNomad does not consume it:
+the workspace proxy rejects any `parentID` on creation before native forwarding,
+including an owned parent or malformed value. Creation requires an inspectable
+JSON object rather than an opaque body; ordinary owned root creation and the
+existing ownership-checked fork API remain available.
+
+Other schema changes add optional provider `headerTimeout`, allow `false` for
+`chunkTimeout`, and make configured model capability overrides partial. Published
+declarations change in 4/30 client, 2/60 plugin, 3/36 protocol and 4/102 schema
+files. Plugins additionally expose native session removal and compaction;
+CodeNomad adds no new plugin operation or proxy route. Runtime changes include
+header/chunk/whole-response timeout handling and bounded timeout retries, provider
+cache/error/tool-history fixes, MCP shutdown cleanup and forward-compatible model
+capability defaults. None establishes a new consumed API dependency.
+
+Windows qualification with Node 24.20.0 passes the seven native suites on both
+2.0.7 and 2.0.22, plus the explicit proxy suite. Native/UI pruning acceptance
+passes using the committed parent runner and #828's early dependency import order.
+This is an import-order harness workaround, not proof of repairing the underlying
+Windows heap corruption. Standalone plugin acceptance, historical migrations from
+2.0.3 and beta-19271, and native Codex Usage pass on 2.0.22. Native npm upgrade
+installs 2.0.22 while retaining the running 2.0.15 daemon's version and PID.
+The compaction-isolation fixture additionally passes on 2.0.22, preserving a
+second session's progress while the first provider response is held. Detailed
+test counts, limits, independent review and remote CI results belong in the PR.
+
+### Loaded-only pending recovery on 2.0.22
+
+The bundled pruning entry also registers the fixed read-only
+`codenomad.pending-requests.snapshot` RPC under its existing backend-presence
+lifecycle. This narrow native-internals exception is qualified against published
+OpenCode **2.0.22** and bundled Effect **4.0.0-rc.112**. Registration uses the
+native setup context's version, not browser input or plugin options. Missing or
+different versions omit only this new capability; the global minimum remains
+**2.0.7** and the recommendation remains **2.0.22**. Existing pruning/history
+methods retain their own support and write checks.
+
+The reader uses private native LocationServiceMap, Location, Form and Permission
+services, scoped existing-only leases and repeated inventory/object-identity
+checks. It preserves global/idle Forms and native numeric JSON codecs, returning
+complete coverage (including empty cold directories) with actual caller
+`originDirectory`. Bounds are 64 requested directories/selected placements,
+2048 loaded keys, 1024 Forms and Permissions per placement/directory, 4 MiB
+UTF-8 output and a two-second reader deadline. The broker's 30-second overall
+deadline includes bounded Git ownership revalidation (eight directories at a
+time through the existing Git worker). Overflow or unsafe serialization
+fails rather than truncates. This is unsupported internal coupling: another
+runtime needs separate qualification, not a version-range expansion.
+
+The UI sends at most eight directories per request, also retaining the escaped
+URL budget, to bound Git-heavy historical authorization within its independent
+ten-second request deadline. This imposes no whole-history scan deadline or
+completion guarantee on arbitrarily slow filesystems. The broker rejects
+overflowing raw JSON numbers before coverage/capability admission, including
+unknown metadata; native numeric codec strings remain unchanged.
+
+`GET /api/workspaces/:id/pending-requests` retains its existing UI wire shape and
+uses only the authenticated connection's fixed
+`POST /api/rpc/codenomad.pending-requests/snapshot?location[directory]=<root>` with
+`{ "input": { "directories": [...] } }`. The root comes from the established
+workspace's owned native Location, never startup environment or a submitted
+candidate. The broker validates requested directories/common-repository identity,
+native execution-host origin, full coverage and every returned placement,
+including cold/empty authority and WSL translations/aliases. Legacy workspace
+identities are rejected rather than erased. Workspace/connection replacement,
+root and candidate deletion and changed directory authority fence dispatch and
+publication. Cold UI coverage synthesizes a location from the validated native
+entry directory, not the browser's alias.
+
+Only HTTP 400 with a bounded, declared native `RpcError` type `rpc.unavailable`
+or `rpc.method_not_found` means `supported:false`. Plain 404s, malformed output,
+authentication failures, reader errors, timeouts and overflow return
+non-authoritative 503s; they neither clear queues nor retry native mutations.
+Successful capability negotiation is connection-scoped and occurs only after
+all origin/coverage/placement checks. The existing compaction guard defers an
+unverified capability before inventory work and again before forwarding. It
+cannot probe during an observed compaction until capability was previously
+verified; this conservative hold is intentional. Older/unsupported runtimes
+retain guarded legacy discovery. No general RPC proxy, native pending-API
+dependency, provisioning mutation, reload or service restart was added.
+
+Candidate traversal does not construct cold Locations. Native HTTP middleware
+may still warm/rebuild the single bootstrap root before handler execution;
+root eviction/config rebuild is not a construction-free guarantee. Snapshots
+can stale after leases release or transport, so existing per-kind mutation
+fences and settlement tombstones remain essential. This work does not fix
+existing graph/Bus/TUI CPU costs or claim live desktop acceptance. Isolated
+published production-loader/authenticated-router proof and ordinary bundle
+resolution are separate from desktop deployment qualification; detailed checks
+and receipts belong in the PR.
 
 The audit and implementation record below is historical context, not a runtime
 qualification matrix to maintain.

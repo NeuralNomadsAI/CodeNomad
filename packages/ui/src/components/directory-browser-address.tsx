@@ -1,11 +1,11 @@
 import { Component, For, Show, createEffect, createSignal, createUniqueId } from "solid-js"
-import { ArrowLeft, ArrowUpLeft, Folder, Home } from "lucide-solid"
+import { ArrowLeft, Folder, FolderRoot, Home } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 
 export interface DirectoryDestination {
   target: string
   label: string
-  kind: "initial" | "parent" | "home" | "folder"
+  kind: "initial" | "root" | "home" | "folder"
 }
 
 interface DirectoryBrowserAddressProps {
@@ -92,7 +92,7 @@ const DirectoryBrowserAddress: Component<DirectoryBrowserAddressProps> = (props)
                 onClick={() => { props.onChoose(destination); props.onOpenChange(false); setActive(-1) }}
               >
                 {destination.kind === "initial" ? <ArrowLeft class="w-4 h-4" />
-                  : destination.kind === "parent" ? <ArrowUpLeft class="w-4 h-4" />
+                  : destination.kind === "root" ? <FolderRoot class="w-4 h-4" />
                   : destination.kind === "home" ? <Home class="w-4 h-4" />
                   : <Folder class="w-4 h-4" />}
                 <span class="truncate">{destination.label}</span>
