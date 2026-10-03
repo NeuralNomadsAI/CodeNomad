@@ -1,4 +1,8 @@
 export const messagingMessages = {
+  "question-receipt.answer": "あなたの回答",
+  "question-receipt.unavailable": "回答を取得できません",
+  "question-receipt.otherChoices": "その他の選択肢（{count}）",
+  "question-receipt.offeredChoices": "提示された選択肢（{count}）",
   "interruption.question": "回答してください",
   "interruption.permission": "許可が必要です",
   "interruption.expand": "リクエストを展開",

@@ -136,17 +136,38 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
         return { primary, answers: Array.from(receipt.querySelectorAll("dd"), answer => getComputedStyle(answer).color) }
       })
       assert.deepEqual(receiptColors.answers, Array(3).fill(receiptColors.primary), "Every receipt answer must use resolved primary text color")
-      assert.deepEqual(await page.locator(".interruption-receipt dt").allTextContents(), [
+      assert.deepEqual(await page.locator(".question-receipt-prompt").allTextContents(), [
         "How should we deploy the updated interruption dock to existing workspaces?",
         "Which checks must finish before the release can proceed?",
         "What additional release notes should the team include?",
       ])
+      assert.deepEqual(await page.locator(".question-receipt-answers .question-receipt-label").allTextContents(), [
+        "All workspaces", "Browser coverage", "Visual review", "Include the keyboard shortcuts and deployment schedule.",
+      ])
+      assert.deepEqual(await page.locator(".question-receipt-answers .question-receipt-description").allTextContents(), [
+        "Release the updated panel everywhere after the browser checks pass and support documentation is ready.",
+        "Verify narrow layouts, keyboard navigation, persistent answers and bounded panel actions.",
+        "Review both light and dark appearances, question hierarchy and lengthy option descriptions.",
+      ])
+      assert.deepEqual(await page.locator(".question-receipt summary").allTextContents(), ["Other choices (2)", "Other choices (1)"])
+      assert.equal(await page.locator(".question-receipt details[open]").count(), 0)
+      assert.equal(await page.locator(".question-receipt details").getByText("All workspaces", { exact: true }).count(), 0)
       assert.deepEqual(await page.evaluate(() => (window as any).fixture.replies[0].answer), {
         q0: "All workspaces", q1: ["Browser coverage", "Visual review"], q2: "Include the keyboard shortcuts and deployment schedule.",
       })
       assert.equal(await page.locator(".prompt-input").inputValue(), "Keep the release draft")
       await page.waitForFunction(() => document.activeElement?.matches(".prompt-input"))
       await capture("completed")
+      const choices = page.locator(".question-receipt summary").first()
+      await choices.focus()
+      await page.keyboard.press("Enter")
+      assert.equal(await page.locator(".question-receipt details[open]").count(), 1)
+      assert.equal(await page.getByText("Keep the new interaction in preview while collecting keyboard and mobile accessibility feedback.", { exact: true }).isVisible(), true)
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+      await capture("choices")
+      await page.evaluate(() => (window as any).fixture.rehydrate())
+      await page.locator(".question-receipt-answers .question-receipt-label").filter({ hasText: "All workspaces" }).waitFor()
+      assert.equal(await page.locator(".question-receipt-answers .question-receipt-description").count(), 3)
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   })
@@ -167,6 +188,52 @@ test("a single request has no navigation; the badge restores the collapsed edito
     await page.locator('.permission-center-trigger').click()
     assert.equal(await answer(page).inputValue(), "Preserved answer")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("native receipt metadata wins and custom multiline answers stay literal", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.liveAsk(true))
+    const search = await page.evaluate(() => (window as any).fixture.complete([
+      ["Gradual rollout"], ["Browser coverage", "Visual review"], ["Custom <answer>\nSecond line"],
+    ], { answers: [["WRONG OUTPUT ANSWER"]] }))
+    await page.locator(".question-receipt").waitFor()
+    assert.deepEqual(await page.locator(".question-receipt-answers .question-receipt-label").allTextContents(), [
+      "Gradual rollout", "Browser coverage", "Visual review", "Custom <answer>\nSecond line",
+    ])
+    assert.equal(search.join("\n").includes("WRONG OUTPUT ANSWER"), false)
+    assert.equal(search.includes("Custom <answer>\nSecond line"), true)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("malformed answers stay unknown and do not leak image payloads into search", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.liveAsk(true))
+    const unknownSearch = await page.evaluate(() => (window as any).fixture.complete([
+      [{ type: "image", data: "PRIVATE_IMAGE_BYTES" }], [], ["Unlisted answer"],
+    ], { answers: [["WRONG OUTPUT ANSWER"]] }))
+    await page.getByText("Answer unavailable", { exact: true }).waitFor()
+    assert.deepEqual(await page.locator(".question-receipt-empty").allTextContents(), ["Answer unavailable", "No answer"])
+    assert.deepEqual(await page.locator(".question-receipt summary").allTextContents(), ["Choices offered (3)", "Other choices (3)"])
+    assert.deepEqual(await page.locator(".question-receipt-answers .question-receipt-label").allTextContents(), ["Unlisted answer"])
+    assert.equal(await page.locator(".question-receipt-answers .question-receipt-description").count(), 0)
+    assert.equal(unknownSearch.join("\n").includes("PRIVATE_IMAGE_BYTES"), false)
+    assert.equal(unknownSearch.join("\n").includes("WRONG OUTPUT ANSWER"), false)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("failed native questions use the shared error shell, never an answered receipt", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => { (window as any).fixture.liveAsk(); (window as any).fixture.toolError() })
+    assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().question?.parts["question-tool"]?.data?.state?.status), "error")
+    await page.locator(".tool-call-error-content").filter({ hasText: "Question cancelled" }).waitFor()
+    assert.equal(await page.locator(".question-receipt").count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -212,7 +279,7 @@ test("answering outside loaded history preserves the composer and native receipt
     assert.equal(await page.locator(".prompt-input").inputValue(), "Keep my draft")
     await page.evaluate(() => (window as any).fixture.rehydrate())
     await page.locator(".interruption-receipt dd").filter({ hasText: "Use the dock" }).waitFor()
-    assert.equal(await page.locator(".interruption-receipt dt").innerText(), "Which approach?")
+    assert.equal(await page.locator(".question-receipt-prompt").innerText(), "Which approach?")
     assert.equal(await page.evaluate(() => (window as any).fixture.replies.length), 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }

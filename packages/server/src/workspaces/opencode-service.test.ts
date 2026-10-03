@@ -5,6 +5,7 @@ import type { Endpoint } from "@opencode/client/service"
 
 import {
   OpenCodeSharedService,
+  nativeEventConnections,
   type OpenCodeServiceLifecycle,
   type OpenCodeSharedServiceDependencies,
   type OpenCodeSharedServiceOptions,
@@ -16,6 +17,18 @@ const endpoint: Endpoint = {
 }
 
 describe("OpenCodeSharedService", () => {
+  it("binds event provenance to its actual connection without serializing credentials", async () => {
+    const event = { type: "permission.replied", data: { sessionID: "s", requestID: "p", reply: "once" } }
+    const service = createService({ makeClient: () => ({ event: { subscribe: async function* () { yield event } } }) as unknown as OpenCodeClient })
+    const stream = await service.subscribe(undefined, lifecycleOptions("event-provenance", lifecycleFor(endpoint)))
+    const connection = await service.acquire()
+    for await (const received of stream) {
+      assert.equal(nativeEventConnections.get(received), connection)
+      assert.equal(JSON.stringify(received), JSON.stringify(event))
+      assert.ok(!JSON.stringify(received).includes("secret"))
+      break
+    }
+  })
   it("prepares plugins once per connected daemon, coalesces callers, and prepares replacements", async () => {
     let release!: () => void
     let preparations = 0
