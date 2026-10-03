@@ -43,6 +43,7 @@ async function fixture() {
   } as unknown as ServiceConnection
   const manager = {
     get: () => workspace,
+    getWorktrees: async () => ({ worktrees: [{ slug: "root", kind: "root", directory: "/project", serviceDirectory: "/project" }] }),
     getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => state.distro,
     getServicePathStyle: () => "posix",
@@ -94,6 +95,72 @@ test("all decisions persist across reload, SSE-before-HTTP upgrades only the exa
     assert.equal(rows.find(row => row.requestId === "cascade")?.reason, undefined)
     assert.ok(f.changed.length >= 7)
   } finally { await f.close() }
+})
+
+test("initial connection and reconnect recover every registered owned Location, never the daemon cwd", async () => {
+  const f = await fixture()
+  const directories = ["/project", "/project-worktree"]
+  const requested: string[] = []
+  let generation = 1
+  Object.assign(f.manager, {
+    getWorktrees: async (_id: string, mode: string, purpose: string) => {
+      assert.equal(mode, "validated"); assert.equal(purpose, "event")
+      return { worktrees: directories.map(serviceDirectory => ({ serviceDirectory })) }
+    },
+    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, _signal: unknown, purpose?: string) => {
+      if (purpose) assert.equal(purpose, "event")
+      return directories.includes(location.directory)
+    },
+  })
+  Object.assign(f.connection.client.permission.request, { list: async (input?: { location: { directory: string } }) => {
+    assert.ok(input?.location.directory, "must not default to daemon cwd")
+    requested.push(input.location.directory)
+    return { location: input.location, data: [pending(`${input.location.directory}-${generation}`), { ...pending("foreign"), sessionID: "foreign" }] }
+  } })
+  Object.assign(f.connection.client.session, { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID,
+    location: { directory: sessionID === "foreign" ? "/foreign" : "/project" } }) })
+  try {
+    for (generation = 1; generation <= 2; generation++) {
+      f.bus.publish({ type: "instance.eventStatus", instanceId: "w", status: "connected", generation })
+      await f.receipts.stop()
+      f.receipts.start()
+      for (const directory of directories) f.emit("permission.replied", { sessionID: "s", requestID: `${directory}-${generation}`, reply: "once" })
+      await f.receipts.stop()
+      f.receipts.start()
+    }
+    assert.deepEqual(requested, [...directories, ...directories])
+    const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
+    assert.equal(rows.length, 4)
+    for (const row of rows) {
+      assert.equal(row.action, "shell")
+      assert.deepEqual(row.resources, ["git status"])
+      assert.deepEqual(row.source, { messageId: "m", callId: "call" })
+      assert.equal(row.origin, "native")
+    }
+  } finally { await f.close() }
+})
+
+test("late recovery snapshots cannot cross workspace or connection replacement", async () => {
+  for (const replacement of ["workspace", "connection"]) {
+    const f = await fixture()
+    let release!: () => void
+    let started!: () => void
+    const listing = new Promise<void>(resolve => { started = resolve })
+    Object.assign(f.connection.client.permission.request, { list: async () => {
+      started()
+      await new Promise<void>(resolve => { release = resolve })
+      return { data: [pending()] }
+    } })
+    try {
+      f.bus.publish({ type: "instance.eventStatus", instanceId: "w", status: "connected", generation: 1 })
+      await listing
+      if (replacement === "workspace") Object.assign(f.manager, { get: () => ({ id: "w", path: "/project" }) })
+      else f.state.current = false
+      release()
+      await f.receipts.stop()
+      assert.deepEqual(await readdir(f.root), [])
+    } finally { await f.close() }
+  }
 })
 
 test("unanchored native decisions survive, pending snapshots are not receipts, deletion fences late success", async () => {
@@ -224,7 +291,7 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
     await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
-    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation,
+    const manager = { get: f.manager.get, getWorktrees: f.manager.getWorktrees, ownsLocation: f.manager.ownsLocation,
       getServiceWslDistro: f.manager.getServiceWslDistro, getServicePathStyle: f.manager.getServicePathStyle,
       getSharedServiceConnection: f.manager.getSharedServiceConnection }
     const otherManager = { ...manager, getSharedServiceConnection: async () => otherConnection }

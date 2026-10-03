@@ -366,8 +366,8 @@ export class WorkspaceManager {
     now: () => this.now(),
   })
 
-  getWorktrees(id: string, mode: "cached" | "validated" | "fresh" = "cached") {
-    return this.worktreeInventory.read(id, mode)
+  getWorktrees(id: string, mode: "cached" | "validated" | "fresh" = "cached", purpose: "request" | "event" = "request") {
+    return (purpose === "event" ? this.eventWorktreeInventory : this.worktreeInventory).read(id, mode)
   }
 
   // Registered-only reads cannot join discovery scans. They retain all native,
@@ -384,9 +384,7 @@ export class WorkspaceManager {
 
   private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event") {
     const mode = refresh ? "fresh" : "validated"
-    return (await (purpose === "event"
-      ? this.eventWorktreeInventory.read(id, mode)
-      : this.getWorktrees(id, mode))).worktrees
+    return (await this.getWorktrees(id, mode, purpose)).worktrees
   }
 
   invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {

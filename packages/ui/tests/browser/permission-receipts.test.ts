@@ -154,6 +154,40 @@ test("event bursts reconcile authoritatively with a trailing read, retry preserv
   } finally { await page.close() }
 })
 
+test("expanded unanchored receipts participate in latest, anchor and manual scroll geometry", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+  try {
+    const errors = await prepare(page, route => fulfill(route,
+      new URL(route.request().url()).searchParams.has("unanchored")
+        ? [receipt("long-session-receipt", "reject", { source: undefined, reason: "Long permission decision.\n".repeat(45) })] : []))
+    await page.goto(`${url}?scroll`)
+    await page.getByRole("button", { name: "Aller au premier message", exact: true }).click()
+    const stream = page.locator(".message-stream")
+    await page.locator('[data-permission-message="unanchored"] summary').click()
+    await page.waitForFunction(() => document.querySelector('.permission-receipt-reason')!.getBoundingClientRect().height > 700)
+    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).click()
+    await page.waitForFunction(() => {
+      const stream = document.querySelector(".message-stream")!
+      return Math.abs(stream.scrollHeight - stream.clientHeight - stream.scrollTop) <= 1
+    })
+    await page.getByRole("button", { name: "Aller au dernier message", exact: true }).waitFor({ state: "detached" })
+    await page.locator('.message-timeline-segment[data-message-id="message-12"]').click()
+    await page.waitForFunction(() => {
+      const stream = document.querySelector(".message-stream")!
+      const target = document.querySelector('[data-virtual-follow-key="message-12"]')
+      return target && Math.abs(target.getBoundingClientRect().top - stream.getBoundingClientRect().top) <= 2
+    })
+    await stream.hover()
+    await page.mouse.wheel(0, 180)
+    await page.waitForTimeout(250)
+    const position = await stream.evaluate(element => element.scrollTop)
+    await page.evaluate(() => (window as any).receiptFixture.event({ messageId: undefined }))
+    await page.waitForTimeout(250)
+    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - position) <= 2, "receipt refresh preserves manual reader position")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const) {
   test(`long permission resources and reasons wrap with reachable pagination at ${width}px in ${theme}`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 800 } })

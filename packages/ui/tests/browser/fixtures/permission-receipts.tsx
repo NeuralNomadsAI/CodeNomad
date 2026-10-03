@@ -16,6 +16,7 @@ import "../../../src/index.css"
 
 const instanceId = "receipt-instance", sessionId = "session-a", messageId = "message-a"
 const direct = new URLSearchParams(location.search).has("direct")
+const scrollFixture = new URLSearchParams(location.search).has("scroll")
 const [scope, setScope] = createSignal({ instanceId, sessionId, messageId })
 const [active, setActive] = createSignal(true)
 const model = { providerID: "fixture", id: "fixture" }
@@ -26,7 +27,9 @@ const message = { id: messageId, type: "assistant", agent: "build", model, time:
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, location: { directory: "/fixture" }, time: { created: 1, updated: 10 } }) },
-  message: { list: async () => ({ data: [message], cursor: {} }) },
+  message: { list: async () => ({ data: scrollFixture ? Array.from({ length: 30 }, (_, index) => ({ ...message,
+    id: `message-${index}`, content: [{ type: "text", text: `Message ${index}\n\n${"Native transcript content. ".repeat(25)}` }],
+  })) : [message], cursor: {} }) },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -36,13 +39,14 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 10 },
 } as any]])))
 setActiveSession(instanceId, sessionId)
-await applyUiSettings({ locale: "fr", showMessageTimeline: false,
+await applyUiSettings({ locale: "fr", showMessageTimeline: scrollFixture,
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { bash: "hidden" } } })
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ display: "flex", height: "700px", width: "min(100%, 900px)" }}>
     {direct ? <div style={{ width: "100%" }}><PermissionReceipts {...scope()} active={active()} /></div>
-      : <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={active()} />}
+      : <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={active()}
+          onLoadLatestMessages={() => loadMessages(instanceId, sessionId, { force: true })} />}
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).receiptFixture = {

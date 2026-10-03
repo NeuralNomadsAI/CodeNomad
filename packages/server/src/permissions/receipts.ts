@@ -8,7 +8,7 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import { nativeEventConnections } from "../workspaces/opencode-service"
 import { PermissionReceiptStore, permissionSnapshot, receiptHash, type ReceiptQuery } from "./receipt-store"
 
-type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
+type Manager = Pick<WorkspaceManager, "get" | "getWorktrees" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 export class PermissionReceipts {
   private readonly scopes = new WeakMap<ServiceConnection, Promise<string>>()
@@ -97,20 +97,36 @@ export class PermissionReceipts {
   }
   private readonly onStatus = (event: Extract<WorkspaceEventPayload, { type: "instance.eventStatus" }>) => {
     if (event.status !== "connected") return
+    const workspace = this.manager.get(event.instanceId)
+    if (!workspace) return
     this.enqueue(event.instanceId, async () => {
       const connection = await this.manager.getSharedServiceConnection(event.instanceId)
       if (!connection) return
-      const scope = await this.scope(event.instanceId, connection)
-      const pending = await connection.client.permission.request.list(undefined, { signal: AbortSignal.timeout(10_000) })
-      for (const value of pending.data) {
-        const request = permissionSnapshot(value)
-        if (!request) continue
-        let session
-        try { session = await connection.client.session.get({ sessionID: request.sessionId }, { signal: AbortSignal.timeout(10_000) }) }
-        catch (error) { if (isSessionNotFoundError(error)) continue; throw error }
-        if (!await this.manager.ownsLocation(event.instanceId, session.location, connection.client)) continue
+      const current = () => {
         connection.assertCurrent()
-        await this.store.capture(scope, request)
+        return this.manager.get(event.instanceId) === workspace
+      }
+      if (!current()) return
+      const scope = await this.scope(event.instanceId, connection)
+      if (!current()) return
+      const { worktrees } = await this.manager.getWorktrees(event.instanceId, "validated", "event")
+      // Native pending permissions are Location-scoped; an omitted location
+      // queries only the daemon cwd. Never trigger strategy discovery here.
+      for (const directory of new Set(worktrees.map(worktree => worktree.serviceDirectory).filter((value): value is string => Boolean(value)))) {
+        if (!current()) return
+        const pending = await connection.client.permission.request.list({ location: { directory } }, { signal: AbortSignal.timeout(10_000) })
+        for (const value of pending.data) {
+          if (!current()) return
+          const request = permissionSnapshot(value)
+          if (!request) continue
+          let session
+          try { session = await connection.client.session.get({ sessionID: request.sessionId }, { signal: AbortSignal.timeout(10_000) }) }
+          catch (error) { if (isSessionNotFoundError(error)) continue; throw error }
+          if (!current()) return
+          if (!await this.manager.ownsLocation(event.instanceId, session.location, connection.client, undefined, "event")) continue
+          if (!current()) return
+          await this.store.capture(scope, request)
+        }
       }
     })
   }
