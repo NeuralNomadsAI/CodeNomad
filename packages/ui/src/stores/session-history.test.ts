@@ -6,20 +6,46 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 
 const empty = { status: "page" as const, scanned: 32, tools: 0, reasoning: 0, skipped: 0, hits: [], candidates: [], cursor: null }
 const query = { query: "needle", purpose: "search" as const, includeTechnical: true, sessionID: "s" }
-test("search advances empty bounded pages, reports skipped content and stops at first result page", async () => {
+test("workspace search fills a result page across sparse scan batches and continues losslessly", async () => {
   const original = serverApi.querySessionHistory
   const cursors: Array<string | undefined> = []
+  const progress: number[] = []
   try {
     serverApi.querySessionHistory = async (_instance, input) => {
       cursors.push(input.cursor)
-      if (!input.cursor) return { ...empty, skipped: 1, cursor: "second" }
-      return { ...empty, cursor: "third", hits: [{ sessionID: "s", messageID: "m", role: "user", partIndex: 0, kind: "text", excerpt: "needle" }] }
+      const n = Number(input.cursor ?? 0)
+      if (n === 0) return { ...empty, skipped: 1, cursor: "1" }
+      return { ...empty, cursor: n < 35 ? String(n + 1) : null, hits: [{ sessionID: `s-${n}`, messageID: `m-${n}`, role: "user", partIndex: 0, kind: "text", excerpt: "needle" }] }
     }
-    const result = await findHistoryMatches("history-tests", query, new AbortController().signal)
-    assert.equal(result.hits.length, 1)
+    const workspaceQuery = { ...query, sessionID: undefined }
+    const result = await findHistoryMatches("history-tests", workspaceQuery, new AbortController().signal, page => progress.push(page.hits.length))
+    assert.equal(result.hits.length, 32)
     assert.equal(result.skipped, 1)
+    assert.equal(result.cursor, "33")
+    assert.deepEqual(progress, Array.from({ length: 33 }, (_, n) => n))
+    const next = await findHistoryMatches("history-tests", { ...workspaceQuery, cursor: result.cursor! }, new AbortController().signal)
+    assert.equal(next.cursor, null)
+    assert.deepEqual([...result.hits, ...next.hits].map(hit => hit.messageID), Array.from({ length: 35 }, (_, n) => `m-${n + 1}`))
+    assert.equal(cursors.length, 36)
+  } finally { serverApi.querySessionHistory = original }
+})
+test("search retains an entire final transport batch and fences cancellation and cyclic cursors", async () => {
+  const original = serverApi.querySessionHistory
+  try {
+    const hit = { sessionID: "s", role: "user", partIndex: 0, kind: "text" as const, excerpt: "needle" }
+    serverApi.querySessionHistory = async (_instance, input) => ({ ...empty, cursor: input.cursor ? "third" : "second",
+      hits: Array.from({ length: input.cursor ? 32 : 31 }, (_, n) => ({ ...hit, messageID: `${input.cursor ?? "first"}-${n}` })) })
+    const result = await findHistoryMatches("history-tests", query, new AbortController().signal)
+    assert.equal(result.hits.length, 63)
+    assert.equal(new Set(result.hits.map(hit => hit.messageID)).size, 63)
     assert.equal(result.cursor, "third")
-    assert.deepEqual(cursors, [undefined, "second"])
+    const controller = new AbortController()
+    let published = 0
+    serverApi.querySessionHistory = async () => { controller.abort(); return empty }
+    await assert.rejects(findHistoryMatches("history-tests", query, controller.signal, () => published++), /abort/i)
+    assert.equal(published, 0)
+    serverApi.querySessionHistory = async () => ({ ...empty, cursor: "repeat", hits: [{ ...hit, messageID: "m" }] })
+    await assert.rejects(findHistoryMatches("history-tests", { ...query, cursor: "repeat" }, new AbortController().signal))
   } finally { serverApi.querySessionHistory = original }
 })
 test("aborted history requests never publish a late page or start another page", async () => {

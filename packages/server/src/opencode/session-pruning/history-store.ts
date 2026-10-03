@@ -12,6 +12,21 @@ const cursorSchema = z.object({
 }).strict()
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
+// Keep original part positions, but do not materialize tool payloads, images or
+// provider state in JavaScript for text-only searches. SQLite still parses JSON.
+const textProjection = `CASE WHEN json_valid(m.data) THEN CASE WHEN json_type(m.data) = 'object' THEN
+  CASE WHEN json_type(m.data, '$.content') = 'array' THEN json_object('content', (
+    SELECT json_group_array(CASE WHEN p.type = 'object' THEN
+      CASE WHEN json_extract(p.value, '$.type') = 'text' AND json_type(p.value, '$.text') = 'text'
+        THEN json_object('type', 'text', 'text', json_extract(p.value, '$.text')) END END)
+    FROM json_each(m.data, '$.content') p
+  )) WHEN m.type != 'assistant' THEN json_object(
+    'text', CASE WHEN json_type(m.data, '$.text') = 'text' THEN json_extract(m.data, '$.text') END,
+    'summary', CASE WHEN json_type(m.data, '$.summary') = 'text' THEN json_extract(m.data, '$.summary') END,
+    'command', CASE WHEN json_type(m.data, '$.command') = 'text' THEN json_extract(m.data, '$.command') END,
+    'output', json_object('output', CASE WHEN json_type(m.data, '$.output.output') = 'text' THEN json_extract(m.data, '$.output.output') END)
+  ) END END END`
+
 function excerpt(text: string, query: string): string | undefined {
   const index = text.toLowerCase().indexOf(query)
   if (index < 0) return undefined
@@ -48,8 +63,9 @@ function findHit(content: unknown, query: string, includeTechnical: boolean): Pi
   }
 }
 
-// Each call examines at most 32 messages, materializes one bounded message at a
-// time and yields to the native event loop. No index/triggers in OpenCode's DB.
+// Search and metadata counts examine up to 1024 rows / 32 owners / 40 ms;
+// content counts/pruning retain 32-row pages. Materialize one bounded message
+// and yield between rows. No index/triggers in OpenCode's DB.
 // The rowid horizon prevents an active generation from extending a traversal.
 export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, input: HistoryQuery, signal: AbortSignal): Promise<HistoryNativePage> {
   const binding = createHash("sha256").update(JSON.stringify([scope, input.query, input.includeTechnical, input.purpose])).digest("hex")
@@ -66,17 +82,23 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
   }
   if (cursor.binding !== binding || cursor.after > cursor.through) throw new Error("Invalid history cursor")
   const result: HistoryNativePage = { status: "page", scanned: 0, tools: 0, reasoning: 0, skipped: 0, hits: [], candidates: [], cursor: null, sessions: [] }
+  const countMessagesOnly = input.purpose === "stats" && !input.includeTechnical
+  const textOnly = input.purpose === "search" && !input.includeTechnical
+  const rowLimit = countMessagesOnly || input.purpose === "search" ? 1024 : 32
+  const dataColumn = countMessagesOnly ? "NULL" : `CASE WHEN length(CAST(m.data AS BLOB)) <= ? THEN ${textOnly ? textProjection : "m.data"} END`
   const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.type,s.directory,s.workspace_id,
-    CASE WHEN length(CAST(m.data AS BLOB)) <= ? THEN m.data ELSE NULL END AS data
+    ${dataColumn} AS data
     FROM session_message m JOIN session_v2 s ON s.id=m.session_id
-    WHERE ${where} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid LIMIT 32`)
+    WHERE ${where} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid LIMIT ${rowLimit}`)
   let after = cursor.after
   const started = performance.now()
-  for (const row of rows.iterate(MAX_MESSAGE_BYTES, ...params, cursor.after, cursor.through)) {
+  const query = input.query.trim().toLowerCase()
+  for (const row of rows.iterate(...(countMessagesOnly ? [] : [MAX_MESSAGE_BYTES]), ...params, cursor.after, cursor.through)) {
     signal.throwIfAborted()
+    let owner = result.sessions.find(owner => owner.sessionID === row.session_id)
+    if (!owner && result.sessions.length === 32) break
     after = Number(row.position)
     result.scanned++
-    let owner = result.sessions.find(owner => owner.sessionID === row.session_id)
     if (!owner) {
       owner = { sessionID: String(row.session_id), directory: String(row.directory),
         ...(typeof row.workspace_id === "string" ? { workspaceID: row.workspace_id } : {}),
@@ -84,6 +106,11 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
       result.sessions.push(owner)
     }
     owner.scanned++
+    if (countMessagesOnly) {
+      await yieldTurn(undefined, { signal })
+      if (performance.now() - started >= 40) break
+      continue
+    }
     const previousSkipped = result.skipped
     try {
       if (typeof row.data !== "string") throw new Error("Oversized history message")
@@ -92,8 +119,8 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
       if (row.type === "assistant" && !Array.isArray(data.content)) throw new Error("Unsupported assistant content")
       const content = Array.isArray(data.content) ? data.content : [data.text, data.summary, data.command, data.output?.output]
         .filter((text): text is string => typeof text === "string").map(text => ({ type: "text", text }))
-      const tools = content.filter((p: any) => p?.type === "tool").length
-      const reasoning = content.filter((p: any) => p?.type === "reasoning").length
+      const tools = textOnly ? 0 : content.filter((p: any) => p?.type === "tool").length
+      const reasoning = textOnly ? 0 : content.filter((p: any) => p?.type === "reasoning").length
       result.tools += tools
       result.reasoning += reasoning
       owner.tools += tools
@@ -103,14 +130,14 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
         if (preview.status === "preview") result.candidates.push({ messageID: String(row.id), revision: preview.revision, toolCount: tools, reasoningCount: reasoning })
         else result.skipped++
       }
-      if (input.purpose === "search" && input.query.trim()) {
-        const hit = findHit(content, input.query.trim().toLowerCase(), input.includeTechnical)
+      if (input.purpose === "search" && query) {
+        const hit = findHit(content, query, input.includeTechnical)
         if (hit) result.hits.push({ sessionID: String(row.session_id), messageID: String(row.id), role: String(row.type), ...hit })
       }
     } catch { result.skipped++ }
     owner.skipped += result.skipped - previousSkipped
     await yieldTurn(undefined, { signal })
-    if (performance.now() - started >= 40) break
+    if (result.hits.length === 32 || performance.now() - started >= 40) break
   }
   // Empty pages complete the scan too, including deletions since the first page.
   if (result.scanned && after < cursor.through) {
