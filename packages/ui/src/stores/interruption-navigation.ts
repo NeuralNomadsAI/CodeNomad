@@ -7,7 +7,3 @@ export const [interruptionFocus, setInterruptionFocus] = createSignal<{
 export function focusInterruption(instanceId: string, sessionId?: string, requestId?: string) {
   setInterruptionFocus({ instanceId, sessionId, requestId })
 }
-
-export const [interruptionReveal, setInterruptionReveal] = createSignal<{
-  instanceId: string; sessionId: string; messageId: string; callId?: string
-}>()

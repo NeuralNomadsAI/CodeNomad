@@ -125,6 +125,97 @@ test("missing credential API explains the running service requirement without ge
   } finally { await page.close() }
 })
 
+test("repeated connected notifications preserve quota DOM and in-flight refreshes without compaction or input coupling", async () => {
+  const page = await browser.newPage()
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    // Establish both connection identities before publishing their validated quota.
+    await page.evaluate(() => (window as any).usageFixture.connection("connected"))
+    await waitRequests(requests, 2)
+    await page.evaluate(() => (window as any).usageFixture.transport("connected"))
+    await waitRequests(requests, 3)
+    await fulfill(requests[0], 80); await fulfill(requests[1], 90); await fulfill(requests[2], 10)
+    const bar = page.getByRole("progressbar")
+    await bar.waitFor()
+    const original = await bar.elementHandle()
+    await page.evaluate(() => {
+      const fixture = (window as any).usageFixture
+      for (let i = 0; i < 20; i++) {
+        fixture.connection("connected")
+        fixture.transport("connected")
+      }
+      fixture.event("session.compaction.started")
+      fixture.event("session.compaction.ended")
+    })
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 3, "duplicate connectivity and compaction alone do not demand quotas")
+    assert.equal(await original!.evaluate(el => el.isConnected), true)
+    assert.equal(await bar.getAttribute("aria-valuenow"), "10")
+
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 4)
+    await page.evaluate(() => {
+      const fixture = (window as any).usageFixture
+      for (let i = 0; i < 20; i++) {
+        fixture.connection("connected")
+        fixture.transport("connected")
+      }
+    })
+    assert.equal(await original!.evaluate(el => el.isConnected), true, "a pending refresh cannot reset the display")
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE })
+    await fulfill(requests[3], 20)
+    await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "20")
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 4, "duplicate connectivity neither cancels nor schedules trailing reads")
+    assert.equal(await original!.evaluate(el => el.isConnected), true)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const boundary of ["native-generation", "native-disconnect", "transport-disconnect", "server-connected"] as const) {
+  test(`real ${boundary} boundary still revokes quotas and fences old responses`, async () => {
+    const page = await browser.newPage()
+    try {
+      const { requests, errors } = await prepare(page)
+      await waitRequests(requests, 1)
+      await page.evaluate(() => (window as any).usageFixture.connection("connected"))
+      await waitRequests(requests, 2)
+      await page.evaluate(() => (window as any).usageFixture.transport("connected"))
+      await waitRequests(requests, 3)
+      await fulfill(requests[0], 80); await fulfill(requests[1], 90); await fulfill(requests[2], 10)
+      await page.getByRole("progressbar").waitFor()
+      await page.evaluate(() => {
+        for (let i = 0; i < 5; i++) (window as any).usageFixture.event("provider.updated")
+      })
+      await waitRequests(requests, 4)
+      await page.evaluate(boundary => {
+        const fixture = (window as any).usageFixture
+        if (boundary === "native-generation") fixture.connection("connected", 2)
+        else if (boundary === "native-disconnect") fixture.connection("disconnected")
+        else if (boundary === "transport-disconnect") fixture.transport("disconnected")
+        else fixture.event("server.connected")
+      }, boundary)
+      assert.equal(await page.getByRole("progressbar").count(), 0)
+      await fulfill(requests[3], 95)
+      await page.waitForTimeout(50)
+      assert.equal(await page.getByRole("progressbar").count(), 0, "old reads cannot restore disconnected quotas")
+      if (boundary === "native-disconnect" || boundary === "transport-disconnect") {
+        assert.equal(requests.length, 4, "obsolete trailing demand is fenced on disconnect")
+        await page.evaluate(boundary => {
+          if (boundary === "native-disconnect") (window as any).usageFixture.connection("connected")
+          else (window as any).usageFixture.transport("connected")
+        }, boundary)
+      }
+      await waitRequests(requests, 5)
+      await fulfill(requests[4], 30)
+      await page.getByRole("progressbar").waitFor()
+      assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "30")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 test("provider catalogue bursts refresh in place, coalesce reads and ignore other native locations", async () => {
   const page = await browser.newPage({ viewport: { width: 360, height: 400 }, locale: "en-US" })
   try {

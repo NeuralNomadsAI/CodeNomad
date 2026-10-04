@@ -153,6 +153,15 @@ Certificates are valid for about 30 days and rotate automatically on startup whe
 codenomad --tlsSANs "localhost,127.0.0.1,my-hostname,192.168.1.10"
 ```
 
+Generated CA and server certificates use positive, nonzero serial numbers. On startup,
+CodeNomad replaces an older generated server certificate with a negative or zero
+serial while keeping its valid CA, so existing reverse-proxy trust remains usable.
+If the generated CA itself has an invalid serial, has expired or must be replaced,
+CodeNomad reissues the server certificate too and logs a warning: import the new
+`ca-cert.pem` into clients/reverse proxies that trusted the old CA. Restart CodeNomad
+after installing a version containing this fix to repair existing generated credentials.
+Explicitly supplied certificates are not rewritten; their renewal remains your responsibility.
+
 > **Browser warning:** Self-signed certificates trigger a "Your connection is not private" warning in browsers on first visit. This is expected and safe for local development (127.0.0.1 / localhost):
 > 
 > 1. **Chrome/Brave/Edge:** Click **Advanced** → **Proceed to 127.0.0.1 (unsafe)**

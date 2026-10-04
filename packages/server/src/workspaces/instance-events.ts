@@ -219,7 +219,7 @@ export class InstanceEventBridge {
         let revision: number
         do {
           revision = this.ownershipRevision
-          if (location) allowed = await this.resolveLocationOwner(instanceId, location, current)
+          if (location) allowed = await this.resolveLocationOwner(instanceId, location, current, route.signal)
           if (!current()) return
         } while (revision !== this.ownershipRevision)
         // Stopped recipients and work from an earlier connection never publish.
@@ -293,15 +293,15 @@ export class InstanceEventBridge {
     return location
   }
 
-  private resolveLocationOwner(instanceId: string, location: LocationRef, current: () => boolean): Promise<boolean> {
+  private resolveLocationOwner(instanceId: string, location: LocationRef, current: () => boolean, signal: AbortSignal): Promise<boolean> {
     const now = Date.now()
     const key = JSON.stringify([instanceId, location.directory, location.workspaceID])
     const cached = this.locationOwners.get(key)
     if (cached && cached.expiresAt > now) return cached.owns
 
     const resolve = () => location.workspaceID === undefined
-      ? this.options.workspaceManager.ownsDirectory(instanceId, location.directory)
-      : this.options.workspaceManager.ownsLocation(instanceId, location)
+      ? this.options.workspaceManager.ownsDirectory(instanceId, location.directory, "event")
+      : this.options.workspaceManager.ownsLocation(instanceId, location, undefined, signal, "event")
     const owns = Promise.resolve().then(resolve).catch(() => current() ? resolve() : false)
       .catch(error => {
         if (current()) this.options.logger.warn({ err: error, instanceId, location }, "Failed to resolve instance event location owner")

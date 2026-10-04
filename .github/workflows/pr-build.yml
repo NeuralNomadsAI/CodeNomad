@@ -356,6 +356,8 @@ jobs:
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/instances-pending-compaction.test.ts
+          packages/ui/src/stores/instances-pending-requests.test.ts
           packages/ui/src/stores/message-v2/bus.test.ts
           packages/ui/src/stores/message-v2/transcript-eviction.test.ts
           packages/ui/src/stores/opencode-data.test.ts

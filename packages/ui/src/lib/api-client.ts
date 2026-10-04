@@ -4,6 +4,7 @@ import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../s
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
   ConfigFileContentRequest,
@@ -45,6 +46,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceCreateResponse,
   WorkspaceDescriptor,
+  WorkspacePendingRequestsResponse,
   WorkspaceFileResponse,
   WorkspaceFileSearchResponse,
 
@@ -189,6 +191,11 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
+    const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
+    if (cursor) params.set("cursor", cursor)
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
+  },
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
       method: "POST", body: JSON.stringify({ sessionID, target }), signal,
@@ -373,6 +380,10 @@ export const serverApi = {
   },
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
+  getPendingRequests(id: string, directories: string[], signal?: AbortSignal): Promise<WorkspacePendingRequestsResponse> {
+    const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+    return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
   },
   cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
     return request<WorkspaceCloneResponse>("/api/workspaces/clone", {

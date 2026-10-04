@@ -15,7 +15,9 @@ const [mounted, setMounted] = createSignal(true)
   event: (type: string, instanceId = scope().instanceId, directory = scope().directory) => (serverEvents as any).dispatchBatch([{
     type: "instance.event", instanceId, event: { type, id: "event", created: Date.now(), data: {}, location: { directory } },
   }]),
-  connection: (status: string) => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: scope().instanceId, status }]),
+  connection: (status: string, generation = 1, instanceId = scope().instanceId) =>
+    (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId, status, generation }]),
+  transport: (status: string) => (serverEvents as any).emitTransportStatus(status),
 }
 render(() => <ConfigProvider><I18nProvider><Show when={mounted()}>
   <div data-usage><ProviderUsagePanel instanceId={scope().instanceId} sessionId={scope().sessionId} directory={scope().directory}

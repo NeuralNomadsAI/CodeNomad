@@ -1,6 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
-import { interruptionReveal, setInterruptionReveal } from "../stores/interruption-navigation"
 import { Portal } from "solid-js/web"
 import Kbd from "./kbd"
 import DismissibleWindow from "./dismissible-window"
@@ -9,6 +8,7 @@ import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
+import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
 import { getTimelineRecordSignature } from "./message-timeline-projection"
@@ -24,7 +24,6 @@ import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/messa
 import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
-import HistoryStatistics from "./history-statistics"
 import HistoryMessagePreview from "./history-message-preview"
 import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
@@ -294,6 +293,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
+  const [scannedSearchMessages, setScannedSearchMessages] = createSignal(0)
   const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
   const [nextSearchCursor, setNextSearchCursor] = createSignal<string | null>(null)
   const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
@@ -495,27 +495,6 @@ export default function MessageSection(props: MessageSectionProps) {
   )
 
   onCleanup(cancelWindowNavigation)
-  onCleanup(() => {
-    const target = interruptionReveal()
-    if (target?.instanceId === props.instanceId && target.sessionId === props.sessionId) setInterruptionReveal(undefined)
-  })
-  createEffect(on(() => [interruptionReveal(), props.isActive] as const, ([target]) => {
-    if (!target || props.isActive === false || target.instanceId !== props.instanceId || target.sessionId !== props.sessionId) return
-    const locate = () => {
-      if (interruptionReveal() !== target || props.isActive === false) return
-      listApi()?.setAutoScroll(false)
-      listApi()?.scrollToKey(target.messageId, { block: "start" })
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (interruptionReveal() !== target || props.isActive === false) return
-        document.getElementById(getMessageAnchorId(target.messageId))
-          ?.querySelector('[data-interruption-reveal="true"]')?.scrollIntoView({ block: "center" })
-      }))
-    }
-    if (untrack(messageIds).includes(target.messageId)) {
-      cancelWindowNavigation()
-      locate()
-    } else void pageWindow("around", locate, target.messageId)
-  }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
@@ -767,6 +746,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setNextSearchCursor(null)
     setPreviewSearchMatch(undefined)
     setSkippedSearchMessages(0)
+    setScannedSearchMessages(0)
     setSearchQuery("")
     setDebouncedSearchQuery("")
     setSearchedQuery("")
@@ -1049,8 +1029,10 @@ export default function MessageSection(props: MessageSectionProps) {
     setFailedSearchQuery("")
     setSearchMatches([])
     setNextSearchCursor(null)
+    setActiveSearchIndex(0)
     setPreviewSearchMatch(undefined)
     setSkippedSearchMessages(0)
+    setScannedSearchMessages(0)
     const instanceId = props.instanceId
     const sessionId = props.sessionId
     const generation = ++searchGeneration
@@ -1064,14 +1046,15 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    void findHistoryMatches(instanceId, {
-      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
-    }, controller.signal).then((page) => {
+    const publish = (page: Awaited<ReturnType<typeof findHistoryMatches>>, settled: boolean) => {
       if (!isCurrentSearch()) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         if (!isCurrentSearch()) return
         batch(() => {
-          setSearchMatches(page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map(hit => ({
+          // Progress only appends hits within this page. Preserve row identities
+          // so Solid keeps existing result buttons and their keyboard focus.
+          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
@@ -1079,13 +1062,17 @@ export default function MessageSection(props: MessageSectionProps) {
           })))
           setNextSearchCursor(page.cursor)
           setSkippedSearchMessages(page.skipped)
+          setScannedSearchMessages(page.scanned)
           setSearchedQuery(query)
-          setActiveSearchIndex(0)
-          setIsSearchPending(false)
+          setIsSearchPending(!settled)
         })
       })
-    }).catch((error) => {
+    }
+    void findHistoryMatches(instanceId, {
+      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
+    }, controller.signal, page => publish(page, false)).then(page => publish(page, true)).catch((error) => {
       if (!isCurrentSearch()) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
       setIsSearchPending(false)
       setFailedSearchQuery(query)
       log.error("Failed to query message history", { instanceId, sessionId, error })
@@ -1300,6 +1287,7 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} />
               <Show when={olderMessageLoadFailed()}>
                 <div class="flex justify-center py-2">
                   <button
@@ -1374,6 +1362,7 @@ export default function MessageSection(props: MessageSectionProps) {
             </>
           )}
           renderItem={(messageId, index) => (
+            <>
             <MessageBlock
               messageId={messageId}
               instanceId={props.instanceId}
@@ -1406,6 +1395,8 @@ export default function MessageSection(props: MessageSectionProps) {
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
             />
+            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </>
           )}
           renderOverlay={() => (
             <>
@@ -1432,9 +1423,6 @@ export default function MessageSection(props: MessageSectionProps) {
                     </div>
                     <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
                   </div>
-                  <Show when={isSearchOpen()}>
-                    <HistoryStatistics instanceId={props.instanceId} sessionId={searchWorkspace() ? undefined : props.sessionId} />
-                  </Show>
                   <div class="modal-search-container message-search-container">
                     <div class="message-search-input-row">
                       <Search class="w-4 h-4 modal-search-icon" aria-hidden="true" />
@@ -1499,6 +1487,11 @@ export default function MessageSection(props: MessageSectionProps) {
                   </div>
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
+                  </Show>
+                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery())}>
+                    <div class="history-statistics" role="status">
+                      {t("history.searchProgress", { matches: currentSearchMatches().length, messages: scannedSearchMessages() })}
+                    </div>
                   </Show>
                   <Show when={searchFailed()}>
                     <div class="modal-empty-state message-search-empty">

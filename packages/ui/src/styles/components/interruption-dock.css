@@ -4,21 +4,44 @@
   max-height: 45%;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-base);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-base));
+  border-inline-start: 3px solid var(--accent-primary);
   background: var(--surface-base);
   color: var(--text-primary);
 }
-.interruption-dock:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -2px; }
-.interruption-dock .window-header { flex-wrap: wrap; gap: 0.5rem; }
-.interruption-dock .window-actions { margin-inline-start: auto; }
-.interruption-toolbar { justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
-.interruption-toolbar > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.interruption-body { overflow: auto; overscroll-behavior: contain; min-height: 0; }
+.interruption-dock:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
+.interruption-dock .window-header {
+  gap: var(--space-sm);
+  background: color-mix(in srgb, var(--accent-primary) 9%, var(--surface-chrome));
+}
+.interruption-heading { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }
+.interruption-heading-copy { min-width: 0; }
+.interruption-dock .window-title { font-weight: var(--font-weight-semibold); }
+.interruption-session { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interruption-dock .window-actions { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-sm); margin-inline-start: auto; }
+.interruption-navigation { display: flex; align-items: center; gap: var(--space-xs); }
+.interruption-position { font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-secondary); }
+.interruption-dock .window-icon-button { width: 32px; height: 32px; }
+.interruption-navigation .window-icon-button:disabled { opacity: 0.3; cursor: default; background: transparent; }
+.interruption-navigation .window-icon-button > svg:dir(rtl) { transform: scaleX(-1); }
+.interruption-toggle { border-inline-start: 1px solid var(--border-divider); }
+.interruption-body { display: flex; padding: 0; overflow: hidden; min-height: 0; }
+.interruption-editor { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .interruption-dock [hidden] { display: none; }
-.interruption-dock .form-request { border: 0; margin: 0; }
-.interruption-dock .window-action { min-height: 32px; }
+.interruption-dock.is-collapsed .window-header { border-bottom: 0; }
+.interruption-dock .form-request,
+.interruption-dock .tool-call-permission { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; border: 0; margin: 0; padding: 0; gap: 0; background: var(--surface-base); }
+.interruption-dock .form-request-fields,
+.interruption-permission-content { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-md); scrollbar-width: auto; scrollbar-gutter: stable; scroll-padding-block: var(--space-md); }
+.interruption-permission-content { display: flex; flex-direction: column; gap: var(--space-sm); }
+.interruption-dock .form-request-field { padding: 0; border: 0; background: transparent; }
+.interruption-dock .form-request-description { color: var(--text-primary); font-size: var(--font-size-sm); }
+.interruption-dock .form-request-label { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.interruption-dock .window-footer { flex-direction: row; flex-wrap: wrap; margin: 0; padding: var(--space-sm) var(--space-md); }
+.interruption-dock .window-footer .selector-button { width: auto; min-width: 0; }
+.interruption-dock :is(.form-request-error, .tool-call-permission-error) { padding: var(--space-sm) var(--space-md); }
 .interruption-receipt { padding: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .interruption-receipt dt { color: var(--text-secondary); margin-block-start: 0.5rem; }
-.interruption-receipt dd { margin: 0.25rem 0 0.75rem; }
-[data-interruption-reveal="true"] { outline: 2px solid var(--text-primary); outline-offset: -2px; }
+.interruption-receipt dd { color: var(--text-primary); margin: 0.25rem 0 0.75rem; }
 @media (pointer: coarse) { .interruption-dock .window-action { min-height: 44px; min-width: 44px; } }

@@ -72,6 +72,7 @@ function ensureGeneratedTls(args: ResolveHttpsOptionsArgs): ResolvedHttpsOptions
       if (!fs.existsSync(certPath)) return true
       const pem = fs.readFileSync(certPath, "utf-8")
       const certificate = new crypto.X509Certificate(pem)
+      if (!hasPositiveSerialNumber(certificate)) return true
       const validToMs = Date.parse(certificate.validTo)
       if (!Number.isFinite(validToMs)) return true
       const rotateAt = validToMs - ROTATE_IF_EXPIRES_WITHIN_DAYS * 24 * 60 * 60 * 1000
@@ -86,23 +87,30 @@ function ensureGeneratedTls(args: ResolveHttpsOptionsArgs): ResolvedHttpsOptions
       if (!fs.existsSync(caCertPath)) return true
       const pem = fs.readFileSync(caCertPath, "utf-8")
       const x509 = new crypto.X509Certificate(pem)
+      if (!hasPositiveSerialNumber(x509)) return true
       const validToMs = Date.parse(x509.validTo)
       if (!Number.isFinite(validToMs)) return true
-      // CA rotates only when expired.
+      // A usable CA otherwise rotates only when expired.
       return Date.now() >= validToMs
     } catch {
       return true
     }
   }
 
-  if (shouldRotateCa() || !fs.existsSync(caKeyPath)) {
+  const rotateCa = shouldRotateCa() || !fs.existsSync(caKeyPath)
+  if (rotateCa) {
+    const replacingCa = fs.existsSync(caCertPath)
     const { caKeyPem, caCertPem } = generateCaCertificate()
     writePemFile(caKeyPath, caKeyPem, 0o600)
     writePemFile(caCertPath, caCertPem, 0o644)
     args.logger.info({ caCertPath }, "Generated self-signed CodeNomad CA certificate")
+    if (replacingCa) {
+      args.logger.warn({ caCertPath }, "Replaced CodeNomad CA certificate; clients must trust the replacement CA")
+    }
   }
 
-  if (shouldRotateLeaf() || !fs.existsSync(keyPath)) {
+  // A replacement CA must also sign a new leaf, even if the old leaf is unexpired.
+  if (rotateCa || shouldRotateLeaf() || !fs.existsSync(keyPath)) {
     const caKeyPem = fs.readFileSync(caKeyPath, "utf-8")
     const caCertPem = fs.readFileSync(caCertPath, "utf-8")
 
@@ -144,13 +152,25 @@ function writePemFile(filePath: string, content: string, mode: number) {
   }
 }
 
+function hasPositiveSerialNumber(certificate: crypto.X509Certificate): boolean {
+  return /^[0-9a-f]+$/i.test(certificate.serialNumber) && /[1-9a-f]/i.test(certificate.serialNumber)
+}
+
+function generateSerialNumber(): string {
+  // Forge writes these bytes directly as a signed ASN.1 INTEGER. Strip redundant
+  // zero octets and add sign padding only when needed (RFC 5280, section 4.1.2.2).
+  // Even the all-zero random draw must produce a nonzero serial.
+  const hex = crypto.randomBytes(16).toString("hex").replace(/^(00)+/, "") || "01"
+  return parseInt(hex.slice(0, 2), 16) >= 0x80 ? `00${hex}` : hex
+}
+
 function generateCaCertificate(): { caKeyPem: string; caCertPem: string } {
   const forge = loadForge()
 
   const keys = forge.pki.rsa.generateKeyPair(2048)
   const cert = forge.pki.createCertificate()
   cert.publicKey = keys.publicKey
-  cert.serialNumber = crypto.randomBytes(16).toString("hex")
+  cert.serialNumber = generateSerialNumber()
 
   const now = new Date()
   const notBefore = new Date(now.getTime() - 60_000)
@@ -190,7 +210,7 @@ function generateServerCertificate(args: {
   const keys = forge.pki.rsa.generateKeyPair(2048)
   const cert = forge.pki.createCertificate()
   cert.publicKey = keys.publicKey
-  cert.serialNumber = crypto.randomBytes(16).toString("hex")
+  cert.serialNumber = generateSerialNumber()
 
   const now = new Date()
   const notBefore = new Date(now.getTime() - 60_000)

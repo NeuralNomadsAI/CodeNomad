@@ -6,7 +6,7 @@ import type {
   Preferences,
   RecentFolder,
 } from "./config/schema"
-import type { OpenCodeEvent } from "@opencode/client"
+import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
 export type {
@@ -88,6 +88,22 @@ export type WorkspaceCreateResponse = WorkspaceDescriptor & {
 }
 export type WorkspaceListResponse = WorkspaceDescriptor[]
 export type WorkspaceDetailResponse = WorkspaceDescriptor
+
+/** Only successful exact-directory coverage may remove local interruptions. */
+export interface WorkspacePendingRequestLocation {
+  location: { directory: string }
+  permissions: PermissionRequest[]
+  forms: FormInfo[]
+}
+
+export type WorkspacePendingRequestsResponse = { supported: false } | {
+  supported: true
+  directories: Array<{
+    directory: string
+    status: "ok"
+    locations: WorkspacePendingRequestLocation[]
+  } | { directory: string; status: "error"; locations?: WorkspacePendingRequestLocation[] }>
+}
 
 export interface WorkspaceDeleteResponse {
   id: string
@@ -499,6 +515,7 @@ export interface BinaryUpdateRequest {
 
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
 export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
+export const PENDING_RECONCILIATION_HEADER = "x-codenomad-pending-reconciliation" as const
 
 export interface BinaryValidationResult {
   valid: boolean
@@ -628,6 +645,25 @@ export type WorkspaceEventType =
   | "instance.eventStatus"
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
+  | "permission.receiptsChanged"
+
+export interface PermissionReceipt {
+  requestId: string
+  sessionId: string
+  action?: string
+  resources: string[]
+  requestMessage?: string
+  source?: { messageId: string; callId: string }
+  decision: "once" | "always" | "reject"
+  reason?: string
+  origin: "codenomad" | "yolo" | "native"
+  resolvedAt: number
+}
+
+export interface PermissionReceiptPage {
+  receipts: PermissionReceipt[]
+  next?: string
+}
 
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
@@ -645,6 +681,7 @@ export type WorkspaceEventPayload =
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
+  | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
 
 export interface NetworkAddress {
   ip: string

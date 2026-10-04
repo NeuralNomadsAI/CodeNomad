@@ -9,7 +9,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
-import { addInstance, instances } from "../../../src/stores/instances"
+import { addInstance, addPendingForm, addPermissionToQueue, instances } from "../../../src/stores/instances"
 import { setSessions, setActiveSession, setActiveParentSession, setSessionPage, setProviders, setSessionStatus, activeSessionId, setSessionInfoByInstance } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
@@ -76,6 +76,14 @@ bootStage("preferences-before")
 await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
+  askQuestion: () => addPendingForm(id, {
+    id: "dock-question", sessionID: sessionId, title: "Questions", metadata: { kind: "question" },
+    fields: [{ key: "q0", type: "string", title: "Approach", description: "Which approach?", required: true }],
+    state: { status: "pending" },
+  }),
+  queuePermission: () => addPermissionToQueue(id, {
+    id: "dock-permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {},
+  }),
   viewAction: (action: string) => viewAction(action),
   menuInstance: setMenuInstance,
   setPreferences: updatePreferences,

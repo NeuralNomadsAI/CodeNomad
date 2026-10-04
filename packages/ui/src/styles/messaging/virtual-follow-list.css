@@ -34,6 +34,11 @@
   pointer-events: auto;
 }
 
+.virtual-follow-list-before {
+  /* Include child margins in the measured offset before Virtua's item root. */
+  display: flow-root;
+}
+
 .virtual-follow-list-overlay {
   position: absolute;
   inset: 0;

@@ -9,6 +9,7 @@ import { redactSecrets, registerInstanceProxyRoutes, type InstanceProxyWorkspace
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { PROMPT_INLINE_FILE_LIMITS } from "../../api-types"
+import { observePendingDiscovery, PENDING_RECONCILIATION_HEADER, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
 
 const apps: FastifyInstance[] = []
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
@@ -173,6 +174,44 @@ async function harness(
 }
 
 describe("instance proxy location enforcement", () => {
+  it("defers legacy pending lists before slow ownership, rechecks at forwarding, and admits only authorized settlement reconciliation", async () => {
+    const { app, manager, requestCount } = await harness()
+    const connection = (await manager.getSharedServiceConnection!("workspace"))!
+    manager.getSharedServiceConnection = async () => connection
+    const compact = (phase: "started" | "ended", seq: number) => observePendingDiscovery(connection, {
+      id: `compact-${seq}`, created: seq, type: `session.compaction.${phase}`,
+      durable: { aggregateID: "unknown", seq, version: 1 },
+      data: { sessionID: "unknown", reason: "auto", recent: "r", text: "summary" },
+    } as any)
+    const owns = manager.ownsDirectory
+    let ownership = 0
+    manager.ownsDirectory = async (...args) => { ownership++; return owns(...args) }
+    compact("started", 1)
+    for (const path of ["permission/request", "form"]) {
+      const response = await app.inject({ url: `/workspaces/workspace/instance/api/${path}?location[directory]=/repo/worktree` })
+      assert.equal(response.statusCode, 503)
+      assert.equal(response.headers["retry-after"], "30")
+      assert.equal(response.json().error, PENDING_DISCOVERY_DEFERRED)
+    }
+    assert.equal(ownership, 0)
+    assert.equal(requestCount(), 0)
+    // A browser assertion alone never bypasses early admission.
+    const headers = { [PENDING_RECONCILIATION_HEADER]: "1" }
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree", headers })).statusCode, 503)
+    // Mutations remain authorized and forwarded once; their attempted directory
+    // grants a short, exact, workspace-bound read-only reconciliation exception.
+    assert.equal((await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/permission/p/reply", payload: { decision: "once" } })).statusCode, 200)
+    const reconciled = await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree", headers })
+    assert.equal(reconciled.statusCode, 200)
+    assert.equal(reconciled.json().headers[PENDING_RECONCILIATION_HEADER], undefined)
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo/worktree&directory=/repo", headers })).statusCode, 503)
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/other", headers })).statusCode, 503)
+    compact("ended", 2)
+    const prior = requestCount()
+    manager.ownsDirectory = async (...args) => { compact("started", 3); return owns(...args) }
+    assert.equal((await app.inject({ url: "/workspaces/workspace/instance/api/form?location[directory]=/repo" })).statusCode, 503)
+    assert.equal(requestCount(), prior, "mid-authorization compaction cannot admit the pending list upstream")
+  })
   it("rejects native parent creation even when the claimed location is owned", async () => {
     const { app, sessionGets, requestCount } = await harness()
     for (const parentID of ["foreign-parent", "owned-parent", null, "", 42]) {

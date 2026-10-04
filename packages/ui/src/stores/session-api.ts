@@ -433,7 +433,7 @@ function withRuntimeStatus(session: Session, existingSession: Session | undefine
   }
 }
 
-async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSignal): Promise<void> {
+async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSignal) {
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -470,6 +470,7 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     return next
   })
   reconcilePendingSessionIndicators(instanceId)
+  return active
 }
 
 async function hydrateRestoredSessionChain(

@@ -4,7 +4,10 @@ Questions (native Forms) and permissions have one response surface: `Interruptio
 immediately above the composer. The shell owns the component and slots it into the
 active session or the no-session composer. Navigating sessions moves the surface;
 it does not recreate its request editors. The composer remains mounted, retaining
-its draft. The panel is non-modal, height-bounded and independently scrollable.
+its draft. The panel is non-modal and height-bounded. Request content scrolls
+independently; reply, cancel and permission actions remain in a fixed footer
+outside that scrolling content. Its square shared window chrome uses the existing
+accent/surface tokens for the header, icon and leading border.
 
 ## Ownership and navigation
 
@@ -12,14 +15,18 @@ its draft. The panel is non-modal, height-bounded and independently scrollable.
   a request can be answered. Global Forms and requests without a tool source work
   in the same panel.
 - The instance badge opens the panel; session-row selection with pending requests
-  targets that session's request. Inline tools offer the same explicit action.
-- The panel shows request count and source session, with previous/next controls.
-  It keeps editors keyed by request kind/id, preserving partial answers and rejection
-  reasons through native object replacement and queue navigation.
+  targets that session's request through the `interruptionFocus` UI intent.
+- The panel shows the request kind and source session. Previous/next controls and
+  the position/count appear only when multiple requests are pending. Navigation is
+  bounded: the first/last request disables the corresponding arrow without wrapping.
+- Selection stays pinned to the current request kind/id through queue refreshes and
+  newly arriving requests, including a permission inserted ahead of a question.
+  Explicit navigation or settlement can change the selection. Editors stay keyed
+  by request kind/id, preserving partial answers and rejection reasons through native
+  object replacement, queue navigation and session navigation.
 - Collapse only hides the panel body. It never cancels or refuses a request.
-- Source links retain the native message/call identity even when that message is
-  absent from the resident transcript. They use the existing bounded history-window
-  navigation and its cancellation/fencing. The target tool is revealed and highlighted.
+- Pending questions appear only in the dock. There are no “View in discussion” or
+  “Answer in dock” links and no interruption-specific transcript reveal state.
 - Only the panel submits replies. Transcript tools no longer register document-wide
   permission shortcuts or independently render response forms.
 - Replies/cancellations continue through the existing native stores, retaining
@@ -33,20 +40,60 @@ its draft. The panel is non-modal, height-bounded and independently scrollable.
 The `question` renderer displays question/answer pairs from native tool input and
 `metadata.answers`. It works for live tool completion and rehydrated history; it
 does not invent a local assistant/user message or persist a parallel transcript.
-Native errors continue to use the tool error renderer.
+Pending questions are not duplicated in transcript tool cards. Native completed
+answers remain readable there; native errors continue to use the tool error renderer.
+
+Question receipts retain the question, selected answers and matching option
+descriptions. Other proposed choices are available through a native disclosure;
+free-text answers stay verbatim. Native answers remain the authority.
 
 Arbitrary Forms are not necessarily conversation artifacts. A provider/auth Form
-does not acquire a synthetic transcript receipt. Similarly, this change does not
-invent durable permission-decision history when the native tool lacks that data.
+does not acquire a synthetic transcript receipt.
+
+Permission decisions have a separate CodeNomad-owned durable receipt: request,
+resources, confirmed decision (`once`, `always`, `reject`), and the supplied reason
+when known. Receipts are read-only transcript annotations, not synthetic native
+messages. A source message anchors the receipt; requests without one remain
+available as session receipts. Reads are bounded and ownership-checked.
+
+Native permission events are ephemeral and replies omit the reason. CodeNomad
+therefore captures confirmed replies and observed native settlements separately.
+Native settlement does not imply a user click: it can come from another client
+or a cascade. Yolo decisions are identified as automatic. A failed or ambiguous
+reply never becomes a fabricated decision and is never replayed automatically.
+Decisions lost before capture was available, or while CodeNomad was offline,
+cannot be reconstructed from a tool's success/error or from saved permission rules.
+These annotations are not part of native full-history search, copy or export.
+
+Permission snapshots and receipts live under the CodeNomad profile's
+`permission-receipts` directory, in atomic per-request files. The namespace uses
+the execution host, native discovery root and authenticated service channel;
+credential rotation starts a new namespace. Session deletion removes its receipts.
+Stored text is capped at 4096 characters and resources at 64 entries; native
+metadata and diffs are not copied. Reads return up to 100 receipts and scan at most
+500 records per page, so an empty page can still have a continuation cursor.
+Reconnect recovery enumerates loaded native Locations and filters them through
+registered-only workspace ownership before querying pending permissions. This
+includes descendant directories inside the project and its worktrees; it never
+uses the daemon's default directory as a substitute or triggers strategy discovery.
 
 ## Validation
 
 `tests/browser/interruption-dock.test.ts` exercises real Solid session, transcript,
 composer and panel components, the native event dispatcher and isolated HTTP fixtures:
-off-window source navigation, native answer rendering and history rehydration,
-draft retention, refresh/navigation, failure/retry, in-flight submission, remote
-settlement, source-less permissions, global Forms and narrow-screen geometry.
+native answer rendering and history rehydration, dock-only pending questions,
+draft retention, stable selection, bounded navigation, failure/retry, in-flight
+submission, remote settlement, source-less permissions, global Forms and narrow-screen
+geometry with reachable footer actions.
 
 `permission-fallback-diff.test.ts` now targets the panel, retaining full-source
 access, changed-diff and late-copy regressions. No shared daemon or user database
 is used by these tests.
+
+`permissions/receipts.test.ts` exercises disk reload, all decisions, native versus
+manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
+`tests/browser/permission-receipts.test.ts` covers reload, hidden tools, empty-page
+pagination, SSE refresh, stale reads and long receipts in light/dark mobile layouts.
+`node scripts/test-permission-receipts-native.mjs` runs isolated native recovery
+against project/worktree roots and descendant Locations, with external replies
+and disk reload. It never uses a shared daemon or user database.
