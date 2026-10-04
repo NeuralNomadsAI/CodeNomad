@@ -1,4 +1,5 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
@@ -13,6 +14,8 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  MissionListResponse,
+  MissionMap,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
@@ -59,6 +62,9 @@ import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
+import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
+import { missionMutationRequest } from "./mission-mutation"
+import { missionLifecycleRequest } from "./mission-lifecycle-request"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 
@@ -587,6 +593,39 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
+  fetchMissions(instanceId: string): Promise<MissionListResponse> {
+    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  },
+  createMission(instanceId: string, input: { objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
+    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
+  },
+  editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "PATCH", input)
+  },
+  deleteMission(instanceId: string, missionId: string, input: MissionDeletionRequest) {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+    return deleteMissionRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
+  },
+  controlMission(instanceId: string, missionId: string, input: { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
+    return missionLifecycleRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
+  },
+  async recoverMission(instanceId: string, missionId: string, input: { expectedRevision: number; target: "coordinator" | "report"; taskKey?: string }): Promise<{ mission: MissionMap; admitted: true }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/recover`
+    // Keep the structured classification: generic request() intentionally projects
+    // errors to text. Recovery must never display upstream text or replay a POST.
+    const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined)
+      const code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : undefined
+      throw Object.assign(new Error("Mission recovery was not admitted"), { code, status: response.status })
+    }
+    return await response.json() as { mission: MissionMap; admitted: true }
+  },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -638,7 +677,8 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
+
   return `${url.pathname}${url.search}`
 }
 
-export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }
+export type { MissionListResponse, WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }

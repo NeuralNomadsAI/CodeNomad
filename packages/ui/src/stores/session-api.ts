@@ -80,7 +80,7 @@ import {
 
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
-import { mergeFetchedSessionRuntimeState, resolveAuthoritativeGenerationRecovery } from "./session-generation-recovery"
+import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { listMessageWindow } from "./session-message-pages"
 import {
   MESSAGE_WINDOW_PAGE_SIZE,
@@ -426,20 +426,10 @@ function withActiveSessionState(
 }
 
 function withRuntimeStatus(session: Session, existingSession: Session | undefined, activeSessions: Record<string, unknown> | null): Session {
-  const existingStatus = existingSession?.status
-  const active = activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, session.id)
-  const status = activeSessions === null
-    ? existingStatus ?? "idle"
-    : active && existingStatus === "compacting" ? "compacting" : active ? "working" : "idle"
+  const reconciled = reconcileFetchedSessionRuntime(session, existingSession, activeSessions)
   return {
-    ...session,
-    status,
-    retry: activeSessions === null ? existingSession?.retry ?? null : null,
-    idleSince: getIdleSinceForStatusTransition(existingStatus, status, existingSession?.idleSince),
-    runtimeStatusKnown: activeSessions === null ? existingSession?.runtimeStatusKnown ?? false : true,
-    generationRecovery: activeSessions === null
-      ? existingSession?.generationRecovery ?? null
-      : resolveAuthoritativeGenerationRecovery(existingSession?.generationRecovery, status),
+    ...reconciled,
+    idleSince: getIdleSinceForStatusTransition(existingSession?.status, reconciled.status, existingSession?.idleSince),
   }
 }
 
@@ -448,7 +438,22 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const captured = new Map(sessions().get(instanceId) ?? [])
-  const active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
+  let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
+  if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  // An active-only map cannot explain a run that settled during an SSE gap.
+  // Read outcomes only for inactive rows whose completion needs reconciling.
+  const outcomes = new Map(await Promise.all(Array.from(captured).flatMap(([id, baseline]) => {
+    if (Object.prototype.hasOwnProperty.call(active, id)
+      || (baseline.status === "idle" && !baseline.generationRecovery)) return []
+    return [(async () => {
+      const info = await getRootClient(instanceId).session.get({ sessionID: id }, signal ? { signal } : undefined)
+      return [id, info] as const
+    })()]
+  })))
+  if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  // Outcome is historical. Work may have restarted while its read was pending,
+  // including without a delivered SSE event; the later activity read wins.
+  if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   setSessions(previous => {
     const next = new Map(previous)
@@ -456,7 +461,8 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     for (const [id, baseline] of captured) {
       const latest = current.get(id)
       if (!latest) continue
-      const fetched = withRuntimeStatus(latest, baseline, active)
+      const info = outcomes.get(id)
+      const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
       if (merged) current.set(id, merged)
     }
@@ -600,10 +606,6 @@ async function fetchSessions(instanceId: string, options?: {
     // The runtime-status map must never gate list publication: it fans out to
     // per-session native reads on the server and has stalled lists for 10+s.
     // Publish the directory page as soon as it arrives, then patch statuses.
-    const activePromise = getRootClient(instanceId).session.active(options?.signal ? { signal: options.signal } : undefined).catch((error) => {
-      log.warn("Failed to refresh active sessions", { instanceId, error })
-      return null
-    })
     const response = await fetchV2Sessions(instanceId, sessionListOptions, options?.signal)
     if (!isCurrent()) {
       if (options?.strictStatus) throw new Error("Foreground session refresh was superseded")
@@ -672,6 +674,12 @@ async function fetchSessions(instanceId: string, options?: {
     }
     const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
     const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
+    // Read current activity after the historical outcomes, never use an earlier
+    // idle map as proof that an execution with an old outcome is still idle.
+    const activePromise = getRootClient(instanceId).session.active(options?.signal ? { signal: options.signal } : undefined).catch((error) => {
+      log.warn("Failed to refresh active sessions", { instanceId, error })
+      return null
+    })
     const sessionMap = new Map<string, Session>()
 
     for (const apiSession of apiSessions) {
@@ -1022,6 +1030,9 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     generationRecovery: existingSession?.generationRecovery ?? null,
     runtimeStatusKnown: existingSession?.runtimeStatusKnown ?? false,
     generationAdmissionToken: existingSession?.generationAdmissionToken,
+    generationAdmissionEpoch: existingSession?.generationAdmissionEpoch,
+    generationAdmissionIdleBoundary: existingSession?.generationAdmissionIdleBoundary,
+    outcome: apiSession.outcome,
     cost: apiSession.cost,
     tokens: apiSession.tokens,
     location: apiSession.location,

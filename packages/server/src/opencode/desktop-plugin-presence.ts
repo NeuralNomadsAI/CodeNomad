@@ -18,6 +18,7 @@ export async function followPresence(
   directory: string | readonly string[],
   register: () => Promise<() => void | Promise<void>>,
   onError: (error: unknown) => void = console.error,
+  retainWithoutPresence: () => Promise<boolean> = async () => false,
 ) {
   let dispose: (() => void | Promise<void>) | undefined
   let stopped = false
@@ -28,7 +29,7 @@ export async function followPresence(
       const directories = typeof directory === "string" ? [directory] : directory
       const active = !stopped && (await Promise.all(directories.map(path => hasPresence(path)))).some(Boolean)
       if (active && !dispose && !stopped) dispose = await register()
-      if ((!active || stopped) && dispose) {
+      if (dispose && (stopped || (!active && !await retainWithoutPresence()))) {
         await dispose()
         dispose = undefined
       }

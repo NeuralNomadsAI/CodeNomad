@@ -7,6 +7,7 @@ import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
+import { readAdmissionEnvironment } from "./admission-environment"
 
 export type DocKind = "config" | "state"
 
@@ -94,6 +95,10 @@ export class SettingsService {
       this.configStore.replace(normalized)
     }
     return normalized
+  }
+
+  readEnvironmentForAdmission(signal?: AbortSignal): Promise<Record<string, string>> {
+    return readAdmissionEnvironment(this.location, signal)
   }
 
   mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {

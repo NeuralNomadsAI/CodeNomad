@@ -184,8 +184,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (index === -1) return
 
     let target: RightPanelTabModule | undefined
-    if (event.key === "ArrowLeft") target = tabs[(index - 1 + tabs.length) % tabs.length]
-    if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length]
+    const direction = event.currentTarget instanceof HTMLElement && getComputedStyle(event.currentTarget).direction === "rtl" ? -1 : 1
+    if (event.key === "ArrowLeft") target = tabs[(index - direction + tabs.length) % tabs.length]
+    if (event.key === "ArrowRight") target = tabs[(index + direction + tabs.length) % tabs.length]
     if (event.key === "Home") target = tabs[0]
     if (event.key === "End") target = tabs[tabs.length - 1]
     if (!target) return
@@ -221,8 +222,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       instanceId: props.instanceId,
       t: props.t,
       activeSessionId: props.activeSessionId,
-      isTabActive: (tabId) => rightPanelTab() === tabId,
+      isTabActive: (tabId) => props.isActive() && rightPanelTab() === tabId,
       openTab: openRightPanelTab,
+      revealConversation: () => { if (props.isPhoneLayout()) props.onCloseRightDrawer() },
       reportAttention: () => undefined,
     },
   )

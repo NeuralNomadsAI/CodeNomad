@@ -9,6 +9,25 @@ import type {
 import type { OpenCodeEvent } from "@opencode/client"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 
+export type {
+  MissionActor,
+  MissionActorActivity,
+  MissionActorActivityState,
+  MissionActorRuntimeStatus,
+  MissionActivityProjection,
+  MissionListAvailableResponse,
+  MissionListResponse,
+  MissionListUnavailableResponse,
+  MissionMap,
+  MissionReport,
+  MissionReportOutcome,
+  MissionSnapshot,
+  MissionStatus,
+  MissionTask,
+  MissionTaskStatus,
+  MissionTemplateId,
+} from "./missions/model"
+
 /**
  * Canonical HTTP/SSE contract for the CLI server.
  * These types are consumed by both the CLI implementation and any UI clients.

@@ -1076,7 +1076,7 @@ export class WorkspaceManager {
   async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
     const record = this.workspaces.get(id)
     if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
-    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    const configured = await this.options.settings.readEnvironmentForAdmission(signal)
     return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
   }
 

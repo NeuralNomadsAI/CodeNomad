@@ -1,0 +1,712 @@
+{
+  "historicalAggregateSHA256": "e389b2fa34ef2c9ecf52cf57fe1b64d6e01d99cee707349a8edc04ca1ad2fa81",
+  "runs": [
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-uBSkac",
+      "status": "completed-experiments",
+      "counts": {
+        "providerRequests": 10,
+        "primaryRequests": 10,
+        "sessions": 4,
+        "events": 177
+      },
+      "comparisons": [
+        {
+          "label": "fg_write_settlement_continue",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 83,
+          "sourceHash": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+          "toolVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+            "runtimeSHA256": "8c661d3a72c56a463fa5a7c84e3fdb933aa78c064d92a75df77939a457423104",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+            "runtimeSHA256": "3a8933071cd26a8033a060f0d62618958998314a1bc4ee58bb0c607c4e2ec643",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 85,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "8c661d3a72c56a463fa5a7c84e3fdb933aa78c064d92a75df77939a457423104",
+            "runtimeSHA256": "3a8933071cd26a8033a060f0d62618958998314a1bc4ee58bb0c607c4e2ec643",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "bg_after_env_receipt_continue",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 83,
+          "sourceHash": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+          "toolVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+            "runtimeSHA256": "00d838951c931f9d9d9da11f49d71a45e4f01c1c168fb0645c00afcece8b684f",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "114221c7fc09d4f81b1c876499200e17b2b0acb47640fd6cfb5a30f181057e59",
+            "runtimeSHA256": "3a8933071cd26a8033a060f0d62618958998314a1bc4ee58bb0c607c4e2ec643",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 85,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "00d838951c931f9d9d9da11f49d71a45e4f01c1c168fb0645c00afcece8b684f",
+            "runtimeSHA256": "3a8933071cd26a8033a060f0d62618958998314a1bc4ee58bb0c607c4e2ec643",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-Ei4hDW",
+      "status": "completed-experiments",
+      "counts": {
+        "providerRequests": 42,
+        "primaryRequests": 42,
+        "sessions": 11,
+        "events": 552
+      },
+      "comparisons": [
+        {
+          "label": "root_A1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "2d497043740bde9403089e0b8d07d71cff7fd8af017ffbdfed710353b2defa57",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "2d497043740bde9403089e0b8d07d71cff7fd8af017ffbdfed710353b2defa57",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "root_B1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "c68f519ef884c2f8cad6dba1197aff0d88f0c01f740de4e0bf6f4d5c67694853",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "c68f519ef884c2f8cad6dba1197aff0d88f0c01f740de4e0bf6f4d5c67694853",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_A1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "a82730080cd86cde42faf3dd488243b7b4a69684431f724eca43b788f1db2f7a",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "a82730080cd86cde42faf3dd488243b7b4a69684431f724eca43b788f1db2f7a",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_grand_A1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "53ceb16a36629566d1440db582a77f45a151e1eb4b718fcd2ca1e1035484d75e",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "6813aa6433a74b5060e8705c2a55db7b68d0eb62c5e1f5e30abf8bd761aa2098",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "53ceb16a36629566d1440db582a77f45a151e1eb4b718fcd2ca1e1035484d75e",
+            "runtimeSHA256": "909358ab7b09678c28589b19d2bc85b06b1017fa1c0e9c9d456faf5cb5827206",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_B1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "7bf20d0c86a6f5bcd6f34050f36754b2a7486602a1297ed2a09b57d1c1d48224",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "7bf20d0c86a6f5bcd6f34050f36754b2a7486602a1297ed2a09b57d1c1d48224",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_grand_B1",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "aa91babe9c0a4007e8fa66843916be9a0c012d99e1d8f764ef2a2b2996a99f57",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "aa91babe9c0a4007e8fa66843916be9a0c012d99e1d8f764ef2a2b2996a99f57",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "root_A2",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 83,
+          "sourceHash": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+          "toolVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "c961db0aa04597a7f2a539428eea0c156bcf822d79fb07e6b78a12df2d669478",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 85,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "c961db0aa04597a7f2a539428eea0c156bcf822d79fb07e6b78a12df2d669478",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_continue_A2",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 83,
+          "sourceHash": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+          "toolVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "20131cad6e4e6c8a5cf8f63ccee9337b400d7ffb7f1d20085885342e31e7375a",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 85,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "20131cad6e4e6c8a5cf8f63ccee9337b400d7ffb7f1d20085885342e31e7375a",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "clean_grand_continue_A2",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 83,
+          "sourceHash": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+          "toolVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "c8a599c1f3a183218a86eb6f643c71cc7c11de212867ac28a9aee414d461550f",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 83,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "f23e643cdfb61bf83a3bb216b7c1096cbead1707e48a41a205b113cd51037c20",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 85,
+            "runtimeKeyCount": 84,
+            "sourceSHA256": "c8a599c1f3a183218a86eb6f643c71cc7c11de212867ac28a9aee414d461550f",
+            "runtimeSHA256": "afd1a8c602c1960a199f3af29021adeb719796255fd9a7ede877905acec3bcaf",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        },
+        {
+          "label": "detach_bound",
+          "scope": "FULL_PROCESS_ENV_DIFFERENCES_RETAINED",
+          "sourceCount": 84,
+          "sourceHash": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+          "toolVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 86,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "68832e9447b7dd8a3c41eab219f6bf147a6dbf94cc3bd5d123263c40352a2095",
+            "missing": [],
+            "extra": [
+              "OPENCODE_SESSION_ID",
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "apiVsSource": {
+            "sourceKeyCount": 84,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "23b76cbfe8e75fad62c95f6d15283e3db288416b64d7d0636b1619f75aa5dcf1",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [],
+            "extra": [
+              "OPENCODE_TERMINAL"
+            ],
+            "mismatched": [
+              "PSMODULEPATH"
+            ],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          },
+          "toolVsAPI": {
+            "sourceKeyCount": 86,
+            "runtimeKeyCount": 85,
+            "sourceSHA256": "68832e9447b7dd8a3c41eab219f6bf147a6dbf94cc3bd5d123263c40352a2095",
+            "runtimeSHA256": "0096050d1013670c45d7bcb5c991b15d8aff704efc1e0be310f055141723acf0",
+            "missing": [
+              "OPENCODE_SESSION_ID"
+            ],
+            "extra": [],
+            "mismatched": [],
+            "caseChanges": [],
+            "sourceAllKeysEquivalent": false,
+            "fullProcessEnvironmentEqual": false
+          }
+        }
+      ]
+    }
+  ],
+  "changedSourcePathsVsReview": [
+    {
+      "path": "scripts/native-subsession-spike/qualification/backend.mjs",
+      "before": "11dd4deedd70b2e42122433b735274146d098eb949fea13931457699f2376ea7",
+      "after": "e4c0aa31164ce532a1e7956aab08531604ca45c25ed5e6a023f5a680f8cce480"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/environment-contract-inventory.mjs",
+      "before": null,
+      "after": "c1b80774cff321788d5077d2baa6645b022f20cb6095d804b35089e76c8a2486"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/environment-crash.mjs",
+      "before": "6b1715e5cef3fcec77df5900005c183cce7f2e86f0d83285167fa469f2476c96",
+      "after": "acfcfe93cb18f7b40cdc1ee12ab4b60f822870d3891d1873ac0328aa5561bac9"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/environment-evidence.mjs",
+      "before": null,
+      "after": "79340a0b3425958b9c219dbb0779a600f6afc01c8945bea42835b091d4471ca1"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/environment-evidence.test.mjs",
+      "before": null,
+      "after": "75f667c2ea59f747496577df7f3aaf0fab6f38db068bb857fe511ba621b1c9d8"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/record-environment-followup.mjs",
+      "before": null,
+      "after": "4789aea6f2420574ae7711cbc7d472cccfc121e2637c4e4a04899ec18e6b7fc8"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/recursion.mjs",
+      "before": "71cafba95e6b21badbf7981f8d5b19ee65d2e7c988469a9282c5ef58951e2b17",
+      "after": "9c8cb4809cd7211c54f47e3c00790dac0bdf1e1447b80518210f63742590f94c"
+    },
+    {
+      "path": "scripts/native-subsession-spike/qualification/verify-environment-followup.mjs",
+      "before": null,
+      "after": "ae32b98ceab2dd6f1681627ece59b4de8def29a9f3099781e2630ebc0657f68b"
+    }
+  ],
+  "changedDocument": {
+    "path": "dev-docs/MISSIONS_NATIVE_RECURSION_QUALIFICATION.md",
+    "before": "eb11ce2ca2b100f8c4e5669bec9079fb102e489f616ff5597dac78faf06cd06c",
+    "after": "9843b13fd92c2af5a1ed5e44064a2034df5f2b8dab953c8dd87e92205e76fa49"
+  }
+}

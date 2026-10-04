@@ -16,6 +16,8 @@ describe("workspace routes", () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const entered = new Promise<void>((resolve) => { started = resolve })
     const workspaceManager = {
+      get: () => ({ id: "test", path: "/private/root" }),
+      getWorktreeIdentityForPath: async () => "/private/root",
       writeFile: async () => { started(); await gate; throw new Error("disk write failed") },
       searchFiles: async () => { throw new WorkspaceSearchBusyError() },
     } as unknown as WorkspaceManager
@@ -37,6 +39,62 @@ describe("workspace routes", () => {
       await write
       await app.close()
     }
+  })
+
+  it("fences root and omitted-worktree saves without invoking a native Git requirement", async () => {
+    const app = Fastify()
+    const fence = new WorktreeDeletionFence()
+    let writes = 0
+    const identities: string[] = []
+    const workspaceManager = {
+      get: (id: string) => id === "test" ? { id, path: "/private/root" } : undefined,
+      getWorktreeIdentityForPath: async (_id: string, directory: string) => { identities.push(directory); return directory },
+      writeFile: async () => { writes++ },
+      getWorktrees: async () => { throw new Error("Directory-only saves must not require worktree discovery") },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: fence })
+    const save = (query = "") => app.inject({ method: "PUT", url: `/api/workspaces/test/files/content?path=notes.txt${query}`,
+      payload: { contents: "private fixture" } })
+    try {
+      await fence.run("/private/root", ["/private/root"], async () => {
+        assert.equal((await save()).statusCode, 409)
+        assert.equal((await save("&worktree=root")).statusCode, 409)
+        assert.equal(writes, 0)
+      })
+      assert.deepEqual(identities, ["/private/root", "/private/root"])
+      assert.equal((await save()).statusCode, 204)
+      assert.equal(writes, 1)
+      assert.equal((await app.inject({ method: "PUT", url: "/api/workspaces/missing/files/content?path=notes.txt",
+        payload: { contents: "private fixture" } })).statusCode, 404)
+      assert.equal(writes, 1)
+    } finally { await app.close() }
+  })
+
+  it("retains root save admission until the real write settles", async () => {
+    const app = Fastify()
+    const fence = new WorktreeDeletionFence()
+    let release!: () => void, started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const workspaceManager = {
+      get: () => ({ id: "test", path: "/private/root" }),
+      getWorktreeIdentityForPath: async () => "/private/root",
+      writeFile: async () => { started(); await gate },
+    } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: fence })
+    const saving = app.inject({ method: "PUT", url: "/api/workspaces/test/files/content?path=notes.txt", payload: { contents: "private" } })
+    let deleted = false
+    try {
+      await entered
+      const deletion = fence.run("/private/root", ["/private/root"], async () => { deleted = true })
+      try {
+        await new Promise(resolve => setImmediate(resolve))
+        assert.equal(deleted, false)
+      } finally { release() }
+      assert.equal((await saving).statusCode, 204)
+      await deletion
+      assert.equal(deleted, true)
+    } finally { release(); await saving; await app.close() }
   })
 
   it("forwards workspace creation options without per-workspace binary settings", async () => {

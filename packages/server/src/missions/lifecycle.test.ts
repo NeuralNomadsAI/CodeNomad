@@ -1,0 +1,273 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { MissionControl, MissionControlError } from "./control"
+import type { MissionInputTransport, NativeMissionSession } from "./control-types"
+import type { MissionJsonValue, MissionMap } from "./model"
+import { parseMissionEvent, type MissionStorage } from "./journal"
+import { controlResumeAdmissionID } from "./receipt-identity"
+
+function fixture() {
+  const values = new Map<string, MissionJsonValue>()
+  const state = { active: true, loseReceipt: false, afterNative: () => {}, interrupted: true }
+  const storage: MissionStorage = {
+    get: async key => values.get(key), set: async (key, value) => {
+      if (state.loseReceipt && value && typeof value === "object" && !Array.isArray(value) && (value as Record<string, MissionJsonValue>).type === "mission.control-applied") {
+        state.loseReceipt = false; throw new Error("Lost receipt write")
+      }
+      values.set(key, structuredClone(value))
+    },
+    scan: async ({ prefix, after, limit }) => {
+      const entries = [...values].filter(([key]) => key.startsWith(prefix) && (!after || key > after)).sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value }))
+      return { entries, next: entries.length === limit ? entries.at(-1)?.key : undefined }
+    },
+  }
+  const native = new Map<string, NativeMissionSession>()
+  const calls: Array<{ action: string; sessionID: string; operationID?: string }> = []
+  const failing = new Set<string>()
+  let now = 1_000
+  const transport: MissionInputTransport = {
+    prompt: async (_, input) => { calls.push({ action: "assignment", sessionID: input.sessionID }) },
+    synthetic: async (_, input) => { calls.push({ action: "report", sessionID: input.sessionID }) },
+    lifecycle: async (_, input) => {
+      const mission = (await control().snapshot()).missions.find(mission => mission.id === input.missionID)!
+      calls.push({ ...input, action: mission.control!.action })
+      if (failing.has(input.sessionID)) throw new Error("Native unavailable")
+      state.afterNative()
+      const identity = { ...input, action: mission.control!.action }
+      return { nativeAcknowledgement: mission.control!.action === "start" ? { ...identity, disposition: "start-admitted", admission: {
+        id: controlResumeAdmissionID(input.operationID, input.sessionID), sessionID: input.sessionID, type: "synthetic", delivery: "queue", time: { created: 100 },
+        payload: { text: "Continue existing work", metadata: { "codenomad.mission": { version: 1, missionID: input.missionID, operationID: input.operationID, kind: "lifecycle" } } },
+      } } : { ...identity, disposition: "interrupt-observed", interrupt: { interrupted: state.interrupted }, cancellations: [] } }
+    },
+  }
+  const control = () => new MissionControl({ project: { id: "project", canonical: "/repo", location: { directory: "/repo" } }, storage,
+    now: () => now++, transport, isActive: () => state.active, sessions: {
+      get: async ({ sessionID }) => { if (!native.has(sessionID)) throw new Error("missing"); return native.get(sessionID)! },
+      create: async input => { const session = { ...input, projectID: "project" }; native.set(session.id, session); return session },
+      prompt: async () => { throw new Error("Transport required") }, synthetic: async () => { throw new Error("Transport required") },
+    },
+  })
+  const create = async () => (await control().create({ requestID: "create", objective: "Fixture", template: "custom", prepared: true })).mission
+  const action = (mission: MissionMap, action: "start" | "pause" | "stop", requestID = `${action}-${mission.revision}`) => ({ missionID: mission.id, action, expectedRevision: mission.revision, requestID })
+  const delegate = (mission: MissionMap, key: string) => control().delegate(mission.coordinatorSessionId, { missionID: mission.id, taskKey: key, title: key, brief: key, role: "worker", blockedBy: [], delivery: "queue" })
+  return { control, create, calls, failing, action, delegate, values, native, transport, state }
+}
+const code = (value: string) => (error: unknown) => error instanceof MissionControlError && error.code === value
+
+test("native coordinator readout respects explicit Play, Pause and terminal Stop", async () => {
+  const f = fixture()
+  let mission = await f.create()
+  mission = (await f.control().lifecycle(f.action(mission, "start"))).mission
+  mission = (await f.control().declare(mission.coordinatorSessionId, { taskKey: "native-work", title: "Work",
+    brief: "Native return", role: "specialist", blockedBy: [] })).mission
+  const report = { taskKey: "native-work", outcome: "completed" as const, summary: "Read result", evidence: [], next: [], final: false }
+  mission = (await f.control().lifecycle(f.action(mission, "pause"))).mission
+  await assert.rejects(f.control().report(mission.coordinatorSessionId, report), code("mission-not-running"))
+  assert.equal((await f.control().snapshot()).missions[0].reports.length, 0)
+  mission = (await f.control().lifecycle(f.action(mission, "start"))).mission
+  mission = (await f.control().report(mission.coordinatorSessionId, report)).mission
+  assert.equal(mission.tasks[0].status, "completed")
+  assert.equal(f.calls.some(call => call.action === "report" || call.action === "assignment"), false)
+  mission = (await f.control().lifecycle(f.action(mission, "stop"))).mission
+  await assert.rejects(f.control().report(mission.coordinatorSessionId, report), code("mission-not-running"))
+})
+
+test("Play starts a prepared mission once; Pause gates delegation and report wakeups until resume", async () => {
+  const f = fixture()
+  let mission = await f.create()
+  assert.equal(mission.runState, "prepared")
+  await assert.rejects(f.delegate(mission, "before-start"), code("mission-not-running"))
+  const start = f.action(mission, "start")
+  mission = (await f.control().lifecycle(start)).mission
+  await f.control().lifecycle(start)
+  assert.deepEqual(f.calls.map(call => call.action), ["start"])
+  mission = (await f.delegate(mission, "one")).mission
+  mission = (await f.delegate(mission, "two")).mission
+  const first = mission.tasks[0].actorSessionId!
+  const second = mission.tasks[1].actorSessionId!
+  mission = (await f.control().lifecycle(f.action(mission, "pause"))).mission
+  assert.equal(mission.runState, "paused")
+  assert.deepEqual(f.calls.filter(call => call.action === "pause").map(call => call.sessionID).sort(), [mission.coordinatorSessionId, first, second].sort())
+  await assert.rejects(f.delegate(mission, "while-paused"), code("mission-not-running"))
+  await f.control().report(first, { missionID: mission.id, taskKey: "one", outcome: "completed", summary: "Saved", evidence: [], next: [], final: false })
+  assert.equal(f.calls.filter(call => call.action === "report").length, 0)
+  assert.deepEqual(await f.control().retryPendingNotifications(), { attempted: 0, failed: 0 })
+  mission = (await f.control().snapshot()).missions[0]
+  assert.equal(mission.reports[0].notificationStatus, "pending")
+  const beforeResume = f.calls.length
+  mission = (await f.control().lifecycle(f.action(mission, "start"))).mission
+  assert.deepEqual(f.calls.slice(beforeResume).map(call => call.sessionID).sort(), [mission.coordinatorSessionId, second].sort())
+  await f.control().retryPendingNotifications()
+  assert.equal(f.calls.filter(call => call.action === "report").length, 1)
+})
+
+test("unknown ACKs leave immutable original targets pending and explicit retry sends no assignments", async () => {
+  for (const reply of [undefined, null, { applied: true }, { nativeAcknowledgement: {} }, { nativeAcknowledgement: { interrupted: true } }]) {
+    const f = fixture(), mission = await f.create(), start = f.action(mission, "start")
+    const known = f.transport.lifecycle!
+    f.transport.lifecycle = async (_, input) => { f.calls.push({ action: "unknown", ...input }); return reply }
+    await assert.rejects(f.control().lifecycle(start), code("control-pending"))
+    const pending = (await f.control().snapshot()).missions[0].control!
+    assert.deepEqual(pending.pending, [mission.coordinatorSessionId])
+    assert.deepEqual(pending.receipts, [])
+    assert.equal([...f.values.values()].some(value => (value as any).type === "mission.control-applied"), false)
+    f.transport.lifecycle = known
+    const settled = (await f.control().lifecycle(start)).mission.control!
+    assert.equal(settled.id, pending.id)
+    assert.deepEqual(settled.targets, pending.targets)
+    assert.deepEqual(settled.pending, [])
+    assert.deepEqual(f.calls.map(call => call.action), ["unknown", "start"])
+  }
+})
+
+test("wrong target/action/operation native ACKs cannot settle a valid saved intent", async () => {
+  for (const change of [{ sessionID: "ses_other" }, { missionID: "msn_other" }, { operationID: "evt_other" }, { action: "stop" }]) {
+    const f = fixture(), mission = await f.create(), request = f.action(mission, "start"), original = f.transport.lifecycle!
+    f.transport.lifecycle = async (...args) => {
+      const reply = await original(...args) as { nativeAcknowledgement: Record<string, unknown> }
+      return { nativeAcknowledgement: { ...reply.nativeAcknowledgement, ...change } }
+    }
+    await assert.rejects(f.control().lifecycle(request), code("control-pending"))
+    assert.deepEqual((await f.control().snapshot()).missions[0].control?.pending, [mission.coordinatorSessionId])
+  }
+})
+
+test("lost native response is uncertain until explicit retry of the same stable original operation", async () => {
+  const f = fixture(), mission = await f.create(), request = f.action(mission, "start")
+  f.state.afterNative = () => { throw new Error("Lost native response") }
+  await assert.rejects(f.control().lifecycle(request), code("control-pending"))
+  const pending = (await f.control().snapshot()).missions[0].control!
+  assert.deepEqual(pending.receipts, [])
+  assert.deepEqual(pending.pending, [mission.coordinatorSessionId])
+  f.state.afterNative = () => {}
+  const settled = (await f.control().lifecycle(request)).mission.control!
+  assert.equal(settled.id, pending.id)
+  assert.deepEqual(f.calls.map(call => call.operationID), [pending.id, pending.id])
+  const bytes = structuredClone([...f.values])
+  await f.control().lifecycle(request)
+  assert.deepEqual([...f.values], bytes)
+  assert.equal(f.calls.length, 2)
+})
+
+test("lost receipt preserves pending original targets; retry saves only actual newly observed interrupt:false", async () => {
+  const f = fixture()
+  let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
+  f.state.loseReceipt = true
+  const request = f.action(mission, "pause")
+  await assert.rejects(f.control().lifecycle(request), code("control-pending"))
+  mission = (await f.control().snapshot()).missions[0]
+  assert.deepEqual(mission.control?.pending, [mission.coordinatorSessionId])
+  f.state.interrupted = false
+  mission = (await f.control().lifecycle(request)).mission
+  const receipt = mission.control?.receipts?.[0]
+  assert.equal(receipt?.acknowledgementState, "known")
+  assert.equal(receipt?.nativeAcknowledgement?.disposition, "interrupt-observed")
+  if (receipt?.nativeAcknowledgement?.disposition !== "interrupt-observed") throw new Error("Wrong ACK")
+  assert.deepEqual(receipt.nativeAcknowledgement.interrupt, { interrupted: false })
+  const bytes = structuredClone([...f.values]), count = f.calls.length
+  await f.control().lifecycle(request)
+  assert.equal(f.calls.length, count)
+  assert.deepEqual([...f.values], bytes)
+})
+
+test("captured native settlement after availability revocation cannot append a late receipt", async () => {
+  const f = fixture(), mission = await f.create(), request = f.action(mission, "start")
+  f.state.afterNative = () => { f.state.active = false }
+  await assert.rejects(f.control().lifecycle(request), code("control-pending"))
+  f.state.active = true
+  assert.deepEqual((await f.control().snapshot()).missions[0].control?.pending, [mission.coordinatorSessionId])
+  assert.equal([...f.values.values()].some(value => (value as any).type === "mission.control-applied"), false)
+})
+
+test("durable native acknowledgements survive reconstruction without upgrading admission to consumption", async () => {
+  const f = fixture(), mission = await f.create()
+  const started = (await f.control().lifecycle(f.action(mission, "start"))).mission.control!
+  const restarted = (await f.control().snapshot()).missions[0].control!
+  assert.deepEqual(restarted.receipts, started.receipts)
+  assert.equal(restarted.receipts?.[0].nativeAcknowledgement?.disposition, "start-admitted")
+  assert.equal(restarted.receipts?.[0].acknowledgementState, "known")
+  assert.equal("consumed" in restarted, false)
+})
+
+test("Stop is terminal across restart and stale Play retries; conversations and results remain", async () => {
+  const f = fixture()
+  let mission = await f.create()
+  const start = f.action(mission, "start")
+  mission = (await f.control().lifecycle(start)).mission
+  mission = (await f.delegate(mission, "worker")).mission
+  const stop = f.action(mission, "stop")
+  mission = (await f.control().lifecycle(stop)).mission
+  assert.equal(mission.status, "stopped")
+  assert.equal(mission.runState, "stopped")
+  assert.equal(mission.control?.pending.length, 0)
+  const count = f.calls.length
+  assert.equal((await f.control().lifecycle(start)).mission.status, "stopped")
+  await f.control().lifecycle(stop)
+  assert.equal(f.calls.length, count)
+  await assert.rejects(f.control().lifecycle(f.action(mission, "start")), code("mission-finished"))
+  await assert.rejects(f.delegate(mission, "after-stop"), code("mission-not-running"))
+  assert.equal(f.native.size, 2)
+  assert.equal(mission.tasks.length, 1)
+})
+
+test("partial control failures persist target receipts and retries act only on remaining actors", async () => {
+  const f = fixture()
+  let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
+  mission = (await f.delegate(mission, "worker")).mission
+  const actor = mission.tasks[0].actorSessionId!
+  f.failing.add(actor)
+  const pause = f.action(mission, "pause")
+  await assert.rejects(f.control().lifecycle(pause), code("control-pending"))
+  mission = (await f.control().snapshot()).missions[0]
+  assert.equal(mission.runState, "paused")
+  assert.deepEqual(mission.control?.pending, [actor])
+  await assert.rejects(f.control().lifecycle({ ...pause, action: "stop" }), code("request-conflict"))
+  f.failing.clear()
+  const count = f.calls.length
+  mission = (await f.control().lifecycle(pause)).mission
+  assert.deepEqual(f.calls.slice(count).map(call => call.sessionID), [actor])
+  assert.deepEqual(mission.control?.pending, [])
+  assert.ok([...f.values.values()].every(value => parseMissionEvent(value)))
+})
+
+test("late admitted reports survive terminal Stop without waking or completing withdrawn work", async () => {
+  const f = fixture()
+  let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
+  mission = (await f.delegate(mission, "worker")).mission
+  const actor = mission.tasks[0].actorSessionId!
+  mission = (await f.control().lifecycle(f.action(mission, "stop"))).mission
+  const calls = f.calls.length
+  const input = { missionID: mission.id, taskKey: "worker", outcome: "completed" as const, summary: "Existing work finished before Stop", evidence: [], next: [], final: false }
+  const saved = await f.control().report(actor, input)
+  assert.equal(saved.disposition, "reported")
+  assert.equal(saved.mission.status, "stopped")
+  assert.equal(saved.mission.tasks[0].status, "withdrawn")
+  assert.equal(saved.mission.tasks[0].report, undefined)
+  assert.equal(saved.mission.tasks[0].lateReports?.length, 1)
+  assert.equal(saved.mission.reports[0].notificationStatus, "pending")
+  assert.equal((await f.control().report(actor, input)).disposition, "existing")
+  assert.deepEqual(await f.control().retryPendingNotifications(), { attempted: 0, failed: 0 })
+  assert.equal(f.calls.length, calls, "proof conservation cannot resume a stopped coordinator")
+  const afterRestart = (await f.control().snapshot()).missions[0]
+  assert.equal(afterRestart.tasks[0].lateReports?.length, 1)
+  assert.equal(afterRestart.status, "stopped")
+})
+
+test("Stop can supersede an incomplete start while CAS prevents stale new actions", async () => {
+  const f = fixture()
+  let mission = await f.create()
+  f.failing.add(mission.coordinatorSessionId)
+  const start = f.action(mission, "start")
+  await assert.rejects(f.control().lifecycle(start), code("control-pending"))
+  mission = (await f.control().snapshot()).missions[0]
+  await assert.rejects(f.delegate(mission, "while-starting"), code("control-pending"))
+  await assert.rejects(f.control().report(mission.coordinatorSessionId, { final: true, outcome: "completed", summary: "Premature", evidence: [], next: [] }), code("control-pending"))
+  await assert.rejects(f.control().lifecycle({ ...f.action(mission, "stop"), expectedRevision: start.expectedRevision }), code("revision-conflict"))
+  mission = (await f.control().snapshot()).missions[0]
+  f.failing.clear()
+  mission = (await f.control().lifecycle(f.action(mission, "stop"))).mission
+  const count = f.calls.length
+  await f.control().lifecycle(start)
+  assert.equal(f.calls.length, count)
+  assert.equal(mission.status, "stopped")
+})

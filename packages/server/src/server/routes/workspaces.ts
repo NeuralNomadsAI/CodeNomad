@@ -246,7 +246,12 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
         reply.code(204)
         return
       }
-      await deps.workspaceManager.writeFile(request.params.id, query.path, body.contents)
+      const workspace = deps.workspaceManager.get(request.params.id)
+      if (!workspace) throw new Error("Workspace not found")
+      const mutation = await runWorktreeMutation(deps, workspace.id, workspace.path, reply, async () => {
+        await deps.workspaceManager.writeFile(workspace.id, query.path, body.contents)
+      })
+      if (!mutation) return
       reply.code(204)
     } catch (error) {
       return handleWorkspaceError(error, reply)

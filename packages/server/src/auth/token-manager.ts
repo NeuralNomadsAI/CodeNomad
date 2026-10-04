@@ -7,26 +7,38 @@ export interface BootstrapToken {
 }
 
 export class TokenManager {
-  private token: BootstrapToken | null = null
+  private readonly tokens = new Map<string, BootstrapToken>()
+  private latest: string | null = null
 
   constructor(private readonly ttlMs: number) {}
 
   generate(): string {
+    this.prune()
+    // Each attached native client needs its own one-shot proof. Issuing a proof
+    // must not invalidate another client's concurrent attach handshake.
+    if (this.tokens.size >= 32) throw new Error("Too many pending bootstrap requests")
     const token = crypto.randomBytes(32).toString("base64url")
-    this.token = { token, createdAt: Date.now(), consumed: false }
+    this.tokens.set(token, { token, createdAt: Date.now(), consumed: false })
+    this.latest = token
     return token
   }
 
   consume(token: string): boolean {
-    if (!this.token) return false
-    if (this.token.consumed) return false
-    if (Date.now() - this.token.createdAt > this.ttlMs) return false
-    if (token !== this.token.token) return false
-    this.token.consumed = true
+    this.prune()
+    const proof = this.tokens.get(token)
+    if (!proof) return false
+    this.tokens.delete(token)
     return true
   }
 
   peek(): string | null {
-    return this.token?.token ?? null
+    return this.latest
+  }
+
+  private prune(): void {
+    const now = Date.now()
+    for (const [token, proof] of this.tokens) {
+      if (now - proof.createdAt > this.ttlMs) this.tokens.delete(token)
+    }
   }
 }

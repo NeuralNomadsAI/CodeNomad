@@ -9,7 +9,8 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { setSessions, setActiveSession } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
-import { loadMessages } from "../../../src/stores/session-api"
+import { loadMessages, loadOlderMessageWindow } from "../../../src/stores/session-api"
+import { nativeChildHistory } from "./native-task-history"
 import "../../../src/index.css"
 
 const instanceId = "task-copy-instance", parentId = "parent", childId = "child", grandchildId = "grandchild"
@@ -29,10 +30,21 @@ function toolMessage(sessionID: string, index: number, target?: string) {
         content: [{ type: "text", text: target ? "Task completed" : `Untruncated ${id}: ${"長い output\n".repeat(500)}` }] } }] }
 }
 
-const history: Record<string, ReturnType<typeof toolMessage>[]> = {
+const scenario = new URLSearchParams(location.search).get("steps")
+const history: Record<string, any[]> = {
   [parentId]: [toolMessage(parentId, 0, childId)],
   [childId]: [...Array.from({ length: 230 }, (_, index) => toolMessage(childId, index)), toolMessage(childId, 230, grandchildId)],
   [grandchildId]: Array.from({ length: 230 }, (_, index) => toolMessage(grandchildId, index)),
+}
+if (scenario) {
+  history[childId] = nativeChildHistory
+  history[grandchildId] = []
+  history[parentId][0].content[0].state.content = nativeChildHistory[2].content
+  if (scenario === "overflow" || scenario === "limit") {
+    const message = toolMessage(childId, 0)
+    message.content = Array.from({ length: scenario === "overflow" ? 201 : 200 }, (_, index) => ({ ...message.content[0], id: `overflow-${index}` }))
+    history[childId] = [message]
+  }
 }
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
@@ -51,7 +63,7 @@ const client: any = {
     }
     const end = cursor ? Number(cursor) : messages.length
     const start = Math.max(0, end - limit)
-    return { data: messages.slice(start, end).reverse(), cursor: start ? { next: String(start) } : {} }
+    return { data: messages.slice(start, end).reverse(), cursor: start ? { next: String(start) } : scenario && sessionID === childId && !cursor ? { next: "0" } : {} }
   } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
@@ -81,6 +93,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={mounted()}
   </main>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
+  probeOlder: () => loadOlderMessageWindow(instanceId, childId),
   hold: () => { held = true },
   release: () => { held = false; gates.splice(0).forEach(resolve => resolve()) },
   selectSession: (id: string) => { setSelectedSession(id); setActiveSession(instanceId, id) },

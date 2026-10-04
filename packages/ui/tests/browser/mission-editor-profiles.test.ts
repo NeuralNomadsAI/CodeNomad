@@ -1,0 +1,152 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { chromium, type Browser } from "playwright"
+import { createServer, type ViteDevServer } from "vite"
+import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import type {} from "./fixtures/mission-editor-lifetime"
+
+let server: ViteDevServer, browser: Browser, url: string
+before(async () => {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [solid(), shutdown.plugin, { name: "mission-editor-profiles", configureServer(s) { s.middlewares.use("/editor-profiles", async (_req, res) => {
+      res.setHeader("Content-Type", "text/html")
+      res.end(await s.transformIndexHtml("/editor-profiles", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
+    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
+  await server.listen()
+  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/editor-profiles`
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+})
+
+test("inactivation cancels visible catalog demand and late responses cannot populate the fenced editor", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
+  let release!: () => void, started!: () => void, finished!: () => void, reads = 0, completions = 0
+  const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
+  const settled = new Promise<void>(resolve => { finished = resolve })
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: {
+    available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0,
+  } }))
+  await page.route("**/workspaces/fixture/instance/api/{agent,model}**", async route => {
+    const request = new URL(route.request().url())
+    // Other native UI consumers revalidate their explicitly selected directory
+    // on config events. Count only this editor's native-default catalog reads.
+    if (request.search || !/\/api\/(agent|model)$/.test(request.pathname)) {
+      await route.fulfill({ json: { data: [] } }); return
+    }
+    if (++reads === 2) started()
+    await hold
+    try { await route.fulfill({ json: { data: route.request().url().includes("/agent") ? [{ id: "late-root", mode: "primary" }] : [] } }) }
+    catch { /* The owned editor cancels its request on inactivation. */ }
+    if (++completions === 2) finished()
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.evaluate(async () => {
+      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
+      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
+      updateInstance("fixture", { client: getRootClient("fixture") })
+    })
+    await reached
+    await page.evaluate(() => window.missionEditorLifetime.activate(false))
+    release(); await settled
+    assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="late-root"]').count(), 0)
+    await page.evaluate(async () => {
+      const eventsPath = "/src/lib/server-events.ts", { serverEvents } = await import(eventsPath)
+      serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: {
+        type: "config.updated", id: "hidden-config", created: 1, location: { directory: "/fixture" }, data: {},
+      } }])
+    })
+    // A bounded quiet period covers the control's coalesced trailing-read delay.
+    await page.waitForTimeout(150)
+    assert.equal(reads, 2, "hidden invalidations do not schedule trailing catalog reads")
+    assert.deepEqual(errors, [])
+  } finally { release(); await page.close() }
+})
+after(async () => { await browser?.close(); await server?.close() })
+
+test("real editor sends exact coordinator/reviewer model variants and deep-held unknown creation keeps them across remount", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
+  const writes: Array<Record<string, unknown>> = [], catalogReads: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    writes.push(route.request().postDataJSON())
+    return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown native result" } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/agent**", route => {
+    catalogReads.push(route.request().url())
+    return route.fulfill({ json: { data: [{ id: "root-only", mode: "primary" }, { id: "child-only", mode: "subagent" }, { id: "all", mode: "all" }, { id: "hidden", mode: "all", hidden: true }] } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/model**", route => {
+    catalogReads.push(route.request().url())
+    return route.fulfill({ json: { data: [
+      { providerID: "p", id: "m", enabled: true, capabilities: { tools: true }, variants: [{ id: "high" }, { id: "low" }] },
+      { providerID: "p", id: "disabled", enabled: false, capabilities: { tools: true }, variants: [] },
+    ] } })
+  })
+  try {
+    await page.goto(url)
+    // Reuse the fixture's real owned-instance store and generated Promise client.
+    await page.evaluate(async () => {
+      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
+      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
+      updateInstance("fixture", { client: getRootClient("fixture") })
+    })
+    assert.equal(catalogReads.length, 0, "a closed editor has no catalog demand")
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.getByLabel("Objective", { exact: true }).fill("Profile fixture")
+    await page.getByLabel("Playbook", { exact: true }).selectOption("pocock-fix-bug")
+    const root = page.getByLabel("Coordinator · Agent", { exact: true }), child = page.getByLabel("Specification reviewer · Agent", { exact: true })
+    await root.locator('option[value="root-only"]').waitFor({ state: "attached" })
+    assert.equal(await root.locator('option[value="child-only"]').count(), 0)
+    assert.equal(await child.locator('option[value="root-only"]').count(), 0)
+    assert.equal(await child.locator('option[value="hidden"]').count(), 0)
+    await root.selectOption("root-only")
+    await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
+    await page.getByLabel("Coordinator · Thinking", { exact: true }).selectOption("high")
+    await child.selectOption("child-only")
+    await page.getByLabel("Specification reviewer · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
+    await page.getByLabel("Specification reviewer · Thinking", { exact: true }).selectOption("low")
+    await page.getByLabel("Standards reviewer · Agent", { exact: true }).selectOption("all")
+    await page.getByLabel("Fresh validator · Agent", { exact: true }).selectOption("child-only")
+    await page.getByText("Optional task presets", { exact: true }).click()
+    await page.getByLabel("Implementer · Agent", { exact: true }).selectOption("all")
+    const geometry = await root.evaluate(select => ({ radius: getComputedStyle(select).borderRadius,
+      rowWidth: select.closest("fieldset")!.getBoundingClientRect().width, formWidth: select.closest("form")!.getBoundingClientRect().width }))
+    assert.equal(geometry.radius, "0px")
+    assert.ok(geometry.rowWidth <= geometry.formWidth, "compact profile row fits the narrow editor")
+    assert.equal(await page.getByLabel("Specification reviewer · Model", { exact: true }).locator('option').filter({ hasText: "disabled" }).count(), 0)
+    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
+    const expected = { coordinator: { agent: "root-only", model: { providerID: "p", id: "m", variant: "high" } },
+      roles: { "review-spec": { agent: "child-only", model: { providerID: "p", id: "m", variant: "low" } },
+        "review-standards": { agent: "all" }, validator: { agent: "child-only" }, implementer: { agent: "all" } } }
+    assert.equal(writes.length, 1)
+    assert.deepEqual(writes[0].profiles, expected)
+    assert.equal(writes[0].directory, undefined, "catalog and creation retain native default directory")
+    assert.deepEqual((await page.evaluate(() => window.missionEditorLifetime.held()))!.profiles, expected)
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    assert.equal(await page.getByLabel("Coordinator · Thinking", { exact: true }).inputValue(), "high")
+    assert.equal(await page.getByLabel("Specification reviewer · Thinking", { exact: true }).inputValue(), "low")
+    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), true)
+    await page.getByRole("button", { name: "Refresh mission map", exact: true }).last().click()
+    assert.equal(writes.length, 1)
+    assert.equal(catalogReads.length, 2, "uncertain draft does not refresh or replace its original profile")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

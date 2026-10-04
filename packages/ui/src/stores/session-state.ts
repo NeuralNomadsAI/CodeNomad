@@ -37,7 +37,8 @@ interface GenerationAdmission {
   token: number
   pending: number
   accepted: boolean
-  baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
+  idleBoundary: number
+  baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince" | "outcome" | "generationAdmissionEpoch" | "generationAdmissionIdleBoundary">
 }
 const generationAdmissions = new Map<string, GenerationAdmission>()
 
@@ -705,7 +706,7 @@ function hydrateSessionGenerationRecovery(
     withSession(instanceId, sessionId, (session) => {
       const recovery = session.pendingPermission || session.pendingForm
         ? null
-        : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
+        : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true, session.outcome)
       if ((session.generationRecovery ?? null) === recovery) return false
       session.generationRecovery = recovery
     })
@@ -725,10 +726,14 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
       token: ++generationAdmissionSequence,
       pending: 0,
       accepted: false,
+      idleBoundary: session.time.idle ?? 0,
       baseline: {
         generationRecovery: session.generationRecovery,
         runtimeStatusKnown: session.runtimeStatusKnown,
         idleSince: session.idleSince,
+        outcome: session.outcome,
+        generationAdmissionEpoch: session.generationAdmissionEpoch,
+        generationAdmissionIdleBoundary: session.generationAdmissionIdleBoundary,
       },
     }
     generationAdmissions.set(key, admission)
@@ -739,6 +744,9 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
     session.runtimeStatusKnown = false
     session.idleSince = null
     session.generationAdmissionToken = admission!.token
+    session.generationAdmissionEpoch = admission!.token
+    session.generationAdmissionIdleBoundary = admission!.idleBoundary
+    session.outcome = undefined
   })
 
   let settled = false
@@ -866,12 +874,14 @@ function setSessionStatus(
       && sameRetry
       && session.runtimeStatusKnown === !admissionPending
       && (session.generationRecovery ?? null) === generationRecovery
+      && (status === "idle" || session.outcome === undefined)
     ) return false
     if (session.status === "compacting" && status !== "compacting" && !options.force) return false
     const previous = session.status
     session.status = status
     session.runtimeStatusKnown = !admissionPending
     session.generationRecovery = generationRecovery
+    if (status !== "idle") session.outcome = undefined
     if (!admissionPending) {
       cancelSessionGenerationAdmissions(instanceId, sessionId)
       session.generationAdmissionToken = undefined

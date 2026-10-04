@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "target": "win32-x64",
+  "abi": "codenomad.runtime.v1",
+  "wire": "CNHRv001",
+  "build": {
+    "profile": "release",
+    "targetTriple": "x86_64-pc-windows-msvc",
+    "features": [],
+    "cargoLockSha256": "80d73891fde1ce1e3b5033c2c05dea0deb8e4342fe53e8c1068193674c17b4b9"
+  },
+  "node": {
+    "version": "v24.20.0",
+    "modules": "137",
+    "napi": "10",
+    "sha256": "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5"
+  },
+  "artifacts": {
+    "supervisor": {
+      "file": "supervisor.exe",
+      "sha256": "fd912e51ae2f3ce1703d5d56f4b63e2ef50094f81521cfbd6c0f142db155928f"
+    },
+    "binding": {
+      "file": "runtime.node",
+      "sha256": "bb99885979c53c5b4845b7a177aae0e4f049afc9bee9b213f85934f6e87faa44"
+    },
+    "fingerprint": {
+      "file": "cargo-fingerprint.json",
+      "sha256": "6fb2ef82a3e74a6335cbc94959dd2c48dafd0d80c142392b8af4b34212b740ad"
+    }
+  }
+}

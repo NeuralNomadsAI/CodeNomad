@@ -34,6 +34,7 @@ import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
+import { registerMissionRoutes } from "./routes/missions"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { WebSearchSettings } from "../opencode/websearch-settings"
@@ -341,12 +342,14 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAutomationPluginRoute(app, {
     authManager: deps.authManager,
     bridgeToken: deps.automationBridgeToken,
+    worktreeDeletionFence,
     nativeParent: deps.nativeParent,
     developerCdp,
     workspaceManager: deps.workspaceManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
@@ -880,16 +883,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     targetUrl.searchParams.set("path", translated)
   }
   const mutationIdentities = new Set<string>()
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    for (const directory of requestLocations.directories) {
-      const identity = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, directory))
-      if (!identity) {
-        reply.code(403).send({ error: "Location does not belong to workspace" })
-        return
-      }
-      mutationIdentities.add(identity)
-    }
-  }
+  const mutationDirectories = new Set(requestLocations.directories)
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await wait(allPathsOwned(workspaceManager, workspaceId, promptFiles.paths)))) {
     reply.code(promptFiles.invalid ? 400 : 403).send({ error: "Prompt file does not belong to workspace" })
@@ -929,6 +923,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         reply.code(403).send({ error: "PTY does not belong to workspace" })
         return
       }
+      mutationDirectories.add(pty.data.cwd)
     } catch (error) {
       if (isPtyNotFoundError(error)) {
         reply.code(404).send({ error: "PTY not found" })
@@ -953,6 +948,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         reply.code(403).send({ error: "Shell does not belong to workspace" })
         return
       }
+      mutationDirectories.add(shell.data.cwd)
     } catch (error) {
       if (isShellNotFoundError(error)) {
         reply.code(404).send({ error: "Shell not found" })
@@ -996,7 +992,21 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     }
   }
 
-  const body = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
+  const defaultLocation = applyDefaultWorkspaceLocation(targetUrl, promptBody, request.method, serviceDirectory, requestLocations.directories.length > 0 || sessionListHasScope, Boolean(sessionId) && !isGlobalFormAction(pathname, request.method))
+  const body = defaultLocation.body
+  if (defaultLocation.directory) mutationDirectories.add(defaultLocation.directory)
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    // Resolve every effective effect location, including server-supplied defaults
+    // and a native resource's actual cwd, BEFORE entering the deletion fence.
+    for (const directory of mutationDirectories) {
+      const identity = await workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
+      if (!identity) {
+        reply.code(403).send({ error: "Location does not belong to workspace" })
+        return
+      }
+      mutationIdentities.add(identity)
+    }
+  }
   const instanceAuthHeader = workspaceManager.getInstanceAuthorizationHeader(workspaceId)
   signal.throwIfAborted()
   const releaseFence = request.method === "GET" || request.method === "HEAD"
@@ -1226,22 +1236,22 @@ function applyDefaultWorkspaceLocation(
   directory: string,
   hasLocation: boolean,
   sessionRoute: boolean,
-): unknown {
-  if (hasLocation || sessionRoute) return body
+): { body: unknown; directory?: string } {
+  if (hasLocation || sessionRoute) return { body }
   if (/^\/api\/(?:credential|project)(?:\/|$)/.test(targetUrl.pathname)
-    || /^\/api\/permission\/saved(?:\/|$)/.test(targetUrl.pathname)) return body
+    || /^\/api\/permission\/saved(?:\/|$)/.test(targetUrl.pathname)) return { body }
   if (targetUrl.pathname === "/api/session" && method === "GET") {
     targetUrl.searchParams.set("directory", directory)
-    return body
+    return { body, directory }
   }
   if (targetUrl.pathname === "/api/session" && method === "POST") {
     const input = body && typeof body === "object" && !Array.isArray(body) && !Buffer.isBuffer(body)
       ? body as Record<string, unknown>
       : {}
-    return { ...input, location: { directory } }
+    return { body: { ...input, location: { directory } }, directory }
   }
   targetUrl.searchParams.set("location[directory]", directory)
-  return body
+  return { body, directory }
 }
 
 function getSessionRouteId(pathname: string): string | null {

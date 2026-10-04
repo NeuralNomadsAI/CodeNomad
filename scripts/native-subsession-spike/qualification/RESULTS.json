@@ -1,0 +1,4611 @@
+{
+  "scope": "Private 2.0.22 native runner plus deterministic synthetic provider; not real-LLM or production trust qualification",
+  "runs": [
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-SlIXMX",
+      "phase": "recursion-permissions-environment",
+      "status": "failed-fixture",
+      "failure": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(!h.result.sessionCreateProperties.includes(\"parentID\"))\n",
+      "counts": {
+        "providerRequests": 0,
+        "primaryRequests": 0,
+        "sessions": 0,
+        "events": 0
+      },
+      "matrix": [],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-wiQsSe",
+      "phase": "recursion-permissions-environment",
+      "status": "failed-fixture",
+      "failure": "Error: Bounded timeout: binding foreground_2",
+      "counts": {
+        "providerRequests": 4,
+        "primaryRequests": 4,
+        "sessions": 2,
+        "events": 56
+      },
+      "matrix": [],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-XkNPCJ",
+      "phase": "recursion-permissions-environment",
+      "status": "failed-fixture",
+      "failure": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(!h.requests(gb.childID)[0].body.tools.some(tool => tool.function.name === \"subagent\"))\n",
+      "counts": {
+        "providerRequests": 29,
+        "primaryRequests": 29,
+        "sessions": 15,
+        "events": 349
+      },
+      "matrix": [
+        {
+          "test": "root-child-grandchild-greatgrandchild foreground",
+          "status": "SUPPORTED",
+          "rootID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+          "bindings": [
+            {
+              "parentID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+              "childID": "ses_efff54b56ffeth7NqAu0vK5zmh",
+              "callID": "foreground_1",
+              "messageID": "msg_1000ab480001z9K87q3nt3a7s9",
+              "rootID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+              "generation": 1
+            },
+            {
+              "parentID": "ses_efff54b56ffeth7NqAu0vK5zmh",
+              "childID": "ses_efff54ac1ffecWQsSNEgMb7yGE",
+              "callID": "foreground_2",
+              "messageID": "msg_1000ab521001LjNVkVw5rEvsWe",
+              "rootID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+              "generation": 1
+            },
+            {
+              "parentID": "ses_efff54ac1ffecWQsSNEgMb7yGE",
+              "childID": "ses_efff54987ffemUvSAiEKpbvO4S",
+              "callID": "foreground_3",
+              "messageID": "msg_1000ab6600017iY12rU6t5xnXg",
+              "rootID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+              "generation": 1
+            }
+          ],
+          "consumedAtAllParents": true
+        },
+        {
+          "test": "nested background native notification",
+          "status": "SUPPORTED",
+          "rootID": "ses_efff548a5ffeDwE8Ggcmd1JLFK",
+          "bindings": [
+            {
+              "parentID": "ses_efff548a5ffeDwE8Ggcmd1JLFK",
+              "childID": "ses_efff5481effe1Dl3hbvglgOws5",
+              "callID": "background_1",
+              "messageID": "msg_1000ab7cd0013KzzFvhuLB7OlN",
+              "rootID": "ses_efff548a5ffeDwE8Ggcmd1JLFK",
+              "generation": 1
+            },
+            {
+              "parentID": "ses_efff5481effe1Dl3hbvglgOws5",
+              "childID": "ses_efff546daffeBPQdhBYznvQoOe",
+              "callID": "background_2",
+              "messageID": "msg_1000ab8ea001QuRYgo86fpObNI",
+              "rootID": "ses_efff548a5ffeDwE8Ggcmd1JLFK",
+              "generation": 1
+            },
+            {
+              "parentID": "ses_efff546daffeBPQdhBYznvQoOe",
+              "childID": "ses_efff5461fffePHf7E2UlR0uvNp",
+              "callID": "background_3",
+              "messageID": "msg_1000ab9980014U7djun4GEBvZZ",
+              "rootID": "ses_efff548a5ffeDwE8Ggcmd1JLFK",
+              "generation": 1
+            }
+          ],
+          "activeLeafWhileRootIdle": true,
+          "leafReportConsumedByImmediateParent": true
+        },
+        {
+          "test": "same-parent concurrent deep foreground/background binding",
+          "status": "SUPPORTED",
+          "rootID": "ses_efff543e6ffeCSJIWjrhPHsf14",
+          "pfg": {
+            "parentID": "ses_efff540b5ffegDEIgdIUe3e6R2",
+            "childID": "ses_efff53fe1fferlYk94goyUOfIF",
+            "callID": "parallel_fg_depth2",
+            "messageID": "msg_1000abffa001SSHY37G92obT1E",
+            "rootID": "ses_efff543e6ffeCSJIWjrhPHsf14",
+            "generation": 1
+          },
+          "pbg": {
+            "parentID": "ses_efff540b6ffeZBe0R2VL9Lmt5J",
+            "childID": "ses_efff53feeffe6DzgO0tgOPRLUA",
+            "callID": "parallel_bg_depth2",
+            "messageID": "msg_1000abfdb001jT9FiW7hzwsy1f",
+            "rootID": "ses_efff543e6ffeCSJIWjrhPHsf14",
+            "generation": 1
+          },
+          "distinctCalls": true
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [
+        {
+          "index": 4,
+          "sessionID": "ses_efff54ac1ffecWQsSNEgMb7yGE",
+          "kind": "primary"
+        },
+        {
+          "index": 5,
+          "sessionID": "ses_efff54b56ffeth7NqAu0vK5zmh",
+          "kind": "primary"
+        },
+        {
+          "index": 6,
+          "sessionID": "ses_efff54f13ffe4hUE1R4LwuClCP",
+          "kind": "primary"
+        },
+        {
+          "index": 16,
+          "sessionID": "ses_efff546daffeBPQdhBYznvQoOe",
+          "kind": "primary"
+        }
+      ],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-znvkjp",
+      "phase": "recursion-permissions-environment:permissions",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 20,
+        "primaryRequests": 20,
+        "sessions": 9,
+        "events": 234
+      },
+      "matrix": [
+        {
+          "test": "builtin general recursive invocation, not tool advertisement",
+          "status": "SUPPORTED",
+          "binding": {
+            "parentID": "ses_efff27d72ffeZtKXWGH825GFMJ",
+            "childID": "ses_efff277baffedhQTUeggGCwFfm",
+            "callID": "general_control",
+            "messageID": "msg_1000d8818001RbXMS3zKqqr2q6",
+            "rootID": "ses_efff27d72ffeZtKXWGH825GFMJ",
+            "generation": 1
+          },
+          "advertisedSubagent": true,
+          "actualInvocation": {
+            "type": "tool",
+            "id": "general_forbidden_child",
+            "name": "subagent",
+            "executed": false,
+            "state": {
+              "status": "completed",
+              "input": {
+                "agent": "recursive",
+                "description": "general_forbidden_child",
+                "prompt": "Private native qualification"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<subagent sessionID=\"ses_efff27280ffe06JMsu1TStWfo6\" state=\"completed\">\nNATIVE_CONSUMED:[{\"role\":\"user\",\"content\":\"You are a subagent spawned by another session.\\nPrivate native qualification\"}]\n</subagent>"
+                }
+              ],
+              "metadata": {
+                "sessionID": "ses_efff27280ffe06JMsu1TStWfo6",
+                "status": "completed",
+                "truncated": false
+              }
+            },
+            "time": {
+              "created": 1791002250610,
+              "ran": 1791002250614,
+              "completed": 1791002250763
+            }
+          }
+        },
+        {
+          "test": "denied_birth",
+          "status": "SUPPORTED",
+          "rootID": "ses_efff27188ffeCM7ylnz3jTnGKG",
+          "noChildBirth": true
+        },
+        {
+          "test": "primary_mode",
+          "status": "SUPPORTED",
+          "rootID": "ses_efff270b0ffeu4xKlXURpC7z5C",
+          "noChildBirth": true
+        },
+        {
+          "test": "permission birth snapshot and existing-child continuation",
+          "status": "SUPPORTED",
+          "first": {
+            "parentID": "ses_efff26fd9fferinE2funwPzyX6",
+            "childID": "ses_efff26f54ffexzR67c58lIvK9B",
+            "callID": "inherited_first",
+            "messageID": "msg_1000d90990019f562FYb4qgP81",
+            "rootID": "ses_efff26fd9fferinE2funwPzyX6",
+            "generation": 1
+          },
+          "grand": {
+            "parentID": "ses_efff26f54ffexzR67c58lIvK9B",
+            "childID": "ses_efff26e0fffeHRdhOMdbM5jyXy",
+            "callID": "inherited_grandchild",
+            "messageID": "msg_1000d91ca001AUnhP8RboWElps",
+            "rootID": "ses_efff26fd9fferinE2funwPzyX6",
+            "generation": 1
+          },
+          "existingChildHasShellAfterParentAllow": false,
+          "newChildHasShell": true
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-nXXDqv",
+      "phase": "recursion-permissions-environment:environment",
+      "status": "failed-fixture",
+      "failure": "Error: Cannot find package 'fuzzysort' imported from D:\\CodeNomad\\.codenomad\\worktrees\\missions-native-subsessions-20261003\\packages\\server\\src\\filesystem\\search.ts",
+      "counts": {
+        "providerRequests": 0,
+        "primaryRequests": 0,
+        "sessions": 0,
+        "events": 0
+      },
+      "matrix": [],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-Khag6I",
+      "phase": "recursion-permissions-environment:environment",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 39,
+        "primaryRequests": 39,
+        "sessions": 11,
+        "events": 499
+      },
+      "matrix": [
+        {
+          "test": "raw native profile inheritance A1",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effef954bffeXCjH5RKyNljoyW",
+          "child": {
+            "tool": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            }
+          },
+          "grandchild": {
+            "tool": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "raw native profile inheritance B1",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+          "child": {
+            "tool": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            }
+          },
+          "grandchild": {
+            "tool": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": null,
+              "retired": null,
+              "db": true,
+              "password": true,
+              "state": true,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "pre-first-provider fresh complete descendant environment clean_A1",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "childID": "ses_effef85b8ffe1zyT2y5I0OHgZ2",
+            "callID": "clean_A1",
+            "messageID": "msg_100107a2b001dUkncBQ32WMzvn",
+            "rootID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "A1",
+              "retired": "old-A1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "A1",
+              "retired": "old-A1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "pre-first-provider fresh complete descendant environment clean_grand_A1",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef85b8ffe1zyT2y5I0OHgZ2",
+            "childID": "ses_effef82a7ffeoSTB2YOfx1Y1O4",
+            "callID": "clean_grand_A1",
+            "messageID": "msg_100107d3b001EOVIQ3LO8lcHTc",
+            "rootID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "A1",
+              "retired": "old-A1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "A1",
+              "retired": "old-A1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "pre-first-provider fresh complete descendant environment clean_B1",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+            "childID": "ses_effef851cffeaOWHTqzYUL3xBs",
+            "callID": "clean_B1",
+            "messageID": "msg_100107ace001I2TuevmlacbL1M",
+            "rootID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "pre-first-provider fresh complete descendant environment clean_grand_B1",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef851cffeaOWHTqzYUL3xBs",
+            "childID": "ses_effef82aaffeodO1yKH6ZoyOos",
+            "callID": "clean_grand_B1",
+            "messageID": "msg_100107d25001EUBjvaDeKuC0N2",
+            "rootID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "recursive same-child continuation profile replacement clean_continue_A2",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "childID": "ses_effef85b8ffe1zyT2y5I0OHgZ2",
+            "callID": "clean_continue_A2",
+            "messageID": "msg_1001087ff001FshCAPinbWg8sV",
+            "rootID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "A2",
+              "retired": null,
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "A2",
+              "retired": null,
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "recursive same-child continuation profile replacement clean_grand_continue_A2",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effef85b8ffe1zyT2y5I0OHgZ2",
+            "childID": "ses_effef82a7ffeoSTB2YOfx1Y1O4",
+            "callID": "clean_grand_continue_A2",
+            "messageID": "msg_100108949001UF0UUpPKc1iSvF",
+            "rootID": "ses_effef954bffeXCjH5RKyNljoyW",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "A2",
+              "retired": null,
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "A2",
+              "retired": null,
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          }
+        },
+        {
+          "test": "actual backend detach after child admission",
+          "status": "SUPPORTED",
+          "binding": {
+            "parentID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+            "childID": "ses_effef72d8ffe3nKH9jj5a1WY91",
+            "callID": "detach_bound",
+            "messageID": "msg_100108cfa0011DqtiMsbrlrTQo",
+            "rootID": "ses_effef8be4ffeMdy56ANAyBL6Hg",
+            "generation": 2
+          },
+          "measured": {
+            "tool": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            },
+            "sessionShell": {
+              "marker": "B1",
+              "retired": "old-B1",
+              "db": false,
+              "password": false,
+              "state": false,
+              "path": true
+            }
+          },
+          "succeeded": "succeeded"
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-tR2OkJ",
+      "phase": "native-interrupt-and-durable-generation-gates",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 34,
+        "primaryRequests": 34,
+        "sessions": 25,
+        "events": 455
+      },
+      "matrix": [
+        {
+          "test": "raw root interrupt recursively attached foreground depth3",
+          "status": "SUPPORTED",
+          "rootID": "ses_effef0053ffe4D7slKEBECJMnH",
+          "bindings": [
+            {
+              "parentID": "ses_effef0053ffe4D7slKEBECJMnH",
+              "childID": "ses_effeefa1dffe6TaIzQVNjRucYf",
+              "callID": "raw_foreground_1",
+              "messageID": "msg_1001105bc001eB6CWOWx5wnAHy",
+              "rootID": "ses_effef0053ffe4D7slKEBECJMnH",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeefa1dffe6TaIzQVNjRucYf",
+              "childID": "ses_effeef98bffeSYPDVTc30UPRI1",
+              "callID": "raw_foreground_2",
+              "messageID": "msg_10011065b001WVSSGAe6W8ydve",
+              "rootID": "ses_effef0053ffe4D7slKEBECJMnH",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeef98bffeSYPDVTc30UPRI1",
+              "childID": "ses_effeef900ffeOrA8my5y8iHP3a",
+              "callID": "raw_foreground_3",
+              "messageID": "msg_1001106e8001LQv06x0CbtHaGO",
+              "rootID": "ses_effef0053ffe4D7slKEBECJMnH",
+              "generation": 2
+            }
+          ],
+          "ids": [
+            "ses_effef0053ffe4D7slKEBECJMnH",
+            "ses_effeefa1dffe6TaIzQVNjRucYf",
+            "ses_effeef98bffeSYPDVTc30UPRI1",
+            "ses_effeef900ffeOrA8my5y8iHP3a"
+          ],
+          "ack": {
+            "interrupted": true
+          },
+          "states": {
+            "ses_effef0053ffe4D7slKEBECJMnH": {
+              "session": {
+                "id": "ses_effef0053ffe4D7slKEBECJMnH",
+                "projectID": "global",
+                "agent": "recursive",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002476837,
+                  "updated": 1791002477998,
+                  "idle": 1791002478499
+                },
+                "title": "raw_foreground",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeefa1dffe6TaIzQVNjRucYf": {
+              "session": {
+                "id": "ses_effeefa1dffe6TaIzQVNjRucYf",
+                "parentID": "ses_effef0053ffe4D7slKEBECJMnH",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002478154,
+                  "updated": 1791002478159,
+                  "idle": 1791002478497
+                },
+                "title": "raw_foreground_1",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeef98bffeSYPDVTc30UPRI1": {
+              "session": {
+                "id": "ses_effeef98bffeSYPDVTc30UPRI1",
+                "parentID": "ses_effeefa1dffe6TaIzQVNjRucYf",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002478299,
+                  "updated": 1791002478304,
+                  "idle": 1791002478494
+                },
+                "title": "raw_foreground_2",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeef900ffeOrA8my5y8iHP3a": {
+              "session": {
+                "id": "ses_effeef900ffeOrA8my5y8iHP3a",
+                "parentID": "ses_effeef98bffeSYPDVTc30UPRI1",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002478431,
+                  "updated": 1791002478436,
+                  "idle": 1791002478489
+                },
+                "title": "raw_foreground_3",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            }
+          }
+        },
+        {
+          "test": "raw parent interrupt does not stop background family; late native wake",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effeef84cffe1kygKJFlHvwwFO",
+          "bindings": [
+            {
+              "parentID": "ses_effeef84cffe1kygKJFlHvwwFO",
+              "childID": "ses_effeef720ffe6c6z6aXq7gKqfi",
+              "callID": "raw_background_1",
+              "messageID": "msg_1001108c9001Jycdz9ZFKh8fD0",
+              "rootID": "ses_effeef84cffe1kygKJFlHvwwFO",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeef720ffe6c6z6aXq7gKqfi",
+              "childID": "ses_effeef682ffemLLkxH6iOVDbYz",
+              "callID": "raw_background_2",
+              "messageID": "msg_100110956001avs2pX2PV048ku",
+              "rootID": "ses_effeef84cffe1kygKJFlHvwwFO",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeef682ffemLLkxH6iOVDbYz",
+              "childID": "ses_effeef544ffeR6h2mkb3P1TijS",
+              "callID": "raw_background_3",
+              "messageID": "msg_100110a920018qqAKbHmLPkQWE",
+              "rootID": "ses_effeef84cffe1kygKJFlHvwwFO",
+              "generation": 2
+            }
+          ],
+          "ids": [
+            "ses_effeef84cffe1kygKJFlHvwwFO",
+            "ses_effeef720ffe6c6z6aXq7gKqfi",
+            "ses_effeef682ffemLLkxH6iOVDbYz",
+            "ses_effeef544ffeR6h2mkb3P1TijS"
+          ],
+          "ack": {
+            "interrupted": true
+          },
+          "statesAtInterrupt": {
+            "ses_effeef84cffe1kygKJFlHvwwFO": {
+              "session": {
+                "id": "ses_effeef84cffe1kygKJFlHvwwFO",
+                "projectID": "global",
+                "agent": "recursive",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002478771,
+                  "updated": 1791002478783,
+                  "idle": 1791002479468
+                },
+                "title": "raw_background",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeef720ffe6c6z6aXq7gKqfi": {
+              "session": {
+                "id": "ses_effeef720ffe6c6z6aXq7gKqfi",
+                "parentID": "ses_effeef84cffe1kygKJFlHvwwFO",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "time": {
+                  "created": 1791002478921,
+                  "updated": 1791002478925
+                },
+                "title": "raw_background_1",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": true
+            },
+            "ses_effeef682ffemLLkxH6iOVDbYz": {
+              "session": {
+                "id": "ses_effeef682ffemLLkxH6iOVDbYz",
+                "parentID": "ses_effeef720ffe6c6z6aXq7gKqfi",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "time": {
+                  "created": 1791002479232,
+                  "updated": 1791002479239
+                },
+                "title": "raw_background_2",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": true
+            },
+            "ses_effeef544ffeR6h2mkb3P1TijS": {
+              "session": {
+                "id": "ses_effeef544ffeR6h2mkb3P1TijS",
+                "parentID": "ses_effeef682ffemLLkxH6iOVDbYz",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "time": {
+                  "created": 1791002479388,
+                  "updated": 1791002479392
+                },
+                "title": "raw_background_3",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": true
+            }
+          },
+          "requestsBefore": 2,
+          "requestsAfter": 3,
+          "nativeModelConsumption": true
+        },
+        {
+          "test": "Stop durable context gate rejects native late background wake",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "bindings": [
+            {
+              "parentID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+              "childID": "ses_effeef335ffeeou8Jrc8UBqSlb",
+              "callID": "guarded_background_1",
+              "messageID": "msg_100110ca9001UAiTP31qMr7h4p",
+              "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeef335ffeeou8Jrc8UBqSlb",
+              "childID": "ses_effeef207ffe3MKy4PLRUtaLDB",
+              "callID": "guarded_background_2",
+              "messageID": "msg_100110dc90017L5SkpeYLcR7hs",
+              "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeef207ffe3MKy4PLRUtaLDB",
+              "childID": "ses_effeef0c1ffeaAQbIj4B6b4Bdl",
+              "callID": "guarded_background_3",
+              "messageID": "msg_100110f110012Q1yZ4M4jj2z8E",
+              "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+              "generation": 2
+            }
+          ],
+          "ids": [
+            "ses_effeef3fdffeuXfBuRJAsfSpss",
+            "ses_effeef335ffeeou8Jrc8UBqSlb",
+            "ses_effeef207ffe3MKy4PLRUtaLDB",
+            "ses_effeef0c1ffeaAQbIj4B6b4Bdl"
+          ],
+          "generation": 3,
+          "providerRequestsAfterStop": 0,
+          "rawSyntheticMessagesStillPossible": [
+            {
+              "id": "msg_100110dc2001vhCzbEVb3VNVOD",
+              "metadata": {
+                "source": "subagent",
+                "childID": "ses_effeef335ffeeou8Jrc8UBqSlb",
+                "agent": "recursive",
+                "state": "error"
+              },
+              "time": {
+                "created": 1791002480927
+              },
+              "text": "<subagent sessionID=\"ses_effeef335ffeeou8Jrc8UBqSlb\" state=\"error\" description=\"guarded_background_1\">\nTrusted private generation gate: stopped\n</subagent>",
+              "description": "guarded_background_1",
+              "type": "synthetic"
+            }
+          ],
+          "rootRequestsBefore": 2,
+          "rootRequestsAfter": 2
+        },
+        {
+          "test": "synthetic admission versus blocked model consumption after irreversible Stop",
+          "status": "WORKAROUND_TESTED",
+          "admissionID": "msg_10011124f001dElyjG6f1FoH4a",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "consumptionCount": 0
+        },
+        {
+          "test": "Pause explicit family interrupt plus pending native inbox cancellation",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+          "bindings": [
+            {
+              "parentID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+              "childID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+              "callID": "paused_explicit_family_1",
+              "messageID": "msg_1001112ef001NYC7n43mt00fUJ",
+              "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+              "childID": "ses_effeeebcdffeLe538kG9jgYaeH",
+              "callID": "paused_explicit_family_2",
+              "messageID": "msg_100111408001szyEW4WokBsk45",
+              "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+              "generation": 2
+            },
+            {
+              "parentID": "ses_effeeebcdffeLe538kG9jgYaeH",
+              "childID": "ses_effeeeab2ffe0R0pn7P2k0XHKR",
+              "callID": "paused_explicit_family_3",
+              "messageID": "msg_100111539001HF0F24nXahSMCp",
+              "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+              "generation": 2
+            }
+          ],
+          "ids": [
+            "ses_effeeed99ffeSjLP0dQMadZsqL",
+            "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+            "ses_effeeebcdffeLe538kG9jgYaeH",
+            "ses_effeeeab2ffe0R0pn7P2k0XHKR"
+          ],
+          "receipts": [
+            {
+              "sessionID": "ses_effeeeab2ffe0R0pn7P2k0XHKR",
+              "ack": {
+                "interrupted": true
+              }
+            },
+            {
+              "sessionID": "ses_effeeebcdffeLe538kG9jgYaeH",
+              "ack": {
+                "interrupted": true
+              }
+            },
+            {
+              "sessionID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+              "ack": {
+                "interrupted": false
+              }
+            },
+            {
+              "sessionID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+              "ack": {
+                "interrupted": true
+              }
+            }
+          ],
+          "states": {
+            "ses_effeeed99ffeSjLP0dQMadZsqL": {
+              "session": {
+                "id": "ses_effeeed99ffeSjLP0dQMadZsqL",
+                "projectID": "global",
+                "agent": "recursive",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002481371,
+                  "updated": 1791002482629,
+                  "idle": 1791002482636
+                },
+                "title": "paused_explicit_family",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeeecfeffeuaJKi1MXjZm1Rk": {
+              "session": {
+                "id": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+                "parentID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "failed",
+                "time": {
+                  "created": 1791002481661,
+                  "updated": 1791002481665,
+                  "idle": 1791002482627
+                },
+                "title": "paused_explicit_family_1",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeeebcdffeLe538kG9jgYaeH": {
+              "session": {
+                "id": "ses_effeeebcdffeLe538kG9jgYaeH",
+                "parentID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002481967,
+                  "updated": 1791002481970,
+                  "idle": 1791002482607
+                },
+                "title": "paused_explicit_family_2",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            },
+            "ses_effeeeab2ffe0R0pn7P2k0XHKR": {
+              "session": {
+                "id": "ses_effeeeab2ffe0R0pn7P2k0XHKR",
+                "parentID": "ses_effeeebcdffeLe538kG9jgYaeH",
+                "projectID": "global",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                },
+                "outcome": "interrupted",
+                "time": {
+                  "created": 1791002482548,
+                  "updated": 1791002482553,
+                  "idle": 1791002482589
+                },
+                "title": "paused_explicit_family_3",
+                "location": {
+                  "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-tR2OkJ\\project"
+                }
+              },
+              "active": false
+            }
+          },
+          "atomic": false
+        },
+        {
+          "test": "explicit Play continues same child without automatic assignment replay",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+          "childID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+          "consumed": true
+        },
+        {
+          "test": "captured pre-Stop shell executor cannot start protected operation",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeee6d0ffe2KgdWkzMwfP2uE",
+          "filesystemEffect": false
+        },
+        {
+          "test": "pending native depth3 question during foreground Stop",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeee444fferK2zXXl3NSyyo9",
+          "childID": "ses_effeedf15ffem3Komx2d7DTdYp",
+          "formsBefore": [
+            {
+              "id": "frm_100112161001Zqbhrize0lvcRy",
+              "sessionID": "ses_effeedf15ffem3Komx2d7DTdYp",
+              "title": "Questions",
+              "metadata": {
+                "kind": "question",
+                "tool": {
+                  "messageID": "msg_10011214d0017Ik8U95Fisgc7k",
+                  "id": "depth3_question"
+                }
+              },
+              "fields": [
+                {
+                  "key": "q0",
+                  "title": "Private",
+                  "description": "Continue owned probe?",
+                  "type": "string",
+                  "options": [
+                    {
+                      "value": "Yes",
+                      "label": "Yes",
+                      "description": "Private choice"
+                    }
+                  ],
+                  "custom": true
+                }
+              ]
+            }
+          ],
+          "formsAfter": []
+        },
+        {
+          "test": "pending inherited native depth3 shell permission during Pause",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeede69ffeuL1NQNHF3wAYE1",
+          "pendingBefore": [
+            {
+              "id": "per_100112457001U4a8964TJqvqGe",
+              "sessionID": "ses_effeedc54ffeEjRPLMeKqp6MnD",
+              "action": "shell",
+              "resources": [
+                "node -e \"require('fs').writeFileSync('permission-effect.txt','bad')\""
+              ],
+              "save": [
+                "node *"
+              ],
+              "source": {
+                "type": "tool",
+                "messageID": "msg_100112411001UfGqcwVkO6tlJe",
+                "id": "depth3_permission"
+              }
+            }
+          ],
+          "pendingAfter": [],
+          "filesystemEffect": false
+        },
+        {
+          "test": "durable Stop generation rehydrates after private daemon replacement",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "policiesRehydrated": true,
+          "providerRequests": 0,
+          "noPermissionPromptReplay": true
+        },
+        {
+          "test": "atomic descendant-birth fence",
+          "status": "UNTESTED",
+          "guarantee": "Hooks gate model dispatch/tool starts; explicit known-family interrupts are non-atomic"
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [
+        {
+          "index": 24,
+          "sessionID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+          "kind": "primary"
+        }
+      ],
+      "rejections": [
+        {
+          "kind": "rejected",
+          "time": 1791002480877,
+          "sessionID": "ses_effeef207ffe3MKy4PLRUtaLDB",
+          "boundary": "result-settlement",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002480894,
+          "sessionID": "ses_effeef207ffe3MKy4PLRUtaLDB",
+          "boundary": "context",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002480916,
+          "sessionID": "ses_effeef335ffeeou8Jrc8UBqSlb",
+          "boundary": "context",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002480942,
+          "sessionID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "boundary": "context",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002481250,
+          "sessionID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "boundary": "context",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002482606,
+          "sessionID": "ses_effeeebcdffeLe538kG9jgYaeH",
+          "boundary": "context",
+          "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+          "state": "paused",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002482626,
+          "sessionID": "ses_effeeecfeffeuaJKi1MXjZm1Rk",
+          "boundary": "context",
+          "rootID": "ses_effeeed99ffeSjLP0dQMadZsqL",
+          "state": "paused",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002483625,
+          "sessionID": "ses_effeee6d0ffe2KgdWkzMwfP2uE",
+          "boundary": "tool:shell",
+          "rootID": "ses_effeee6d0ffe2KgdWkzMwfP2uE",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002483636,
+          "sessionID": "ses_effeee6d0ffe2KgdWkzMwfP2uE",
+          "boundary": "context",
+          "rootID": "ses_effeee6d0ffe2KgdWkzMwfP2uE",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002487083,
+          "sessionID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "boundary": "context",
+          "rootID": "ses_effeef3fdffeuXfBuRJAsfSpss",
+          "state": "stopped",
+          "generation": 3
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-aHtzji",
+      "phase": "private-restart-fault-boundaries",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 30,
+        "primaryRequests": 30,
+        "sessions": 18,
+        "events": 419
+      },
+      "matrix": [
+        {
+          "test": "2.0.22 session.create parentID native depth3 linked family",
+          "status": "SUPPORTED",
+          "rootID": "ses_effee86c7ffezWoad2QE9Ap6Ff",
+          "linkedIDs": [
+            "ses_effee8401ffesWqw7EqGcsqe9v",
+            "ses_effee83a1ffeUvLEdMtlX9tcQ8",
+            "ses_effee8344ffemixv3vI7n0NYzJ"
+          ],
+          "actualModelConsumption": true,
+          "notSubagentToolLaunch": true
+        },
+        {
+          "test": "quiesced private restart retains completed child before parent consumption",
+          "status": "SUPPORTED",
+          "before": {
+            "root": {
+              "id": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002508904,
+                "updated": 1791002508921
+              },
+              "title": "Child completed before parent consumes result",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee815dffeB01NT8dPDkW9gK",
+              "parentID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "outcome": "succeeded",
+              "time": {
+                "created": 1791002509340,
+                "updated": 1791002509346,
+                "idle": 1791002509375
+              },
+              "title": "completed_before_consume",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_100117e860017So8pMF9aE78ZY",
+                "time": {
+                  "created": 1791002508946,
+                  "streamed": 1791002508959
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "completed_before_consume",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "completed_before_consume",
+                        "prompt": "Private native qualification"
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002508954,
+                      "ran": 1791002508957
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100117e78001oSnc7hCmylU9oS",
+                "time": {
+                  "created": 1791002508929
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011803f002EuWwdmsrpmDjYU",
+                "time": {
+                  "created": 1791002509375
+                },
+                "type": "idle",
+                "outcome": "succeeded"
+              },
+              {
+                "id": "msg_10011802b001aXym5jpKQdV02a",
+                "time": {
+                  "created": 1791002509364,
+                  "streamed": 1791002509373,
+                  "completed": 1791002509374
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "DURABLE_CHILD_COMPLETED_REPORT"
+                  }
+                ],
+                "finish": "stop",
+                "rawFinish": "stop",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_100118021001kH5ccfvXSjJWx2",
+                "time": {
+                  "created": 1791002509352
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee8207ffe06ziXGRDPfLYSX": {
+                "type": "running"
+              }
+            },
+            "binding": {
+              "parentID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "childID": "ses_effee815dffeB01NT8dPDkW9gK",
+              "callID": "completed_before_consume",
+              "messageID": "msg_100117e860017So8pMF9aE78ZY",
+              "rootID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "generation": 2
+            }
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002508904,
+                "updated": 1791002508921
+              },
+              "title": "Child completed before parent consumes result",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee815dffeB01NT8dPDkW9gK",
+              "parentID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "outcome": "succeeded",
+              "time": {
+                "created": 1791002509340,
+                "updated": 1791002509346,
+                "idle": 1791002509375
+              },
+              "title": "completed_before_consume",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_100117e860017So8pMF9aE78ZY",
+                "time": {
+                  "created": 1791002508946,
+                  "streamed": 1791002508959
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "completed_before_consume",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "completed_before_consume",
+                        "prompt": "Private native qualification"
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002508954,
+                      "ran": 1791002508957
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100117e78001oSnc7hCmylU9oS",
+                "time": {
+                  "created": 1791002508929
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011803f002EuWwdmsrpmDjYU",
+                "time": {
+                  "created": 1791002509375
+                },
+                "type": "idle",
+                "outcome": "succeeded"
+              },
+              {
+                "id": "msg_10011802b001aXym5jpKQdV02a",
+                "time": {
+                  "created": 1791002509364,
+                  "streamed": 1791002509373,
+                  "completed": 1791002509374
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture",
+                  "variant": "default"
+                },
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "DURABLE_CHILD_COMPLETED_REPORT"
+                  }
+                ],
+                "finish": "stop",
+                "rawFinish": "stop",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_100118021001kH5ccfvXSjJWx2",
+                "time": {
+                  "created": 1791002509352
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": {
+              "parentID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "childID": "ses_effee815dffeB01NT8dPDkW9gK",
+              "callID": "completed_before_consume",
+              "messageID": "msg_100117e860017So8pMF9aE78ZY",
+              "rootID": "ses_effee8207ffe06ziXGRDPfLYSX",
+              "generation": 2
+            }
+          },
+          "daemonShutdownWasGraceful": false
+        },
+        {
+          "test": "true graceful Windows private daemon signal shutdown",
+          "status": "UNTESTED",
+          "reason": "Current authenticated API has no daemon shutdown operation; Location reload plus exact ChildProcess stop is explicitly not claimed equivalent"
+        },
+        {
+          "test": "crash/reopen same private DB at fg_before_binding",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee76d9ffe64uhVliz0W1WOU",
+          "childID": "ses_effee758bffeFqyUcehHRQA9xv",
+          "background": false,
+          "fault": "before-binding",
+          "before": {
+            "root": {
+              "id": "ses_effee76d9ffe64uhVliz0W1WOU",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002511910,
+                "updated": 1791002511932
+              },
+              "title": "fg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee758bffeFqyUcehHRQA9xv",
+              "parentID": "ses_effee76d9ffe64uhVliz0W1WOU",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002512271,
+                "updated": 1791002512271
+              },
+              "title": "fg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_100118a4f001ARyllQmrDSL3sE",
+                "time": {
+                  "created": 1791002511968,
+                  "streamed": 1791002511984
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_before_binding",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_before_binding",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002511979,
+                      "ran": 1791002511983
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100118a3b001MXMVd6vuVYGn3u",
+                "time": {
+                  "created": 1791002511944
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee76d9ffe64uhVliz0W1WOU": {
+                "type": "running"
+              }
+            },
+            "binding": null
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee76d9ffe64uhVliz0W1WOU",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002511910,
+                "updated": 1791002511932
+              },
+              "title": "fg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee758bffeFqyUcehHRQA9xv",
+              "parentID": "ses_effee76d9ffe64uhVliz0W1WOU",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002512271,
+                "updated": 1791002512271
+              },
+              "title": "fg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_100118a4f001ARyllQmrDSL3sE",
+                "time": {
+                  "created": 1791002511968,
+                  "streamed": 1791002511984
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_before_binding",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_before_binding",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002511979,
+                      "ran": 1791002511983
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100118a3b001MXMVd6vuVYGn3u",
+                "time": {
+                  "created": 1791002511944
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": null
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": true,
+          "environmentAdmissionNotExercised": false
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth fg_before_binding",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee76d9ffe64uhVliz0W1WOU",
+          "childID": "ses_effee758bffeFqyUcehHRQA9xv",
+          "recoveredCall": "recover_fg_before_binding",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "crash/reopen same private DB at bg_before_binding",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee6772ffeQT7RgxznjtM1Q6",
+          "childID": "ses_effee6699ffec6KSKel37jQEBg",
+          "background": true,
+          "fault": "before-binding",
+          "before": {
+            "root": {
+              "id": "ses_effee6772ffeQT7RgxznjtM1Q6",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002515754,
+                "updated": 1791002515769
+              },
+              "title": "bg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee6699ffec6KSKel37jQEBg",
+              "parentID": "ses_effee6772ffeQT7RgxznjtM1Q6",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002516070,
+                "updated": 1791002516070
+              },
+              "title": "bg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_1001199460019aZ46orkAeileo",
+                "time": {
+                  "created": 1791002515797,
+                  "streamed": 1791002515809
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_before_binding",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_before_binding",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002515805,
+                      "ran": 1791002515808
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100119938001wNIx65cnzk22HN",
+                "time": {
+                  "created": 1791002515777
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee6772ffeQT7RgxznjtM1Q6": {
+                "type": "running"
+              }
+            },
+            "binding": null
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee6772ffeQT7RgxznjtM1Q6",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002515754,
+                "updated": 1791002515769
+              },
+              "title": "bg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee6699ffec6KSKel37jQEBg",
+              "parentID": "ses_effee6772ffeQT7RgxznjtM1Q6",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002516070,
+                "updated": 1791002516070
+              },
+              "title": "bg_before_binding",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_1001199460019aZ46orkAeileo",
+                "time": {
+                  "created": 1791002515797,
+                  "streamed": 1791002515809
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_before_binding",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_before_binding",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002515805,
+                      "ran": 1791002515808
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_100119938001wNIx65cnzk22HN",
+                "time": {
+                  "created": 1791002515777
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": null
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": true,
+          "environmentAdmissionNotExercised": false
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth bg_before_binding",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee6772ffeQT7RgxznjtM1Q6",
+          "childID": "ses_effee6699ffec6KSKel37jQEBg",
+          "recoveredCall": "recover_bg_before_binding",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "crash/reopen same private DB at fg_progress_persisted",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+          "childID": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+          "background": false,
+          "fault": "after-admission",
+          "before": {
+            "root": {
+              "id": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002517547,
+                "updated": 1791002517564
+              },
+              "title": "fg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+              "parentID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002518091,
+                "updated": 1791002518091
+              },
+              "title": "fg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011a046001SpFIFR69cgcwEu",
+                "time": {
+                  "created": 1791002517598,
+                  "streamed": 1791002517622
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_progress_persisted",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_progress_persisted",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002517612,
+                      "ran": 1791002517619
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011a03b0015S3aBvcKxaUCC3",
+                "time": {
+                  "created": 1791002517570
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee60d0ffeUE1xVqlw8veSD0": {
+                "type": "running"
+              }
+            },
+            "binding": {
+              "parentID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "childID": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+              "callID": "fg_progress_persisted",
+              "messageID": "msg_10011a046001SpFIFR69cgcwEu",
+              "rootID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "generation": 2
+            }
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002517547,
+                "updated": 1791002517564
+              },
+              "title": "fg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+              "parentID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002518091,
+                "updated": 1791002518091
+              },
+              "title": "fg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011a046001SpFIFR69cgcwEu",
+                "time": {
+                  "created": 1791002517598,
+                  "streamed": 1791002517622
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_progress_persisted",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_progress_persisted",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002517612,
+                      "ran": 1791002517619
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011a03b0015S3aBvcKxaUCC3",
+                "time": {
+                  "created": 1791002517570
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": {
+              "parentID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "childID": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+              "callID": "fg_progress_persisted",
+              "messageID": "msg_10011a046001SpFIFR69cgcwEu",
+              "rootID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+              "generation": 2
+            }
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": false,
+          "environmentAdmissionNotExercised": true
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth fg_progress_persisted",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+          "childID": "ses_effee5f81ffeJNS8ImSLi2oUqu",
+          "recoveredCall": "recover_fg_progress_persisted",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "crash/reopen same private DB at bg_progress_persisted",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+          "childID": "ses_effee52cfffemkzMuosyw9deY3",
+          "background": true,
+          "fault": "after-admission",
+          "before": {
+            "root": {
+              "id": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002520839,
+                "updated": 1791002520852
+              },
+              "title": "bg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee52cfffemkzMuosyw9deY3",
+              "parentID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002521440,
+                "updated": 1791002521440
+              },
+              "title": "bg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011ad1d00143D4mWy947pJCx",
+                "time": {
+                  "created": 1791002520869,
+                  "streamed": 1791002520878
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_progress_persisted",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_progress_persisted",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002520875,
+                      "ran": 1791002520877
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011ad13001LP9vzQvbtxZhde",
+                "time": {
+                  "created": 1791002520858
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee5624ffe1gaLg1fV37E3Z7": {
+                "type": "running"
+              }
+            },
+            "binding": {
+              "parentID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "childID": "ses_effee52cfffemkzMuosyw9deY3",
+              "callID": "bg_progress_persisted",
+              "messageID": "msg_10011ad1d00143D4mWy947pJCx",
+              "rootID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "generation": 2
+            }
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002520839,
+                "updated": 1791002520852
+              },
+              "title": "bg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee52cfffemkzMuosyw9deY3",
+              "parentID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002521440,
+                "updated": 1791002521440
+              },
+              "title": "bg_progress_persisted",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011ad1d00143D4mWy947pJCx",
+                "time": {
+                  "created": 1791002520869,
+                  "streamed": 1791002520878
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_progress_persisted",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_progress_persisted",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002520875,
+                      "ran": 1791002520877
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011ad13001LP9vzQvbtxZhde",
+                "time": {
+                  "created": 1791002520858
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": {
+              "parentID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "childID": "ses_effee52cfffemkzMuosyw9deY3",
+              "callID": "bg_progress_persisted",
+              "messageID": "msg_10011ad1d00143D4mWy947pJCx",
+              "rootID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+              "generation": 2
+            }
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": false,
+          "environmentAdmissionNotExercised": true
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth bg_progress_persisted",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+          "childID": "ses_effee52cfffemkzMuosyw9deY3",
+          "recoveredCall": "recover_bg_progress_persisted",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "crash/reopen same private DB at fg_provider_awaiting",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+          "childID": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+          "background": false,
+          "fault": "none",
+          "before": {
+            "root": {
+              "id": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002522586,
+                "updated": 1791002522599
+              },
+              "title": "fg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+              "parentID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002522722,
+                "updated": 1791002522725
+              },
+              "title": "fg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011b3f10014h4kbpFGdossSY",
+                "time": {
+                  "created": 1791002522616,
+                  "streamed": 1791002522625
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_provider_awaiting",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_provider_awaiting",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002522622,
+                      "ran": 1791002522624
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011b3e6001fJNXtvAx4hcfEM",
+                "time": {
+                  "created": 1791002522606
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011b465002PmfH8g3e8CSAHR",
+                "time": {
+                  "created": 1791002522730
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee4ca8ffecd6FmwDxSL6rE9": {
+                "type": "running"
+              },
+              "ses_effee4bfbffeAJyTtPKqjDEkuC": {
+                "type": "running"
+              }
+            },
+            "binding": {
+              "parentID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "childID": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+              "callID": "fg_provider_awaiting",
+              "messageID": "msg_10011b3f10014h4kbpFGdossSY",
+              "rootID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "generation": 2
+            }
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002522586,
+                "updated": 1791002522599
+              },
+              "title": "fg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+              "parentID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002522722,
+                "updated": 1791002522725
+              },
+              "title": "fg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011b3f10014h4kbpFGdossSY",
+                "time": {
+                  "created": 1791002522616,
+                  "streamed": 1791002522625
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "fg_provider_awaiting",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "running",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "fg_provider_awaiting",
+                        "prompt": "Private native qualification",
+                        "background": false
+                      },
+                      "metadata": {}
+                    },
+                    "time": {
+                      "created": 1791002522622,
+                      "ran": 1791002522624
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "msg_10011b3e6001fJNXtvAx4hcfEM",
+                "time": {
+                  "created": 1791002522606
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011b465002PmfH8g3e8CSAHR",
+                "time": {
+                  "created": 1791002522730
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": {
+              "parentID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "childID": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+              "callID": "fg_provider_awaiting",
+              "messageID": "msg_10011b3f10014h4kbpFGdossSY",
+              "rootID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+              "generation": 2
+            }
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": false,
+          "environmentAdmissionNotExercised": false
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth fg_provider_awaiting",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+          "childID": "ses_effee4bfbffeAJyTtPKqjDEkuC",
+          "recoveredCall": "recover_fg_provider_awaiting",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "crash/reopen same private DB at bg_provider_awaiting",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effee4730ffePsBaBnfmOSOmfG",
+          "childID": "ses_effee460fffew7Z5H6Cebji9PE",
+          "background": true,
+          "fault": "none",
+          "before": {
+            "root": {
+              "id": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "outcome": "succeeded",
+              "time": {
+                "created": 1791002524098,
+                "updated": 1791002524111,
+                "idle": 1791002524434
+              },
+              "title": "bg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee460fffew7Z5H6Cebji9PE",
+              "parentID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002524387,
+                "updated": 1791002524391
+              },
+              "title": "bg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011bb12001Nd9ZJHnknh45oh",
+                "time": {
+                  "created": 1791002524434
+                },
+                "type": "idle",
+                "outcome": "succeeded"
+              },
+              {
+                "id": "msg_10011bafd001TGspMihiTi9MlJ",
+                "time": {
+                  "created": 1791002524423,
+                  "streamed": 1791002524432,
+                  "completed": 1791002524432
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "NATIVE_CONSUMED:[{\"role\":\"user\",\"content\":\"Private native qualification\"},{\"role\":\"tool\",\"tool_call_id\":\"bg_provider_awaiting\",\"content\":\"The subagent is working in the background (sessionID: ses_effee460fffew7Z5H6Cebji9PE). You will be notified automatically when it finishes.\\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response.\"}]"
+                  }
+                ],
+                "finish": "stop",
+                "rawFinish": "stop",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_10011b9d8001u7MhxFAMN1Dwa6",
+                "time": {
+                  "created": 1791002524129,
+                  "streamed": 1791002524139,
+                  "completed": 1791002524408
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_provider_awaiting",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "completed",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_provider_awaiting",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "The subagent is working in the background (sessionID: ses_effee460fffew7Z5H6Cebji9PE). You will be notified automatically when it finishes.\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response."
+                        }
+                      ],
+                      "metadata": {
+                        "sessionID": "ses_effee460fffew7Z5H6Cebji9PE",
+                        "status": "running",
+                        "truncated": false
+                      }
+                    },
+                    "time": {
+                      "created": 1791002524135,
+                      "ran": 1791002524137,
+                      "completed": 1791002524407
+                    }
+                  }
+                ],
+                "finish": "tool-calls",
+                "rawFinish": "tool_calls",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_10011b9ce001zdwqNIbvuVvjJL",
+                "time": {
+                  "created": 1791002524117
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011bae70016YDMMOhbJyg6Lh",
+                "time": {
+                  "created": 1791002524397
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {
+              "ses_effee460fffew7Z5H6Cebji9PE": {
+                "type": "running"
+              }
+            },
+            "binding": {
+              "parentID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "childID": "ses_effee460fffew7Z5H6Cebji9PE",
+              "callID": "bg_provider_awaiting",
+              "messageID": "msg_10011b9d8001u7MhxFAMN1Dwa6",
+              "rootID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "generation": 2
+            }
+          },
+          "after": {
+            "root": {
+              "id": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "projectID": "global",
+              "agent": "recursive",
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "outcome": "succeeded",
+              "time": {
+                "created": 1791002524098,
+                "updated": 1791002524111,
+                "idle": 1791002524434
+              },
+              "title": "bg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "child": {
+              "id": "ses_effee460fffew7Z5H6Cebji9PE",
+              "parentID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "projectID": "global",
+              "agent": "recursive",
+              "model": {
+                "id": "fixture",
+                "providerID": "fixture",
+                "variant": "default"
+              },
+              "cost": 0,
+              "tokens": {
+                "input": 0,
+                "output": 0,
+                "reasoning": 0,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                }
+              },
+              "time": {
+                "created": 1791002524387,
+                "updated": 1791002524391
+              },
+              "title": "bg_provider_awaiting",
+              "location": {
+                "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-aHtzji\\project"
+              }
+            },
+            "rootMessages": [
+              {
+                "id": "msg_10011bb12001Nd9ZJHnknh45oh",
+                "time": {
+                  "created": 1791002524434
+                },
+                "type": "idle",
+                "outcome": "succeeded"
+              },
+              {
+                "id": "msg_10011bafd001TGspMihiTi9MlJ",
+                "time": {
+                  "created": 1791002524423,
+                  "streamed": 1791002524432,
+                  "completed": 1791002524432
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "NATIVE_CONSUMED:[{\"role\":\"user\",\"content\":\"Private native qualification\"},{\"role\":\"tool\",\"tool_call_id\":\"bg_provider_awaiting\",\"content\":\"The subagent is working in the background (sessionID: ses_effee460fffew7Z5H6Cebji9PE). You will be notified automatically when it finishes.\\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response.\"}]"
+                  }
+                ],
+                "finish": "stop",
+                "rawFinish": "stop",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_10011b9d8001u7MhxFAMN1Dwa6",
+                "time": {
+                  "created": 1791002524129,
+                  "streamed": 1791002524139,
+                  "completed": 1791002524408
+                },
+                "type": "assistant",
+                "agent": "recursive",
+                "model": {
+                  "id": "fixture",
+                  "providerID": "fixture"
+                },
+                "content": [
+                  {
+                    "type": "tool",
+                    "id": "bg_provider_awaiting",
+                    "name": "subagent",
+                    "executed": false,
+                    "state": {
+                      "status": "completed",
+                      "input": {
+                        "agent": "recursive",
+                        "description": "bg_provider_awaiting",
+                        "prompt": "Private native qualification",
+                        "background": true
+                      },
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "The subagent is working in the background (sessionID: ses_effee460fffew7Z5H6Cebji9PE). You will be notified automatically when it finishes.\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response."
+                        }
+                      ],
+                      "metadata": {
+                        "sessionID": "ses_effee460fffew7Z5H6Cebji9PE",
+                        "status": "running",
+                        "truncated": false
+                      }
+                    },
+                    "time": {
+                      "created": 1791002524135,
+                      "ran": 1791002524137,
+                      "completed": 1791002524407
+                    }
+                  }
+                ],
+                "finish": "tool-calls",
+                "rawFinish": "tool_calls",
+                "cost": 0,
+                "tokens": {
+                  "input": 0,
+                  "output": 0,
+                  "reasoning": 0,
+                  "cache": {
+                    "read": 0,
+                    "write": 0
+                  }
+                }
+              },
+              {
+                "id": "msg_10011b9ce001zdwqNIbvuVvjJL",
+                "time": {
+                  "created": 1791002524117
+                },
+                "text": "Private native qualification",
+                "type": "user"
+              }
+            ],
+            "childMessages": [
+              {
+                "id": "msg_10011bae70016YDMMOhbJyg6Lh",
+                "time": {
+                  "created": 1791002524397
+                },
+                "text": "You are a subagent spawned by another session.\nPrivate native qualification",
+                "type": "user"
+              }
+            ],
+            "rootInbox": [],
+            "childInbox": [],
+            "active": {},
+            "binding": {
+              "parentID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "childID": "ses_effee460fffew7Z5H6Cebji9PE",
+              "callID": "bg_provider_awaiting",
+              "messageID": "msg_10011b9d8001u7MhxFAMN1Dwa6",
+              "rootID": "ses_effee4730ffePsBaBnfmOSOmfG",
+              "generation": 2
+            }
+          },
+          "birthsBefore": 1,
+          "childCountAfter": 1,
+          "automaticRequests": 0,
+          "missingBinding": false,
+          "environmentAdmissionNotExercised": false
+        },
+        {
+          "test": "legitimate explicit native continuation without duplicate birth bg_provider_awaiting",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effee4730ffePsBaBnfmOSOmfG",
+          "childID": "ses_effee460fffew7Z5H6Cebji9PE",
+          "recoveredCall": "recover_bg_provider_awaiting",
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "actualResultConsumed": true
+        },
+        {
+          "test": "production exactly-once contract/report and crash between environment dispatch/receipt",
+          "status": "UNTESTED",
+          "reason": "Native identity/transcript persistence and explicit continuation are measured; no automatic replay/outbox/atomic binding claim is made"
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [
+        {
+          "index": 6,
+          "sessionID": "ses_effee76d9ffe64uhVliz0W1WOU",
+          "kind": "primary"
+        },
+        {
+          "index": 10,
+          "sessionID": "ses_effee6772ffeQT7RgxznjtM1Q6",
+          "kind": "primary"
+        },
+        {
+          "index": 14,
+          "sessionID": "ses_effee60d0ffeUE1xVqlw8veSD0",
+          "kind": "primary"
+        },
+        {
+          "index": 18,
+          "sessionID": "ses_effee5624ffe1gaLg1fV37E3Z7",
+          "kind": "primary"
+        },
+        {
+          "index": 23,
+          "sessionID": "ses_effee4ca8ffecd6FmwDxSL6rE9",
+          "kind": "primary"
+        },
+        {
+          "index": 29,
+          "sessionID": "ses_effee4730ffePsBaBnfmOSOmfG",
+          "kind": "primary"
+        }
+      ],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-MVBlF2",
+      "phase": "Stop-is-not-OS-shell-suspension",
+      "status": "failed-fixture",
+      "failure": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(shell && shell.status === \"running\")\n",
+      "counts": {
+        "providerRequests": 4,
+        "primaryRequests": 4,
+        "sessions": 4,
+        "events": 59
+      },
+      "matrix": [],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-RVJCZc",
+      "phase": "Stop-is-not-OS-shell-suspension",
+      "status": "failed-fixture",
+      "failure": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\ntrue !== false\n",
+      "counts": {
+        "providerRequests": 8,
+        "primaryRequests": 8,
+        "sessions": 8,
+        "events": 138
+      },
+      "matrix": [
+        {
+          "test": "fg_gate_only",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "depth3ChildID": "ses_effea3b67ffe0s61Zf6L7QNyec",
+          "background": false,
+          "shellBefore": {
+            "id": "sh_10015c54a0012DTpJL6IT6Ddwy",
+            "status": "running",
+            "command": "node effect.cjs fg_gate_only",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-RVJCZc\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-RVJCZc\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_10015c54a0012DTpJL6IT6Ddwy.out",
+            "pid": 43944,
+            "metadata": {
+              "sessionID": "ses_effea3b67ffe0s61Zf6L7QNyec"
+            },
+            "time": {
+              "started": 1791002789194
+            }
+          },
+          "receipt": null,
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Model/tool gate is not suspension of an already-running OS process"
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": [
+        {
+          "kind": "rejected",
+          "time": 1791002789519,
+          "sessionID": "ses_effea3b67ffe0s61Zf6L7QNyec",
+          "boundary": "context",
+          "rootID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002789535,
+          "sessionID": "ses_effea3c14ffeHGUkOgAjplDe48",
+          "boundary": "context",
+          "rootID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002789559,
+          "sessionID": "ses_effea3ca8ffeIK5anyXhWsABbW",
+          "boundary": "context",
+          "rootID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002789579,
+          "sessionID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "boundary": "context",
+          "rootID": "ses_effea43d8ffezw1Z1jtfZWuxLk",
+          "state": "stopped",
+          "generation": 3
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-NkXFan",
+      "phase": "Stop-is-not-OS-shell-suspension",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 30,
+        "primaryRequests": 30,
+        "sessions": 20,
+        "events": 412
+      },
+      "matrix": [
+        {
+          "test": "fg_gate_only",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "depth3ChildID": "ses_effe9015dffey6AtGVeMi455ne",
+          "background": false,
+          "shellBefore": {
+            "id": "sh_10016ff47001qb0RCZ77yrPSNG",
+            "status": "running",
+            "command": "node effect.cjs fg_gate_only",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_10016ff47001qb0RCZ77yrPSNG.out",
+            "pid": 36520,
+            "metadata": {
+              "sessionID": "ses_effe9015dffey6AtGVeMi455ne"
+            },
+            "time": {
+              "started": 1791002869575
+            }
+          },
+          "receipt": null,
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Already-started OS descendant effect occurred despite model gate/native cancellation; no suspension guarantee"
+        },
+        {
+          "test": "fg_native_interrupt",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe8fe9affejwSWVretwuEWdc",
+          "depth3ChildID": "ses_effe8fbe0ffeR37m7NtkKJObzM",
+          "background": false,
+          "shellBefore": {
+            "id": "sh_1001704aa001erlxqdMaupov4x",
+            "status": "running",
+            "command": "node effect.cjs fg_native_interrupt",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_1001704aa001erlxqdMaupov4x.out",
+            "pid": 19500,
+            "metadata": {
+              "sessionID": "ses_effe8fbe0ffeR37m7NtkKJObzM"
+            },
+            "time": {
+              "started": 1791002870954
+            }
+          },
+          "receipt": {
+            "interrupted": true
+          },
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Already-started OS descendant effect occurred despite model gate/native cancellation; no suspension guarantee"
+        },
+        {
+          "test": "fg_native_remove",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "depth3ChildID": "ses_effe8f00bffeBjx3H9YN54Vywx",
+          "background": false,
+          "shellBefore": {
+            "id": "sh_1001714f400139YUnmGm27sRk1",
+            "status": "running",
+            "command": "node effect.cjs fg_native_remove",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_1001714f400139YUnmGm27sRk1.out",
+            "pid": 6456,
+            "metadata": {
+              "sessionID": "ses_effe8f00bffeBjx3H9YN54Vywx"
+            },
+            "time": {
+              "started": 1791002875124
+            }
+          },
+          "receipt": null,
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Already-started OS descendant effect occurred despite model gate/native cancellation; no suspension guarantee"
+        },
+        {
+          "test": "bg_gate_only",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe8e86affeKwQO3vQlVp2csN",
+          "depth3ChildID": "ses_effe8e480ffeygSEBJqJc3wspE",
+          "background": true,
+          "shellBefore": {
+            "id": "sh_100171cbf001sgmKnavfY66AWn",
+            "status": "running",
+            "command": "node effect.cjs bg_gate_only",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_100171cbf001sgmKnavfY66AWn.out",
+            "pid": 37380,
+            "metadata": {
+              "sessionID": "ses_effe8e480ffeygSEBJqJc3wspE"
+            },
+            "time": {
+              "started": 1791002877119
+            }
+          },
+          "receipt": null,
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Already-started OS descendant effect occurred despite model gate/native cancellation; no suspension guarantee"
+        },
+        {
+          "test": "bg_native_remove",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe8e185ffe7rAXLEMaZj5jW4",
+          "depth3ChildID": "ses_effe8df48ffeRORbYPKKod230i",
+          "background": true,
+          "shellBefore": {
+            "id": "sh_100172223001mcnjwI4VCKZZAF",
+            "status": "running",
+            "command": "node effect.cjs bg_native_remove",
+            "cwd": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\project",
+            "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+            "file": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-NkXFan\\XDG_DATA_HOME\\opencode\\shell\\global\\sh_100172223001mcnjwI4VCKZZAF.out",
+            "pid": 30544,
+            "metadata": {
+              "sessionID": "ses_effe8df48ffeRORbYPKKod230i"
+            },
+            "time": {
+              "started": 1791002878499
+            }
+          },
+          "receipt": null,
+          "filesystemEffectAfterStop": true,
+          "providerRequestsAfterStop": 0,
+          "claim": "Already-started OS descendant effect occurred despite model gate/native cancellation; no suspension guarantee"
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        }
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": [
+        {
+          "kind": "rejected",
+          "time": 1791002869888,
+          "sessionID": "ses_effe9015dffey6AtGVeMi455ne",
+          "boundary": "context",
+          "rootID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002869914,
+          "sessionID": "ses_effe902cbffeDtabrbETwU9gID",
+          "boundary": "context",
+          "rootID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002869928,
+          "sessionID": "ses_effe9037bffe549PE7IpRkezNX",
+          "boundary": "context",
+          "rootID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002869944,
+          "sessionID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "boundary": "context",
+          "rootID": "ses_effe90711ffesP15AZuAIjOCF3",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002875533,
+          "sessionID": "ses_effe8f00bffeBjx3H9YN54Vywx",
+          "boundary": "context",
+          "rootID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002875568,
+          "sessionID": "ses_effe8f467ffebQQRd5sAlyRR0l",
+          "boundary": "context",
+          "rootID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002875603,
+          "sessionID": "ses_effe8f6fdffer8ERYq8rEMGdSA",
+          "boundary": "context",
+          "rootID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002875635,
+          "sessionID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "boundary": "context",
+          "rootID": "ses_effe8f93bffeCYx1eAi5SM80Ny",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002877414,
+          "sessionID": "ses_effe8e480ffeygSEBJqJc3wspE",
+          "boundary": "context",
+          "rootID": "ses_effe8e86affeKwQO3vQlVp2csN",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791002878781,
+          "sessionID": "ses_effe8df48ffeRORbYPKKod230i",
+          "boundary": "context",
+          "rootID": "ses_effe8e185ffe7rAXLEMaZj5jW4",
+          "state": "stopped",
+          "generation": 3
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-pelAK7",
+      "phase": "real-child-environment-write-crash",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 10,
+        "primaryRequests": 10,
+        "sessions": 4,
+        "events": 159
+      },
+      "matrix": [
+        {
+          "test": "actual environment API write survives private crash? fg_write_settlement",
+          "status": "OBSERVED_LIMIT",
+          "binding": {
+            "parentID": "ses_effe81925ffes3QugvzMsszKlV",
+            "childID": "ses_effe8156cffeP94sQE4H2k18xm",
+            "callID": "fg_write_settlement",
+            "messageID": "msg_10017ea70001Uj169NrW4luUv3",
+            "rootID": "ses_effe81925ffes3QugvzMsszKlV",
+            "generation": 2
+          },
+          "settlementBeforeReceipt": true,
+          "actualWriteCount": 1,
+          "providerBeforeCrash": 0,
+          "afterRestart": {
+            "marker": null,
+            "db": true,
+            "password": true,
+            "state": true
+          }
+        },
+        {
+          "test": "fresh owned pre-provider environment re-admission on explicit same-child continuation fg_write_settlement",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe81925ffes3QugvzMsszKlV",
+          "childID": "ses_effe8156cffeP94sQE4H2k18xm",
+          "measured": {
+            "marker": "CRASH_PROFILE",
+            "db": false,
+            "password": false,
+            "state": false
+          },
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "environmentWritesNewAdmission": 1
+        },
+        {
+          "test": "actual environment API write survives private crash? bg_after_env_receipt",
+          "status": "OBSERVED_LIMIT",
+          "binding": {
+            "parentID": "ses_effe807e7ffeNLBmyYPFj09TUN",
+            "childID": "ses_effe806b2ffeJiD1jzdJNoqLJF",
+            "callID": "bg_after_env_receipt",
+            "messageID": "msg_10017f936001H4YG694Cn12xvW",
+            "rootID": "ses_effe807e7ffeNLBmyYPFj09TUN",
+            "generation": 2
+          },
+          "settlementBeforeReceipt": false,
+          "actualWriteCount": 1,
+          "providerBeforeCrash": 0,
+          "afterRestart": {
+            "marker": null,
+            "db": true,
+            "password": true,
+            "state": true
+          }
+        },
+        {
+          "test": "fresh owned pre-provider environment re-admission on explicit same-child continuation bg_after_env_receipt",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe807e7ffeNLBmyYPFj09TUN",
+          "childID": "ses_effe806b2ffeJiD1jzdJNoqLJF",
+          "measured": {
+            "marker": "CRASH_PROFILE",
+            "db": false,
+            "password": false,
+            "state": false
+          },
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "environmentWritesNewAdmission": 1
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-JPwpQA",
+      "phase": "real-child-environment-write-crash",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 10,
+        "primaryRequests": 10,
+        "sessions": 4,
+        "events": 167
+      },
+      "matrix": [
+        {
+          "test": "actual environment API write survives private crash? fg_write_settlement",
+          "status": "OBSERVED_LIMIT",
+          "binding": {
+            "parentID": "ses_effe604b9ffeV4ViwObHcePTUF",
+            "childID": "ses_effe602e0ffe5jIWJmmYGOGcr6",
+            "callID": "fg_write_settlement",
+            "messageID": "msg_10019fcee001jyt2CtI6N7z82r",
+            "rootID": "ses_effe604b9ffeV4ViwObHcePTUF",
+            "generation": 2
+          },
+          "settlementBeforeReceipt": true,
+          "actualWriteCount": 1,
+          "providerBeforeCrash": 0,
+          "afterRestart": {
+            "marker": null,
+            "db": true,
+            "password": true,
+            "state": true
+          }
+        },
+        {
+          "test": "native wake cannot consume stale persisted environment receipt fg_write_settlement",
+          "status": "WORKAROUND_TESTED",
+          "childID": "ses_effe602e0ffe5jIWJmmYGOGcr6",
+          "providerRequests": 0,
+          "runtimeLifetimeFence": true,
+          "notNativeAttestation": true
+        },
+        {
+          "test": "fresh owned pre-provider environment re-admission on explicit same-child continuation fg_write_settlement",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe604b9ffeV4ViwObHcePTUF",
+          "childID": "ses_effe602e0ffe5jIWJmmYGOGcr6",
+          "measured": {
+            "marker": "CRASH_PROFILE",
+            "db": false,
+            "password": false,
+            "state": false
+          },
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "environmentWritesNewAdmission": 1
+        },
+        {
+          "test": "actual environment API write survives private crash? bg_after_env_receipt",
+          "status": "OBSERVED_LIMIT",
+          "binding": {
+            "parentID": "ses_effe5f6a8ffehNHbuVl1AZ5RuV",
+            "childID": "ses_effe5f5adffeynI3ewwsMQYhY7",
+            "callID": "bg_after_env_receipt",
+            "messageID": "msg_1001a0a32001XH4WG1Yc8MBFoY",
+            "rootID": "ses_effe5f6a8ffehNHbuVl1AZ5RuV",
+            "generation": 2
+          },
+          "settlementBeforeReceipt": false,
+          "actualWriteCount": 1,
+          "providerBeforeCrash": 0,
+          "afterRestart": {
+            "marker": null,
+            "db": true,
+            "password": true,
+            "state": true
+          }
+        },
+        {
+          "test": "native wake cannot consume stale persisted environment receipt bg_after_env_receipt",
+          "status": "WORKAROUND_TESTED",
+          "childID": "ses_effe5f5adffeynI3ewwsMQYhY7",
+          "providerRequests": 0,
+          "runtimeLifetimeFence": true,
+          "notNativeAttestation": true
+        },
+        {
+          "test": "fresh owned pre-provider environment re-admission on explicit same-child continuation bg_after_env_receipt",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe5f6a8ffehNHbuVl1AZ5RuV",
+          "childID": "ses_effe5f5adffeynI3ewwsMQYhY7",
+          "measured": {
+            "marker": "CRASH_PROFILE",
+            "db": false,
+            "password": false,
+            "state": false
+          },
+          "duplicateBirths": 0,
+          "originalAssignmentReplayed": false,
+          "environmentWritesNewAdmission": 1
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": [
+        {
+          "kind": "environment-context-rejected",
+          "time": 1791003067216,
+          "sessionID": "ses_effe602e0ffe5jIWJmmYGOGcr6",
+          "rootID": "ses_effe604b9ffeV4ViwObHcePTUF",
+          "boundary": "context",
+          "reason": "Fresh owned environment admission required in current plugin lifetime/generation"
+        },
+        {
+          "kind": "environment-context-rejected",
+          "time": 1791003070967,
+          "sessionID": "ses_effe5f5adffeynI3ewwsMQYhY7",
+          "rootID": "ses_effe5f6a8ffehNHbuVl1AZ5RuV",
+          "boundary": "context",
+          "reason": "Fresh owned environment admission required in current plugin lifetime/generation"
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-WwfCfP",
+      "phase": "direct-native-entrypoints-and-owned-admission",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 5,
+        "primaryRequests": 5,
+        "sessions": 4,
+        "events": 79
+      },
+      "matrix": [
+        {
+          "test": "direct prompt is admitted but context/generate model consumption blocked",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+          "childID": "ses_effe5789dffe1C848jABrTebbC",
+          "promptAdmissionID": "msg_1001a885a001FUFdSO5h0MwNx2",
+          "providerRequests": 0
+        },
+        {
+          "test": "authenticated raw session.shell bypasses model/tool hooks",
+          "status": "OBSERVED_LIMIT",
+          "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+          "childID": "ses_effe5789dffe1C848jABrTebbC",
+          "actualFilesystemEffect": true,
+          "requiresOwnedAdmissionBoundary": true
+        },
+        {
+          "test": "owned authenticated descendant shell/prompt admission honors durable Stop",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+          "childID": "ses_effe5789dffe1C848jABrTebbC",
+          "filesystemEffect": false,
+          "routeReceipts": [
+            {
+              "operation": "owned-route-denied",
+              "sessionID": "ses_effe5789dffe1C848jABrTebbC",
+              "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+              "entrypoint": "shell"
+            },
+            {
+              "operation": "owned-route-denied",
+              "sessionID": "ses_effe57d3affedMURa1K0tdEA6I",
+              "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+              "entrypoint": "prompt"
+            }
+          ]
+        },
+        {
+          "test": "backend detach before admission leaves native child but fails closed pre-model",
+          "status": "WORKAROUND_TESTED",
+          "binding": {
+            "parentID": "ses_effe57682ffefA5ALKllzhMmpe",
+            "childID": "ses_effe575e7ffeO1Ygd9vabDrlVk",
+            "callID": "after_detach_birth",
+            "messageID": "msg_1001a8a020010YiGj2igqjQLdr",
+            "rootID": "ses_effe57682ffefA5ALKllzhMmpe",
+            "generation": 2
+          },
+          "providerRequests": 0,
+          "nativeBirthIsNotAuthorizedExecution": true
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": [
+        {
+          "kind": "rejected",
+          "time": 1791003101296,
+          "sessionID": "ses_effe5789dffe1C848jABrTebbC",
+          "boundary": "context",
+          "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+          "state": "stopped",
+          "generation": 3
+        },
+        {
+          "kind": "rejected",
+          "time": 1791003101310,
+          "sessionID": "ses_effe5789dffe1C848jABrTebbC",
+          "boundary": "generate",
+          "rootID": "ses_effe57d3affedMURa1K0tdEA6I",
+          "state": "stopped",
+          "generation": 3
+        }
+      ]
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-u2dKQg",
+      "phase": "builtin-general-uncontaminated-policy",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 3,
+        "primaryRequests": 3,
+        "sessions": 2,
+        "events": 48
+      },
+      "matrix": [
+        {
+          "test": "builtin General cannot recurse with native unmodified deny and no global star allow",
+          "status": "SUPPORTED",
+          "binding": {
+            "parentID": "ses_effe36483ffeXx8eWFWhYCWdHT",
+            "childID": "ses_effe3617affegKNLju2xhP3gQ7",
+            "callID": "uncontaminated_general",
+            "messageID": "msg_1001c9e5c001VyIlJCxVuuNJz5",
+            "rootID": "ses_effe36483ffeXx8eWFWhYCWdHT",
+            "generation": 1
+          },
+          "advertisedSubagent": false,
+          "actualInvocation": null,
+          "nestedBirths": 0,
+          "customRecursiveAgentStillLegal": true,
+          "noEngineImpossibilityClaim": true
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    },
+    {
+      "root": "C:/Users/Admin/AppData/Local/Temp/opencode/missions-child-environment-VmLlDu",
+      "phase": "native-private-shutdown-handler-workaround",
+      "status": "completed-experiments",
+      "failure": null,
+      "counts": {
+        "providerRequests": 2,
+        "primaryRequests": 2,
+        "sessions": 2,
+        "events": 37
+      },
+      "matrix": [
+        {
+          "test": "registered native shutdown handler invoked on owned private daemon",
+          "status": "WORKAROUND_TESTED",
+          "rootID": "ses_effe26601ffeFvmcqSEj087DOV",
+          "binding": {
+            "parentID": "ses_effe26601ffeFvmcqSEj087DOV",
+            "childID": "ses_effe25d4cffe2Mce82UpRV81ya",
+            "callID": "graceful_child",
+            "messageID": "msg_1001da28c001B0JED9j04qVO2E",
+            "rootID": "ses_effe26601ffeFvmcqSEj087DOV",
+            "generation": 2
+          },
+          "request": {
+            "attempted": true,
+            "counts": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            },
+            "signal": "SIGTERM"
+          },
+          "naturalExit": true,
+          "nativeCleanupObserved": true,
+          "before": {
+            "id": "ses_effe25d4cffe2Mce82UpRV81ya",
+            "parentID": "ses_effe26601ffeFvmcqSEj087DOV",
+            "projectID": "global",
+            "agent": "recursive",
+            "model": {
+              "id": "fixture",
+              "providerID": "fixture",
+              "variant": "default"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "outcome": "succeeded",
+            "time": {
+              "created": 1791003304720,
+              "updated": 1791003304725,
+              "idle": 1791003304754
+            },
+            "title": "graceful_child",
+            "location": {
+              "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-VmLlDu\\project"
+            }
+          },
+          "after": {
+            "id": "ses_effe25d4cffe2Mce82UpRV81ya",
+            "parentID": "ses_effe26601ffeFvmcqSEj087DOV",
+            "projectID": "global",
+            "agent": "recursive",
+            "model": {
+              "id": "fixture",
+              "providerID": "fixture",
+              "variant": "default"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "outcome": "succeeded",
+            "time": {
+              "created": 1791003304720,
+              "updated": 1791003304725,
+              "idle": 1791003304754
+            },
+            "title": "graceful_child",
+            "location": {
+              "directory": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\missions-child-environment-VmLlDu\\project"
+            }
+          },
+          "parentDidNotConsumeBeforeRestart": true,
+          "ordinaryWindowsOSSignalQualified": false
+        }
+      ],
+      "before": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "after": {
+        "primary": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "experimentCommon": {
+          "files": 2225,
+          "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+          "baselineDifferences": []
+        },
+        "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+      },
+      "hashesUnchanged": true,
+      "providerConsumptionIndices": [],
+      "rejections": []
+    }
+  ],
+  "hashesNow": {
+    "primary": {
+      "files": 2225,
+      "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+      "baselineDifferences": []
+    },
+    "experimentCommon": {
+      "files": 2225,
+      "digest": "6b8fa087eb40b0fbbe5ff08f39474708f5d820086d53bcb35e33a3c7cd13bfb4",
+      "baselineDifferences": []
+    },
+    "primaryIndexSHA256": "21a5beee4071a842ef888dfbbfecfcc95cc42b69b378dff0268031ffbac222db"
+  },
+  "totals": {
+    "runs": 16,
+    "completed": 10,
+    "failedFixturesPreserved": 6,
+    "providerRequests": 228
+  }
+}

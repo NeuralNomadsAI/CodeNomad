@@ -4,10 +4,14 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
+  cache = await createFixtureCache()
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    cacheDir: cache.cacheDir,
     plugins: [solid(), { name: "task-copy-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -20,16 +24,16 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
-async function withPage(run: (page: Page) => Promise<void>) {
+async function withPage(run: (page: Page) => Promise<void>, scenario?: string) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(scenario ? `${url}?steps=${scenario}` : url, { waitUntil: "domcontentloaded", timeout: 30_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await run(page)
     assert.deepEqual(errors, [])
@@ -44,6 +48,43 @@ async function withPage(run: (page: Page) => Promise<void>) {
     throw error
   } finally { await page.close() }
 }
+
+test("short native child boundary cursor does not invent render overflow", { timeout: 45_000 }, async () => withPage(async page => {
+  const tool = page.locator('.tool-call[data-part-id="parent-task"]')
+  const sections = tool.locator('.tool-call-task-sections').first()
+  const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
+  await steps.waitFor()
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 steps")
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
+  assert.match(await sections.textContent() ?? "", /Validated result:.*484/)
+  const state = await page.evaluate(() => (window as any).fixture.snapshot())
+  assert.equal(state.requests.filter((request: any) => request.sessionID === "child").length, 1)
+  // The cursor is merely a boundary token: a bounded older read is empty.
+  await page.evaluate(() => (window as any).fixture.probeOlder())
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "1 steps")
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
+  assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).requests.filter((request: any) => request.sessionID === "child").length, 2)
+}, "short"))
+
+test("exactly 200 observed child rows are not render overflow", { timeout: 45_000 }, async () => withPage(async page => {
+  const sections = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-sections').first()
+  const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
+  await steps.waitFor()
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "200 steps")
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
+  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 200)
+}, "limit"))
+
+test("observed 201 child rows retain capped count and real truncation warning", { timeout: 45_000 }, async () => withPage(async page => {
+  const sections = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-sections').first()
+  const steps = sections.locator(':scope > section').filter({ has: page.locator('.tool-call-task-section-title', { hasText: /^Steps$/ }) })
+  await steps.waitFor()
+  assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "200+ steps")
+  assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 1)
+  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 200)
+  assert.match(await steps.locator('.tool-call-diagnostic-message').textContent() ?? "", /200/)
+  assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).requests.filter((request: any) => request.sessionID === "child").length, 1)
+}, "overflow"))
 
 async function copyButton(page: Page, nested: boolean) {
   const tool = page.locator(`.tool-call[data-part-id="${nested ? "nested-task" : "parent-task"}"]`)

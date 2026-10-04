@@ -1,0 +1,16 @@
+.mission-cleanup-entry {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+  font-size: var(--font-size-xs);
+}
+.mission-cleanup-objective {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mission-cleanup-entry button { justify-self: start; }
+.mission-cleanup-entry p,
+.mission-cleanup-policy { margin: 0; color: var(--text-secondary); }
+.mission-cleanup-policy { padding: var(--space-sm); font-size: var(--font-size-xs); }

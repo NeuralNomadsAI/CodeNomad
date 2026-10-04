@@ -6,23 +6,45 @@ import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
+async function disposeFixture() {
+  try { await browser?.close() }
+  finally {
+    if (server) await server.close()
+    else await cache?.dispose()
+  }
+}
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "interruptions-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/interruption-dock.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    cache = await createFixtureCache()
+    const shutdown = createFixtureShutdown(cache)
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+      cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "interruptions-fixture", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/interruption-dock.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    await prepareInterruptionDock(server)
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    try { await disposeFixture() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Interruption fixture setup and cleanup failed") }
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(disposeFixture)
 
 async function fixture(width = 1100) {
   const page = await browser.newPage({ viewport: { width, height: 800 } })
@@ -59,6 +81,19 @@ test("explicit reveal invalidates the resident hidden permission tool's display 
     await page.getByRole("button", { name: "View in conversation" }).click()
     await page.locator('[data-interruption-reveal="true"]').waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("source navigation dismisses the mission reader and restores an interactive transcript", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => { (window as any).fixture.ask(); (window as any).fixture.missionReader() })
+    await page.locator('.mission-transcript-content[inert]').waitFor({ state: "attached" })
+    await page.getByRole("button", { name: "View in conversation" }).click()
+    await page.locator('[data-interruption-reveal="true"]').waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.hasMissionReader()), false)
+    assert.equal(await page.locator('.mission-transcript-content').evaluate(element => element.hasAttribute("inert")), false)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

@@ -7,9 +7,14 @@ import { startDeviceUploadFixture } from "./fixtures/device-upload-server.mjs"
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
   ;({ server, url } = await startDeviceUploadFixture())
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    await server.close()
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
 async function setup(host = "web", context = "remote", params = "") {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: "en-US" })

@@ -230,6 +230,7 @@ export const taskRenderer: ToolRenderer = {
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
     const [childToolsTruncated, setChildToolsTruncated] = createSignal(false)
+    const [childStepsOverflow, setChildStepsOverflow] = createSignal(false)
 
     let indexedSessionId = ""
 
@@ -237,6 +238,7 @@ export const taskRenderer: ToolRenderer = {
       indexedSessionId = nextSessionId
       setChildToolKeys([])
       setChildToolsTruncated(false)
+      setChildStepsOverflow(false)
     }
 
     function scanMessageToolParts(messageId: string, startIndex: number, limit: number, budget: TaskScanBudget) {
@@ -278,6 +280,7 @@ export const taskRenderer: ToolRenderer = {
         for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) nextKeys.unshift(keys[keyIndex])
       }
       setChildToolsTruncated((truncated) => isTaskScanTruncated(truncated, oldestScannedIndex > 0, isTaskStepListTruncated(nextKeys.length)))
+      setChildStepsOverflow(isTaskStepListTruncated(nextKeys.length))
       const keys = nextKeys.slice(-TASK_STEP_RENDER_LIMIT)
       setChildToolKeys(previous => previous.length === keys.length && previous.every((key, index) => key === keys[index]) ? previous : keys)
     }
@@ -377,13 +380,16 @@ export const taskRenderer: ToolRenderer = {
         return { id, tool, input: fallbackInput, metadata: metadataFromEntry, state: stateValue, status: statusValue, title }
       })
     })
-    const childTranscriptTruncated = () => {
+    // Coverage controls full-copy traversal, not a claim about omitted tool
+    // rows. Native cursors can point to an empty boundary page; scan budgets
+    // and historical windows likewise cannot prove render-limit overflow.
+    const childTranscriptIncomplete = () => {
       const id = childSessionId()
       const window = id ? store.getMessageWindow(id) : undefined
       return childToolsTruncated() || Boolean(window && (window.kind !== "latest" || window.olderCursor))
     }
-    const childSourceActive = () => childToolKeys().length > 0 || childTranscriptTruncated()
-    const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childTranscriptTruncated(), legacySummary().truncated)
+    const childSourceActive = () => childToolKeys().length > 0 || childTranscriptIncomplete()
+    const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childStepsOverflow(), legacySummary().truncated)
 
     const childTaskCopy = useTaskStepCopy({
       childSessionId,
@@ -448,7 +454,7 @@ export const taskRenderer: ToolRenderer = {
                 <span class="tool-call-task-section-meta">
                   {t("toolCall.task.steps.count", { count: stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length })}
                 </span>
-                <Show when={childTranscriptTruncated()}>
+                <Show when={childTranscriptIncomplete()}>
                   <button type="button" class="tool-call-header-icon-button tool-call-io-copy" disabled={childTaskCopy.pending()} onClick={() => void childTaskCopy.copy().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
