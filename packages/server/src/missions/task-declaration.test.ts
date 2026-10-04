@@ -154,6 +154,49 @@ test("planning exact future actor reuse does not require or create the source ac
   assert.equal(h.sideEffects(), 0)
 })
 
+for (const template of ["custom", "wayfinder"] as const) {
+  test(`${template} keeps Android and iOS frontiers independent when reusing iOS context`, async () => {
+    const h = harness(template)
+    await h.start()
+    await h.control.declare(h.coordinator.id, task("ios-prerequisites"))
+    const completed = await h.control.report(h.coordinator.id, readout("ios-prerequisites"))
+    const result = await h.control.revise(h.coordinator.id, {
+      missionID: completed.mission.id, expectedRevision: completed.mission.revision,
+      requestID: "parallel-mobile-lanes", reason: "Prepare iOS while Android builds; reuse is context, not a prerequisite",
+      retireTasks: [], dependencyUpdates: [], addTasks: [
+        task("android-build"),
+        { ...task("ios-xcode"), executionMode: { kind: "native", parentTaskKey: null, reuseFromTaskKey: "ios-prerequisites" } },
+        task("ios-build", ["ios-xcode"]),
+      ],
+    })
+    assert.deepEqual(result.mission.frontier, ["android-build", "ios-xcode"])
+    assert.deepEqual(result.mission.tasks.find(task => task.key === "ios-xcode")!.blockedBy, [])
+    assert.deepEqual(result.mission.tasks.find(task => task.key === "ios-build")!.blockedBy, ["ios-xcode"])
+    assert.equal(result.mission.tasks.find(task => task.key === "ios-prerequisites")!.contractGeneration, 1)
+    const iosDone = await h.control.report(h.coordinator.id, readout("ios-xcode"))
+    assert.deepEqual(iosDone.mission.frontier, ["android-build", "ios-build"])
+    assert.equal(h.sideEffects(), 0, "planning and readouts never dispatch or prove actual native concurrency")
+  })
+}
+
+test("disconnected reuse declarations preserve exact native parent and live source fences", async () => {
+  const h = harness("custom")
+  await h.start()
+  await h.control.declare(h.coordinator.id, task("parent-work"))
+  await h.control.declare(h.coordinator.id, { ...task("source-work"), executionMode: { kind: "native", parentTaskKey: "parent-work" } })
+  await assert.rejects(h.control.declare(h.coordinator.id, { ...task("wrong-parent"),
+    executionMode: { kind: "native", parentTaskKey: null, reuseFromTaskKey: "source-work" } }), /exact unchanged parent/)
+  const reuse = await h.control.declare(h.coordinator.id, { ...task("reuse-work"),
+    executionMode: { kind: "native", parentTaskKey: "parent-work", reuseFromTaskKey: "source-work" } })
+  assert.deepEqual(reuse.mission.tasks.find(task => task.key === "reuse-work")!.blockedBy, [])
+  const retired = await h.control.revise(h.coordinator.id, { missionID: reuse.mission.id, expectedRevision: reuse.mission.revision,
+    requestID: "retire-source", reason: "Source no longer applies", addTasks: [], dependencyUpdates: [],
+    retireTasks: [{ taskKey: "reuse-work" }, { taskKey: "source-work" }] })
+  await assert.rejects(h.control.declare(h.coordinator.id, { ...task("reuse-retired"), missionID: retired.mission.id,
+    executionMode: { kind: "native", parentTaskKey: "parent-work", reuseFromTaskKey: "source-work" } }), /exact live task/)
+  assert.equal(h.sideEffects(), 0)
+})
+
 test("the full native Pocock frontier can be declared before any role executes", async () => {
   const h = harness("pocock-fix-bug")
   const { mission } = await h.start()

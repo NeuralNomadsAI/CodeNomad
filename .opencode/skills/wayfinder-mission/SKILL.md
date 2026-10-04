@@ -1,6 +1,6 @@
 ---
 name: wayfinder-mission
-description: Use bounded native tasks to clear a planning map one decision at a time.
+description: Clear a planning map through bounded decisions, with independent frontier work in parallel.
 ---
 
 # Wayfinder Mission
@@ -9,6 +9,8 @@ Start `mission.inspect` with template `wayfinder` and phrase the destination as 
 
 - Plan by default. The map is done when the route is clear, not when the destination has been implemented.
 - Chart breadth-first. Create only sharp decisions; leave questions that cannot yet be phrased in the mission notes as fog.
+- Cover all explicitly requested workstreams. Before waiting for one result, launch the other independent ready decisions with runtime-supported background or concurrent native calls. Keep real evidence/permission gates and resource/shared-write limits; state why any ready work must be serial. A blocked workstream does not park unrelated work.
+- Prefer fresh native children for independent work. Exact eligible actor reuse selects context, not a `blockedBy` dependency; do not manufacture edges to reuse a session, and never continue an actor still busy.
 - Create blockers before dependent tasks and connect them with `blockedBy`. The durable map derives the current frontier.
 - Declare sharp decisions without demanding completed prerequisites; execution admits only the unblocked frontier. Run independent ready decisions and `research` in parallel when useful; `blockedBy` records real prerequisites, not an artificial sequence. One durable decision per task does not restrict its native helper tree. Pass the canonical `assignmentPrompt` into each ready task's ordinary native call, preserving its declared execution profile and native continuation checks. Independent roots require an explained location, lifetime, existing-root, or playbook exception.
 - Use native Forms for `prototype` and `grilling` decisions that require a human. Never answer the human side yourself.

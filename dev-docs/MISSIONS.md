@@ -16,6 +16,31 @@ The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`, and 
 
 ## Durability and recovery
 
+### Parallel workstreams and context reuse
+
+The coordinator charts every explicitly requested workstream as soon as its work is
+clear, including actionable preparation for a blocked deliverable. It launches
+independent ready assignments with runtime-supported background/concurrent native
+calls before waiting for one result. Missing tooling or consent in one workstream
+does not stop unrelated ready work. Real evidence/permission gates, resource limits
+and conflicting shared writes remain reasons to serialize; the coordinator must
+name that reason rather than manufacture an order.
+
+`blockedBy` is a business prerequisite. `reuseFromTaskKey` is an explicit native
+context/actor choice and does not require or create a `blockedBy` edge. A fresh
+native child is preferred for independent work; eligible reuse still requires the
+exact live native source, unchanged parent, actual source return and fresh idle
+observation at admission. It never permits concurrent work on the same actor.
+Pocock's resolver still requires dependency-connected implementer/review evidence,
+and its reviewers/validator remain fresh distinct actors. Mixed admission cycles
+remain rejected. Neither declaration nor business readiness proves native activity.
+
+This removes an erroneous general policy gate, not native execution gates or a new
+automatic scheduler. Prompt guidance cannot guarantee an LLM will always chart the
+right workstreams; real native concurrency must be observed separately from tests
+of declaration/frontier and structural authority. Existing mission plans are not
+rewritten or replayed automatically.
+
 Lifecycle RPC methods declare expected mutation failures as `mission.rejected` with a structured `data.code`. Plugin handlers convert only recognized `MissionControlError` failures via the native invocation's `context.error`; the HTTP routes map those codes to 409 (conflict), 404 (missing), or 403 (ownership). Ordinary exceptions remain opaque plugin failures (503). The isolated native fixture exercises stale update/delete, request-ID conflicts and unknown missions through the real HTTP-to-RPC boundary.
 
 The map is an append-only event journal in native plugin storage. Events have deterministic identities, and native prompt/synthetic admissions use deterministic message IDs. Retrying after a plugin or CodeNomad restart therefore resumes an incomplete dispatch without creating a second task, actor, or inbox item.

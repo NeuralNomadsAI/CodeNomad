@@ -172,8 +172,11 @@ export function validateMissionDelegationPolicy(input: {
       if (mode.parentTaskKey !== null && !input.tasks.some(task => task.key === mode.parentTaskKey && task.status !== "withdrawn")) {
         throw new Error("A native parent must name a live task")
       }
-      if (mode.reuseFromTaskKey && !keys.has(mode.reuseFromTaskKey)) {
-        throw new Error("Native reuse must name an exact dependency-connected task")
+      if (mode.reuseFromTaskKey) {
+        const source = input.tasks.find(task => task.key === mode.reuseFromTaskKey)
+        if (!source || source.status === "withdrawn" || source.replacedByTaskKey) {
+          throw new Error("Native reuse must name an exact live task; it does not require a blockedBy dependency")
+        }
       }
     }
     if (input.template !== "pocock-fix-bug") return
@@ -183,7 +186,7 @@ export function validateMissionDelegationPolicy(input: {
     }
     if (input.role === "resolver" && mode?.kind === "native") {
       const implementer = input.tasks.find(task => task.key === mode.reuseFromTaskKey)
-      if (!implementer || implementer.role !== "implementer" || implementer.status === "withdrawn" || implementer.replacedByTaskKey) {
+      if (!implementer || !keys.has(implementer.key) || implementer.role !== "implementer" || implementer.status === "withdrawn" || implementer.replacedByTaskKey) {
         throw new Error("The native Pocock resolver must explicitly reuse a live dependency-connected implementer task")
       }
       if (input.phase !== "declaration") {

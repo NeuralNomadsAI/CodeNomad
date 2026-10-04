@@ -31,7 +31,14 @@ const NATIVE_WORK = `Bounded native work:
 - Integrate actual returned evidence before returning normal native results to your immediate parent. A background launch is not completion; never claim recursive work from a plan alone.
 - Respect native permissions and the user's configured runtime depth. Do not change configuration, force a fixed depth, or turn a denied/depth-limited helper into an undeclared independent root. At a native limit, finish within your scope or return the limitation to your parent.`
 
-const DELEGATION = `Prefer ordinary native delegation for bounded work. Run independent ready frontier tasks in parallel when useful; blockedBy records real prerequisites, not an artificial stage order. Declare task contracts separately from execution: a blocked declaration does not dispatch work. Native tasks use subagent/all profiles; independent roots use primary/all profiles. Choose an independent root only for an explicit location, lifetime, existing-root, or playbook exception, with a concrete explanation. Do not convert historical no-mode root contracts. Native children may recursively delegate within the assignment and return normal native results to their parent; do not require child mission.report copies, task-generation forwarding, or invocation bindings. The coordinator reads those results and records a business readout using mission.report with taskKey and evidence (omit contract). This settles the plan, not native execution receipts, historical model identity, or human consent. Never infer idle from a report. Independent-root actors still submit their own assigned mission reports. Helpers receive the scoped instructions their parent passes, not coordinator topology authority or mission.report privileges.
+const PARALLEL_WORK = `Parallel coordination:
+- Cover every explicitly requested workstream in the initial clear plan, including actionable preparation for a blocked deliverable. Do not invent speculative tasks; record unresolved scope in notes rather than silently dropping a workstream.
+- Before waiting for one result, launch the other independent ready tasks using background native calls or concurrent native calls supported by the runtime. Read each actual returned result and record its business readout; a launch or ready status is not execution/completion proof.
+- One workstream's missing tool, consent or failure must not park unrelated ready work. Keep real evidence gates, human consent, native permissions, resource limits and shared-write conflicts intact; state the concrete reason when work must be serial.
+- Prefer a fresh native child for independent work. Reuse an exact specialist only when its context helps and continuation is eligible; reuseFromTaskKey selects context, not a blockedBy dependency. Do not add a dependency just to reuse a session. An unavailable reused actor cannot run two assignments simultaneously; launch other ready work instead. Pocock resolver evidence must still connect to its implementer and both review axes.`
+
+const DELEGATION = `Prefer ordinary native delegation for bounded work. Run independent ready frontier tasks in parallel; blockedBy records real prerequisites, not an artificial stage order. Declare task contracts separately from execution: a blocked declaration does not dispatch work. Native tasks use subagent/all profiles; independent roots use primary/all profiles. Choose an independent root only for an explicit location, lifetime, existing-root, or playbook exception, with a concrete explanation. Do not convert historical no-mode root contracts. Native children may recursively delegate within the assignment and return normal native results to their parent; do not require child mission.report copies, task-generation forwarding, or invocation bindings. The coordinator reads those results and records a business readout using mission.report with taskKey and evidence (omit contract). This settles the plan, not native execution receipts, historical model identity, or human consent. Never infer idle from a report. Independent-root actors still submit their own assigned mission reports. Helpers receive the scoped instructions their parent passes, not coordinator topology authority or mission.report privileges.
+${PARALLEL_WORK}
 ${NATIVE_WORK}`
 
 const custom: MissionRecipe = {
@@ -44,7 +51,7 @@ const custom: MissionRecipe = {
     "Inspect the map after reports and decide the next move.",
     "Finish only when the stated objective and checks are satisfied.",
   ],
-  coordinator: `Keep topology changes deliberate. Prefer reusing a specialist that already owns the relevant context. ${DELEGATION}`,
+  coordinator: `Keep topology changes deliberate and independent workstreams visible. ${DELEGATION}`,
   roles: [{
     id: "specialist",
     title: "Specialist",
@@ -114,7 +121,7 @@ const pocock: MissionRecipe = {
 const wayfinder: MissionRecipe = {
   id: "wayfinder",
   title: "Wayfinder Map",
-  summary: "Clear the route to a destination one decision at a time while keeping blocked work in the fog.",
+  summary: "Clear the route through bounded decisions and parallel independent frontier work while keeping unformulated questions in the fog.",
   sequence: [
     "Name the destination before charting tasks.",
     "Create sharp decision tasks; keep unformulated questions in mission notes as fog.",

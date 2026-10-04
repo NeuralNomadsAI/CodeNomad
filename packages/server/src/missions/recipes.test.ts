@@ -39,6 +39,20 @@ test("coordinator preserves explicit native reuse and additive frontier planning
   assert.match(context, /omit contract/)
 })
 
+test("every coordinator plans all requested workstreams and launches independent work before waiting", () => {
+  for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+    const context = buildActorContext({ ...mission, template }, "ses_coordinator")
+    assert.match(context, /Cover every explicitly requested workstream/)
+    assert.match(context, /Before waiting for one result, launch the other independent ready tasks/)
+    assert.match(context, /background native calls or concurrent native calls/)
+    assert.match(context, /reuseFromTaskKey selects context, not a blockedBy dependency/)
+    assert.match(context, /Prefer a fresh native child for independent work/)
+    assert.match(context, /Do not add a dependency just to reuse a session/)
+    assert.match(context, /One workstream's missing tool, consent or failure must not park unrelated ready work/)
+    assert.match(context, /Never infer idle from a report/)
+  }
+})
+
 test("Wayfinder guidance cannot claim a human-proof gate without authoritative native Form DTOs", () => {
   const recipe = getMissionRecipe("wayfinder")
   assert.match(recipe.sequence.join("\n"), /replacement is optional for genuinely additive work/)
@@ -70,7 +84,7 @@ for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies Missi
     const recipe = getMissionRecipe(template)
     const coordinator = buildActorContext(map, "ses_coordinator")
     assertNativeWorkPolicy(coordinator)
-    assert.match(coordinator, /Run independent ready frontier tasks in parallel when useful/)
+    assert.match(coordinator, /Run independent ready frontier tasks in parallel;/)
     assert.match(coordinator, /blockedBy records real prerequisites/)
     assert.match(coordinator, /canonical assignmentPrompt.*only when its task is ready/)
     assert.match(coordinator, /context, not execution admission or proof/)

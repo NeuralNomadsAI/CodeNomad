@@ -221,6 +221,26 @@ if (process.argv[1]?.endsWith("derived-call-business.test.ts")) {
       await assert.rejects(g.business.observe(body, body.task, false), /binding-mismatch/)
     }
   })
+  test("independent signed task calls can both be active while a different workstream has an unmet prerequisite", async t => {
+    const g = await structuralDerivedFixture(); t.after(g.f.cleanup)
+    await g.task("android-build"); await g.task("ios-xcode")
+    await g.task("ios-build", { blockedBy: ["ios-xcode"] })
+    const android = await g.body("android-build")
+    await g.start(android); await g.bind(android, "ses_android")
+    const xcode = await g.body("ios-xcode")
+    await g.start(xcode); await g.bind(xcode, "ses_ios")
+    const map = await g.mission()
+    for (const [key, actor] of [["android-build", "ses_android"], ["ios-xcode", "ses_ios"]]) {
+      const task = map.tasks.find(task => task.key === key)!
+      assert.equal(task.actorSessionId, actor)
+      assert.ok(task.nativeExecution?.binding)
+      assert.equal(task.nativeExecution?.ended, undefined, "one call does not have to return before the other binds")
+      assert.equal(task.report, undefined)
+    }
+    const ios = await g.body("ios-build")
+    assert.equal((await g.business.observe(ios, ios.task, false)).dependenciesCompleted, false)
+    await assert.rejects(g.start(ios), /authorization-blocked/)
+  })
   test("raw unenveloped native helper is never a declared task parent", async t => {
     const g = await structuralDerivedFixture(); t.after(g.f.cleanup); await g.task("parent"); const parent = await g.body("parent")
     await g.journal.append({ ...g.base(), type: "task.native-bound", taskKey: "parent", binding: derivedNativeBinding(parent),
@@ -251,6 +271,22 @@ if (process.argv[1]?.endsWith("derived-call-business.test.ts")) {
     assert.equal(g.idleReads(), 1); g.setIdle(true)
     assert.equal(await g.business.assertIdle("ses_child", freshSignal(), body), true)
     g.setIdle(false); assert.throws(() => g.business.assertCurrent(body, "reserve"), /policy-unqualified/)
+  })
+  test("disconnected native context reuse still requires the exact returned source and fresh idle", async t => {
+    const g = await structuralDerivedFixture(); t.after(g.f.cleanup)
+    await g.task("source"); const source = await g.body("source")
+    await g.start(source); await g.bind(source, "ses_source"); await g.report(source, "ses_source")
+    await g.task("ios-xcode", { executionMode: { kind: "native", parentTaskKey: null, reuseFromTaskKey: "source" } })
+    const body = await g.body("ios-xcode", { choice: { kind: "reuse", sessionID: "ses_source", fromTask: source.task } })
+    await assert.rejects(g.business.assertIdle("ses_source", freshSignal(), body), /binding-mismatch/)
+    await g.end(source, "ses_source")
+    g.setIdle(false)
+    await assert.rejects(g.business.assertIdle("ses_source", freshSignal(), body), /full family busy/)
+    g.setIdle(true)
+    assert.equal(await g.business.assertIdle("ses_source", freshSignal(), body), true)
+    const wrong = await g.body("ios-xcode", { choice: { kind: "reuse", sessionID: "ses_sibling", fromTask: source.task } })
+    await assert.rejects(g.business.assertIdle("ses_sibling", freshSignal(), wrong), /binding-mismatch/)
+    assert.deepEqual((await g.mission()).tasks.find(task => task.key === "ios-xcode")!.blockedBy, [])
   })
   test("reuse cannot infer its source/child from reports or select a sibling native session", async t => {
     const g = await structuralDerivedFixture(); t.after(g.f.cleanup); const source = await g.seedCompleted("source", "worker", [], "ses_source")
