@@ -45,7 +45,7 @@ async function dockSnapshot(page: Page) {
 }
 
 for (const size of ["portrait", "short", "keyboard"] as const) {
-  test(`Android ${size} keeps long background/global forms and permission actions reachable above a saved maximum composer`, async () => {
+  test(`Android ${size} keeps descendant and explicitly opened global forms reachable above a saved maximum composer`, async () => {
     const page = await browser.newPage({ ...devices["Pixel 5"], viewport: { width: 393, height: size === "short" ? 393 : 851 } })
     page.setDefaultTimeout(15000)
     const errors: string[] = []
@@ -72,7 +72,7 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
       const saved = await page.evaluate(() => (window as any).fixture.promptHeight())
       await page.evaluate(() => {
         const f = (window as any).fixture
-        f.addSession("background")
+        f.addSession("background", "session")
         f.nativeQuestion("background", "background-form", true)
       })
       if (size === "keyboard") {
@@ -81,7 +81,12 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         assert.equal(await page.evaluate(() => innerHeight), 851)
       }
       for (const request of ["background", "global"]) {
-        if (request === "global") await page.evaluate(() => (window as any).fixture.nativeQuestion("global", "global-form", true))
+        if (request === "global") {
+          await page.evaluate(() => (window as any).fixture.nativeQuestion("global", "global-form", true))
+          assert.equal(await page.locator('.interruption-dock').isVisible(), false)
+          await page.locator('.session-header-indicators .permission-center-trigger:visible').click()
+          assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
+        }
         const fields = page.locator(".interruption-dock .form-request-fields")
         assert.equal(await fields.evaluate(el => el.scrollHeight > el.clientHeight), true)
         await assertFooter(page)
@@ -89,8 +94,8 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         await answer.fill(`Answer ${request}`)
         await assertReachable(answer)
         await assertFooter(page)
-        assert.equal(await composer.inputValue(), draft)
-        assert.equal(await composer.isDisabled(), false, "background/global requests still compact the unrelated active composer")
+        assert.equal(await composer.inputValue(), request === "global" ? "" : draft)
+        assert.equal(await composer.isDisabled(), false, "descendant/global requests compact their own surface's composer")
         assert.equal(await resize.getAttribute("aria-disabled"), "true")
         if (size === "keyboard") {
           for (const immersive of [true, false]) {
@@ -106,6 +111,7 @@ for (const size of ["portrait", "short", "keyboard"] as const) {
         await page.getByRole("button", { name: "Submit", exact: true }).click()
         await page.locator(".interruption-dock").waitFor({ state: "detached" })
         assert.deepEqual(await page.evaluate(() => (window as any).fixture.promptHeight()), saved)
+        if (request === "global") await page.evaluate(() => (window as any).fixture.selectSession("session"))
       }
       await page.evaluate(() => (window as any).fixture.queuePermission())
       await page.locator(".interruption-dock .tool-call-permission").waitFor()
@@ -135,6 +141,151 @@ async function assertReachable(control: Locator) {
     const r = el.getBoundingClientRect()
     return r.height > 0 && r.width > 0 && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
   }), true, "the actual control must receive pointer hit testing")
+}
+
+for (const mobile of [false, true]) {
+  test(`real shell scopes recursive interruptions and preserves per-conversation selection on ${mobile ? "mobile" : "desktop"}`, async () => {
+    const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 60000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("child", "session")
+        f.addSession("grandchild", "child")
+        f.addSession("sibling", "session")
+        f.addSession("unrelated")
+        for (const id of ["session", "child", "grandchild", "sibling", "unrelated"]) f.nativeQuestion(id)
+      })
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      const owner = page.locator('.interruption-session:visible')
+      assert.equal(await owner.innerText(), "Fixture conversation")
+      assert.equal(await page.locator('.interruption-position').innerText(), "1 / 4")
+      await answer.fill("Parent draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await answer.fill("Child draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await answer.fill("Grandchild draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await owner.innerText(), "Fixture child")
+      assert.equal(await answer.inputValue(), "Child draft")
+      assert.equal(await page.locator('.interruption-position').innerText(), "1 / 2")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await answer.focus()
+      await page.evaluate(() => (window as any).fixture.queuePermission("child"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true)
+      assert.equal(await page.locator('.interruption-position').innerText(), "3 / 3")
+      await page.getByRole('button', { name: 'Previous request', exact: true }).click()
+      await page.getByRole('button', { name: 'Previous request', exact: true }).click()
+      await page.locator('.interruption-dock textarea:visible').fill("Child permission draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("unrelated"))
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await page.locator('.interruption-dock textarea:visible').inputValue(), "Child permission draft")
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+      await page.getByRole('button', { name: 'Next request', exact: true }).click()
+
+      await page.evaluate(() => (window as any).fixture.selectSession("grandchild"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      assert.equal(await page.locator('.interruption-position').count(), 0, "parents and siblings are excluded")
+      await page.evaluate(() => (window as any).fixture.selectSession("unrelated"))
+      assert.equal(await owner.innerText(), "Fixture unrelated")
+      assert.equal(await page.locator('.interruption-position').count(), 0)
+      await answer.fill("Unrelated draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await owner.innerText(), "Fixture grandchild", "child conversation restores its selected descendant")
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      assert.equal(await owner.innerText(), "Fixture grandchild", "parent conversation restores its selection independently")
+
+      // Reconciliation changes payload identity without replacing the mounted editor.
+      await page.evaluate(() => (window as any).fixture.nativeQuestion("grandchild"))
+      assert.equal(await answer.inputValue(), "Grandchild draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "grandchild")
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      await page.evaluate(() => (window as any).fixture.selectSession("child"))
+      assert.equal(await page.locator('.interruption-dock textarea:visible').inputValue(), "Child permission draft")
+      await page.getByRole('button', { name: 'Deny', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[1].sessionID), "child")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`real shell explicitly opens unrelated/global requests and reacts to late ancestry on ${mobile ? "mobile" : "desktop"}`, async () => {
+    const page = await browser.newPage(mobile ? { ...devices["Pixel 5"] } : { viewport: { width: 1400, height: 900 } })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url, { timeout: 60000 })
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 60000 })
+      const dock = page.locator('.interruption-dock')
+      const answer = page.locator('.interruption-dock input[type="text"]:visible')
+      const badge = page.locator('.session-header-indicators .permission-center-trigger:visible')
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("unrelated")
+        f.nativeQuestion("unrelated")
+      })
+      assert.equal(await dock.isVisible(), false)
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "session")
+      assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+      await badge.click()
+      await answer.fill("Owner draft")
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), "unrelated")
+      assert.equal(await dock.evaluate(el => el.contains(document.activeElement)), true)
+      await page.evaluate(() => (window as any).fixture.nativeQuestion("global"))
+      assert.equal(await page.locator('.interruption-position').count(), 0)
+      assert.equal(await answer.inputValue(), "Owner draft")
+      await badge.click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.selectedSession()), null)
+      assert.equal(await page.locator('.interruption-session:visible').innerText(), "Service request")
+      await answer.fill("Global draft")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      assert.equal(await dock.isVisible(), false)
+      await badge.click()
+      assert.equal(await answer.inputValue(), "Global draft")
+      await page.getByRole('button', { name: 'Submit', exact: true }).click()
+      assert.equal(await page.evaluate(() => (window as any).fixture.replies[0].sessionID), "global")
+      assert.equal(await dock.isVisible(), false, "sessionless surface never falls back to a conversation")
+      await page.evaluate(() => (window as any).fixture.selectSession("session"))
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.addSession("late-grandchild", "late-child")
+        f.nativeQuestion("late-grandchild")
+      })
+      assert.equal(await dock.isVisible(), false)
+      await page.evaluate(() => (window as any).fixture.addSession("late-child", "session"))
+      assert.equal(await page.locator('.interruption-session:visible').innerText(), "Fixture late-grandchild")
+      await answer.fill("Late draft")
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.focusRequest("unrelated", "question-unrelated")
+        f.focusRequest("late-grandchild", "already-settled")
+      })
+      assert.equal(await answer.inputValue(), "Late draft")
+      assert.equal(await answer.evaluate(el => el === document.activeElement), true, "invalid focus intents cannot fall back to the current request")
+      // Even a queued valid focus is fenced when the surface changes before its microtask.
+      await page.evaluate(() => {
+        const f = (window as any).fixture
+        f.focusRequest("late-grandchild", "question-late-grandchild")
+        f.selectSession("missing-session")
+      })
+      assert.equal(await dock.isVisible(), false)
+      await page.evaluate(() => (window as any).fixture.showInfo())
+      assert.equal(await dock.isVisible(), false)
+      await page.evaluate(() => (window as any).fixture.selectSession(null))
+      assert.equal(await dock.isVisible(), false)
+      await page.evaluate(() => (window as any).fixture.selectSession("unrelated"))
+      assert.equal(await answer.inputValue(), "Owner draft")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
 }
 
 async function assertFooter(page: Page, selector = ".form-request-actions") {
@@ -315,8 +466,13 @@ for (const mode of ["desktop", "mobile", "immersive", "landscape"] as const) {
       for (const sid of ["second", "session", "second", "session"]) {
         await page.evaluate(sid => (window as any).fixture.selectSession(sid), sid)
         await page.locator(`.session-cache-pane[data-session-id="${sid}"][data-session-active="true"] textarea`).waitFor()
-        assert.equal(await page.locator(".interruption-dock:visible").count(), 1, JSON.stringify(await dockSnapshot(page)))
-        assert.equal(await answer.inputValue(), "Preserve my answer")
+        assert.equal(await page.locator(".interruption-dock:visible").count(), sid === "session" ? 1 : 0, JSON.stringify(await dockSnapshot(page)))
+        if (sid === "session") assert.equal(await answer.inputValue(), "Preserve my answer")
+        else {
+          assert.equal(await page.locator('.interruption-editor[hidden][inert] input').inputValue(), "Preserve my answer")
+          assert.equal(await page.locator('.prompt-resize-handle').getAttribute('aria-disabled'), null)
+          assert.equal(await composer.evaluate(el => el.getBoundingClientRect().height), originalHeight)
+        }
       }
       if (mode !== "immersive") {
         await page.getByRole("button", { name: "Collapse requests", exact: true }).click()

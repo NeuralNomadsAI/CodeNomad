@@ -33,7 +33,7 @@ before(async () => {
 
 after(async () => { await browser?.close(); await server?.close() })
 
-test("a question stays selected and focused when the newly visited session receives a permission", async () => {
+test("a question retains its draft while a different conversation receives a permission", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
   page.setDefaultTimeout(15000)
   const errors: string[] = []
@@ -46,17 +46,17 @@ test("a question stays selected and focused when the newly visited session recei
     const answer = page.locator('.interruption-dock input[type="text"]:visible')
     await answer.fill("Draft before switching")
 
-    // This session has no request: the same question remains visible after the pane remount.
+    // The unrelated session cannot expose or focus the first conversation's editor.
     await page.evaluate(() => {
       const fixture = (window as any).fixture
       fixture.activationFrames.pause()
       fixture.switch("other")
     })
     await page.waitForFunction(() => (window as any).fixture.activationFrames.pending() === 1)
-    assert.equal(await answer.inputValue(), "Draft before switching")
-    await answer.fill("Continue the original answer")
+    assert.equal(await answer.count(), 0)
+    assert.equal(await page.locator('.interruption-editor[hidden][inert] input').inputValue(), "Draft before switching")
     await page.evaluate(() => (window as any).fixture.activationFrames.flush())
-    assert.equal(await answer.evaluate(element => element === document.activeElement), true)
+    assert.equal(await page.locator('.prompt-input').evaluate(element => element === document.activeElement), true)
 
     const pending = await page.evaluate(async modulePath => {
       const { addPermissionToQueue, getPermissionQueue } = await import(/* @vite-ignore */ modulePath)
@@ -69,13 +69,18 @@ test("a question stays selected and focused when the newly visited session recei
     }, "/src/stores/instances.ts")
 
     assert.deepEqual(pending, [{ id: "permission-other", sessionID: "other" }])
-    assert.equal(await answer.inputValue(), "Continue the original answer")
+    assert.equal(await answer.count(), 0)
     assert.equal(await page.locator(".prompt-input").inputValue(), "")
+    assert.equal(await page.locator(".interruption-session").innerText(), "Other session")
+    assert.equal(await page.locator(".interruption-position").count(), 0)
+    await page.evaluate(() => (window as any).fixture.switch("s"))
+    assert.equal(await answer.inputValue(), "Draft before switching")
+    await answer.fill("Continue the original answer")
+    await page.evaluate(() => (window as any).fixture.activationFrames.flush())
     assert.equal(await answer.evaluate(element => element === document.activeElement), true)
     assert.equal(await page.locator(".interruption-session").innerText(), "Main session")
-    assert.equal(await page.locator(".interruption-position").innerText(), "2 / 2")
-    assert.equal(await page.getByRole("button", { name: "Previous request", exact: true }).isEnabled(), true)
-    assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).isDisabled(), true)
+    assert.equal(await page.locator(".interruption-position").count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).count(), 0)
     assert.deepEqual(errors, [])
   } finally {
     await page.close()

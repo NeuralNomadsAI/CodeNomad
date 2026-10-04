@@ -117,10 +117,10 @@ const [conversationFocus, setConversationFocus] = createSignal(false)
 const [phone, setPhone] = createSignal(false)
 let focusHandled = 0
 function App() {
-  const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId)} />
+   const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId) ?? null} />
   return <main style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "100%" }}>
     <PermissionNotificationBanner instanceId={instanceId} onClick={() => focusInterruption(instanceId)} />
-    <For each={[activeSessionId().get(instanceId)!]}>{id => <SessionView
+     <For each={[activeSessionId().get(instanceId) ?? sessionId]}>{id => <SessionView
       sessionId={id} instanceId={instanceId} instanceFolder="/fixture" activeSessions={sessions().get(instanceId)!}
       escapeInDebounce={false} isActive={active()} isPhoneLayout={phone()} focusConversationOnActivate={conversationFocus()}
       onConversationFocusHandled={() => { focusHandled++ }}
@@ -159,7 +159,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
   global: () => addPendingForm(instanceId, { ...form("global-question", "global"), location: { directory: "/fixture" } }),
   refresh: () => addPendingForm(instanceId, { ...form(), title: "Questions refreshed" }),
   focus: (id = "question") => focusInterruption(instanceId, undefined, id),
-  switch: (id: string) => setActiveSession(instanceId, id),
+  switch: (id: string | null) => setActiveSession(instanceId, id),
   permission: () => addPermissionToQueue(instanceId, { id: "permission", sessionID: sessionId, action: "bash", resources: ["git status"], metadata: {} }),
   remoteReply: () => emit("form.replied", { id: "question", answer: { q0: "Another client" } }),
   fail: (value: boolean) => { fail = value }, hold: () => { hold = true }, release: () => { hold = false; release?.() },
