@@ -1,4 +1,4 @@
-import { For } from "solid-js"
+import { For, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
 import { InterruptionDock } from "../../../src/components/interruption-dock"
@@ -20,6 +20,7 @@ import { openFilePreview, getFilePreview } from "../../../src/stores/files-previ
 import { updateMissionProjectView, missionProjectView } from "../../../src/stores/mission-view-state"
 import { getQuestionToolSearchText } from "../../../src/components/tool-call/search-text"
 import "../../../src/index.css"
+import { installActivationFrameGate } from "./activation-frame-gate"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
 let messageId = "msg_0000"
@@ -112,18 +113,27 @@ serverApi.patchStateOwner = async (_owner, patch) => {
 serverApi.fetchPermissionReceipts = async () => ({ receipts: [] })
 await applyUiSettings({ locale: "en", showMessageTimeline: false, toolInputsVisibility: "hidden", toolOutputExpansion: "expanded",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "expanded" } } })
+const activationFrames = installActivationFrameGate()
+const [active, setActive] = createSignal(true)
+const [conversationFocus, setConversationFocus] = createSignal(false)
+const [phone, setPhone] = createSignal(false)
+let focusHandled = 0
 function App() {
   const panel = <InterruptionDock instanceId={instanceId} sessionId={activeSessionId().get(instanceId)} />
   return <main style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "100%" }}>
     <PermissionNotificationBanner instanceId={instanceId} onClick={() => focusInterruption(instanceId)} />
     <For each={[activeSessionId().get(instanceId)!]}>{id => <SessionView
       sessionId={id} instanceId={instanceId} instanceFolder="/fixture" activeSessions={sessions().get(instanceId)!}
-      escapeInDebounce={false} isActive={true} interruptionPanel={panel} onAgentChange={async () => {}} onModelChange={async () => {}} />}</For>
+      escapeInDebounce={false} isActive={active()} isPhoneLayout={phone()} focusConversationOnActivate={conversationFocus()}
+      onConversationFocusHandled={() => { focusHandled++ }}
+      interruptionPanel={panel} onAgentChange={async () => {}} onModelChange={async () => {}} />}</For>
   </main>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><App /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
+  activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
+  focusHandled: () => focusHandled,
   replies, windows,
   theme: setThemePreference,
   ask: () => emit("form.created", { form: form() }),

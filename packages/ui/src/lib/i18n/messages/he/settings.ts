@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "המשך",
   "settings.opencode.setup.diagnostics": "פרטי גרסאות",
   "settings.opencode.setup.troubleshooting": "פתרון בעיות",
+  "settings.opencode.setup.restartTroubleshooting": "הפעל מחדש את שירות OpenCode",
+  "settings.opencode.setup.restartDescription": "הפעל מחדש את תהליך OpenCode ללא התקנת עדכון. בניגוד לטעינה מחדש של התצורה, פעולה זו מחליפה את התהליך ומפסיקה עבודה פעילה בכל הלקוחות המחוברים. היסטוריית הסשנים נשמרת.",
   "settings.opencode.setup.check": "בדיקת מצב ועדכונים",
   "settings.opencode.setup.checked": "בדיקת המצב והעדכונים הושלמה.",
   "settings.opencode.setup.reloaded": "תצורת OpenCode נטענה מחדש.",

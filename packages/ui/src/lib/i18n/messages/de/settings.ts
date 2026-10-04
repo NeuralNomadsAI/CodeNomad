@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "Weiter",
   "settings.opencode.setup.diagnostics": "Versionsdetails",
   "settings.opencode.setup.troubleshooting": "Fehlerbehebung",
+  "settings.opencode.setup.restartTroubleshooting": "OpenCode-Dienst neu starten",
+  "settings.opencode.setup.restartDescription": "Starten Sie den OpenCode-Prozess neu, ohne ein Update zu installieren. Anders als beim Neuladen der Konfiguration wird der Prozess ersetzt und aktive Arbeit in allen verbundenen Clients unterbrochen. Der Sitzungsverlauf bleibt erhalten.",
   "settings.opencode.setup.check": "Status und Updates prüfen",
   "settings.opencode.setup.checked": "Status- und Updateprüfung abgeschlossen.",
   "settings.opencode.setup.reloaded": "OpenCode-Konfiguration neu geladen.",

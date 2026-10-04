@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "Devam et",
   "settings.opencode.setup.diagnostics": "Sürüm ayrıntıları",
   "settings.opencode.setup.troubleshooting": "Sorun giderme",
+  "settings.opencode.setup.restartTroubleshooting": "OpenCode hizmetini yeniden başlat",
+  "settings.opencode.setup.restartDescription": "Güncelleme yüklemeden OpenCode sürecini yeniden başlatın. Yapılandırmayı yeniden yüklemenin aksine bu işlem süreci değiştirir ve bağlı tüm istemcilerdeki etkin çalışmayı keser. Oturum geçmişi korunur.",
   "settings.opencode.setup.check": "Durumu ve güncellemeleri denetle",
   "settings.opencode.setup.checked": "Durum ve güncelleme denetimi tamamlandı.",
   "settings.opencode.setup.reloaded": "OpenCode yapılandırması yeniden yüklendi.",

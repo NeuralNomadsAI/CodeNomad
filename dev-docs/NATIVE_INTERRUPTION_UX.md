@@ -9,6 +9,16 @@ independently; reply, cancel and permission actions remain in a fixed footer
 outside that scrolling content. Its square shared window chrome uses the existing
 accent/surface tokens for the header, icon and leading border.
 
+An expanded request takes priority over a manually enlarged composer. The composer
+temporarily uses its minimum field height and disables resizing without overwriting
+the saved height or draft; collapse or settlement restores the preference. The dock
+does not flex-shrink into an unusable header. The shell bounds the conversation to
+the visual viewport while a request is expanded, including Android keyboard resize
+and pan. Request fields scroll within the dock while its actions remain reachable.
+For keyboard heights too short to fit the whole stack, a measured minimum reserves
+the header, footer and one usable input. The session stack then scrolls as a whole
+instead of clipping controls; field scrolling can chain into that outer scroller.
+
 ## Ownership and navigation
 
 - Native pending queues remain authoritative. No transcript scan decides whether
@@ -25,6 +35,9 @@ accent/surface tokens for the header, icon and leading border.
   by request kind/id, preserving partial answers and rejection reasons through native
   object replacement, queue navigation and session navigation.
 - Collapse only hides the panel body. It never cancels or refuses a request.
+- Deferred session-activation focus must recheck the current input and modal owner
+  when it runs, and expire when the pane deactivates or unmounts. An answer field
+  focused during navigation retains keyboard input instead of yielding to the composer.
 - Pending questions appear only in the dock. There are no “View in discussion” or
   “Answer in dock” links and no interruption-specific transcript reveal state.
 - Only the panel submits replies. Transcript tools no longer register document-wide
@@ -97,3 +110,9 @@ pagination, SSE refresh, stale reads and long receipts in light/dark mobile layo
 `node scripts/test-permission-receipts-native.mjs` runs isolated native recovery
 against project/worktree roots and descendant Locations, with external replies
 and disk reload. It never uses a shared daemon or user database.
+
+`tests/browser/mobile-interruption.test.ts` exercises the real instance shell with
+Android touch emulation, session navigation, saved maximum composer height,
+portrait/landscape/short layouts, simulated keyboard resize/pan, global/background
+Forms and permission actions. Width-only component captures do not replace this
+shell-level geometry regression.

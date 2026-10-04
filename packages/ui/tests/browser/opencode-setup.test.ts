@@ -426,6 +426,184 @@ const healthyStatus = { state: "ready", currentVersion: "2.0.16", latestVersion:
   recommendedVersion: "2.0.15", binaryPath: "opencode2", target: "host", canUpgrade: false, canRestart: false,
   serviceState: "ready", daemonVersion: "2.0.16" }
 
+for (const surface of ["settings", "recovery"]) test(`${surface} keeps same-version restart in troubleshooting, confirmed and separate from reload`, async () => {
+  const page = await browser.newPage()
+  const mutations: unknown[] = [], errors: string[] = []
+  let release: (() => void) | undefined
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.method() === "POST" && /\/api\/opencode\/(service|update)$/.test(request.url())) {
+      assert.ok(request.url().endsWith("/api/opencode/service"), "maintenance must not install an update")
+      mutations.push(request.postDataJSON())
+      if (request.postDataJSON().restart) await new Promise<void>(resolve => { release = resolve })
+    }
+    return route.fulfill({ json: { ...healthyStatus, canRestart: true, canReload: true,
+      latestVersion: null, checkError: "update_check_failed", target: surface === "recovery" ? "wsl" : "host" } })
+  })
+  try {
+    await page.goto(`${url}${surface === "settings" ? "?settings=1" : ""}`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    if (surface === "recovery") await page.evaluate(() => (window as any).fixture.open())
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await panel.getByRole("button", { name: "Restart shared service", exact: true }).count(), 0, "no update-only shortcut on a healthy same-version service")
+    await panel.getByText("Troubleshooting", { exact: true }).click()
+    const restart = panel.getByRole("button", { name: "Restart OpenCode service", exact: true })
+    assert.equal(await restart.isEnabled(), true, "registry availability is not restart authority")
+    await restart.click()
+    const confirm = page.getByRole("dialog", { name: "Restart OpenCode service", exact: true })
+    await confirm.getByText(/interrupts active work in all connected clients/).waitFor()
+    assert.deepEqual(mutations, [])
+    await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.deepEqual(mutations, [])
+    await restart.evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
+    assert.equal(await confirm.count(), 1)
+    await confirm.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.waitForFunction(() => document.querySelector(".opencode-setup-progress"))
+    assert.equal(await restart.isDisabled(), true)
+    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
+    assert.ok(release)
+    release()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.deepEqual(mutations, [{ restart: true }])
+    assert.equal(await restart.isEnabled(), true, "restart remains available without another update")
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0, "troubleshooting never resumes a workspace-open continuation")
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, `opencode-troubleshooting-${surface}.png`), fullPage: true })
+    await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.deepEqual(mutations, [{ restart: true }, { reload: true }])
+    assert.deepEqual(errors, [])
+  } finally { release?.(); await page.close() }
+})
+
+test("troubleshooting remains visible with restart disabled when lifecycle authority is unavailable", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 800 } })
+  let fail = false, mutations = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+    return route.fulfill(fail ? { status: 503, json: { error: "unavailable" } }
+      : { json: { ...healthyStatus, canRestart: false, canReload: false } })
+  })
+  try {
+    await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode est connecté.", { exact: true }).waitFor()
+    await panel.getByText("Dépannage", { exact: true }).click()
+    const restart = panel.getByRole("button", { name: "Redémarrer le service OpenCode", exact: true })
+    assert.equal(await restart.isDisabled(), true)
+    assert.equal(await panel.getByRole("button", { name: "Recharger la configuration OpenCode", exact: true }).count(), 0)
+    assert.equal(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-troubleshooting-fr-narrow.png"), fullPage: true })
+    fail = true
+    await panel.getByRole("button", { name: "Vérifier l’état et les mises à jour", exact: true }).click()
+    await panel.getByRole("alert").waitFor()
+    assert.equal(await restart.isDisabled(), true)
+    assert.equal(mutations, 0)
+  } finally { await page.close() }
+})
+
+test("superseding a restart confirmation cancels it and unlocks maintenance without a mutation", async () => {
+  for (const replacement of ["alert", "confirm", "prompt"]) {
+    const page = await browser.newPage()
+    let mutations = 0
+    await page.route("**/api/**", route => {
+      if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+      return route.fulfill({ json: { ...healthyStatus, canRestart: true, canReload: true } })
+    })
+    try {
+      await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+      const panel = page.locator(".opencode-setup-panel")
+      await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+      await panel.getByText("Troubleshooting", { exact: true }).click()
+      const restart = panel.getByRole("button", { name: "Restart OpenCode service", exact: true })
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).waitFor()
+      await page.evaluate(type => (window as any).fixture.replaceDialog(type), replacement)
+      const next = page.getByRole("dialog", { name: "Fixture replacement", exact: true })
+      await next.waitFor()
+      await next.getByRole("button", { name: replacement === "alert" ? "OK" : "Cancel", exact: true }).click()
+      await next.waitFor({ state: "hidden" })
+      await page.waitForFunction(() => [...document.querySelectorAll(".opencode-setup-panel button")]
+        .filter(button => /^(Restart OpenCode service|Reload OpenCode configuration|Check status and updates)$/.test(button.textContent ?? ""))
+        .every(button => !(button as HTMLButtonElement).disabled))
+      assert.equal(await restart.isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Check status and updates", exact: true }).isEnabled(), true)
+      assert.equal(mutations, 0)
+      // Superseding a prompt must also settle its caller, without treating the
+      // replacement's dismissal as an affirmative answer to the old dialog.
+      await page.evaluate(() => (window as any).fixture.replaceDialog("prompt"))
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).waitFor()
+      await page.evaluate(() => (window as any).fixture.replaceDialog("alert"))
+      await page.waitForFunction(() => (window as any).fixture.replacementResult() === null)
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).getByRole("button", { name: "OK", exact: true }).click()
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click()
+      assert.equal(mutations, 0)
+    } finally { await page.close() }
+  }
+})
+
+test("a changed executable or lost restart capability fences a pending confirmation", async () => {
+  for (const change of ["binary", "capability"]) {
+    const page = await browser.newPage()
+    let permitted = true, mutations = 0
+    await page.route("**/api/**", route => {
+      if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+      return route.fulfill({ json: { ...healthyStatus, canRestart: permitted } })
+    })
+    try {
+      await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+      const panel = page.locator(".opencode-setup-panel")
+      await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+      await panel.getByText("Troubleshooting", { exact: true }).click()
+      await panel.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+      const confirm = page.getByRole("dialog", { name: "Restart OpenCode service", exact: true })
+      await confirm.waitFor()
+      if (change === "binary") {
+        await page.evaluate(() => (window as any).fixture.selectBinary("/replacement/opencode"))
+        await page.waitForFunction(() => (window as any).fixture.selectedBinary() === "/replacement/opencode")
+      } else {
+        permitted = false
+        await page.evaluate(() => (window as any).fixture.refresh())
+      }
+      await confirm.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+      await confirm.waitFor({ state: "hidden" })
+      assert.equal(mutations, 0)
+    } finally { await page.close() }
+  }
+})
+
+test("settings troubleshooting restart retains a dismissed recovery continuation for explicit Continue", async () => {
+  const page = await browser.newPage()
+  let restarts = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) {
+      assert.deepEqual(route.request().postDataJSON(), { restart: true })
+      restarts++
+    }
+    return route.fulfill({ json: { ...healthyStatus, canRestart: true } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click()
+    await panel.getByText("Troubleshooting", { exact: true }).click()
+    await panel.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.equal(restarts, 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
+    await page.evaluate(() => (window as any).fixture.reopen())
+    await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(restarts, 1)
+  } finally { await page.close() }
+})
+
 test("instance info explicitly confirms a global V2 reload and never calls the retired dispose endpoint", async () => {
   const page = await browser.newPage()
   const mutations: Array<{ url: string; body: unknown }> = []
@@ -688,7 +866,7 @@ test("settings expose and install an optional update directly, with retry feedba
     await page.getByRole("alert").waitFor()
     assert.equal(await page.getByRole("dialog").count(), 0)
     await update.click()
-    await page.locator(".opencode-setup-panel button:disabled").filter({ hasText: "OpenCode" }).waitFor()
+    await page.locator(".opencode-setup-panel button:disabled:visible").filter({ hasText: "OpenCode" }).waitFor()
     for (let count = 0; count < 100 && !releaseInstall; count++) await page.waitForTimeout(10)
     assert.ok(releaseInstall)
     releaseInstall()

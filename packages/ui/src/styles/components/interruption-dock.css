@@ -1,7 +1,9 @@
 .interruption-dock {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  max-height: 45%;
+  /* The measured usable minimum takes precedence on extreme keyboard heights;
+     the session stack scrolls rather than clipping the footer or composer. */
+  max-height: min(60%, 45vh);
   display: flex;
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-base));
@@ -13,6 +15,14 @@
 .interruption-dock .window-header {
   gap: var(--space-sm);
   background: color-mix(in srgb, var(--accent-primary) 9%, var(--surface-chrome));
+}
+.session-view:has(> .interruption-dock:not(.is-collapsed)) {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.session-view:has(> .interruption-dock:not(.is-collapsed)) > .prompt-input-container { flex-shrink: 0; }
+.session-view:has(> .interruption-dock:not(.is-collapsed)) :is(.form-request-fields, .interruption-permission-content) {
+  overscroll-behavior-y: auto;
 }
 .interruption-heading { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 .interruption-heading > svg { flex-shrink: 0; color: var(--accent-primary); }

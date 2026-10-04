@@ -128,11 +128,12 @@ export default function PromptInput(props: PromptInputProps) {
   })
   createEffect(() => {
     const saved = inputHeight()
-    if (typeof saved === "number" && viewport().height > 0) {
+    if (!props.interruptionExpanded && typeof saved === "number" && viewport().height > 0) {
       persistPromptInputHeight(heightPreference(saved))
     }
   })
   const effectiveInputHeight = () => {
+    if (props.interruptionExpanded) return minimumFieldHeight()
     const saved = inputHeight()
     const desired = saved === null ? defaultFieldHeight()
       : typeof saved === "number" ? saved
@@ -408,6 +409,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeStart(event: PointerEvent) {
     event.preventDefault()
+    if (props.interruptionExpanded) return
     const target = event.currentTarget as HTMLElement
 
     resizeDragState = {
@@ -428,6 +430,7 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleResizeMove(event: PointerEvent) {
+    if (props.interruptionExpanded) return
     if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
 
     event.preventDefault()
@@ -450,6 +453,10 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleResizeKeyDown(event: KeyboardEvent) {
+    if (props.interruptionExpanded) {
+      if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) event.preventDefault()
+      return
+    }
     const currentHeight = effectiveInputHeight() ?? fieldContainerRef?.getBoundingClientRect().height ?? defaultFieldHeight()
     const minimum = minimumFieldHeight()
     const current = Math.max(minimum, currentHeight)
@@ -470,6 +477,11 @@ export default function PromptInput(props: PromptInputProps) {
 
   onCleanup(() => {
     resizeDragState = undefined
+  })
+  createEffect(() => {
+    if (!props.interruptionExpanded) return
+    resizeDragState = undefined
+    setIsResizing(false)
   })
 
   const promptDelivery = (alternate = false) => resolvePromptDelivery(
@@ -625,6 +637,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeMaximize(event: MouseEvent) {
     event.preventDefault()
+    if (props.interruptionExpanded) return
     persistPromptInputHeight(heightPreference(computeMaxFieldHeight()))
     textareaRef?.focus()
   }
@@ -898,7 +911,8 @@ export default function PromptInput(props: PromptInputProps) {
           onPointerCancel={handleResizeEnd}
           onDblClick={handleResizeMaximize}
           onKeyDown={handleResizeKeyDown}
-          tabIndex={0}
+          tabIndex={props.interruptionExpanded ? -1 : 0}
+          aria-disabled={props.interruptionExpanded || undefined}
           role="separator"
           aria-orientation="horizontal"
           aria-valuemin={Math.round(minimumFieldHeight())}

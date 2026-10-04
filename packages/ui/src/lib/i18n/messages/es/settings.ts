@@ -41,6 +41,8 @@ export const settingsMessages = {
   "settings.opencode.setup.continue": "Continuar",
   "settings.opencode.setup.diagnostics": "Detalles de versiones",
   "settings.opencode.setup.troubleshooting": "Solución de problemas",
+  "settings.opencode.setup.restartTroubleshooting": "Reiniciar servicio OpenCode",
+  "settings.opencode.setup.restartDescription": "Reinicia el proceso OpenCode sin instalar una actualización. A diferencia de recargar la configuración, esto reemplaza el proceso e interrumpe el trabajo activo de todos los clientes conectados. El historial de sesiones se conserva.",
   "settings.opencode.setup.check": "Comprobar estado y actualizaciones",
   "settings.opencode.setup.checked": "Comprobación de estado y actualizaciones completada.",
   "settings.opencode.setup.reloaded": "Configuración de OpenCode recargada.",
