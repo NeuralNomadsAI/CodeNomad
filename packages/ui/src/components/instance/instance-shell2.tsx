@@ -83,6 +83,7 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
+import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -165,8 +166,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   // Shell ownership keeps partially answered requests alive as session panes change.
+  const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
+  const interruptionViewport = useInterruptionViewport(() => sessionCenterEl() ?? undefined, interruptionExpanded)
   const interruptionPanel = <InterruptionDock instanceId={props.instance.id}
-    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} />
+    sessionId={activeSessionIdForInstance()} active={props.isActiveInstance} onExpandedChange={setInterruptionExpanded} />
 
   const desktopQuery = useMediaQuery("(min-width: 1280px)")
 
@@ -1048,6 +1051,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       <Box
         class="session-center-column"
         ref={setSessionCenterEl}
+        style={interruptionViewport()}
         data-session-center-width={sessionCenterWidthStep()}
         data-session-header-density={String(headerDensity())}
         data-session-header-actions-forced={narrowHeaderActions() ? "true" : "false"}
@@ -1214,6 +1218,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
                     {interruptionPanel}
                     <PromptInput
+                      interruptionExpanded={interruptionExpanded()}
                       instanceId={props.instance.id}
                       instanceFolder={props.instance.folder}
                       sessionId={NO_SESSION_DRAFT_SESSION_ID}
@@ -1253,6 +1258,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                         <Show when={isActive()}>
                           <SessionView
                             interruptionPanel={interruptionPanel}
+                            interruptionExpanded={interruptionExpanded()}
                             sessionId={sessionId}
                             activeSessions={activeSessions()}
                             instanceId={props.instance.id}

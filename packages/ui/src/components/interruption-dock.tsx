@@ -8,7 +8,7 @@ import { interruptionFocus } from "../stores/interruption-navigation"
 import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
 
-export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean }) {
+export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const { t } = useI18n()
   const [selected, setSelected] = createSignal<string>()
   const [collapsed, setCollapsed] = createSignal(false)
@@ -18,6 +18,8 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
     ...getFormQueue(props.instanceId).map(payload => ({ key: `form:${payload.id}`, kind: "form" as const, payload })),
   ])
   const byKey = createMemo(() => new Map(queue().map(item => [item.key, item])))
+  createEffect(() => props.onExpandedChange?.(queue().length > 0 && !collapsed()))
+  onCleanup(() => props.onExpandedChange?.(false))
   const current = createMemo(() => byKey().get(selected() ?? "") ?? queue().find(item => item.payload.sessionID === props.sessionId) ?? queue()[0])
   const index = () => queue().findIndex(item => item.key === current()?.key)
   const title = (sessionId: string) => sessions().get(props.instanceId)?.get(sessionId)?.title || sessionId

@@ -1,7 +1,9 @@
 .interruption-dock {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  max-height: 45%;
+  /* A short conversation loses a larger fraction to toolbar/composer chrome.
+     Give its editor room while retaining the viewport-wide 45% upper bound. */
+  max-height: min(60%, 45vh);
   display: flex;
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-base));
