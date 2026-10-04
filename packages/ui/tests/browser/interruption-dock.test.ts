@@ -248,6 +248,8 @@ test("new permissions do not replace the draft; bounded navigation stays separat
     assert.equal(await answer(page).evaluate(element => element === document.activeElement), true)
     assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
+    await page.evaluate(() => { (window as any).fixture.other(); (window as any).fixture.refresh() })
+    assert.equal(await page.getByRole("button", { name: "Expand requests", exact: true }).getAttribute("aria-expanded"), "false")
     await page.locator('.permission-center-trigger').click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
     await page.getByRole("button", { name: "Previous request", exact: true }).click()
@@ -300,15 +302,14 @@ test("a live native question becomes a durable transcript receipt after dock sub
   } finally { await page.close() }
 })
 
-test("partial answers survive refresh, request navigation and session remount; failed sends stay retryable", async () => {
+test("partial answers survive refresh and conversation navigation; failed sends stay retryable", async () => {
   const { page, errors } = await fixture()
   try {
     await page.evaluate(() => (window as any).fixture.ask())
     await answer(page).fill("Partial answer")
     await page.evaluate(() => { (window as any).fixture.refresh(); (window as any).fixture.other() })
-    await page.getByRole("button", { name: "Next request", exact: true }).click()
-    await answer(page).fill("Other answer")
     await page.evaluate(() => (window as any).fixture.switch("other"))
+    await answer(page).fill("Other answer")
     assert.equal(await answer(page).inputValue(), "Other answer")
     await page.evaluate(() => (window as any).fixture.switch("s"))
     assert.equal(await answer(page).inputValue(), "Partial answer")
@@ -322,6 +323,8 @@ test("partial answers survive refresh, request navigation and session remount; f
     assert.equal(await answer(page).isDisabled(), true)
     await page.evaluate(() => (window as any).fixture.release())
     await page.waitForFunction(() => !(window as any).fixture.snapshot().forms.includes("question"))
+    assert.equal(await page.locator('.interruption-dock').isVisible(), false)
+    await page.evaluate(() => (window as any).fixture.switch("other"))
     assert.equal(await answer(page).inputValue(), "Other answer")
     assert.equal(await page.evaluate(() => (window as any).fixture.replies.length), 2)
     assert.deepEqual(errors, [])
@@ -342,6 +345,8 @@ test("mobile dock handles source-less permissions, global Forms and remote settl
     await page.evaluate(() => (window as any).fixture.remoteReply())
     await page.locator(".interruption-dock").waitFor({ state: "detached" })
     await page.evaluate(() => (window as any).fixture.global())
+    assert.equal(await page.locator('.interruption-dock').isVisible(), false)
+    await page.evaluate(() => (window as any).fixture.switch(null))
     await page.getByText("Service request", { exact: true }).waitFor()
     assert.equal(await page.getByRole("button", { name: "View in conversation" }).count(), 0)
     await answer(page).fill("Global answer")

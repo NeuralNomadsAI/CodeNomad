@@ -5,55 +5,64 @@ import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/ins
 import { getFormQueue } from "../stores/forms"
 import { sessions } from "../stores/sessions"
 import { interruptionFocus } from "../stores/interruption-navigation"
+import { getInterruptionQueue, getInterruptionScope } from "../stores/interruption-scope"
 import FormRequest from "./form-request"
 import { InterruptionPermission } from "./interruption-permission"
 import { useInterruptionMinimumHeight } from "./interruption-dock-layout"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean; onExpandedChange?: (expanded: boolean) => void }) {
   const { t } = useI18n()
-  const [selected, setSelected] = createSignal<string>()
+  const [selections, setSelections] = createSignal(new Map<string | null | undefined, string>())
+  const select = (key: string) => setSelections(previous => new Map(previous).set(props.sessionId, key))
   const [collapsed, setCollapsed] = createSignal(false)
   let root: HTMLElement | undefined
-  const queue = createMemo(() => [
-    ...getPermissionQueue(props.instanceId).map(payload => ({ key: `permission:${payload.id}`, kind: "permission" as const, payload })),
-    ...getFormQueue(props.instanceId).map(payload => ({ key: `form:${payload.id}`, kind: "form" as const, payload })),
-  ])
-  const byKey = createMemo(() => new Map(queue().map(item => [item.key, item])))
+  const pending = createMemo(() => getInterruptionQueue(props.instanceId))
+  const scope = createMemo(() => getInterruptionScope(sessions().get(props.instanceId), props.sessionId))
+  const queue = createMemo(() => pending().filter(item => scope().has(item.payload.sessionID)))
+  const byKey = createMemo(() => new Map(pending().map(item => [item.key, item])))
   createEffect(() => props.onExpandedChange?.(queue().length > 0 && !collapsed()))
   onCleanup(() => props.onExpandedChange?.(false))
-  const current = createMemo(() => byKey().get(selected() ?? "") ?? queue().find(item => item.payload.sessionID === props.sessionId) ?? queue()[0])
+  const current = createMemo(() => queue().find(item => item.key === selections().get(props.sessionId))
+    ?? queue().find(item => item.payload.sessionID === props.sessionId) ?? queue()[0])
+  const currentKey = createMemo(() => current()?.key)
   const minimumHeight = useInterruptionMinimumHeight(() => root, () => collapsed() ? undefined : current()?.key)
   const index = () => queue().findIndex(item => item.key === current()?.key)
   const title = (sessionId: string) => sessions().get(props.instanceId)?.get(sessionId)?.title || sessionId
   const heading = () => t(current()?.kind === "permission" ? "interruption.permission" : "interruption.question")
   const sessionTitle = () => current()?.payload.sessionID === "global" ? t("interruption.global") : title(current()?.payload.sessionID ?? "")
   createEffect(on(() => props.sessionId, () => {
-    setSelected(untrack(queue).find(item => item.payload.sessionID === props.sessionId)?.key ?? untrack(current)?.key)
     setCollapsed(false)
   }))
-  createEffect(on(() => current()?.key, key => {
+  createEffect(on([() => props.sessionId, currentKey], ([, key]) => {
     // Pin the request being edited, even when a permission arrives ahead of it.
-    setSelected(key)
+    if (key) select(key)
     setCollapsed(false)
   }))
   createEffect(on(interruptionFocus, intent => {
     if (intent?.instanceId !== props.instanceId) return
-    const item = untrack(queue).find(item => intent.requestId ? item.payload.id === intent.requestId
-      : intent.sessionId ? item.payload.sessionID === intent.sessionId : item.key === untrack(current)?.key) ?? untrack(queue)[0]
+    const item = untrack(queue).find(item => (!intent.kind || item.kind === intent.kind)
+      && (!intent.sessionId || item.payload.sessionID === intent.sessionId)
+      && (intent.requestId ? item.payload.id === intent.requestId
+        : intent.sessionId ? true : item.key === untrack(current)?.key))
     if (!item) return
-    setSelected(item.key)
+    select(item.key)
     setCollapsed(false)
-    queueMicrotask(() => { if (props.active !== false && root?.isConnected) root.focus({ preventScroll: true }) })
+    const sessionId = props.sessionId
+    queueMicrotask(() => {
+      if (interruptionFocus() === intent && props.sessionId === sessionId && current()?.key === item.key
+        && props.active !== false && root?.isConnected && !root.hidden) root.focus({ preventScroll: true })
+    })
   }))
   const move = (delta: number) => {
     const next = queue()[index() + delta]
     if (!next) return
-    setSelected(next.key)
+    select(next.key)
     setCollapsed(false)
   }
 
-  return <Show when={queue().length > 0}>
+  return <Show when={pending().length > 0}>
     <section ref={root} class="interruption-dock window-shell" classList={{ "is-collapsed": collapsed() }}
+      hidden={queue().length === 0} inert={queue().length === 0}
       style={{ "min-height": !collapsed() && minimumHeight() !== undefined ? `${minimumHeight()}px` : undefined }} tabIndex={-1} aria-label={t("permissionApproval.title")}>
       <header class="window-header">
         <div class="interruption-heading">
@@ -79,7 +88,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
       </header>
       <div id={`interruption-body-${props.instanceId}`} class="window-body interruption-body" hidden={collapsed()}>
         {/* Stable request keys preserve partial answers across native reconciliation and queue navigation. */}
-        <For each={queue().map(item => item.key)}>{key => {
+        <For each={pending().map(item => item.key)}>{key => {
           const item = () => byKey().get(key)!
           let editor: HTMLDivElement | undefined
           onCleanup(() => {
@@ -87,7 +96,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
             const composer = root?.closest(".session-view")?.querySelector<HTMLTextAreaElement>(".prompt-input")
             queueMicrotask(() => {
               if (props.active === false || (document.activeElement !== document.body && document.activeElement?.isConnected)) return
-              if (root?.isConnected) root.focus({ preventScroll: true })
+              if (root?.isConnected && !root.hidden) root.focus({ preventScroll: true })
               else if (composer?.isConnected) composer.focus({ preventScroll: true })
             })
           })
