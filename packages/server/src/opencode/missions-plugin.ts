@@ -27,6 +27,7 @@ import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../mis
 import { parseExecutionMode } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
+import { buildAssignmentPrompt } from "../missions/recipes"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string }): unknown
@@ -218,7 +219,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       })
       draft.add({
         name: "delegate",
-        description: "Declare one dependency-aware native task without creating or prompting a session. Use ordinary native subagent calls and their returned text; the coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs.",
+        description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs.",
         input: delegateSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -232,9 +233,13 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           await policy?.beforeTool(independent ? "delegate" : "declare", input, tool.sessionID)
           assertActive()
           await tool.progress({ status: independent ? "Delegating independent mission task" : "Declaring native mission task" })
-          return textResult(independent
-            ? await control.delegate(tool.sessionID, parseDelegateInput(input))
-            : await control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] })))
+          if (independent) return textResult(await control.delegate(tool.sessionID, parseDelegateInput(input)))
+          const result = await control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
+          const task = result.mission.tasks.find(candidate => candidate.key === result.contract.taskKey)
+          if (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract.generation) {
+            throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
+          }
+          return textResult({ ...result, assignmentPrompt: buildAssignmentPrompt(result.mission, task) })
         },
       })
       draft.add({
@@ -252,7 +257,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       })
       draft.add({
         name: "report",
-        description: "Coordinator: settle a declared native task with taskKey and evidence from ordinary native results, then finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize.",
+        description: "Coordinator: settle a declared native task with taskKey and actual returned evidence from ordinary native work, including any child-owned recursive helpers; do not ask descendants for duplicate mission reports. Finalize when the plan is complete. This business readout does not prove native execution ended or human consent. Independent-root actors report their assigned tasks as before. Qualified native actors may optionally supply an exact contract through the stronger native-return route. Only the coordinator may finalize.",
         input: reportSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {

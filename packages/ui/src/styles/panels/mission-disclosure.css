@@ -30,7 +30,4 @@
 .mission-task-dependencies { display: grid; gap: var(--space-xs); }
 .mission-task-link { text-align: start; color: var(--text-secondary); overflow-wrap: anywhere; }
 .mission-task-link:hover { color: var(--accent-primary); text-decoration: underline; }
-.mission-history-list { display: grid; gap: var(--space-xs); padding: 0; list-style: none; }
-.mission-history-list > li { display: flex; align-items: center; padding: var(--space-xs); border-bottom: 1px solid var(--border-base); }
-.mission-history-copy { flex: 1; min-width: 0; }
-.mission-history-copy p { margin: var(--space-xs) 0; font-size: var(--font-size-sm); }
+.mission-history-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }

@@ -4,6 +4,7 @@ import type { MissionActorActivity, MissionMap } from "../../../server/src/api-t
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { canRecoverMissionReport } from "./mission-native-execution-model"
+import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 
 export type MissionRecoveryButtonProps = {
   instanceId: string
@@ -39,7 +40,7 @@ function classify(error: unknown): "busy" | "unknown" | "conflict" | "failed" {
   return "failed"
 }
 
-export function MissionRecoveryButton(props: MissionRecoveryButtonProps) {
+export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
   const { t } = useI18n()
   const descriptionId = createUniqueId()
   const [error, setError] = createSignal<{ key: string; kind: ReturnType<typeof classify> }>()
@@ -87,15 +88,32 @@ export function MissionRecoveryButton(props: MissionRecoveryButtonProps) {
       try { await props.onAdmitted() } catch { /* No replay. */ }
     }
   }
-  return <Show when={eligible()}>
-    <span class="inline-flex items-center gap-1">
-      <button type="button" class="mission-control-icon-button" aria-label={label()} title={label()}
-        aria-busy={state() === "pending"} aria-describedby={state() === "pending" || currentError() ? descriptionId : undefined}
-        disabled={props.disabled || Boolean(state())} onClick={() => void recover()}>
-        <RefreshCw class="h-4 w-4" />
-      </button>
+  return {
+    action: (): ActionOverflowMenuItem | undefined => eligible() ? {
+      key: "recovery", label: label(), icon: <RefreshCw class="h-4 w-4" aria-hidden="true" />,
+      disabled: props.disabled || Boolean(state()), onSelect: recover,
+      description: state() === "pending" ? t("missions.recovery.pending") : currentError() ? t(`missions.recovery.error.${currentError()!.kind}`) : undefined,
+    } : undefined,
+    feedback: <Show when={eligible()}>
       <Show when={state() === "pending"}><small id={descriptionId} role="status">{t("missions.recovery.pending")}</small></Show>
       <Show when={currentError()}>{failure => <small id={descriptionId} role="alert">{t(`missions.recovery.error.${failure().kind}`)}</small>}</Show>
+    </Show>,
+  }
+}
+
+export function MissionRecoveryButton(props: MissionRecoveryButtonProps) {
+  const { t } = useI18n()
+  const recovery = createMissionRecoveryAction(props)
+  return <Show when={recovery.action()}>
+    {action =>
+    <span class="inline-flex items-center gap-1">
+      <button type="button" class="mission-control-icon-button" aria-label={action().label} title={action().label}
+        aria-busy={action().description === t("missions.recovery.pending")} aria-description={action().description}
+        disabled={action().disabled} onClick={() => void action().onSelect()}>
+        {action().icon}
+      </button>
+      {recovery.feedback}
     </span>
+    }
   </Show>
 }

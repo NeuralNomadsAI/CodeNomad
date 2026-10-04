@@ -6,6 +6,7 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
+import { clickMissionAction } from "./mission-actions"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -38,7 +39,7 @@ async function setup(f: ReturnType<typeof cleanupBackend>, loseAcknowledgement =
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
-  await page.getByRole("button", { name: "Delete mission", exact: true }).click()
+  await clickMissionAction(page.locator(".mission-control-index .mission-list-item").first(), "Delete mission")
   await page.getByRole("checkbox", { name: "Also delete specialist conversations created for this mission" }).check()
   return { page, requests }
 }
@@ -67,7 +68,7 @@ test("committed partial cleanup survives cancel, remount and reconnect with the 
     await page.locator(".mission-cleanup").getByText("1 removed · 0 kept · 1 pending", { exact: true }).waitFor()
     assert.equal((await f.control.snapshot()).missions.length, 0)
     f.failing.clear()
-    await page.locator(".mission-cleanup").getByRole("button", { name: "Try again", exact: true }).click()
+    await clickMissionAction(page.locator(".mission-cleanup .mission-list-item"), "Try again")
     await page.locator(".mission-cleanup").getByText("2 removed · 0 kept · 0 pending", { exact: true }).waitFor()
     assert.equal(requests.length, 2); assert.deepEqual(requests[0].input, requests[1].input)
     assert.deepEqual(requests.map(item => item.status), [503, 200])

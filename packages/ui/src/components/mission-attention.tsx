@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { getFormQueue } from "../stores/forms"
 import { getPermissionQueue } from "../stores/instances"
 import { MissionDisclosure } from "./mission-disclosure"
+import { MissionListItem } from "./mission-list-item"
 import { selectMissionAttention, type MissionObservedFamily } from "./mission-attention-model"
 
 /**
@@ -20,7 +21,7 @@ export const MissionAttention: Component<{
   instanceId: string
   mission: MissionMap
   family?: MissionObservedFamily
-  onOpenActor: (sessionId: string) => Promise<void>
+  onOpenActor: (sessionId: string, request?: { kind: "form" | "permission"; id: string }) => Promise<void>
 }> = (props) => {
   const { t } = useI18n()
   const items = createMemo(() => selectMissionAttention({
@@ -31,6 +32,12 @@ export const MissionAttention: Component<{
     family: props.family,
   }))
   const pending = createMemo(() => items().filter(item => item.open))
+  // Native request IDs are scoped by kind/session and the containing mission.
+  // Keep rows across display refetches, never across a different answer target.
+  const rows = createMemo(() => new Map(items().map(item => [JSON.stringify([
+    props.instanceId, props.mission.id, item.kind, item.id,
+    item.sessionId ?? null, item.actorSessionId ?? null, item.taskKey ?? null,
+  ]), item])))
   const actorTitle = (sessionId: string) =>
     props.mission.actors.find(actor => actor.sessionId === sessionId)?.title ?? sessionId
 
@@ -55,43 +62,31 @@ export const MissionAttention: Component<{
         fallback={<p class="mission-control-empty-line">{t("missions.control.attention.empty")}</p>}
       >
         <ul class="mission-attention-list">
-          <For each={items()}>
-            {(item) => (
-              <li class="mission-attention-item" data-kind={item.kind} data-open={item.open ? "true" : "false"}>
-                <span class="mission-attention-mark" aria-hidden="true" />
-                <div class="mission-attention-copy">
-                  <strong>{item.title}</strong>
-                   <small>{t(`missions.control.attention.${item.kind}`)}</small>
-                   <Show when={item.actorSessionId && item.actorSessionId !== item.sessionId}>
-                     <small>{t("missions.control.family.ancestry", { parent: props.family?.members.find(member => member.sessionId === item.sessionId)?.parentSessionId ?? "", actor: actorTitle(item.actorSessionId!) })}</small>
+          <For each={[...rows().keys()]}>
+            {key => <Show when={rows().get(key)}>{item =>
+              <li class="min-w-0"><MissionListItem statusKind={item().open ? item().kind : undefined}
+                text={<><strong>{item().title}</strong>{" "}
+                   <Show when={item().actorSessionId && item().actorSessionId !== item().sessionId}>
+                      <span>{t("missions.control.family.ancestry", { parent: props.family?.members.find(member => member.sessionId === item().sessionId)?.parentSessionId ?? "", actor: actorTitle(item().actorSessionId!) })}{" "}</span>
                    </Show>
-                  <Show when={item.kind === "form" && item.questions}>
-                    <span>{t("missions.control.attention.questions", { count: item.questions! })}</span>
+                  <Show when={item().kind === "form" && item().questions}>
+                    <span>{t("missions.control.attention.questions", { count: item().questions! })}</span>
                   </Show>
-                  <Show when={item.resources?.length}>
-                    <code>{item.resources!.join(" · ")}</code>
+                  <Show when={item().resources?.length}>
+                    <code>{item().resources!.join(" · ")}</code>
                   </Show>
-                  <Show when={item.summary}>
-                    <p class="mission-text-excerpt">{item.summary}</p>
+                  <Show when={item().summary}>
+                    <span>{" "}{item().summary}</span>
                   </Show>
-                </div>
-                <Show
-                  when={item.sessionId}
-                  fallback={<small class="mission-attention-historic">{t("missions.control.attention.blockedHint")}</small>}
-                >
-                  {(sessionId) => (
-                    <button
-                      type="button"
-                      class="mission-inline-session"
-                      onClick={() => void props.onOpenActor(sessionId())}
-                    >
-                      <span>{t("missions.control.attention.openActor", { actor: actorTitle(sessionId()) })}</span>
-                      <ArrowUpRight class="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  )}
-                </Show>
-              </li>
-            )}
+                </>}
+                status={<>{t(`missions.control.attention.${item().kind}`)}<Show when={!item().sessionId}>{" · "}{t("missions.control.attention.blockedHint")}</Show></>}
+                actions={item().sessionId ? [{ key: "actor", label: t("missions.control.attention.openActor", { actor: actorTitle(item().sessionId!) }),
+                  icon: <ArrowUpRight class="h-3.5 w-3.5" />, onSelect: () => {
+                    const current = rows().get(key)
+                     if (current?.open && current.sessionId && current.kind !== "blocked") return props.onOpenActor(current.sessionId,
+                       { kind: current.kind, id: current.id.slice(current.kind.length + 1) })
+                  } }] : []} /></li>
+            }</Show>}
           </For>
         </ul>
       </Show>

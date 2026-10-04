@@ -7,7 +7,6 @@ import { initializeClientState, writeClientLayoutValue } from "../../../src/stor
 import { missionProjectView } from "../../../src/stores/mission-view-state"
 import { activeSessionId, activeParentSessionId, seedRestoredSessionSelection, setSessionPage, setSessions } from "../../../src/stores/session-state"
 import { getSessionDraftPrompt } from "../../../src/stores/sessions"
-import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
 import type { Session } from "../../../src/types/session"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
@@ -26,7 +25,8 @@ writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const id = "native-family", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
 addInstance({ id, folder: scope, port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client,
   metadata: { project: { id: "project", directory: scope, canonical: scope } } })
-const definitions = [["A", null], ["actor", "A"], ["child", "actor"], ["grandchild", "child"], ["B", null], ["outside", null]] as const
+const definitions = [["A", null], ["actor", "A"], ["child", "actor"], ["grandchild", "child"],
+  ["third", "grandchild"], ["fourth", "third"], ["fifth", "fourth"], ["independent", null], ["B", null], ["outside", null]] as const
 const initial = definitions.map(([name, parent]) => ({ id: `ses_${name}`, instanceId: id, parentId: parent ? `ses_${parent}` : null,
   title: `Conversation ${name}`, agent: "build", model: { providerId: "fixture", modelId: "fixture" }, projectID: "project", cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -93,6 +93,11 @@ async function measureComposer() {
 function Fixture() {
   window.missionNativeFamily = {
     snapshot, emit, measureComposer,
+    statusKnown: (sessionId, known) => setSessions(previous => {
+      const next = new Map(previous), catalog = new Map(next.get(id)), session = catalog.get(sessionId)
+      if (session) catalog.set(sessionId, { ...session, runtimeStatusKnown: known })
+      next.set(id, catalog); return next
+    }),
     ask: () => {
       const question: Extract<V2Event, { type: "form.created" }>["data"]["form"] = { id: "child-question", sessionID: "ses_grandchild", title: "Child choice", fields: [
         { type: "string", key: "answer", title: "Which approach?" },
@@ -108,8 +113,6 @@ function Fixture() {
         data: { id: "global-permission", sessionID: "global", action: "global-read", resources: ["global-fixture.txt"] } })
     },
     coldChild: async () => {
-      await refreshSessionCatalog(id, true)
-      clearSessionCatalogState(id)
       setSessions(previous => { const next = new Map(previous), catalog = new Map(next.get(id)); catalog.delete("ses_child"); next.set(id, catalog); return next })
     },
   }
@@ -122,7 +125,7 @@ function Fixture() {
 }
 declare global {
   interface Window {
-    missionNativeFamily: { snapshot(): ReturnType<typeof snapshot>; emit(event: V2Event): void; ask(): void; askPermission(): void; coldChild(): Promise<void>; measureComposer(): ReturnType<typeof measureComposer> }
+    missionNativeFamily: { snapshot(): ReturnType<typeof snapshot>; emit(event: V2Event): void; ask(): void; askPermission(): void; coldChild(): Promise<void>; statusKnown(sessionId: string, known: boolean): void; measureComposer(): ReturnType<typeof measureComposer> }
   }
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

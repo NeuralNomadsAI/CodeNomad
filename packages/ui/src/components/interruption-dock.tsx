@@ -35,7 +35,10 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
   createEffect(on(interruptionFocus, intent => {
     if (intent?.instanceId !== props.instanceId) return
     const item = untrack(queue).find(item => intent.requestId ? item.payload.id === intent.requestId
-      : intent.sessionId ? item.payload.sessionID === intent.sessionId : item.key === untrack(current)?.key) ?? untrack(queue)[0]
+      && (!intent.sessionId || item.payload.sessionID === intent.sessionId)
+      && (!intent.kind || item.kind === intent.kind)
+      : intent.sessionId ? item.payload.sessionID === intent.sessionId : item.key === untrack(current)?.key)
+      ?? (intent.requestId ? undefined : untrack(queue)[0])
     if (!item) return
     setSelected(item.key)
     setCollapsed(false)

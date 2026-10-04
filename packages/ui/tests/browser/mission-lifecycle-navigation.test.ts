@@ -47,7 +47,7 @@ const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ met
 const tick = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 const retry = (page: Page) => page.locator(".mission-lifecycle").getByRole("button", { name: "Try again", exact: true })
 const pause = (page: Page) => page.getByRole("button", { name: "Pause mission", exact: true })
-const select = (page: Page, id: string) => page.getByRole("button", { name: `Navigation ${id} Active`, exact: true }).click()
+const select = (page: Page, id: string) => page.getByRole("button", { name: `Navigation ${id}`, exact: true }).click()
 async function settle(page: Page) {
   await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready" && !document.querySelector('.mission-lifecycle [role="status"]'))
 }

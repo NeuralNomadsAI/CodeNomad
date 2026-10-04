@@ -316,6 +316,31 @@ test("new permissions do not replace the draft; bounded navigation stays separat
   } finally { await page.close() }
 })
 
+test("exact focus intents honor the native session and never substitute another request after disappearance", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Scoped draft")
+    await page.evaluate(() => (window as any).fixture.collidingPermission())
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", "other"))
+    await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    assert((await page.locator(".interruption-dock").innerText()).includes("other-scope.txt"))
+    await page.evaluate(() => (window as any).fixture.focusScoped("question"))
+    await answer(page).waitFor()
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.evaluate(() => { (window as any).fixture.sameScopePermission(); (window as any).fixture.focusScoped("question", undefined, "permission") })
+    await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    assert((await page.locator(".interruption-dock").innerText()).includes("same-scope.txt"))
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", undefined, "form"))
+    await answer(page).waitFor()
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.evaluate(() => (window as any).fixture.focusScoped("already-answered", "other"))
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.replies), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("answering outside loaded history preserves the composer and native receipt survives reload", async () => {
   const { page, errors } = await fixture()
   try {

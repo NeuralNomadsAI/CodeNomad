@@ -1,10 +1,13 @@
 import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, onCleanup, untrack, type Component, type JSX } from "solid-js"
-import { AlertTriangle, ArrowUpRight, Check, Flag, Loader2, Minus, Pencil, Plus, RefreshCw } from "lucide-solid"
+import { AlertTriangle, ArrowUpRight, Check, Eye, Flag, Loader2, Minus, Pencil, Plus, RefreshCw } from "lucide-solid"
 
 import type { MissionMap, MissionReport } from "../../../../../../../server/src/api-types"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
-import { activeParentSessionId, refreshSessionCatalog, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
-import { instances } from "../../../../../stores/instances"
+import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
+import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
+import { instances, getPermissionQueue } from "../../../../../stores/instances"
+import { getFormQueue } from "../../../../../stores/forms"
+import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { sessionPreviews, showSessionChat } from "../../../../../stores/session-previews"
 import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionDisclosure } from "../../../../mission-disclosure"
@@ -13,10 +16,10 @@ import { MissionWork } from "../../../../mission-work"
 import { MissionHistory } from "../../../../mission-history"
 import { MissionAttention } from "../../../../mission-attention"
 import { missionIncludesSession } from "../../../../mission-attention-model"
-import { MissionReadButton } from "../../../../mission-read-button"
+import { MissionListItem } from "../../../../mission-list-item"
 import { MissionLifecycleControls } from "../../../../mission-lifecycle-controls"
 import { MissionActors } from "../../../../mission-actors"
-import { MissionRecoveryButton } from "../../../../mission-recovery-button"
+import { createMissionRecoveryAction } from "../../../../mission-recovery-button"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
 
@@ -95,20 +98,24 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     }
   }
 
-  const openActor = async (sessionId: string, origin = navigationOrigin()): Promise<boolean> => {
+  const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void): Promise<boolean> => {
     const missionId = selectedMissionId()
+    const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
     const authorized = () => missions().some(value => value.id === missionId && includesSession(value, sessionId))
-    if (!origin.current() || !authorized()) return false
+    const admitted = () => origin.current() && authorized()
+      && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
+      && !getAuthoritativelyDeletedSessionIdsForInstance(origin.instanceId).has(sessionId)
+    if (!admitted()) return false
     setNavigationError(false)
-    if (!sessions().get(origin.instanceId)?.has(sessionId)) {
-      try {
-        await refreshSessionCatalog(origin.instanceId)
-      } catch {
-        if (origin.current()) setNavigationError(true)
-        return false
-      }
+    // Targeted native hydration preserves authoritative locations and parent
+    // metadata, including a cold descendant absent from the display catalog.
+    try {
+      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], undefined, admitted)
+    } catch {
+      if (admitted()) setNavigationError(true)
+      return false
     }
-    if (!origin.current() || !authorized()) return false
+    if (!admitted()) return false
     if (!sessions().get(origin.instanceId)?.has(sessionId)) {
       setNavigationError(true)
       return false
@@ -118,9 +125,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       showSessionChat(origin.scope)
       updateMissionProjectView(origin.scope, { reader: undefined })
     })
-    origin.adoptConversation()
-    if (!origin.current()) return false
-    props.onRevealConversation?.()
+     origin.adoptConversation()
+     if (!origin.current()) return false
+     // Exact request selection belongs to our guarded navigation, before the
+     // owned phone-drawer close retires this panel's view lifetime.
+     afterSelection?.()
+     if (!origin.current()) return false
+     props.onRevealConversation?.()
     return origin.current()
   }
 
@@ -243,9 +254,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                     selectMission(value.id)
                     void openActor(value.coordinatorSessionId)
                   }}
-                  recovery={value => <MissionRecoveryButton instanceId={props.instanceId} mission={value} target="coordinator"
-                    activity={state().activity?.missions.find(item => item.missionId === value.id)?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state}
-                    disabled={Boolean(editor()) || !(props.isActive?.() ?? true)} onAdmitted={() => missionStore.refresh(props.instanceId)} />}
+                  recovery={value => createMissionRecoveryAction({
+                    get instanceId() { return props.instanceId }, get mission() { return value() }, target: "coordinator",
+                    get activity() { return state().activity?.missions.find(item => item.missionId === value().id)?.actors.find(actor => actor.sessionId === value().coordinatorSessionId)?.state },
+                    get disabled() { return Boolean(editor()) || !(props.isActive?.() ?? true) },
+                    onAdmitted: () => missionStore.refresh(props.instanceId),
+                  })}
                   t={props.t}
                 />
               <Show when={selected().id} keyed>{id => <MissionLifecycleControls instanceId={props.instanceId} mission={missions().find(mission => mission.id === id)!} disabled={Boolean(editor())} />}</Show>
@@ -260,7 +274,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onRead={task => void read({ missionId: selected().id, kind: "task", itemId: task.id })}
                 onReport={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })}
               />
-               <MissionAttention mission={selected()} family={family(selected().id)} instanceId={props.instanceId} onOpenActor={async id => { await openActor(id) }} />
+               <MissionAttention mission={selected()} family={family(selected().id)} instanceId={props.instanceId} onOpenActor={async (id, request) => {
+                 const origin = navigationOrigin()
+                 await openActor(id, origin, () => {
+                   if (!origin.current() || !request) return
+                   const queue = request.kind === "form" ? getFormQueue(origin.instanceId) : getPermissionQueue(origin.instanceId)
+                   if (queue.some(item => item.id === request.id && item.sessionID === id))
+                     focusInterruption(origin.instanceId, id, request.id, request.kind)
+                 })
+               }} />
                <Show when={selected().status === "active" && selected().reports.some(report => report.notificationStatus === "pending" && report.delivery !== "native-return")}>
                 <p class="mission-control-stale" role="status">{props.t("missions.control.report.notificationPending")}</p>
               </Show>
@@ -268,6 +290,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
                 onRead={report => void read({ missionId: selected().id, kind: "report", itemId: report.id })} />
               <MissionActors
                 mission={selected()}
+                instanceId={props.instanceId}
                 activity={state().activity?.missions.find(value => value.missionId === selected().id)?.actors}
                 family={family(selected().id)}
                 sessionTitle={id => sessions().get(props.instanceId)?.get(id)?.title ?? id}
@@ -310,38 +333,29 @@ const MissionIndex: Component<{
   onDelete: (mission: MissionMap) => void
   onRead: (mission: MissionMap) => void
   onOpenCoordinator: (mission: MissionMap) => void
-  recovery: (mission: MissionMap) => JSX.Element
+  recovery: (mission: () => MissionMap) => ReturnType<typeof createMissionRecoveryAction>
   t: MissionControlProps["t"]
 }> = (props) => (
   <nav class="mission-control-index" aria-label={props.t("missions.control.mapLabel")}>
     <For each={props.missions.map(mission => mission.id)}>
       {id => {
         const mission = () => props.missions.find(mission => mission.id === id)!
-        return <div class="mission-index-row" classList={{ "mission-index-row-active": id === props.selectedId }}>
-        <button
-          type="button"
-          class="mission-control-index-item"
-          classList={{ "mission-control-index-item-active": id === props.selectedId }}
-          aria-current={id === props.selectedId ? "true" : undefined}
-          title={mission().objective}
-          onClick={() => props.onSelect(id)}
-        >
-          <span>{mission().objective}</span>
-          <small data-status={mission().status === "active" ? mission().runState ?? "active" : mission().status}>{props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
-            ? `missions.control.run.${mission().runState}` : statusKey(mission().status))}</small>
-        </button>
-        <MissionReadButton onClick={() => props.onRead(mission())} />
-        <button type="button" class="mission-control-icon-button mission-open-coordinator"
-          aria-label={props.t("missions.control.openCoordinator")} title={props.t("missions.control.openCoordinator")}
-          onClick={() => props.onOpenCoordinator(mission())}><ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" /></button>
-        <Show when={id === props.selectedId}>{props.recovery(mission())}</Show>
-        <button type="button" class="mission-control-icon-button" disabled={props.disabled || mission().status !== "active"}
-          aria-label={props.t("missions.control.edit")} title={props.t("missions.control.edit")}
-          onClick={() => props.onEdit(mission())}><Pencil class="h-3.5 w-3.5" aria-hidden="true" /></button>
-        <button type="button" class="mission-control-icon-button" disabled={props.disabled}
-          aria-label={props.t("missions.control.delete")} title={props.t("missions.control.delete")}
-          onClick={() => props.onDelete(mission())}><Minus class="h-3.5 w-3.5" aria-hidden="true" /></button>
-        </div>
+        const recovery = props.recovery(mission)
+        const recoveryAction = createMemo(() => id === props.selectedId ? recovery.action() : undefined)
+        return <MissionListItem text={mission().objective} title={mission().objective}
+          selected={id === props.selectedId} onSelect={() => props.onSelect(id)}
+          statusKind={mission().status === "active" ? mission().runState ?? "active" : mission().status}
+          status={props.t(mission().status === "active" && (mission().runState === "prepared" || mission().runState === "paused")
+            ? `missions.control.run.${mission().runState}` : statusKey(mission().status))}
+          actions={[
+            { key: "read", label: props.t("missions.control.read"), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(mission()) },
+            { key: "coordinator", label: props.t("missions.control.openCoordinator"), icon: <ArrowUpRight class="h-3.5 w-3.5" />, onSelect: () => props.onOpenCoordinator(mission()) },
+            ...(recoveryAction() ? [recoveryAction()!] : []),
+            { key: "edit", label: props.t("missions.control.edit"), icon: <Pencil class="h-3.5 w-3.5" />, disabled: props.disabled || mission().status !== "active", onSelect: () => props.onEdit(mission()) },
+            { key: "delete", label: props.t("missions.control.delete"), icon: <Minus class="h-3.5 w-3.5" />, disabled: props.disabled, onSelect: () => props.onDelete(mission()) },
+          ]}>
+          <Show when={id === props.selectedId}>{recovery.feedback}</Show>
+        </MissionListItem>
       }}
     </For>
   </nav>
@@ -354,15 +368,11 @@ const MissionReports: Component<{ missionId: string; tasks: MissionMap["tasks"];
         <For each={props.reports.map(report => report.id).reverse()}>
           {id => {
             const report = () => props.reports.find(report => report.id === id)!
-            return <MissionDisclosure class="mission-report" missionId={props.missionId} name={`report:${id}`} defaultOpen={false}
-              actions={<MissionReadButton onClick={() => props.onRead(report())} />}
-              label={`${props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey} — ${props.t(reportOutcomeKey(report().outcome))}`}
-              title={<><span class="mission-report-mark" data-outcome={report().outcome} aria-hidden="true" />
-                <span class="mission-report-heading"><span>{props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey}</span></span>
-                <small>{props.t(reportOutcomeKey(report().outcome))}</small></>}>
-              <p class="mission-text-excerpt">{report().summary}</p>
+            return <MissionListItem text={<>{props.tasks.find(task => task.key === report().taskKey)?.title ?? report().taskKey}{" — "}{report().summary}</>}
+              title={report().summary} status={props.t(reportOutcomeKey(report().outcome))} statusKind={report().outcome}
+              actions={[{ key: "read", label: props.t("missions.control.read"), icon: <Eye class="h-3.5 w-3.5" />, onSelect: () => props.onRead(report()) }]}>
               <Show when={report().late}><p class="mission-report-detail">{props.t("missions.control.report.late")}</p></Show>
-            </MissionDisclosure>
+            </MissionListItem>
           }}
         </For>
       </div>

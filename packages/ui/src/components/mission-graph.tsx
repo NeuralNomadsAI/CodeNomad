@@ -14,7 +14,7 @@ export function orderMissionTasks(tasks: MissionTask[]): MissionTask[] {
   return ordered
 }
 
-/** Measured dependency rail: opening details or resizing never detaches an edge from its row. */
+/** Measured dependency rail: compact shared rows retain their exact anchors on resize. */
 export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListElement }) {
   const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number; status: string }>>([])
   const [height, setHeight] = createSignal(0)
@@ -26,7 +26,7 @@ export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListEleme
       const scale = list.offsetHeight ? bounds.height / list.offsetHeight : 1
       const rows = new Map([...list.children].map(row => [(row as HTMLElement).dataset.taskKey, row]))
       setPoints(tasks.flatMap(task => {
-        const heading = rows.get(task.key)?.querySelector("h3")
+        const heading = rows.get(task.key)?.querySelector(".mission-list-item") ?? rows.get(task.key)?.querySelector("h3")
         if (!heading) return []
         const box = heading.getBoundingClientRect()
         return [{ key: task.key, x: 38, y: (box.top - bounds.top + box.height / 2) / scale, status: task.status }]

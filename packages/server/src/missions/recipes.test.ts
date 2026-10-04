@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { MissionMap, MissionTask } from "./model"
+import type { MissionMap, MissionTask, MissionTemplateId } from "./model"
 import { buildAssignmentPrompt, buildActorContext, getMissionRecipe } from "./recipes"
 
 const task: MissionTask = { id: "task", key: "fix", title: "Fix <bug>", brief: "Only this seam", role: "implementer",
@@ -46,4 +46,82 @@ test("Wayfinder guidance cannot claim a human-proof gate without authoritative n
   assert.match(recipe.coordinator, /typed authority-owned Form proof/)
   assert.match(recipe.coordinator, /do not claim that a report artifact enforces human consent/)
   assert.equal(recipe.roles.some(role => role.reportContract), false)
+})
+
+function assertNativeWorkPolicy(text: string) {
+  assert.match(text, /Each native child owns its bounded assignment and may recursively decompose it/)
+  assert.match(text, /Run independent subtasks in parallel when useful/)
+  assert.match(text, /within the assignment's role and evidence gates/)
+  assert.match(text, /Avoid conflicting edits or shared mutable checks/)
+  assert.match(text, /Pass the relevant scope, role constraints, safety boundaries/)
+  assert.match(text, /Context is not automatically propagated by Missions/)
+  assert.match(text, /helpers may not alter mission topology or submit its mission report/)
+  assert.match(text, /Integrate actual returned evidence.*immediate parent/)
+  assert.match(text, /A background launch is not completion/)
+  assert.match(text, /Respect native permissions and the user's configured runtime depth/)
+  assert.match(text, /Do not change configuration, force a fixed depth/)
+  assert.match(text, /denied\/depth-limited helper into an undeclared independent root/)
+  assert.doesNotMatch(text, /subagent_depth|depth\s*[:=]\s*\d|reach (?:depth|level) \d/)
+}
+
+for (const template of ["custom", "pocock-fix-bug", "wayfinder"] satisfies MissionTemplateId[]) {
+  test(`${template} propagates bounded native policy while retaining every role's constraints`, () => {
+    const map = { ...mission, template }
+    const recipe = getMissionRecipe(template)
+    const coordinator = buildActorContext(map, "ses_coordinator")
+    assertNativeWorkPolicy(coordinator)
+    assert.match(coordinator, /Run independent ready frontier tasks in parallel when useful/)
+    assert.match(coordinator, /blockedBy records real prerequisites/)
+    assert.match(coordinator, /canonical assignmentPrompt.*only when its task is ready/)
+    assert.match(coordinator, /context, not execution admission or proof/)
+    assert.match(coordinator, /Keep the declared execution profile and native continuation checks intact/)
+    for (const role of recipe.roles) {
+      const assignment = { ...task, role: role.id }
+      const prompt = buildAssignmentPrompt(map, assignment)
+      assertNativeWorkPolicy(prompt)
+      assert.ok(prompt.includes(role.instructions), `${role.id} keeps its full role contract`)
+      if (role.reportContract) assert.ok(prompt.includes(role.reportContract), `${role.id} keeps its artifact contract`)
+      assert.match(prompt, /Safety boundary:/)
+      assert.match(prompt, /preserve unrelated user changes/)
+      assert.match(prompt, /Never stage, commit, push/)
+      assert.match(prompt, /Do not expose secrets/)
+      assert.match(prompt, /ordinary native subagent result/)
+      assert.match(prompt, /Do not copy it into mission.report/)
+      const specialist: MissionMap = { ...map, tasks: [{ ...assignment, actorSessionId: "ses_specialist" }], actors: [
+        ...map.actors, { ...map.actors[0], sessionId: "ses_specialist", kind: "specialist", roles: [role.id] },
+      ] }
+      assertNativeWorkPolicy(buildActorContext(specialist, "ses_specialist"))
+      assert.equal(buildActorContext(specialist, "ses_unregistered_helper"), "", "no invented helper membership")
+      const independent = buildAssignmentPrompt(map, { ...assignment, executionMode: { kind: "independent", reason: "playbook", explanation: "Read-only isolated exception" } })
+      assertNativeWorkPolicy(independent)
+      assert.match(independent, /When finished, call mission.report/)
+    }
+  })
+}
+
+test("playbook evidence and human boundaries survive parallel helper guidance", () => {
+  const pocock = getMissionRecipe("pocock-fix-bug")
+  assert.match(pocock.coordinator, /dependency-connected evidence gate/)
+  assert.match(pocock.coordinator, /fresh distinct native sessions for both review axes and final validation/)
+  for (const role of ["review-standards", "review-spec", "validator"]) {
+    assert.match(buildAssignmentPrompt(mission, { ...task, role }), /Do not edit\./)
+  }
+  assert.match(buildAssignmentPrompt(mission, { ...task, role: "diagnostician" }), /test one variable at a time.*Do not edit production code/)
+  assert.match(buildAssignmentPrompt(mission, task), /observe it red, make it green/)
+  const wayfinder = getMissionRecipe("wayfinder")
+  assert.match(wayfinder.sequence.join("\n"), /one durable decision per task does not restrict its native helper tree/)
+  for (const role of ["prototype", "grilling"]) {
+    assert.match(buildAssignmentPrompt({ ...mission, template: "wayfinder" }, { ...task, role }), /native Form/)
+  }
+  assert.match(wayfinder.coordinator, /never answer the human side yourself/)
+})
+
+test("withdrawn native assignments return terminal evidence without duplicate business reports", () => {
+  const actor = { ...mission.actors[0], sessionId: "ses_native", kind: "specialist" as const }
+  const withdrawn: MissionTask = { ...task, actorSessionId: actor.sessionId, status: "withdrawn", outstandingExecution: true }
+  const native = buildActorContext({ ...mission, actors: [actor], tasks: [withdrawn] }, actor.sessionId)
+  assert.match(native, /Do not continue new work; return terminal evidence to your parent without a mission.report copy/)
+  assert.doesNotMatch(native, /submit one terminal mission.report/)
+  const root = buildActorContext({ ...mission, actors: [actor], tasks: [{ ...withdrawn, executionMode: undefined }] }, actor.sessionId)
+  assert.match(root, /submit one terminal mission.report if able/)
 })

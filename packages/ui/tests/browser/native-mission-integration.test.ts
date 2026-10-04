@@ -10,6 +10,7 @@ import solid from "vite-plugin-solid"
 import { marked } from "marked"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { clickMissionAction } from "./mission-actions"
 import type { NativeMissionCapture } from "./fixtures/native-mission-integration"
 
 let browser: Browser, server: ViteDevServer, url: string, capture: NativeMissionCapture
@@ -180,10 +181,10 @@ test("captured actual-native mission frames render dependencies, reports and exa
       await page.screenshot({ path: path.join(outputDirectory, `${label}.png`), fullPage: true })
     }
     const finalMission = capturedMission(capture.frames.find(frame => frame.label === "finished")!)
+    await page.getByRole("button", { name: "Reports", exact: true }).click()
     for (const report of finalMission.reports) {
-      const row = taskRow(page, report.taskKey), trigger = row.locator(".mission-disclosure-trigger").first()
-      if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click()
-      await row.locator(".mission-task-result button").click()
+      const row = page.locator(".mission-report-list > .mission-list-item").filter({ has: page.locator(".mission-list-text", { hasText: report.summary }) })
+      await clickMissionAction(row, "Read in chat area")
       await page.waitForFunction(reportID => window.nativeMissionIntegration.snapshot().reader?.itemId === reportID, report.id)
       const articles = page.locator(".mission-reader article")
       await assertReaderSection(page, articles.filter({ has: page.getByRole("heading", { name: "Summary", exact: true }) }), report.summary)
@@ -196,10 +197,11 @@ test("captured actual-native mission frames render dependencies, reports and exa
     assert(finalMission.reports.length >= 3, "All three actual native task reports must be captured")
     const actors = page.locator(".mission-disclosure").filter({ has: page.locator(".mission-activity-intro") }).first()
     // Actors initially collapse; locate its header by the real translated title.
-    const actorsTrigger = page.locator(".mission-disclosure-trigger").filter({ hasText: "Observed activity" }).first()
+    const actorsTrigger = page.locator(".mission-disclosure-trigger").filter({ hasText: "Conversations" }).first()
     if (await actorsTrigger.getAttribute("aria-expanded") !== "true") await actorsTrigger.click()
     for (const actor of finalMission.actors) {
-      await actors.locator(".mission-activity-actor").filter({ has: page.getByText(actor.title, { exact: true }) }).getByRole("button").click()
+      const actorRow = actors.locator(`.mission-conversation-node[data-session-id="${actor.sessionId}"] > .mission-activity-actor > .mission-list-item`)
+      await clickMissionAction(actorRow, `Open ${actor.title}`)
       assert.equal((await page.evaluate(() => window.nativeMissionIntegration.snapshot())).selectedID, actor.sessionId)
     }
     const inventory = capturedSessions(capture.frames.find(frame => frame.label === "finished")!)

@@ -9,6 +9,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { clickMissionAction } from "./mission-actions"
 import type {} from "./fixtures/mission-cross-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -30,7 +31,7 @@ function mission(id: string): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 function gate() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function setup() {
+async function setup(missing = false) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 950 } })
   const errors: string[] = [], networkErrors: string[] = [], requests: string[] = [], hold = gate(), reached = gate(), complete = gate()
   let defer = false
@@ -42,9 +43,15 @@ async function setup() {
     const pathname = new URL(route.request().url()).pathname; requests.push(`${route.request().method()} ${pathname}`)
     const location = { directory: "/fixture" }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A"), mission("B")], generatedAt: 1, discardedEvents: 0 } })
+    if (pathname.endsWith("/instance/api/session/ses_A")) {
+      if (defer) { reached.release(); await hold.promise }
+      await route.fulfill(missing ? { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } }
+        : { json: { data: { id: "ses_A", projectID: "project", title: "ses_A", slug: "ses_A", version: "1", location, time: { created: 1, updated: 1 } } } })
+      if (defer) complete.release(); return
+    }
     if (pathname.endsWith("/worktrees")) return route.fulfill({ json: { isGitRepo: true, worktrees: [{ slug: "root", directory: "/fixture", kind: "root" }] } })
     if (pathname === "/api/previews") return route.fulfill({ json: { token: "private-preview", sessionId: "ses_initial", targetUrl: "https://example.invalid/", proxyUrl: "/private-preview-frame", createdAt: "2026-10-03" } })
-    if (pathname.endsWith("/command")) { if (defer) { reached.release(); await hold.promise }; await route.fulfill({ json: { location, data: [] } }); if (defer) complete.release(); return }
+    if (pathname.endsWith("/command")) return route.fulfill({ json: { location, data: [] } })
     if (pathname.endsWith("/agent")) return route.fulfill({ json: { location, data: [{ id: "build", name: "build", mode: "primary" }, { id: "plan", name: "plan", mode: "primary" }] } })
     if (pathname.endsWith("/provider") || pathname.endsWith("/model")) return route.fulfill({ json: { location, data: [] } })
     if (pathname.endsWith("/model/default")) return route.fulfill({ json: { location, data: null } })
@@ -56,7 +63,7 @@ async function setup() {
   await page.route("**/private-preview-frame", route => route.fulfill({ contentType: "text/html", body: "<p>Private browser preview</p>" }))
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Objective A Active", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Objective A", exact: true }).waitFor()
     await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests }, null, 2))
@@ -64,7 +71,7 @@ async function setup() {
   }
   return { page, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
 }
-const row = (page: Page, id: string) => page.locator(".mission-index-row").filter({ has: page.getByRole("button", { name: `Objective ${id} Active`, exact: true }) })
+const row = (page: Page, id: string) => page.locator(".mission-control-index > .mission-list-item").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
 async function ordinarySession(page: Page, name: string) { await page.locator(".session-sidebar").getByText(`Conversation ${name}`, { exact: true }).click() }
 async function settle(page: Page) { await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))) }
 for (const origin of ["actor", "reader"] as const) for (const change of ["session", "session-aba", "preview", "preview-aba"] as const) {
@@ -73,7 +80,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["sessio
     try {
       defer()
       if (origin === "reader") await page.evaluate(() => window.missionCrossNavigation.clearActive())
-      await row(page, "A").getByRole("button", { name: origin === "actor" ? "Open coordinator" : "Read in chat area", exact: true }).click()
+      await clickMissionAction(row(page, "A"), origin === "actor" ? "Open coordinator" : "Read in chat area")
       await reached.promise
       if (change.startsWith("session")) {
         await ordinarySession(page, "B")
@@ -103,8 +110,8 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
   try {
     defer()
     if (origin === "reader") await page.evaluate(() => window.missionCrossNavigation.clearActive())
-    await row(page, "A").getByRole("button", { name: origin === "actor" ? "Open coordinator" : "Read in chat area", exact: true }).click()
-    await reached.promise; await page.evaluate(() => window.missionCrossNavigation.created())
+    await clickMissionAction(row(page, "A"), origin === "actor" ? "Open coordinator" : "Read in chat area")
+    await reached.promise
     hold.release(); await complete.promise
     await page.waitForFunction(origin => {
       const current = window.missionCrossNavigation.snapshot()
@@ -115,9 +122,9 @@ for (const origin of ["actor", "reader"] as const) test(`shell current ${origin}
 })
 
 for (const change of ["session", "preview"] as const) test(`shell stale missing actor cannot publish an error over external ${change}`, async () => {
-  const { page, errors, networkErrors, hold, reached, complete, defer } = await setup()
+  const { page, errors, networkErrors, hold, reached, complete, defer } = await setup(true)
   try {
-    defer(); await row(page, "A").getByRole("button", { name: "Open coordinator", exact: true }).click(); await reached.promise
+    defer(); await clickMissionAction(row(page, "A"), "Open coordinator"); await reached.promise
     if (change === "session") await ordinarySession(page, "B")
     else await page.getByRole("button", { name: "Open web preview", exact: true }).click()
     const before = await page.evaluate(() => ({ state: window.missionCrossNavigation.snapshot(), writes: window.missionCrossNavigation.history().length }))

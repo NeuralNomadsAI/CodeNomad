@@ -182,7 +182,7 @@ test("report request is task-scoped and classified rejections never expose upstr
       await button.click()
       const alert = page.getByRole("alert")
       await alert.getByText(english[`missions.recovery.error.${cases[index][1]}`], { exact: true }).waitFor()
-      assert.equal(await button.getAttribute("aria-describedby"), await alert.getAttribute("id"))
+      assert.equal(await button.getAttribute("aria-description"), await alert.innerText())
       assert.equal((await page.locator("body").innerText()).includes("PRIVATE RAW"), false)
       assert.deepEqual(requests[index], { expectedRevision: 1, target: "report", taskKey: "task-report" })
       assert.deepEqual(await call(page, "refreshes"), [])

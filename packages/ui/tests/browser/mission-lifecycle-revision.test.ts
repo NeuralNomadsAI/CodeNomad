@@ -138,7 +138,7 @@ test("real RightPanel ignores late rejection in a newly selected mission", async
     })
     await open(page)
     await page.getByRole("button", { name: "Pause mission", exact: true }).click(); await sent
-    await page.getByRole("button", { name: "Lifecycle two Active", exact: true }).click()
+    await page.getByRole("button", { name: "Lifecycle two", exact: true }).click()
     await settled(page)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response

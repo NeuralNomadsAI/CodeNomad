@@ -9,6 +9,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { clickMissionAction } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -35,7 +36,7 @@ function gate() {
   const promise = new Promise<void>(resolve => { release = resolve })
   return { promise, release }
 }
-async function setup() {
+async function setup(missing = false) {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], networkErrors: string[] = [], requests: string[] = []
   const held = gate(), reached = gate(), completed = gate()
   page.on("pageerror", error => errors.push(error.message))
@@ -46,7 +47,12 @@ async function setup() {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A"), mission("B")], generatedAt: 1, discardedEvents: 0 } })
-    if (pathname.includes("/instance/api/command")) { reached.release(); await held.promise; await route.fulfill({ json: [] }); completed.release(); return }
+    if (pathname.endsWith("/instance/api/session/ses_A")) {
+      reached.release(); await held.promise
+      await route.fulfill(missing ? { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } }
+        : { json: { data: { id: "ses_A", projectID: "project", title: "ses_A", slug: "ses_A", version: "1", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
+      completed.release(); return
+    }
     if (pathname.endsWith("/agent")) return route.fulfill({ json: [{ id: "build", name: "build", mode: "primary" }, { id: "plan", name: "plan", mode: "primary" }] })
     if (pathname.endsWith("/provider")) return route.fulfill({ json: { all: [], connected: [], default: {} } })
     if (pathname.includes("/instance/")) return route.fulfill({ json: [] })
@@ -54,16 +60,22 @@ async function setup() {
   })
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Objective A Active", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Objective A", exact: true }).waitFor()
   } catch (error) {
     if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests }, null, 2))
     held.release(); await page.close(); throw error
   }
   return { page, held, reached, completed, errors, networkErrors, requests }
 }
-const row = (page: Page, id: string) => page.locator(".mission-index-row").filter({ has: page.getByRole("button", { name: `Objective ${id} Active`, exact: true }) })
-async function read(page: Page, id: string) { await row(page, id).getByRole("button", { name: "Read in chat area", exact: true }).click() }
-async function actor(page: Page, id: string) { await row(page, id).getByRole("button", { name: "Open coordinator", exact: true }).click() }
+const row = (page: Page, id: string) => page.locator(".mission-control-index > .mission-list-item").filter({ has: page.getByRole("button", { name: `Objective ${id}`, exact: true }) })
+async function read(page: Page, id: string) {
+  await row(page, id).waitFor()
+  await clickMissionAction(row(page, id), "Read in chat area")
+}
+async function actor(page: Page, id: string) {
+  await row(page, id).waitFor()
+  await clickMissionAction(row(page, id), "Open coordinator")
+}
 async function settled(page: Page) {
   // Let the fulfilled HTTP response traverse the real Promise client and Solid
   // effects; this is not a mock replacement of navigation/selection logic.
@@ -89,7 +101,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       } else if (change === "remount") {
         await page.evaluate(() => window.missionNavigation.mount(false)); await page.evaluate(() => window.missionNavigation.mount(true))
       }
-      if (change === "selection") await page.getByRole("button", { name: "Objective B Active", exact: true }).click()
+      if (change === "selection") await page.getByRole("button", { name: "Objective B", exact: true }).click()
       else if (change === "actor") await actor(page, "B")
       else if (change === "editor") { await page.getByRole("button", { name: "Create mission", exact: true }).click(); await page.getByLabel("Objective", { exact: true }).fill("New editor intent") }
       else await read(page, "B")
@@ -115,7 +127,6 @@ test("current reader without active session opens coordinator then installs its 
   try {
     await page.evaluate(() => window.missionNavigation.clearActive())
     await read(page, "A"); await reached.promise
-    await page.evaluate(() => window.missionNavigation.created("ses_A"))
     held.release(); await completed.promise
     await page.waitForFunction(() => window.missionNavigation.snapshot().view.reader?.missionId === "A")
     const after = await page.evaluate(() => window.missionNavigation.snapshot())
@@ -125,7 +136,7 @@ test("current reader without active session opens coordinator then installs its 
 })
 
 test("missing coordinator does not install its reader after failed opening", async () => {
-  const { page, held, reached, completed, errors } = await setup()
+  const { page, held, reached, completed, errors } = await setup(true)
   try {
     await page.evaluate(() => window.missionNavigation.clearActive())
     await read(page, "A"); await reached.promise
@@ -138,7 +149,7 @@ test("missing coordinator does not install its reader after failed opening", asy
 })
 
 test("stale missing-coordinator error cannot overwrite a newer reader", async () => {
-  const { page, held, reached, completed, errors } = await setup()
+  const { page, held, reached, completed, errors } = await setup(true)
   try {
     await actor(page, "A"); await reached.promise; await read(page, "B")
     const before = await page.evaluate(() => window.missionNavigation.snapshot())

@@ -66,7 +66,10 @@ test("an actual live dispatch command is reconstructed from native map, not trus
   assert.equal(f.counts.prompts, 0); assert.equal(f.counts.environments, 1)
 })
 
-test("transport rejects a tampered full grant or input contract and honors the real deletion fence", { timeout: 15_000 }, async t => {
+// Windows fixture setup performs real protected filesystem/Git checks. Keep the
+// test bounded without making that setup race the original 15-second deadline;
+// all tamper/admission/deletion assertions remain unchanged.
+test("transport rejects a tampered full grant or input contract and honors the real deletion fence", { timeout: 60_000 }, async t => {
   const f = await fixture(); t.after(f.cleanup); await f.create(); await f.action("adopt", {}); await f.action("lifecycle", { action: "start" })
   const state = (await f.authority.read())!
   await f.runTool("delegate", task(state.binding.missionID))

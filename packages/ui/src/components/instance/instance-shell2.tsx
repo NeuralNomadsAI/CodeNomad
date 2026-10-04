@@ -11,7 +11,6 @@ import {
 } from "solid-js"
 import AppBar from "@suid/material/AppBar"
 import Box from "@suid/material/Box"
-import Drawer from "@suid/material/Drawer"
 import IconButton from "@suid/material/IconButton"
 import Toolbar from "@suid/material/Toolbar"
 import useMediaQuery from "@suid/material/useMediaQuery"
@@ -76,6 +75,7 @@ import {
   clampWidth,
 } from "./shell/storage"
 import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
+import { HostedDrawer } from "./shell/HostedDrawer"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
@@ -767,16 +767,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         </Box>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
+      <HostedDrawer
         class="session-floating-drawer"
         anchor={isRTL() ? "right" : "left"}
-        variant="temporary"
+        container={drawerContainer()}
         open={leftOpen()}
         onClose={closeLeftDrawer}
-        ModalProps={modalProps}
       >
         <SessionSidebar
           t={t}
@@ -792,7 +789,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onCloseLeftDrawer={closeLeftDrawer}
           setContentEl={setLeftDrawerContentEl}
         />
-      </Drawer>
+      </HostedDrawer>
     )
   }
 
@@ -836,16 +833,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         </Box>
       )
     }
-    const container = drawerContainer()
-    const modalProps = container ? { container: container as Element } : undefined
     return (
-      <Drawer
+      <HostedDrawer
         class="session-floating-drawer"
         anchor={isRTL() ? "left" : "right"}
-        variant="temporary"
+        container={drawerContainer()}
         open={rightOpen()}
         onClose={closeRightDrawer}
-        ModalProps={modalProps}
       >
         <RightPanel
           isActive={() => props.isActiveInstance !== false && rightOpen()}
@@ -861,7 +855,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           promptInputApi={activePromptInputApi}
           setContentEl={setRightDrawerContentEl}
         />
-      </Drawer>
+      </HostedDrawer>
 
     )
   }

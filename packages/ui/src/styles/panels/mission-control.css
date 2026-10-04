@@ -81,64 +81,7 @@
   overflow-y: auto;
 }
 
-.mission-index-row {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding-inline-end: var(--space-xs);
-  border-inline-start: 2px solid transparent;
-}
-
-.mission-index-row + .mission-index-row { border-top: 1px solid var(--border-base); }
 .mission-control > .mission-disclosure { border-top: 1px solid var(--border-base); }
-
-.mission-index-row:hover { background: var(--surface-hover-overlay); }
-.mission-index-row-active { background: var(--surface-base); border-inline-start-color: var(--accent-primary); }
-.mission-index-row-active:hover { background: var(--surface-base); box-shadow: inset 0 0 0 100vmax var(--surface-hover-overlay); }
-
-.mission-index-row > .mission-control-icon-button { visibility: hidden; }
-.mission-index-row > :is(.mission-read-button, .mission-open-coordinator) { visibility: visible; }
-.mission-index-row:is(:hover, :focus-within, .mission-index-row-active) > .mission-control-icon-button { visibility: visible; }
-@media (hover: none) { .mission-index-row > .mission-control-icon-button { visibility: visible; } }
-
-.mission-control-index-item {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-  align-items: center;
-  gap: 2px;
-  padding: var(--space-sm);
-  text-align: start;
-  color: var(--text-secondary);
-  background: transparent;
-  border: 0;
-}
-
-.mission-control-index-item span {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: var(--font-size-sm);
-  text-overflow: ellipsis;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.4;
-}
-
-.mission-control-index-item small {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  flex-shrink: 0;
-}
-
-.mission-control-index-item-active {
-  color: var(--text-primary);
-}
-
-.mission-control-index-item small:is([data-status="active"], [data-status="running"], [data-status="paused"]) { color: var(--status-starting-fg); }
-.mission-control-index-item small[data-status="completed"] { color: var(--status-ready-fg); }
-.mission-control-index-item small[data-status="failed"] { color: var(--status-error-fg); }
 .mission-lifecycle { display: flex; align-items: center; gap: var(--space-sm); padding-block: var(--space-xs); }
 .mission-lifecycle-actions { display: flex; flex-shrink: 0; }
 .mission-lifecycle small { color: var(--text-secondary); font-size: var(--font-size-xs); }
